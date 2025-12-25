@@ -5,15 +5,17 @@ import { RouteDebugger } from './RouteDebugger';
 
 interface ApproveTimesheetsProps {
   managerId: string;
+  role?: string; // Add role to differentiate between manager and cluster_head
 }
 
-export function ApproveTimesheets({ managerId }: ApproveTimesheetsProps) {
+export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [timesheets, setTimesheets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   console.log('ApproveTimesheets: managerId prop =', managerId);
+  console.log('ApproveTimesheets: role prop =', role);
 
   useEffect(() => {
     loadEmployees();
@@ -27,14 +29,26 @@ export function ApproveTimesheets({ managerId }: ApproveTimesheetsProps) {
 
   const loadEmployees = async () => {
     try {
-      console.log('ApproveTimesheets: Calling getEmployeesByManager with managerId:', managerId);
-      const data = await api.getEmployeesByManager(managerId);
-      console.log('ApproveTimesheets: Received employees:', data);
+      console.log('ApproveTimesheets: Loading employees/managers for role:', role);
+      let data;
+      
+      if (role === 'cluster_head') {
+        // Cluster heads manage managers
+        console.log('ApproveTimesheets: Calling getManagersByClusterHead with clusterHeadId:', managerId);
+        data = await api.getManagersByClusterHead(managerId);
+        console.log('ApproveTimesheets: Received managers:', data);
+      } else {
+        // Managers manage employees
+        console.log('ApproveTimesheets: Calling getEmployeesByManager with managerId:', managerId);
+        data = await api.getEmployeesByManager(managerId);
+        console.log('ApproveTimesheets: Received employees:', data);
+      }
+      
       setEmployees(data);
       if (data.length > 0) {
         setSelectedEmployee(data[0].employeeId);
       } else {
-        console.log('ApproveTimesheets: No employees found for this manager');
+        console.log('ApproveTimesheets: No employees/managers found');
       }
     } catch (error) {
       console.error('Error loading employees:', error);
@@ -86,14 +100,23 @@ export function ApproveTimesheets({ managerId }: ApproveTimesheetsProps) {
 
   const pendingCount = timesheets.length;
   const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
+  
+  // Dynamic text based on role
+  const entityType = role === 'cluster_head' ? 'Manager' : 'Employee';
+  const entityTypePlural = role === 'cluster_head' ? 'Managers' : 'Employees';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Approve Timesheets</h1>
-          <p className="text-gray-600">Review and approve employee timesheet entries</p>
+          <h1 className="text-3xl text-gray-900 mb-2">Approve {entityType} Timesheets</h1>
+          <p className="text-gray-600">
+            {role === 'cluster_head' 
+              ? 'Review and approve manager timesheet entries. Contract workers are paid per day worked and do not require attendance approval.'
+              : 'Review and approve employee timesheet entries'
+            }
+          </p>
         </div>
 
         {/* Error/Warning if no managerId */}
@@ -117,9 +140,9 @@ export function ApproveTimesheets({ managerId }: ApproveTimesheetsProps) {
             <div className="flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-blue-600" />
               <div>
-                <p className="text-blue-900 font-medium">No Employees Found</p>
+                <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
                 <p className="text-sm text-blue-700">
-                  You don't have any employees assigned to you yet. Employees created through Employee Management will appear here.
+                  You don't have any {entityTypePlural.toLowerCase()} assigned to you yet. {entityTypePlural} created through Employee Management will appear here.
                 </p>
                 <p className="text-xs text-blue-600 mt-1">Manager ID: {managerId}</p>
               </div>
@@ -149,13 +172,13 @@ export function ApproveTimesheets({ managerId }: ApproveTimesheetsProps) {
 
         {/* Employee Selector */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
-          <label className="block text-sm text-gray-700 mb-2">Select Employee</label>
+          <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
           <select
             value={selectedEmployee}
             onChange={(e) => setSelectedEmployee(e.target.value)}
             className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
-            <option value="">-- Select Employee --</option>
+            <option value="">-- Select {entityType} --</option>
             {employees.map(emp => (
               <option key={emp.employeeId} value={emp.employeeId}>
                 {emp.name} ({emp.employeeId})

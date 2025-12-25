@@ -250,11 +250,11 @@ export function AttendancePortal({ user }: AttendancePortalProps) {
         )}
 
         {activeTab === 'approve-timesheet' && (isManager || isClusterHead) && (
-          <ApproveTimesheets managerId={user.employeeId || ''} />
+          <ApproveTimesheets managerId={user.employeeId || ''} role={user.role} />
         )}
 
         {activeTab === 'approve-leave' && (isManager || isClusterHead) && (
-          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} />
+          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} role={user.role} />
         )}
 
         {activeTab === 'team' && isManager && (

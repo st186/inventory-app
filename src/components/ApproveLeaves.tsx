@@ -5,13 +5,17 @@ import * as api from '../utils/api';
 interface ApproveLeavesProps {
   managerId: string;
   managerName: string;
+  role?: string; // Add role to differentiate between manager and cluster_head
 }
 
-export function ApproveLeaves({ managerId, managerName }: ApproveLeavesProps) {
+export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  console.log('ApproveLeaves: managerId prop =', managerId);
+  console.log('ApproveLeaves: role prop =', role);
 
   useEffect(() => {
     loadEmployees();
@@ -25,10 +29,26 @@ export function ApproveLeaves({ managerId, managerName }: ApproveLeavesProps) {
 
   const loadEmployees = async () => {
     try {
-      const data = await api.getEmployeesByManager(managerId);
+      console.log('ApproveLeaves: Loading employees/managers for role:', role);
+      let data;
+      
+      if (role === 'cluster_head') {
+        // Cluster heads manage managers
+        console.log('ApproveLeaves: Calling getManagersByClusterHead with clusterHeadId:', managerId);
+        data = await api.getManagersByClusterHead(managerId);
+        console.log('ApproveLeaves: Received managers:', data);
+      } else {
+        // Managers manage employees
+        console.log('ApproveLeaves: Calling getEmployeesByManager with managerId:', managerId);
+        data = await api.getEmployeesByManager(managerId);
+        console.log('ApproveLeaves: Received employees:', data);
+      }
+      
       setEmployees(data);
       if (data.length > 0) {
         setSelectedEmployee(data[0].employeeId);
+      } else {
+        console.log('ApproveLeaves: No employees/managers found');
       }
     } catch (error) {
       console.error('Error loading employees:', error);
@@ -80,14 +100,23 @@ export function ApproveLeaves({ managerId, managerName }: ApproveLeavesProps) {
 
   const pendingCount = leaves.length;
   const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
+  
+  // Dynamic text based on role
+  const entityType = role === 'cluster_head' ? 'Manager' : 'Employee';
+  const entityTypePlural = role === 'cluster_head' ? 'Managers' : 'Employees';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Approve Leaves</h1>
-          <p className="text-gray-600">Review and approve employee leave applications</p>
+          <h1 className="text-3xl text-gray-900 mb-2">Approve {entityType} Leaves</h1>
+          <p className="text-gray-600">
+            {role === 'cluster_head' 
+              ? 'Review and approve manager leave applications. Contract workers do not require leave approval.'
+              : 'Review and approve employee leave applications'
+            }
+          </p>
         </div>
 
         {/* Pending Count Badge */}
@@ -104,16 +133,31 @@ export function ApproveLeaves({ managerId, managerName }: ApproveLeavesProps) {
             </div>
           </div>
         )}
+        
+        {/* No employees message */}
+        {managerId && employees.length === 0 && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
+                <p className="text-sm text-blue-700">
+                  You don't have any {entityTypePlural.toLowerCase()} assigned to you yet. {entityTypePlural} created through Employee Management will appear here.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Employee Selector */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
-          <label className="block text-sm text-gray-700 mb-2">Select Employee</label>
+          <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
           <select
             value={selectedEmployee}
             onChange={(e) => setSelectedEmployee(e.target.value)}
             className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
-            <option value="">-- Select Employee --</option>
+            <option value="">-- Select {entityType} --</option>
             {employees.map(emp => (
               <option key={emp.employeeId} value={emp.employeeId}>
                 {emp.name} ({emp.employeeId})
