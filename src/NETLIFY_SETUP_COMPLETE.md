@@ -94,8 +94,8 @@ Your app is now ready for Netlify deployment. Here's what was configured:
 ### Environment Variables Required:
 
 ```env
-VITE_SUPABASE_PROJECT_ID=xxx
-VITE_SUPABASE_ANON_KEY=xxx
+VITE_SUPABASE_PROJECT_ID=xssxnhrzxvtejavoqgwg
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhzc3huaHJ6eHZ0ZWphdm9xZ3dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwODAzNjksImV4cCI6MjA4MTY1NjM2OX0.boONpQZ8Xv2AzlDylEoKnAlGEW7DFsMQ0zEQ1S5LPGE
 ```
 
 ## ✨ What Works Now

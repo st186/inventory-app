@@ -1,0 +1,355 @@
+import { useState, useEffect } from 'react';
+import { Users, CheckCircle, AlertCircle, Save } from 'lucide-react';
+import * as api from '../utils/api';
+
+interface Employee {
+  employeeId: string;
+  name: string;
+  email: string;
+  role: string;
+  managerId?: string;
+  clusterHeadId?: string;
+}
+
+interface Manager {
+  employeeId: string;
+  name: string;
+  email: string;
+}
+
+interface AssignManagersProps {
+  clusterHeadId: string;
+}
+
+export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [managers, setManagers] = useState<Manager[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch all employees
+      const allEmployees = await api.getAllEmployees();
+      
+      // Filter employees (only those who are actual employees, not managers or cluster heads)
+      const employeesList = allEmployees.filter((emp: Employee) => emp.role === 'employee');
+      setEmployees(employeesList);
+      
+      // Filter managers under this cluster head
+      const managersList = allEmployees.filter(
+        (emp: Employee) => emp.role === 'manager' && emp.clusterHeadId === clusterHeadId
+      );
+      setManagers(managersList);
+      
+      // Initialize assignments with current manager IDs
+      const currentAssignments: Record<string, string> = {};
+      employeesList.forEach((emp: Employee) => {
+        if (emp.managerId) {
+          currentAssignments[emp.employeeId] = emp.managerId;
+        }
+      });
+      setAssignments(currentAssignments);
+      
+    } catch (error) {
+      console.error('Error loading data:', error);
+      alert('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAssignmentChange = (employeeId: string, managerId: string) => {
+    setAssignments(prev => ({
+      ...prev,
+      [employeeId]: managerId
+    }));
+  };
+
+  const handleSave = async (employeeId: string) => {
+    try {
+      setSaving(employeeId);
+      const managerId = assignments[employeeId];
+      
+      if (!managerId) {
+        alert('Please select a manager');
+        return;
+      }
+
+      await api.assignManagerToEmployee(employeeId, managerId);
+      alert('Manager assigned successfully!');
+      
+      // Reload data to reflect changes
+      await loadData();
+      
+    } catch (error) {
+      console.error('Error assigning manager:', error);
+      alert('Failed to assign manager');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const unassignedEmployees = employees.filter(emp => !emp.managerId);
+  const assignedEmployees = employees.filter(emp => emp.managerId);
+
+  const getManagerName = (managerId?: string) => {
+    if (!managerId) return 'Unassigned';
+    const manager = managers.find(m => m.employeeId === managerId);
+    return manager ? manager.name : 'Unknown Manager';
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+          Assign Managers to Employees
+        </h1>
+        <p className="text-gray-600 mt-2">
+          Manage employee-manager relationships across your organization
+        </p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+              <Users className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Total Employees</p>
+              <p className="text-2xl font-bold text-gray-900">{employees.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+              <CheckCircle className="w-6 h-6 text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Assigned</p>
+              <p className="text-2xl font-bold text-gray-900">{assignedEmployees.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+              <AlertCircle className="w-6 h-6 text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Unassigned</p>
+              <p className="text-2xl font-bold text-gray-900">{unassignedEmployees.length}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {managers.length === 0 ? (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
+          <AlertCircle className="w-12 h-12 text-yellow-600 mx-auto mb-3" />
+          <h3 className="text-lg font-semibold text-yellow-900 mb-2">No Managers Available</h3>
+          <p className="text-yellow-700">
+            You need to create managers first before assigning them to employees.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Unassigned Employees Section */}
+          {unassignedEmployees.length > 0 && (
+            <div className="mb-8">
+              <div className="bg-red-50 border border-red-200 rounded-t-xl px-6 py-4">
+                <h2 className="text-lg font-semibold text-red-900 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" />
+                  Unassigned Employees ({unassignedEmployees.length})
+                </h2>
+                <p className="text-sm text-red-700 mt-1">
+                  These employees need to be assigned to a manager
+                </p>
+              </div>
+              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee ID
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Assign Manager
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {unassignedEmployees.map((employee) => (
+                      <tr key={employee.employeeId} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{employee.name}</div>
+                            <div className="text-sm text-gray-500">{employee.email}</div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            {employee.employeeId}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <select
+                            value={assignments[employee.employeeId] || ''}
+                            onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
+                            className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                          >
+                            <option value="">Select a manager...</option>
+                            {managers.map((manager) => (
+                              <option key={manager.employeeId} value={manager.employeeId}>
+                                {manager.name} ({manager.employeeId})
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <button
+                            onClick={() => handleSave(employee.employeeId)}
+                            disabled={!assignments[employee.employeeId] || saving === employee.employeeId}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                          >
+                            <Save className="w-4 h-4" />
+                            {saving === employee.employeeId ? 'Saving...' : 'Assign'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Assigned Employees Section */}
+          {assignedEmployees.length > 0 && (
+            <div>
+              <div className="bg-green-50 border border-green-200 rounded-t-xl px-6 py-4">
+                <h2 className="text-lg font-semibold text-green-900 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5" />
+                  Assigned Employees ({assignedEmployees.length})
+                </h2>
+                <p className="text-sm text-green-700 mt-1">
+                  These employees are already assigned to managers
+                </p>
+              </div>
+              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee ID
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Current Manager
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Reassign Manager
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {assignedEmployees.map((employee) => (
+                      <tr key={employee.employeeId} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{employee.name}</div>
+                            <div className="text-sm text-gray-500">{employee.email}</div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            {employee.employeeId}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{getManagerName(employee.managerId)}</div>
+                          {employee.managerId && (
+                            <div className="text-xs text-gray-500">{employee.managerId}</div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <select
+                            value={assignments[employee.employeeId] || employee.managerId || ''}
+                            onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
+                            className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                          >
+                            <option value="">Select a manager...</option>
+                            {managers.map((manager) => (
+                              <option key={manager.employeeId} value={manager.employeeId}>
+                                {manager.name} ({manager.employeeId})
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <button
+                            onClick={() => handleSave(employee.employeeId)}
+                            disabled={
+                              !assignments[employee.employeeId] || 
+                              assignments[employee.employeeId] === employee.managerId ||
+                              saving === employee.employeeId
+                            }
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                          >
+                            <Save className="w-4 h-4" />
+                            {saving === employee.employeeId ? 'Saving...' : 'Update'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {employees.length === 0 && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-12 text-center">
+              <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Employees Found</h3>
+              <p className="text-gray-600">
+                There are no employees in the system yet. Create employees first through the Employee Management tab.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

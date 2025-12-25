@@ -1,7 +1,7 @@
 
-  # Inventory Management Page
+  # Bhandar-IMS
 
-  This is a code bundle for Inventory Management Page. The original project is available at https://www.figma.com/design/X7Zh8dpmRoV7MGqDIDT4f7/Inventory-Management-Page.
+  This is a code bundle for Bhandar-IMS. The original project is available at https://www.figma.com/design/X7Zh8dpmRoV7MGqDIDT4f7/Bhandar-IMS.
 
   ## Running the code
 

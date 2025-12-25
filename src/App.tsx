@@ -2,8 +2,21 @@ import { useState, useEffect } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
 import { ClusterDashboard } from './components/ClusterDashboard';
 import { SalesManagement } from './components/SalesManagement';
+import { PayrollManagement } from './components/PayrollManagement';
+import { Analytics } from './components/Analytics';
+import { ExportData } from './components/ExportData';
+import { EmployeeDashboard } from './components/EmployeeDashboard';
 import { AuthPage } from './components/AuthPage';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2 } from 'lucide-react';
+import { EmployeeTimesheet } from './components/EmployeeTimesheet';
+import { EmployeeLeave } from './components/EmployeeLeave';
+import { CreateEmployee } from './components/CreateEmployee';
+import { ApproveTimesheets } from './components/ApproveTimesheets';
+import { ApproveLeaves } from './components/ApproveLeaves';
+import { EmployeeHierarchy } from './components/EmployeeHierarchy';
+import { AttendancePortal } from './components/AttendancePortal';
+import { EmployeeManagement } from './components/EmployeeManagement';
+import { SetupClusterHead } from './components/SetupClusterHead';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -58,13 +71,13 @@ export type InventoryContextType = {
   updateSalesData: (id: string, item: Omit<SalesData, 'id'>) => Promise<void>;
   approveSalesData: (id: string) => Promise<void>;
   isManager: boolean;
-  user: { email: string; name: string; role: string; accessToken: string } | null;
+  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string } | null;
 };
 
 export default function App() {
   // All useState hooks must be at the top, before any conditional returns
-  const [activeView, setActiveView] = useState<'inventory' | 'dashboard' | 'sales'>('inventory');
-  const [user, setUser] = useState<{ email: string; name: string; role: string; accessToken: string } | null>(null);
+  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees'>('analytics');
+  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -72,9 +85,14 @@ export default function App() {
   const [salesData, setSalesData] = useState<SalesData[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Get singleton Supabase client
   const supabaseClient = getSupabaseClient();
+
+  // Check for setup URL parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const isSetupMode = urlParams.get('setup') === 'cluster-head';
 
   // Load inventory and overhead data
   const loadData = async (accessToken: string) => {
@@ -101,12 +119,23 @@ export default function App() {
   useEffect(() => {
     const checkSession = async () => {
       try {
+        // Delete all existing cluster head accounts with email subham.tewari@bunnymomos.com
+        try {
+          console.log('Attempting to delete old cluster head accounts...');
+          await api.deleteClusterHeadByEmail('subham.tewari@bunnymomos.com');
+          console.log('Successfully deleted old cluster head account');
+        } catch (error) {
+          // Ignore error if account doesn't exist
+          console.log('No old cluster head account to delete or deletion error:', error);
+        }
+
         const { data: { session } } = await supabaseClient.auth.getSession();
         if (session?.user) {
           const userData = {
             email: session.user.email || '',
             name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
             role: session.user.user_metadata?.role || 'manager',
+            employeeId: session.user.user_metadata?.employeeId || null,
             accessToken: session.access_token
           };
           setUser(userData);
@@ -141,6 +170,7 @@ export default function App() {
           email: data.user.email || '',
           name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
           role: data.user.user_metadata?.role || 'manager',
+          employeeId: data.user.user_metadata?.employeeId || null,
           accessToken: data.session.access_token
         };
         setUser(userData);
@@ -154,7 +184,7 @@ export default function App() {
     }
   };
 
-  const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head') => {
+  const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee') => {
     setAuthError(null);
     try {
       const response = await fetch(
@@ -262,6 +292,9 @@ export default function App() {
   const addSalesData = async (item: Omit<SalesData, 'id'>) => {
     if (!user) return;
     try {
+      console.log('Frontend - Current user:', user);
+      console.log('Frontend - User role:', user.role);
+      console.log('Frontend - Access token (first 50 chars):', user.accessToken.substring(0, 50));
       const newItem = await api.addSalesData(user.accessToken, item);
       setSalesData([...salesData, newItem]);
     } catch (error) {
@@ -331,11 +364,16 @@ export default function App() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <Package className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-pulse" />
+          <Package className="w-12 h-12 text-[#B0A8D8] mx-auto mb-4 animate-pulse" />
           <p className="text-gray-600">Loading...</p>
         </div>
       </div>
     );
+  }
+
+  // Show setup page if in setup mode
+  if (isSetupMode) {
+    return <SetupClusterHead />;
   }
 
   // Show auth page if not logged in
@@ -351,75 +389,528 @@ export default function App() {
 
   // Cluster heads should only see the dashboard
   const isClusterHead = user.role === 'cluster_head';
-  const currentView = isClusterHead ? 'dashboard' : activeView;
+  const isEmployee = user.role === 'employee';
+
+  // If employee, show only employee dashboard
+  if (isEmployee) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        {/* Employee Navigation */}
+        <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-16">
+              <div>
+                <h1 className="text-lg sm:text-xl text-gray-900">Employee Portal</h1>
+                <p className="text-xs sm:text-sm text-gray-500">
+                  {user.name}
+                </p>
+              </div>
+              
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="lg:hidden flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+              
+              {/* Desktop Menu */}
+              <div className="hidden lg:flex gap-2">
+                <button
+                  onClick={() => setActiveView('analytics')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    activeView === 'analytics'
+                      ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  <span>Analytics</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('payroll')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    activeView === 'payroll'
+                      ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>My Payouts</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('attendance')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    activeView === 'attendance'
+                      ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
+                  }`}
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>Attendance</span>
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Logout</span>
+                </button>
+              </div>
+            </div>
+            
+            {/* Mobile Menu */}
+            {isMobileMenuOpen && (
+              <div className="lg:hidden border-t border-gray-200 py-4 space-y-2">
+                <button
+                  onClick={() => {
+                    setActiveView('analytics');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    activeView === 'analytics'
+                      ? 'bg-[#D4A5FF] text-gray-800'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                  }`}
+                >
+                  <TrendingUp className="w-5 h-5" />
+                  <span>Analytics</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveView('payroll');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    activeView === 'payroll'
+                      ? 'bg-[#B0E0E6] text-gray-800'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                  }`}
+                >
+                  <Users className="w-5 h-5" />
+                  <span>My Payouts</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveView('attendance');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    activeView === 'attendance'
+                      ? 'bg-[#FFDAB9] text-gray-800'
+                      : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
+                  }`}
+                >
+                  <Clock className="w-5 h-5" />
+                  <span>Attendance</span>
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <LogOut className="w-5 h-5" />
+                  <span>Logout</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </nav>
+
+        {/* Employee Main Content */}
+        <main className="pb-6">
+          {activeView === 'analytics' ? (
+            <Analytics context={contextValue} />
+          ) : activeView === 'payroll' ? (
+            <EmployeeDashboard employeeId={user.employeeId || ''} />
+          ) : activeView === 'attendance' ? (
+            <AttendancePortal user={{
+              employeeId: user.employeeId,
+              name: user.name,
+              email: user.email,
+              role: user.role
+            }} />
+          ) : (
+            <EmployeeDashboard employeeId={user.employeeId || ''} />
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
-      <nav className="bg-white border-b border-gray-200">
+      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div>
-              <h1 className="text-gray-900">Inventory Management System</h1>
-              <p className="text-sm text-gray-500">
-                Welcome, {user.name} ({user.role === 'manager' ? 'Manager' : 'Cluster Head'})
+              <h1 className="text-lg sm:text-xl text-gray-900">Bhandar-IMS</h1>
+              <p className="text-xs sm:text-sm text-gray-500">
+                {user.name} ({user.role === 'manager' ? 'Manager' : 'Cluster Head'})
               </p>
             </div>
-            <div className="flex gap-2">
-              {!isClusterHead && (
+            
+            {/* Mobile Menu Button */}
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="lg:hidden flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+            
+            {/* Desktop Menu */}
+            <div className="hidden lg:flex gap-2 flex-wrap">
+              {isClusterHead ? (
                 <>
                   <button
+                    onClick={() => setActiveView('analytics')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'analytics'
+                        ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                    }`}
+                  >
+                    <TrendingUp className="w-4 h-4" />
+                    <span className="hidden xl:inline">Analytics</span>
+                  </button>
+                  <button
                     onClick={() => setActiveView('sales')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                       activeView === 'sales'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        ? 'bg-[#FFD4E5] text-gray-800 border-2 border-[#FFC0D9]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8] border-2 border-transparent'
                     }`}
                   >
                     <DollarSign className="w-4 h-4" />
-                    Sales
+                    <span className="hidden xl:inline">Sales</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('payroll')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'payroll'
+                        ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span className="hidden xl:inline">Payroll</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('export')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'export'
+                        ? 'bg-[#FFE5B4] text-gray-800 border-2 border-[#FFD700]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC] border-2 border-transparent'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden xl:inline">Export</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('attendance')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'attendance'
+                        ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span className="hidden xl:inline">Attendance</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('employees')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'employees'
+                        ? 'bg-[#E6E6FA] text-gray-800 border-2 border-[#D8BFD8]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF] border-2 border-transparent'
+                    }`}
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span className="hidden xl:inline">Employees</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setActiveView('analytics')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'analytics'
+                        ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                    }`}
+                  >
+                    <TrendingUp className="w-4 h-4" />
+                    <span className="hidden xl:inline">Analytics</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('sales')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'sales'
+                        ? 'bg-[#FFD4E5] text-gray-800 border-2 border-[#FFC0D9]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8] border-2 border-transparent'
+                    }`}
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    <span className="hidden xl:inline">Sales</span>
                   </button>
                   <button
                     onClick={() => setActiveView('inventory')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                       activeView === 'inventory'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        ? 'bg-[#C1E1C1] text-gray-800 border-2 border-[#B4E7CE]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0] border-2 border-transparent'
                     }`}
                   >
                     <Package className="w-4 h-4" />
-                    Inventory
+                    <span className="hidden xl:inline">Inventory</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('payroll')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'payroll'
+                        ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span className="hidden xl:inline">Payroll</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('export')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'export'
+                        ? 'bg-[#FFE5B4] text-gray-800 border-2 border-[#FFD700]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC] border-2 border-transparent'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden xl:inline">Export</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('attendance')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                      activeView === 'attendance'
+                        ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span className="hidden xl:inline">Attendance</span>
                   </button>
                 </>
               )}
               <button
-                onClick={() => !isClusterHead && setActiveView('dashboard')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                  currentView === 'dashboard'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                Dashboard
-              </button>
-              <button
                 onClick={clearAllData}
-                className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                className="flex items-center gap-2 px-3 py-2 bg-[#FFD4D4] text-gray-700 rounded-lg hover:bg-[#FFC0CB] transition-colors border-2 border-[#FFB6C1]"
                 title="Clear all data for testing"
               >
                 <Trash2 className="w-4 h-4" />
-                Clear Data
+                <span className="hidden xl:inline">Clear</span>
               </button>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
-                Logout
+                <span className="hidden xl:inline">Logout</span>
               </button>
             </div>
           </div>
+          
+          {/* Mobile Menu */}
+          {isMobileMenuOpen && (
+            <div className="lg:hidden border-t border-gray-200 py-4 space-y-2">
+              {isClusterHead ? (
+                <>
+                  <button
+                    onClick={() => {
+                      setActiveView('analytics');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'analytics'
+                        ? 'bg-[#D4A5FF] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                    }`}
+                  >
+                    <TrendingUp className="w-5 h-5" />
+                    <span>Analytics</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('sales');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'sales'
+                        ? 'bg-[#FFD4E5] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8]'
+                    }`}
+                  >
+                    <DollarSign className="w-5 h-5" />
+                    <span>Sales</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('payroll');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'payroll'
+                        ? 'bg-[#B0E0E6] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                    }`}
+                  >
+                    <Users className="w-5 h-5" />
+                    <span>Payroll</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('export');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'export'
+                        ? 'bg-[#FFE5B4] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
+                    }`}
+                  >
+                    <Download className="w-5 h-5" />
+                    <span>Export</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('attendance');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'attendance'
+                        ? 'bg-[#FFDAB9] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
+                    }`}
+                  >
+                    <Clock className="w-5 h-5" />
+                    <span>Attendance</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('employees');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'employees'
+                        ? 'bg-[#E6E6FA] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
+                    }`}
+                  >
+                    <UserPlus className="w-5 h-5" />
+                    <span>Employees</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      setActiveView('analytics');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'analytics'
+                        ? 'bg-[#D4A5FF] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                    }`}
+                  >
+                    <TrendingUp className="w-5 h-5" />
+                    <span>Analytics</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('sales');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'sales'
+                        ? 'bg-[#FFD4E5] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8]'
+                    }`}
+                  >
+                    <DollarSign className="w-5 h-5" />
+                    <span>Sales</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('inventory');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'inventory'
+                        ? 'bg-[#C1E1C1] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0]'
+                    }`}
+                  >
+                    <Package className="w-5 h-5" />
+                    <span>Inventory</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('payroll');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'payroll'
+                        ? 'bg-[#B0E0E6] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                    }`}
+                  >
+                    <Users className="w-5 h-5" />
+                    <span>Payroll</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('export');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'export'
+                        ? 'bg-[#FFE5B4] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
+                    }`}
+                  >
+                    <Download className="w-5 h-5" />
+                    <span>Export</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('attendance');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'attendance'
+                        ? 'bg-[#FFDAB9] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
+                    }`}
+                  >
+                    <Clock className="w-5 h-5" />
+                    <span>Attendance</span>
+                  </button>
+                </>
+              )}
+              <button
+                onClick={clearAllData}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-[#FFD4D4] text-gray-700 rounded-lg hover:bg-[#FFC0CB] transition-colors"
+              >
+                <Trash2 className="w-5 h-5" />
+                <span>Clear All Data</span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                <LogOut className="w-5 h-5" />
+                <span>Logout</span>
+              </button>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -450,11 +941,36 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <main>
-        {currentView === 'sales' ? (
+      <main className="pb-6">
+        {activeView === 'sales' ? (
           <SalesManagement context={contextValue} />
-        ) : currentView === 'inventory' ? (
+        ) : activeView === 'inventory' ? (
           <InventoryManagement context={contextValue} />
+        ) : activeView === 'payroll' ? (
+          <PayrollManagement 
+            userRole={user.role as 'manager' | 'cluster_head'} 
+            selectedDate={new Date().toISOString().split('T')[0]}
+            userEmployeeId={user.employeeId}
+            userName={user.name}
+          />
+        ) : activeView === 'analytics' ? (
+          <Analytics context={contextValue} />
+        ) : activeView === 'export' ? (
+          <ExportData userRole={user.role as 'manager' | 'cluster_head'} />
+        ) : activeView === 'attendance' ? (
+          <AttendancePortal user={{
+            employeeId: user.employeeId,
+            name: user.name,
+            email: user.email,
+            role: user.role
+          }} />
+        ) : activeView === 'employees' ? (
+          <EmployeeManagement user={{
+            role: user.role,
+            email: user.email,
+            employeeId: user.employeeId,
+            name: user.name
+          }} />
         ) : (
           <ClusterDashboard context={contextValue} />
         )}
