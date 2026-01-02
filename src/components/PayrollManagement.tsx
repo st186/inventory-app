@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, UserPlus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText } from 'lucide-react';
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
+import { DatePicker } from './DatePicker';
 
 interface Employee {
   id: string;
@@ -28,57 +29,310 @@ interface PayrollManagementProps {
   selectedDate: string;
   userEmployeeId?: string | null;
   userName?: string;
+  selectedStoreId?: string | null;
+  isIncharge?: boolean;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
 }
 
-export function PayrollManagement({ userRole, selectedDate, userEmployeeId, userName }: PayrollManagementProps) {
+// Helper function to generate payslip PDF
+const generatePayslip = (
+  employeeName: string,
+  employeeId: string,
+  month: string,
+  year: string,
+  payouts: Payout[],
+  employeeType: string
+) => {
+  const totalAmount = payouts.reduce((sum, p) => sum + p.amount, 0);
+  const grossSalary = totalAmount;
+  
+  // Create a simple HTML content for the payslip
+  const payslipContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Payslip - ${month} ${year}</title>
+      <style>
+        body {
+          font-family: 'Arial', sans-serif;
+          margin: 0;
+          padding: 20px;
+          color: #333;
+        }
+        .payslip-container {
+          max-width: 800px;
+          margin: 0 auto;
+          border: 2px solid #9333ea;
+          padding: 30px;
+          background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+        }
+        .header {
+          text-align: center;
+          border-bottom: 3px solid #9333ea;
+          padding-bottom: 20px;
+          margin-bottom: 30px;
+        }
+        .company-name {
+          font-size: 32px;
+          font-weight: bold;
+          color: #9333ea;
+          margin-bottom: 5px;
+        }
+        .company-tagline {
+          font-size: 14px;
+          color: #666;
+          font-style: italic;
+        }
+        .payslip-title {
+          font-size: 24px;
+          color: #9333ea;
+          margin: 20px 0 10px 0;
+          font-weight: bold;
+        }
+        .payslip-period {
+          font-size: 16px;
+          color: #666;
+          margin-bottom: 20px;
+        }
+        .info-section {
+          display: table;
+          width: 100%;
+          margin-bottom: 30px;
+        }
+        .info-row {
+          display: table-row;
+        }
+        .info-label {
+          display: table-cell;
+          padding: 10px 0;
+          font-weight: bold;
+          color: #9333ea;
+          width: 40%;
+        }
+        .info-value {
+          display: table-cell;
+          padding: 10px 0;
+          color: #333;
+        }
+        .payment-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 20px 0;
+          background: white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .payment-table th {
+          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          color: white;
+          padding: 12px;
+          text-align: left;
+          font-weight: bold;
+        }
+        .payment-table td {
+          padding: 12px;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .payment-table tr:last-child td {
+          border-bottom: none;
+        }
+        .payment-table tr:nth-child(even) {
+          background: #faf5ff;
+        }
+        .total-section {
+          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          color: white;
+          padding: 20px;
+          margin-top: 30px;
+          border-radius: 8px;
+          text-align: center;
+        }
+        .total-label {
+          font-size: 18px;
+          margin-bottom: 10px;
+        }
+        .total-amount {
+          font-size: 36px;
+          font-weight: bold;
+        }
+        .footer {
+          margin-top: 40px;
+          padding-top: 20px;
+          border-top: 2px solid #9333ea;
+          text-align: center;
+          font-size: 12px;
+          color: #666;
+        }
+        .signature-section {
+          margin-top: 60px;
+          display: flex;
+          justify-content: space-between;
+        }
+        .signature-box {
+          text-align: center;
+          width: 45%;
+        }
+        .signature-line {
+          border-top: 2px solid #9333ea;
+          margin-top: 50px;
+          padding-top: 10px;
+          font-weight: bold;
+          color: #9333ea;
+        }
+        @media print {
+          body {
+            padding: 0;
+          }
+          .payslip-container {
+            border: none;
+            box-shadow: none;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="payslip-container">
+        <div class="header">
+          <div class="company-name">BHANDAR-IMS</div>
+          <div class="company-tagline">Food Business Inventory Management System</div>
+          <div class="payslip-title">SALARY SLIP</div>
+          <div class="payslip-period">For the Month of ${month} ${year}</div>
+        </div>
+        
+        <div class="info-section">
+          <div class="info-row">
+            <div class="info-label">Employee Name:</div>
+            <div class="info-value">${employeeName}</div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Employee ID:</div>
+            <div class="info-value">${employeeId}</div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Employee Type:</div>
+            <div class="info-value">${employeeType === 'fulltime' ? 'Permanent' : 'Contract'}</div>
+          </div>
+          <div class="info-row">
+            <div class="info-label">Payment Date:</div>
+            <div class="info-value">${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+          </div>
+        </div>
+
+        <table class="payment-table">
+          <thead>
+            <tr>
+              <th>Payment Date</th>
+              <th>Description</th>
+              <th style="text-align: right;">Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${payouts.map(payout => `
+              <tr>
+                <td>${new Date(payout.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                <td>Salary Payment</td>
+                <td style="text-align: right;">₹${payout.amount.toLocaleString('en-IN')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div class="total-section">
+          <div class="total-label">Net Salary for ${month} ${year}</div>
+          <div class="total-amount">₹${totalAmount.toLocaleString('en-IN')}</div>
+        </div>
+
+        <div class="signature-section">
+          <div class="signature-box">
+            <div class="signature-line">Employee Signature</div>
+          </div>
+          <div class="signature-box">
+            <div class="signature-line">Authorized Signatory</div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <p>This is a computer-generated payslip and does not require a signature.</p>
+          <p>© ${year} Bhandar-IMS. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  // Create a new window with the payslip content
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write(payslipContent);
+    printWindow.document.close();
+    
+    // Wait for content to load then trigger print dialog
+    printWindow.onload = () => {
+      printWindow.print();
+    };
+  }
+};
+
+export function PayrollManagement({ userRole, selectedDate, userEmployeeId, userName, selectedStoreId, isIncharge = false, inchargeDesignation = null }: PayrollManagementProps) {
   const [activeTab, setActiveTab] = useState<'contract' | 'permanent' | 'my-payouts'>('contract');
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const isClusterHead = userRole === 'cluster_head';
   
   // Date range filter state
-  const [viewMode, setViewMode] = useState<'current' | 'custom'>('current');
+  const [viewMode, setViewMode] = useState<'current' | 'last' | 'custom'>('current');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   
   // Calculate current month start and end dates
   const getCurrentMonthDates = () => {
+    // Use UTC to avoid timezone issues
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    
+    // Create dates at midnight in local timezone
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+    
+    // Format as YYYY-MM-DD
+    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const endDay = end.getDate();
+    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+    
     return {
-      start: start.toISOString().split('T')[0],
-      end: end.toISOString().split('T')[0],
+      start: startStr,
+      end: endStr,
       monthName: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     };
   };
   
-  const currentMonth = getCurrentMonthDates();
-  
-  // Filter payouts based on selected date range
-  const getFilteredPayouts = () => {
-    if (viewMode === 'current') {
-      // Show only current month payouts
-      return payouts.filter(p => p.date >= currentMonth.start && p.date <= currentMonth.end);
-    } else {
-      // Show custom date range
-      if (!customStartDate || !customEndDate) return [];
-      return payouts.filter(p => p.date >= customStartDate && p.date <= customEndDate);
-    }
+  // Calculate last month start and end dates
+  const getLastMonthDates = () => {
+    const now = new Date();
+    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const month = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+    
+    // Create dates at midnight in local timezone
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+    
+    // Format as YYYY-MM-DD
+    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const endDay = end.getDate();
+    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+    
+    return {
+      start: startStr,
+      end: endStr,
+      monthName: start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    };
   };
   
-  const filteredPayouts = getFilteredPayouts();
-  
-  // Add employee modal state
-  const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({
-    name: '',
-    phone: '',
-    type: 'contract' as 'contract' | 'fulltime',
-    role: '',
-    dailyRate: ''
-  });
+  const currentMonth = getCurrentMonthDates();
+  const lastMonth = getLastMonthDates();
 
   // Edit employee modal state
   const [showEditEmployee, setShowEditEmployee] = useState(false);
@@ -98,6 +352,63 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   // Employee account setup modal state
   const [showAccountSetup, setShowAccountSetup] = useState(false);
+
+  
+  // Filter employees and payouts by store and incharge permissions
+  const filteredEmployees = useMemo(() => {
+    let filtered = employees;
+    
+    // Apply store filter (include null/undefined storeIds for backward compatibility)
+    if (selectedStoreId) {
+      filtered = filtered.filter(emp => 
+        (emp as any).storeId === selectedStoreId || 
+        (emp as any).storeId === null || 
+        (emp as any).storeId === undefined
+      );
+    }
+    
+    // Apply incharge permissions
+    if (isIncharge && userEmployeeId) {
+      filtered = filtered.filter(emp => {
+        // For contract employees, incharge can see ALL contract employees
+        if (emp.type === 'contract') {
+          return true;
+        }
+        
+        // For permanent employees, incharge can only see employees under them
+        if (emp.type === 'fulltime') {
+          return (emp as any).inchargeId === userEmployeeId;
+        }
+        
+        return false;
+      });
+    }
+    
+    return filtered;
+  }, [employees, selectedStoreId, isIncharge, userEmployeeId]);
+
+  const filteredPayoutsByStore = useMemo(() => {
+    if (!selectedStoreId) return payouts;
+    const storeEmployeeIds = filteredEmployees.map(emp => emp.id);
+    return payouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+  }, [payouts, filteredEmployees, selectedStoreId]);
+
+  // Filter payouts based on selected date range (must come AFTER filteredPayoutsByStore)
+  const filteredPayouts = useMemo(() => {
+    let dateFiltered;
+    if (viewMode === 'current') {
+      // Show only current month payouts
+      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= currentMonth.start && p.date <= currentMonth.end);
+    } else if (viewMode === 'last') {
+      // Show only last month payouts
+      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= lastMonth.start && p.date <= lastMonth.end);
+    } else {
+      // Show custom date range
+      if (!customStartDate || !customEndDate) return [];
+      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= customStartDate && p.date <= customEndDate);
+    }
+    return dateFiltered;
+  }, [filteredPayoutsByStore, viewMode, currentMonth, lastMonth, customStartDate, customEndDate]);
 
   useEffect(() => {
     loadData();
@@ -119,52 +430,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       console.error('Error loading payroll data:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const generateEmployeeId = () => {
-    const prefix = newEmployee.type === 'contract' ? 'CT' : 'FT';
-    const timestamp = Date.now().toString().slice(-6);
-    return `${prefix}${timestamp}`;
-  };
-
-  const handleAddEmployee = async () => {
-    if (!newEmployee.name || !newEmployee.phone) {
-      alert('Please fill in all required fields');
-      return;
-    }
-
-    // Prevent managers from adding permanent employees
-    if (userRole === 'manager' && newEmployee.type === 'fulltime') {
-      alert('Managers can only add contract employees. Please contact your cluster head to add permanent employees.');
-      return;
-    }
-
-    const employeeData: Employee = {
-      id: crypto.randomUUID(),
-      employeeId: generateEmployeeId(),
-      name: newEmployee.name,
-      phone: newEmployee.phone,
-      type: newEmployee.type,
-      role: newEmployee.role || undefined,
-      dailyRate: newEmployee.dailyRate ? parseFloat(newEmployee.dailyRate) : undefined,
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      console.log('Adding employee:', employeeData);
-      const result = await api.addEmployee(employeeData);
-      console.log('Employee added, result:', result);
-      
-      // Reload data from server to ensure consistency
-      await loadData();
-      
-      setShowAddEmployee(false);
-      setNewEmployee({ name: '', phone: '', type: 'contract', role: '', dailyRate: '' });
-      alert('Employee added successfully!');
-    } catch (error) {
-      console.error('Error adding employee:', error);
-      alert('Failed to add employee');
     }
   };
 
@@ -276,9 +541,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   };
 
   const calculateContractStats = () => {
-    const contractEmployees = employees.filter(e => e.type === 'contract');
+    const contractEmployees = filteredEmployees.filter(e => e.type === 'contract');
     const contractPayouts = filteredPayouts.filter(p => {
-      const emp = employees.find(e => e.id === p.employeeId);
+      const emp = filteredEmployees.find(e => e.id === p.employeeId);
       return emp?.type === 'contract';
     });
 
@@ -299,9 +564,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   };
 
   const calculatePermanentStats = () => {
-    const permanentEmployees = employees.filter(e => e.type === 'fulltime');
+    const permanentEmployees = filteredEmployees.filter(e => e.type === 'fulltime');
     const permanentPayouts = filteredPayouts.filter(p => {
-      const emp = employees.find(e => e.id === p.employeeId);
+      const emp = filteredEmployees.find(e => e.id === p.employeeId);
       return emp?.type === 'fulltime';
     });
 
@@ -337,9 +602,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const contractStats = calculateContractStats();
   const permanentStats = calculatePermanentStats();
 
-  const filteredEmployees = activeTab === 'contract'
-    ? employees.filter(e => e.type === 'contract')
-    : employees.filter(e => e.type === 'fulltime');
+  const displayEmployees = activeTab === 'contract'
+    ? filteredEmployees.filter(e => e.type === 'contract')
+    : filteredEmployees.filter(e => e.type === 'fulltime');
 
   // Check permissions for payout
   const canAddPayout = () => {
@@ -411,17 +676,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           {/* Action Buttons and Date Filter */}
           <div className="p-6 border-b border-gray-200 space-y-4">
             <div className="flex gap-4 flex-wrap">
-              {/* Only show Add Employee button for contract tab or "My Payouts" doesn't have employees */}
-              {activeTab !== 'permanent' && (
-                <button
-                  onClick={() => setShowAddEmployee(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Employee
-                </button>
-              )}
-              
               {/* Add Payout button - shown based on permissions */}
               {canAddPayout() && (
                 <button
@@ -454,6 +708,16 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                     Current Month
                   </button>
                   <button
+                    onClick={() => setViewMode('last')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      viewMode === 'last'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-purple-50'
+                    }`}
+                  >
+                    Last Month
+                  </button>
+                  <button
                     onClick={() => setViewMode('custom')}
                     className={`px-4 py-2 rounded-lg transition-colors ${
                       viewMode === 'custom'
@@ -469,26 +733,22 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg">
                     <span className="text-gray-900 font-medium">{currentMonth.monthName}</span>
                   </div>
+                ) : viewMode === 'last' ? (
+                  <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg">
+                    <span className="text-gray-900 font-medium">{lastMonth.monthName}</span>
+                  </div>
                 ) : (
                   <div className="flex gap-2 items-center flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <label className="text-gray-700 text-sm font-medium">From:</label>
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={(e) => setCustomStartDate(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-gray-700 text-sm font-medium">To:</label>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={(e) => setCustomEndDate(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      />
-                    </div>
+                    <DatePicker
+                      label="From:"
+                      value={customStartDate}
+                      onChange={setCustomStartDate}
+                    />
+                    <DatePicker
+                      label="To:"
+                      value={customEndDate}
+                      onChange={setCustomEndDate}
+                    />
                   </div>
                 )}
               </div>
@@ -529,7 +789,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                     <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
                       <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
                       <p>No contract employees yet</p>
-                      <p className="text-sm mt-2">Click "Add Employee" to get started</p>
+                      <p className="text-sm mt-2">Contact your cluster head to add employees</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -710,6 +970,53 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
           {/* My Payouts Tab - For managers to view their own payroll */}
           {activeTab === 'my-payouts' && userEmployeeId && (() => {
+            // Get ALL payouts for this employee (not filtered by date range)
+            const allMyPayouts = payouts.filter(p => p.employeeId === userEmployeeId);
+            
+            // Get employee type
+            const currentEmployee = employees.find(e => e.employeeId === userEmployeeId);
+            const employeeType = currentEmployee?.type || 'fulltime';
+            
+            // Group payouts by month (last 12 months from current date)
+            const now = new Date();
+            const currentDay = now.getDate();
+            const monthlyPayslips: Array<{
+              month: string;
+              year: string;
+              payouts: Payout[];
+              total: number;
+              isAvailable: boolean;
+            }> = [];
+            
+            for (let i = 0; i < 12; i++) {
+              const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+              const monthName = date.toLocaleDateString('en-US', { month: 'long' });
+              const year = date.getFullYear().toString();
+              const monthNumber = date.getMonth() + 1;
+              
+              // Check if payslip is available (after 4th of next month)
+              const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 5);
+              const isAvailable = now >= nextMonth;
+              
+              // Get payouts for this month
+              const monthPayouts = allMyPayouts.filter(p => {
+                const payoutDate = new Date(p.date);
+                return payoutDate.getMonth() + 1 === monthNumber && 
+                       payoutDate.getFullYear() === date.getFullYear();
+              });
+              
+              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0);
+              
+              monthlyPayslips.push({
+                month: monthName,
+                year,
+                payouts: monthPayouts,
+                total,
+                isAvailable
+              });
+            }
+
+            // Filtered payouts for the summary card (respects date filter)
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
             const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
 
@@ -718,7 +1025,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div className="mb-6">
                   <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
                   <p className="text-sm text-gray-600">
-                    View your salary and compensation records
+                    View your salary records and download monthly payslips
                   </p>
                 </div>
 
@@ -730,6 +1037,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                       <p className="text-sm text-gray-500">
                         {viewMode === 'current' 
                           ? `for ${currentMonth.monthName}`
+                          : viewMode === 'last'
+                          ? `for ${lastMonth.monthName}`
                           : `from ${customStartDate} to ${customEndDate}`
                         }
                       </p>
@@ -741,7 +1050,70 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   </div>
                 </div>
 
+                {/* Monthly Payslips Section */}
+                <div className="mb-8">
+                  <div className="flex items-center gap-2 mb-4">
+                    <FileText className="w-5 h-5 text-purple-600" />
+                    <h3 className="text-lg text-gray-900">Monthly Payslips</h3>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Payslips are available for download after the 4th of each month
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {monthlyPayslips.map((slip, index) => (
+                      <div 
+                        key={index}
+                        className={`border-2 rounded-xl p-4 transition-all ${
+                          slip.isAvailable && slip.payouts.length > 0
+                            ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-pink-50 hover:shadow-lg'
+                            : 'border-gray-200 bg-gray-50 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <h4 className="text-gray-900 font-semibold">{slip.month} {slip.year}</h4>
+                            <p className="text-sm text-gray-600 mt-1">
+                              {slip.payouts.length} payment{slip.payouts.length !== 1 ? 's' : ''}
+                            </p>
+                          </div>
+                          {slip.isAvailable && slip.payouts.length > 0 ? (
+                            <button
+                              onClick={() => generatePayslip(
+                                userName || 'Employee',
+                                userEmployeeId,
+                                slip.month,
+                                slip.year,
+                                slip.payouts,
+                                employeeType
+                              )}
+                              className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                              title="Download Payslip"
+                            >
+                              <Download className="w-4 h-4" />
+                              Download
+                            </button>
+                          ) : (
+                            <div className="px-3 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed">
+                              {slip.payouts.length === 0 ? 'No Data' : 'Not Available'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="pt-3 border-t border-gray-300">
+                          <p className="text-sm text-gray-600 mb-1">Total Amount</p>
+                          <p className="text-xl text-gray-900 font-semibold">
+                            ₹{slip.total.toLocaleString('en-IN')}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Payouts Table */}
+                <div className="mb-4">
+                  <h3 className="text-lg text-gray-900 mb-3">Payment Details</h3>
+                </div>
                 {myPayouts.length === 0 ? (
                   <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
                     <DollarSign className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -816,7 +1188,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                     <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
                       <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
                       <p>No permanent employees yet</p>
-                      <p className="text-sm mt-2">Click "Add Employee" to get started</p>
+                      <p className="text-sm mt-2">Contact your cluster head to add employees</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto bg-white border border-gray-200 rounded-lg">
@@ -828,7 +1200,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             <th className="text-left py-3 px-4 text-sm text-gray-600">Role</th>
                             <th className="text-left py-3 px-4 text-sm text-gray-600">Phone</th>
                             <th className="text-left py-3 px-4 text-sm text-gray-600">Last Payout</th>
-                            <th className="text-right py-3 px-4 text-sm text-gray-600">Total Paid ({viewMode === 'current' ? 'This Month' : 'Period'})</th>
+                            <th className="text-right py-3 px-4 text-sm text-gray-600">
+                              Total Paid ({viewMode === 'current' ? 'This Month' : viewMode === 'last' ? 'Last Month' : 'Period'})
+                            </th>
                             {userRole === 'cluster_head' && (
                               <th className="text-right py-3 px-4 text-sm text-gray-600">Actions</th>
                             )}
@@ -921,7 +1295,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   <div className="flex justify-between items-center mb-6">
                     <div>
                       <h2 className="text-xl text-gray-900 mb-1">Payout History</h2>
-                      <p className="text-sm text-gray-600">Salary payments for {viewMode === 'current' ? currentMonth.monthName : 'selected period'}</p>
+                      <p className="text-sm text-gray-600">
+                        Salary payments for {viewMode === 'current' ? currentMonth.monthName : viewMode === 'last' ? lastMonth.monthName : 'selected period'}
+                      </p>
                     </div>
                     <div className="text-right">
                       <div className="text-sm text-gray-600 mb-1">Total Payout</div>
@@ -1024,98 +1400,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         </div>
       </div>
 
-      {/* Add Employee Modal */}
-      {showAddEmployee && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl text-gray-900">Add New Employee</h2>
-              <button
-                onClick={() => setShowAddEmployee(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Employee Type</label>
-                <select
-                  value={newEmployee.type}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, type: e.target.value as 'contract' | 'fulltime' })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  disabled={userRole === 'manager'}
-                >
-                  <option value="contract">Contract (Daily Rate)</option>
-                  {userRole === 'cluster_head' && (
-                    <option value="fulltime">Permanent (Full-time)</option>
-                  )}
-                </select>
-                {userRole === 'manager' && (
-                  <p className="text-xs text-gray-500 mt-1">Managers can only add contract employees</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Name *</label>
-                <input
-                  type="text"
-                  value={newEmployee.name}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="Enter employee name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Phone *</label>
-                <input
-                  type="tel"
-                  value={newEmployee.phone}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, phone: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="Enter phone number"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Role (Optional)</label>
-                <input
-                  type="text"
-                  value={newEmployee.role}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g., Chef, Delivery Boy"
-                />
-              </div>
-              {newEmployee.type === 'contract' && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Daily Rate (Optional)</label>
-                  <input
-                    type="number"
-                    value={newEmployee.dailyRate}
-                    onChange={(e) => setNewEmployee({ ...newEmployee, dailyRate: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                    placeholder="Enter daily rate"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="p-6 border-t border-gray-200 flex gap-3">
-              <button
-                onClick={() => setShowAddEmployee(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddEmployee}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Add Employee
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Edit Employee Modal */}
       {showEditEmployee && editingEmployee && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1213,7 +1497,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Select Employees *</label>
                 <div className="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
-                  {filteredEmployees.map(emp => (
+                  {displayEmployees.map(emp => (
                     <label key={emp.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded">
                       <input
                         type="checkbox"
@@ -1244,15 +1528,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   placeholder="Enter amount"
                 />
               </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Date *</label>
-                <input
-                  type="date"
-                  value={payoutData.date}
-                  onChange={(e) => setPayoutData({ ...payoutData, date: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
+              <DatePicker
+                label="Date *"
+                value={payoutData.date}
+                onChange={(date) => setPayoutData({ ...payoutData, date })}
+                className="w-full"
+              />
             </div>
             <div className="p-6 border-t border-gray-200 flex gap-3">
               <button
@@ -1306,15 +1587,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                 />
               </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Date *</label>
-                <input
-                  type="date"
-                  value={editingPayout.date}
-                  onChange={(e) => setEditingPayout({ ...editingPayout, date: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
+              <DatePicker
+                label="Date *"
+                value={editingPayout.date}
+                onChange={(date) => setEditingPayout({ ...editingPayout, date })}
+                className="w-full"
+              />
             </div>
             <div className="p-6 border-t border-gray-200 flex gap-3">
               <button

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Users, CheckCircle, AlertCircle, Save } from 'lucide-react';
+import { Users, CheckCircle, AlertCircle, Save, ArrowUpCircle, Edit, X } from 'lucide-react';
 import * as api from '../utils/api';
+import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 
 interface Employee {
   employeeId: string;
@@ -9,6 +10,9 @@ interface Employee {
   role: string;
   managerId?: string;
   clusterHeadId?: string;
+  designation?: string;
+  department?: string;
+  inchargeId?: string;
 }
 
 interface Manager {
@@ -24,9 +28,12 @@ interface AssignManagersProps {
 export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
+  const [clusterHeads, setClusterHeads] = useState<Manager[]>([]); // Add cluster heads
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [editingRole, setEditingRole] = useState<string | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
     loadData();
@@ -39,15 +46,31 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
       // Fetch all employees
       const allEmployees = await api.getAllEmployees();
       
-      // Filter employees (only those who are actual employees, not managers or cluster heads)
-      const employeesList = allEmployees.filter((emp: Employee) => emp.role === 'employee');
+      console.log('All employees loaded:', allEmployees);
+      console.log('Current cluster head ID:', clusterHeadId);
+      
+      // Filter employees AND managers (both can be assigned to managers for multi-level hierarchy)
+      const employeesList = allEmployees.filter((emp: Employee) => 
+        (emp.role === 'employee' || emp.role === 'manager') && emp.role !== 'cluster_head'
+      );
       setEmployees(employeesList);
       
-      // Filter managers under this cluster head
+      console.log('Filtered employees and managers:', employeesList);
+      
+      // Get all managers under this cluster head (they can be assigned to other employees/managers)
       const managersList = allEmployees.filter(
         (emp: Employee) => emp.role === 'manager' && emp.clusterHeadId === clusterHeadId
       );
       setManagers(managersList);
+      
+      // Get cluster heads (for manager assignment)
+      const clusterHeadsList = allEmployees.filter(
+        (emp: Employee) => emp.role === 'cluster_head'
+      );
+      setClusterHeads(clusterHeadsList);
+      
+      console.log('Available managers (role=manager, clusterHeadId=' + clusterHeadId + '):', managersList);
+      console.log('Available cluster heads:', clusterHeadsList);
       
       // Initialize assignments with current manager IDs
       const currentAssignments: Record<string, string> = {};
@@ -59,6 +82,11 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
       setAssignments(currentAssignments);
       
     } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error && 
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
       console.error('Error loading data:', error);
       alert('Failed to load data');
     } finally {
@@ -97,13 +125,82 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
     }
   };
 
+  const handlePromoteToManager = async (employeeId: string, employeeName: string) => {
+    if (!confirm(`Are you sure you want to promote ${employeeName} to Manager? This will:\n\n1. Change their role from Employee to Manager\n2. Set their cluster head to ${clusterHeadId}\n3. Allow them to manage other employees\n\nContinue?`)) {
+      return;
+    }
+
+    try {
+      setEditingRole(employeeId);
+      
+      // Update the employee to be a manager
+      await api.updateUnifiedEmployee(employeeId, {
+        role: 'manager',
+        clusterHeadId: clusterHeadId
+      });
+      
+      alert(`${employeeName} has been promoted to Manager!`);
+      
+      // Reload data to reflect changes
+      await loadData();
+      
+    } catch (error) {
+      console.error('Error promoting to manager:', error);
+      alert('Failed to promote employee to manager');
+    } finally {
+      setEditingRole(null);
+    }
+  };
+
   const unassignedEmployees = employees.filter(emp => !emp.managerId);
   const assignedEmployees = employees.filter(emp => emp.managerId);
 
   const getManagerName = (managerId?: string) => {
     if (!managerId) return 'Unassigned';
+    // Check if it's a manager first
     const manager = managers.find(m => m.employeeId === managerId);
-    return manager ? manager.name : 'Unknown Manager';
+    if (manager) return manager.name;
+    // Check if it's a cluster head
+    const clusterHead = clusterHeads.find(ch => ch.employeeId === managerId);
+    if (clusterHead) return `${clusterHead.name} (Cluster Head)`;
+    return 'Unknown Manager';
+  };
+
+  // Get available supervisors for a given employee (managers can be assigned to cluster heads or other managers)
+  const getAvailableSupervisors = (employee: Employee) => {
+    const supervisors: Manager[] = [];
+    
+    if (employee.role === 'manager') {
+      // Managers can be assigned to cluster heads OR other managers (Operations Head)
+      // Add cluster heads
+      supervisors.push(...clusterHeads);
+      // Add other managers (for multi-level like Store Incharge under Operations Head)
+      supervisors.push(...managers.filter(m => m.employeeId !== employee.employeeId));
+    } else {
+      // Regular employees can only be assigned to managers
+      supervisors.push(...managers.filter(m => m.employeeId !== employee.employeeId));
+    }
+    
+    return supervisors;
+  };
+
+  // Format designation for display
+  const formatDesignation = (designation?: string) => {
+    if (!designation) return <span className="text-gray-400 italic">No designation</span>;
+    
+    const designationMap: Record<string, string> = {
+      'operations_incharge': 'Operations Incharge',
+      'store_incharge': 'Store Incharge',
+      'production_incharge': 'Production Incharge',
+      'store_ops': 'Store Operations',
+      'production_ops': 'Production Operations',
+    };
+    
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+        {designationMap[designation] || designation}
+      </span>
+    );
   };
 
   if (loading) {
@@ -197,6 +294,9 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                         Employee ID
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Designation
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Assign Manager
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -214,9 +314,24 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                            {employee.employeeId}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {employee.employeeId}
+                            </span>
+                            {employee.role === 'employee' && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                Employee
+                              </span>
+                            )}
+                            {employee.role === 'manager' && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                Manager
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {formatDesignation(employee.designation)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <select
@@ -225,7 +340,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                             className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
                           >
                             <option value="">Select a manager...</option>
-                            {managers.map((manager) => (
+                            {getAvailableSupervisors(employee).map((manager) => (
                               <option key={manager.employeeId} value={manager.employeeId}>
                                 {manager.name} ({manager.employeeId})
                               </option>
@@ -233,14 +348,33 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <button
-                            onClick={() => handleSave(employee.employeeId)}
-                            disabled={!assignments[employee.employeeId] || saving === employee.employeeId}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                          >
-                            <Save className="w-4 h-4" />
-                            {saving === employee.employeeId ? 'Saving...' : 'Assign'}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleSave(employee.employeeId)}
+                              disabled={!assignments[employee.employeeId] || saving === employee.employeeId}
+                              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                            >
+                              <Save className="w-4 h-4" />
+                              {saving === employee.employeeId ? 'Saving...' : 'Assign'}
+                            </button>
+                            {employee.role === 'employee' && (
+                              <button
+                                onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
+                                disabled={editingRole === employee.employeeId}
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                              >
+                                <ArrowUpCircle className="w-4 h-4" />
+                                {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setSelectedEmployee(employee)}
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                            >
+                              <Edit className="w-4 h-4" />
+                              Edit
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -273,6 +407,9 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                         Employee ID
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Designation
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Current Manager
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -293,9 +430,24 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                            {employee.employeeId}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {employee.employeeId}
+                            </span>
+                            {employee.role === 'employee' && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                Employee
+                              </span>
+                            )}
+                            {employee.role === 'manager' && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                Manager
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {formatDesignation(employee.designation)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-900">{getManagerName(employee.managerId)}</div>
@@ -310,7 +462,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                             className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
                           >
                             <option value="">Select a manager...</option>
-                            {managers.map((manager) => (
+                            {getAvailableSupervisors(employee).map((manager) => (
                               <option key={manager.employeeId} value={manager.employeeId}>
                                 {manager.name} ({manager.employeeId})
                               </option>
@@ -318,18 +470,37 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <button
-                            onClick={() => handleSave(employee.employeeId)}
-                            disabled={
-                              !assignments[employee.employeeId] || 
-                              assignments[employee.employeeId] === employee.managerId ||
-                              saving === employee.employeeId
-                            }
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                          >
-                            <Save className="w-4 h-4" />
-                            {saving === employee.employeeId ? 'Saving...' : 'Update'}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleSave(employee.employeeId)}
+                              disabled={
+                                !assignments[employee.employeeId] || 
+                                assignments[employee.employeeId] === employee.managerId ||
+                                saving === employee.employeeId
+                              }
+                              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                            >
+                              <Save className="w-4 h-4" />
+                              {saving === employee.employeeId ? 'Saving...' : 'Update'}
+                            </button>
+                            {employee.role === 'employee' && (
+                              <button
+                                onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
+                                disabled={editingRole === employee.employeeId}
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                              >
+                                <ArrowUpCircle className="w-4 h-4" />
+                                {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setSelectedEmployee(employee)}
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                            >
+                              <Edit className="w-4 h-4" />
+                              Edit
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -349,6 +520,16 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
             </div>
           )}
         </>
+      )}
+      
+      {/* Employee Details Modal */}
+      {selectedEmployee && (
+        <EmployeeDetailsModal
+          employee={selectedEmployee}
+          onClose={() => setSelectedEmployee(null)}
+          onSave={loadData}
+          clusterHeadId={clusterHeadId}
+        />
       )}
     </div>
   );

@@ -16,9 +16,12 @@ interface AttendancePortalProps {
     role: string;
     joiningDate?: string;
   };
+  selectedStoreId?: string | null;
+  isIncharge?: boolean;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
 }
 
-export function AttendancePortal({ user }: AttendancePortalProps) {
+export function AttendancePortal({ user, selectedStoreId, isIncharge = false, inchargeDesignation = null }: AttendancePortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => {
     // Set default tab based on role
     if (user.role === 'employee') return 'timesheet';
@@ -107,7 +110,7 @@ export function AttendancePortal({ user }: AttendancePortalProps) {
                   }`}
                 >
                   <Network className="w-4 h-4" />
-                  My Manager
+                  Hierarchy
                 </button>
               </>
             )}
@@ -249,12 +252,12 @@ export function AttendancePortal({ user }: AttendancePortalProps) {
           />
         )}
 
-        {activeTab === 'approve-timesheet' && (isManager || isClusterHead) && (
-          <ApproveTimesheets managerId={user.employeeId || ''} role={user.role} />
+        {activeTab === 'approve-timesheet' && (isManager || isClusterHead || isIncharge) && (
+          <ApproveTimesheets managerId={user.employeeId || ''} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} />
         )}
 
-        {activeTab === 'approve-leave' && (isManager || isClusterHead) && (
-          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} role={user.role} />
+        {activeTab === 'approve-leave' && (isManager || isClusterHead || isIncharge) && (
+          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} />
         )}
 
         {activeTab === 'team' && isManager && (

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
+import { InventoryView } from './components/InventoryView';
 import { ClusterDashboard } from './components/ClusterDashboard';
 import { SalesManagement } from './components/SalesManagement';
 import { PayrollManagement } from './components/PayrollManagement';
@@ -15,29 +16,55 @@ import { ApproveLeaves } from './components/ApproveLeaves';
 import { EmployeeHierarchy } from './components/EmployeeHierarchy';
 import { AttendancePortal } from './components/AttendancePortal';
 import { EmployeeManagement } from './components/EmployeeManagement';
+import { Notifications } from './components/Notifications';
+import { EmployeePayroll } from './components/EmployeePayroll';
+import { StoreManagement } from './components/StoreManagement';
+import { StoreSelector } from './components/StoreSelector';
 import { SetupClusterHead } from './components/SetupClusterHead';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare } from 'lucide-react';
+import { ProductionManagement } from './components/ProductionManagement';
+import { ProductionHouseManagement } from './components/ProductionHouseManagement';
+import { AssetsManagement } from './components/AssetsManagement';
+import { StockRequestManagement } from './components/StockRequestManagement';
+import { AdvancedInventoryManagement } from './components/AdvancedInventoryManagement';
+import { DebugPanel } from './components/DebugPanel';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
+import * as pushNotifications from './utils/pushNotifications';
 
 export type InventoryItem = {
   id: string;
   date: string;
-  category: 'vegetables_herbs' | 'grocery_spices' | 'dairy' | 'meat' | 'packaging' | 'gas_utilities' | 'production' | 'staff_misc';
+  category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'gas_utilities' | 'production' | 'staff_essentials';
   itemName: string;
   quantity: number;
   unit: string;
   costPerUnit: number;
   totalCost: number;
+  storeId?: string; // Optional storeId for multi-store filtering
+  createdBy?: string; // User ID who created this entry
+  createdByName?: string; // User name who created this entry
+  createdByEmail?: string; // User email who created this entry
 };
 
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'miscellaneous';
   description: string;
   amount: number;
+  storeId?: string; // Optional storeId for multi-store filtering
+};
+
+export type FixedCostItem = {
+  id: string;
+  category: 'electricity' | 'rent';
+  amount: number;
+  description: string;
+  date: string;
+  userId: string;
+  storeId?: string;
 };
 
 export type SalesData = {
@@ -48,44 +75,164 @@ export type SalesData = {
   cashAmount: number;
   onlineSales: number;
   employeeSalary: number;
-  previousCashInHand: number;
-  usedOnlineMoney: number;
+  storeId?: string; // Optional storeId for multi-store filtering
+  createdBy: string;
+  createdByName?: string; // User name who created this entry
+  createdByEmail?: string; // User email who created this entry
+  approvalStatus: 'pending' | 'approved';
   actualCashInHand: number;
   cashOffset: number;
   approvalRequired: boolean;
   approvedBy: string | null;
   approvedAt: string | null;
+  approvalRequested: boolean;
+  approvalRequestedAt: string | null;
+  requestedCashInHand: number | null;
+  requestedOffset: number | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  previousCashInHand?: number;
+  usedOnlineMoney?: number;
+};
+
+export type ProductionData = {
+  id: string;
+  date: string;
+  productionHouseId?: string; // Production House where production happened
+  storeId?: string; // Backwards compatibility - old records might still use this
+  createdBy: string;
+  approvalStatus: 'pending' | 'approved';
+  approvedBy: string | null;
+  approvedAt: string | null;
+  
+  // Regular Momos (Dough + Stuffing based)
+  chickenMomos: {
+    dough: number;
+    stuffing: number;
+    final: number;
+  };
+  chickenCheeseMomos: {
+    dough: number;
+    stuffing: number;
+    final: number;
+  };
+  vegMomos: {
+    dough: number;
+    stuffing: number;
+    final: number;
+  };
+  cheeseCornMomos: {
+    dough: number;
+    stuffing: number;
+    final: number;
+  };
+  paneerMomos: {
+    dough: number;
+    stuffing: number;
+    final: number;
+  };
+  
+  // Kurkure Momos (Batter + Coating based)
+  vegKurkureMomos: {
+    batter: number;
+    coating: number;
+    final: number;
+  };
+  chickenKurkureMomos: {
+    batter: number;
+    coating: number;
+    final: number;
+  };
+  
+  // Wastage
+  wastage: {
+    dough: number;
+    stuffing: number;
+    batter: number;
+    coating: number;
+  };
+  
+  // Sauces and Chutneys
+  sauces: {
+    panfriedSauce: number;
+    chilliChickenSauce: number;
+    spicyKoreanSauce: number;
+    hotGarlicSauce: number;
+    tandooriSauce: number;
+    soupPremix: number;
+    greenMayoChutney: number;
+    spicyRedChutney: number;
+  };
 };
 
 export type InventoryContextType = {
   inventory: InventoryItem[];
   overheads: OverheadItem[];
+  fixedCosts: FixedCostItem[];
   salesData: SalesData[];
+  categorySalesData: api.SalesDataRecord[]; // NEW: Detailed momo sales by type
+  productionData: ProductionData[];
+  productionHouses: api.ProductionHouse[];
+  stockRequests: api.StockRequest[];
+  productionRequests: api.ProductionRequest[];
+  stores: api.Store[];
+  managedStoreIds?: string[];
+  managedProductionHouseIds?: string[];
   addInventoryItem: (item: Omit<InventoryItem, 'id'>) => Promise<void>;
   addOverheadItem: (item: Omit<OverheadItem, 'id'>) => Promise<void>;
+  addFixedCostItem: (item: Omit<FixedCostItem, 'id'>) => Promise<void>;
   updateInventoryItem: (id: string, item: Omit<InventoryItem, 'id'>) => Promise<void>;
   updateOverheadItem: (id: string, item: Omit<OverheadItem, 'id'>) => Promise<void>;
+  updateFixedCostItem: (id: string, item: Omit<FixedCostItem, 'id'>) => Promise<void>;
   deleteInventoryItem: (id: string) => Promise<void>;
   deleteOverheadItem: (id: string) => Promise<void>;
+  deleteFixedCostItem: (id: string) => Promise<void>;
   addSalesData: (item: Omit<SalesData, 'id'>) => Promise<void>;
   updateSalesData: (id: string, item: Omit<SalesData, 'id'>) => Promise<void>;
   approveSalesData: (id: string) => Promise<void>;
+  requestSalesApproval: (id: string, requestedCashInHand: number, requestedOffset: number) => Promise<void>;
+  approveDiscrepancy: (id: string) => Promise<void>;
+  rejectDiscrepancy: (id: string, reason: string) => Promise<void>;
+  addProductionData: (item: Omit<ProductionData, 'id'>) => Promise<void>;
+  updateProductionData: (id: string, item: Omit<ProductionData, 'id'>) => Promise<void>;
+  approveProductionData: (id: string) => Promise<void>;
+  addProductionHouse: (house: Omit<api.ProductionHouse, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  updateProductionHouse: (id: string, updates: Partial<Omit<api.ProductionHouse, 'id' | 'createdAt'>>) => Promise<void>;
+  updateProductionHouseInventory: (id: string, inventory: api.ProductionHouse['inventory']) => Promise<void>;
+  deleteProductionHouse: (id: string) => Promise<void>;
+  setProductionHouses: (houses: api.ProductionHouse[]) => void;
+  createStockRequest: (request: Omit<api.StockRequest, 'id' | 'fulfilledQuantities' | 'status' | 'fulfilledBy' | 'fulfilledByName' | 'fulfillmentDate' | 'notes'>) => Promise<void>;
+  fulfillStockRequest: (id: string, fulfilledQuantities: api.StockRequest['fulfilledQuantities'], fulfilledBy: string, fulfilledByName: string, notes?: string) => Promise<void>;
+  cancelStockRequest: (id: string) => Promise<void>;
   isManager: boolean;
-  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string } | null;
+  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null;
 };
 
 export default function App() {
   // All useState hooks must be at the top, before any conditional returns
-  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees'>('analytics');
-  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string } | null>(null);
+  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory'>('analytics');
+  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [highlightRequestId, setHighlightRequestId] = useState<string | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [overheads, setOverheads] = useState<OverheadItem[]>([]);
+  const [fixedCosts, setFixedCosts] = useState<FixedCostItem[]>([]);
   const [salesData, setSalesData] = useState<SalesData[]>([]);
+  const [categorySalesData, setCategorySalesData] = useState<api.SalesDataRecord[]>([]); // NEW: Detailed momo sales
+  const [productionData, setProductionData] = useState<ProductionData[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [stores, setStores] = useState<api.Store[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
+  const [stockRequests, setStockRequests] = useState<api.StockRequest[]>([]);
+  const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
+  const [employees, setEmployees] = useState<api.Employee[]>([]);
+  const [managedStoreIds, setManagedStoreIds] = useState<string[]>([]);
+  const [managedProductionHouseIds, setManagedProductionHouseIds] = useState<string[]>([]);
 
   // Get singleton Supabase client
   const supabaseClient = getSupabaseClient();
@@ -94,20 +241,157 @@ export default function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const isSetupMode = urlParams.get('setup') === 'cluster-head';
 
+  // Load stores for cluster heads
+  const loadStores = async () => {
+    try {
+      const storesData = await api.getStores();
+      setStores(storesData);
+    } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error && 
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
+      console.error('Error loading stores:', error);
+    }
+  };
+
+  // Load employees for cluster heads
+  const loadEmployees = async () => {
+    try {
+      const employeesData = await api.getAllEmployees();
+      setEmployees(employeesData);
+    } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error && 
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
+      console.error('Error loading employees:', error);
+    }
+  };
+
+  // Load cluster data for cluster heads
+  const loadClusterData = async (accessToken: string) => {
+    try {
+      const clusterInfo = await api.getClusterInfo(accessToken);
+      if (clusterInfo) {
+        setManagedStoreIds(clusterInfo.managedStoreIds || []);
+        setManagedProductionHouseIds(clusterInfo.managedProductionHouseIds || []);
+        console.log('🌐 Cluster assignments loaded:', {
+          stores: clusterInfo.managedStoreIds?.length || 0,
+          productionHouses: clusterInfo.managedProductionHouseIds?.length || 0
+        });
+      }
+    } catch (error) {
+      // Silently handle - cluster head might not have assignments yet
+      console.log('No cluster assignments found (this is okay for new cluster heads)');
+    }
+  };
+
   // Load inventory and overhead data
   const loadData = async (accessToken: string) => {
     setIsLoadingData(true);
     setDataError(null);
     try {
-      const [inventoryData, overheadsData, salesData] = await Promise.all([
+      const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
-        api.fetchSalesData(accessToken)
+        api.fetchFixedCosts(accessToken),
+        api.fetchSalesData(accessToken),
+        api.getSalesData(accessToken), // NEW: Detailed category sales data
+        api.fetchProductionData(),
+        api.getProductionHouses(accessToken),
+        api.getStockRequests(accessToken),
+        api.fetchProductionRequests(accessToken)
       ]);
-      setInventory(inventoryData);
-      setOverheads(overheadsData);
-      setSalesData(salesData);
+      
+      // Debug logging to check for duplicates
+      console.log('📦 Loaded Inventory Items:', inventoryData.length);
+      console.log('🔧 Loaded Overhead Items:', overheadsData.length);
+      console.log('🔧 Loaded Fixed Cost Items:', fixedCostsData.length);
+      
+      // Deduplicate by ID using Map (keeps the first occurrence of each ID)
+      const uniqueInventory = Array.from(
+        new Map(inventoryData.map(item => [item.id, item])).values()
+      );
+      
+      const uniqueOverheads = Array.from(
+        new Map(overheadsData.map(item => [item.id, item])).values()
+      );
+      
+      const uniqueFixedCosts = Array.from(
+        new Map(fixedCostsData.map(item => [item.id, item])).values()
+      );
+      
+      const uniqueSalesData = Array.from(
+        new Map(salesData.map(item => [item.id, item])).values()
+      );
+      
+      const uniqueProductionData = Array.from(
+        new Map(productionData.map(item => [item.id, item])).values()
+      );
+      
+      const inventoryDupes = inventoryData.length - uniqueInventory.length;
+      const overheadDupes = overheadsData.length - uniqueOverheads.length;
+      const fixedCostDupes = fixedCostsData.length - uniqueFixedCosts.length;
+      const salesDupes = salesData.length - uniqueSalesData.length;
+      const productionDupes = productionData.length - uniqueProductionData.length;
+      const totalDupes = inventoryDupes + overheadDupes + fixedCostDupes + salesDupes + productionDupes;
+      
+      console.log('✅ After deduplication:');
+      console.log('Inventory: Before:', inventoryData.length, '→ After:', uniqueInventory.length);
+      console.log('Overheads: Before:', overheadsData.length, '→ After:', uniqueOverheads.length);
+      console.log('Fixed Costs: Before:', fixedCostsData.length, '→ After:', uniqueFixedCosts.length);
+      console.log('Sales: Before:', salesData.length, '→ After:', uniqueSalesData.length);
+      
+      // Silently auto-clean duplicates for cluster heads in background
+      if (totalDupes > 0) {
+        // Don't log warning to console - just clean silently
+        // Check if we already cleaned in this session to prevent refresh loop
+        const hasCleanedThisSession = sessionStorage.getItem('db_cleaned');
+        
+        if (!hasCleanedThisSession) {
+          setTimeout(async () => {
+            try {
+              const userData = await supabaseClient.auth.getUser(accessToken);
+              const userRole = userData.data?.user?.user_metadata?.role;
+              
+              // Only proceed if user is authenticated and is a cluster head
+              if (userData.data?.user && userRole === 'cluster_head') {
+                console.log('🧹 Silently cleaning duplicates in background...');
+                sessionStorage.setItem('db_cleaned', 'true'); // Mark as cleaned
+                const result = await api.cleanupDuplicates(accessToken);
+                console.log(`✅ Cleaned ${result.removed} duplicates successfully`);
+                // Silently refresh without alert
+                setTimeout(() => {
+                  window.location.reload();
+                }, 500);
+              }
+            } catch (error) {
+              // Silently fail if not authenticated or other errors
+              console.log('Auto-cleanup skipped:', error instanceof Error ? error.message : 'Unknown error');
+              sessionStorage.removeItem('db_cleaned'); // Remove flag if cleanup failed
+            }
+          }, 1500); // Small delay to ensure UI is loaded
+        }
+      }
+      
+      setInventory(uniqueInventory);
+      setOverheads(uniqueOverheads);
+      setFixedCosts(uniqueFixedCosts);
+      setSalesData(uniqueSalesData);
+      setCategorySalesData(categorySalesResponse.data || []); // NEW: Set category sales data
+      setProductionData(uniqueProductionData);
+      setProductionHouses(productionHousesData);
+      setStockRequests(stockRequestsData);
+      setProductionRequests(productionRequestsData);
     } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error && 
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
       console.error('Error loading data:', error);
       setDataError('Failed to load inventory data. Please refresh the page.');
     } finally {
@@ -119,29 +403,45 @@ export default function App() {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        // Delete all existing cluster head accounts with email subham.tewari@bunnymomos.com
-        try {
-          console.log('Attempting to delete old cluster head accounts...');
-          await api.deleteClusterHeadByEmail('subham.tewari@bunnymomos.com');
-          console.log('Successfully deleted old cluster head account');
-        } catch (error) {
-          // Ignore error if account doesn't exist
-          console.log('No old cluster head account to delete or deletion error:', error);
-        }
-
         const { data: { session } } = await supabaseClient.auth.getSession();
         if (session?.user) {
+          let storeId = null;
+          let designation = session.user.user_metadata?.designation || null;
+          
+          // For employees, fetch full employee record to get storeId
+          if (session.user.user_metadata?.employeeId) {
+            try {
+              const employees = await api.getEmployees();
+              const employeeRecord = employees.find(emp => emp.employeeId === session.user.user_metadata?.employeeId);
+              if (employeeRecord) {
+                storeId = employeeRecord.storeId || null;
+                designation = employeeRecord.designation || designation;
+              }
+            } catch (error) {
+              console.error('Error fetching employee storeId on session check:', error);
+            }
+          }
+          
           const userData = {
             email: session.user.email || '',
             name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
             role: session.user.user_metadata?.role || 'manager',
             employeeId: session.user.user_metadata?.employeeId || null,
-            accessToken: session.access_token
+            accessToken: session.access_token,
+            storeId,
+            designation
           };
           setUser(userData);
           
           // Load data for the user
           await loadData(session.access_token);
+          
+          // Load stores and employees for cluster heads
+          if (userData.role === 'cluster_head') {
+            await loadStores();
+            await loadEmployees();
+            await loadClusterData(session.access_token);
+          }
         }
       } catch (error) {
         console.log('Session check error:', error);
@@ -151,6 +451,66 @@ export default function App() {
     };
     checkSession();
   }, []); // Empty dependency array - only run once on mount
+
+  // Initialize push notifications when user logs in
+  useEffect(() => {
+    if (user) {
+      const setupPushNotifications = async () => {
+        try {
+          // Check if push notifications are supported
+          if (!pushNotifications.isPushNotificationSupported()) {
+            console.log('Push notifications not supported on this device');
+            return;
+          }
+          
+          // Get VAPID public key from server
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/vapid-public-key`,
+            {
+              headers: {
+                'Authorization': `Bearer ${publicAnonKey}`
+              }
+            }
+          );
+          
+          if (!response.ok) {
+            console.log('Could not fetch VAPID key - push notifications disabled');
+            return;
+          }
+          
+          const data = await response.json();
+          
+          if (!data.configured || !data.publicKey) {
+            console.log('📱 Push notifications not configured. To enable, set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables.');
+            return;
+          }
+          
+          // Initialize push notifications with user ID
+          const userId = user.employeeId || user.email;
+          const success = await pushNotifications.initializePushNotifications(userId, data.publicKey);
+          
+          if (success) {
+            console.log('🔔 Push notifications enabled successfully for user:', userId);
+          } else {
+            // Check if we're in a restricted environment (like Figma preview)
+            const isPreview = window.location.hostname.includes('figma.site') || 
+                            window.location.hostname.includes('figmaiframe') ||
+                            window !== window.top; // Check if in iframe
+            
+            if (isPreview) {
+              console.log('ℹ️ Push notifications unavailable in preview environment. Will work when deployed to production (Vercel, Netlify, etc.)');
+            } else {
+              console.log('⚠️ Push notifications not enabled (permission denied or browser restrictions)');
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ Push notifications initialization error:', error instanceof Error ? error.message : 'Unknown error');
+        }
+      };
+      
+      setupPushNotifications();
+    }
+  }, [user]); // Run when user changes
 
   const handleLogin = async (email: string, password: string) => {
     setAuthError(null);
@@ -166,17 +526,42 @@ export default function App() {
       }
 
       if (data.user && data.session) {
+        let storeId = null;
+        let designation = data.user.user_metadata?.designation || null;
+        
+        // For employees, fetch full employee record to get storeId
+        if (data.user.user_metadata?.employeeId) {
+          try {
+            const employees = await api.getEmployees();
+            const employeeRecord = employees.find(emp => emp.employeeId === data.user.user_metadata?.employeeId);
+            if (employeeRecord) {
+              storeId = employeeRecord.storeId || null;
+              designation = employeeRecord.designation || designation;
+            }
+          } catch (error) {
+            console.error('Error fetching employee storeId:', error);
+          }
+        }
+        
         const userData = {
           email: data.user.email || '',
           name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
           role: data.user.user_metadata?.role || 'manager',
           employeeId: data.user.user_metadata?.employeeId || null,
-          accessToken: data.session.access_token
+          accessToken: data.session.access_token,
+          storeId,
+          designation
         };
         setUser(userData);
         
         // Load data for the user
         await loadData(data.session.access_token);
+        
+        // Load stores and employees for cluster heads
+        if (userData.role === 'cluster_head') {
+          await loadStores();
+          await loadEmployees();
+        }
       }
     } catch (error) {
       console.log('Login error:', error);
@@ -187,6 +572,7 @@ export default function App() {
   const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee') => {
     setAuthError(null);
     try {
+      // Use server-side signup which auto-confirms email
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/auth/signup`,
         {
@@ -195,7 +581,13 @@ export default function App() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${publicAnonKey}`
           },
-          body: JSON.stringify({ email, password, name, role })
+          body: JSON.stringify({
+            email,
+            password,
+            name,
+            role,
+            employeeId: role === 'cluster_head' ? 'BM001' : null
+          })
         }
       );
 
@@ -204,6 +596,41 @@ export default function App() {
       if (!response.ok) {
         setAuthError(data.error || 'Failed to create account');
         return;
+      }
+
+      if (!data.user) {
+        setAuthError('Failed to create account');
+        return;
+      }
+
+      // Create unified employee record for cluster head
+      if (role === 'cluster_head') {
+        try {
+          const employeeId = 'BM001';
+          await fetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/unified-employees`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${publicAnonKey}`
+              },
+              body: JSON.stringify({
+                employeeId: employeeId,
+                name: name,
+                email: email,
+                role: 'cluster_head',
+                employmentType: 'fulltime',
+                joiningDate: new Date().toISOString().split('T')[0],
+                createdBy: 'system',
+                status: 'active',
+                authUserId: data.user.id
+              })
+            }
+          );
+        } catch (err) {
+          console.log('Error creating unified employee record:', err);
+        }
       }
 
       // After successful signup, sign in the user
@@ -219,6 +646,7 @@ export default function App() {
     setUser(null);
     setInventory([]);
     setOverheads([]);
+    setFixedCosts([]);
     setSalesData([]);
     setActiveView('sales');
   };
@@ -226,7 +654,12 @@ export default function App() {
   const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
     if (!user) return;
     try {
-      const newItem = await api.addInventory(user.accessToken, item);
+      // Auto-add storeId if user has one
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const newItem = await api.addInventory(user.accessToken, itemWithStore);
       setInventory([...inventory, newItem]);
     } catch (error) {
       console.error('Error adding inventory item:', error);
@@ -237,10 +670,79 @@ export default function App() {
   const addOverheadItem = async (item: Omit<OverheadItem, 'id'>) => {
     if (!user) return;
     try {
-      const newItem = await api.addOverhead(user.accessToken, item);
+      // Auto-add storeId if user has one
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const newItem = await api.addOverhead(user.accessToken, itemWithStore);
       setOverheads([...overheads, newItem]);
     } catch (error) {
       console.error('Error adding overhead item:', error);
+      throw error;
+    }
+  };
+
+  const addFixedCostItem = async (item: Omit<FixedCostItem, 'id'>) => {
+    if (!user) return;
+    try {
+      // Auto-add storeId if user has one
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const newItem = await api.addFixedCost(user.accessToken, itemWithStore);
+      setFixedCosts([...fixedCosts, newItem]);
+    } catch (error) {
+      console.error('Error adding fixed cost item:', error);
+      throw error;
+    }
+  };
+
+  const updateInventoryItem = async (id: string, item: Omit<InventoryItem, 'id'>) => {
+    if (!user) return;
+    try {
+      // Auto-add storeId if user has one (for consistency)
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const updatedItem = await api.updateInventory(user.accessToken, id, itemWithStore);
+      setInventory(inventory.map(inv => inv.id === id ? updatedItem : inv));
+    } catch (error) {
+      console.error('Error updating inventory item:', error);
+      throw error;
+    }
+  };
+
+  const updateOverheadItem = async (id: string, item: Omit<OverheadItem, 'id'>) => {
+    if (!user) return;
+    try {
+      // Auto-add storeId if user has one (for consistency)
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const updatedItem = await api.updateOverhead(user.accessToken, id, itemWithStore);
+      setOverheads(overheads.map(ovh => ovh.id === id ? updatedItem : ovh));
+    } catch (error) {
+      console.error('Error updating overhead item:', error);
+      throw error;
+    }
+  };
+
+  const updateFixedCostItem = async (id: string, item: Omit<FixedCostItem, 'id'>) => {
+    if (!user) return;
+    try {
+      // Auto-add storeId if user has one (for consistency)
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const updatedItem = await api.updateFixedCost(user.accessToken, id, itemWithStore);
+      setFixedCosts(fixedCosts.map(fc => fc.id === id ? updatedItem : fc));
+    } catch (error) {
+      console.error('Error updating fixed cost item:', error);
       throw error;
     }
   };
@@ -267,24 +769,13 @@ export default function App() {
     }
   };
 
-  const updateInventoryItem = async (id: string, item: Omit<InventoryItem, 'id'>) => {
+  const deleteFixedCostItem = async (id: string) => {
     if (!user) return;
     try {
-      const updatedItem = await api.updateInventory(user.accessToken, id, item);
-      setInventory(inventory.map(inv => inv.id === id ? updatedItem : inv));
+      await api.deleteFixedCost(user.accessToken, id);
+      setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
     } catch (error) {
-      console.error('Error updating inventory item:', error);
-      throw error;
-    }
-  };
-
-  const updateOverheadItem = async (id: string, item: Omit<OverheadItem, 'id'>) => {
-    if (!user) return;
-    try {
-      const updatedItem = await api.updateOverhead(user.accessToken, id, item);
-      setOverheads(overheads.map(ovh => ovh.id === id ? updatedItem : ovh));
-    } catch (error) {
-      console.error('Error updating overhead item:', error);
+      console.error('Error deleting fixed cost item:', error);
       throw error;
     }
   };
@@ -295,7 +786,12 @@ export default function App() {
       console.log('Frontend - Current user:', user);
       console.log('Frontend - User role:', user.role);
       console.log('Frontend - Access token (first 50 chars):', user.accessToken.substring(0, 50));
-      const newItem = await api.addSalesData(user.accessToken, item);
+      // Auto-add storeId if user has one
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const newItem = await api.addSalesData(user.accessToken, itemWithStore);
       setSalesData([...salesData, newItem]);
     } catch (error) {
       console.error('Error adding sales data:', error);
@@ -306,7 +802,12 @@ export default function App() {
   const updateSalesData = async (id: string, item: Omit<SalesData, 'id'>) => {
     if (!user) return;
     try {
-      const updatedItem = await api.updateSalesData(user.accessToken, id, item);
+      // Auto-add storeId if user has one (for consistency)
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const updatedItem = await api.updateSalesData(user.accessToken, id, itemWithStore);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
     } catch (error) {
       console.error('Error updating sales data:', error);
@@ -325,15 +826,90 @@ export default function App() {
     }
   };
 
+  const requestSalesApproval = async (id: string, requestedCashInHand: number, requestedOffset: number) => {
+    if (!user) return;
+    try {
+      const updatedItem = await api.requestSalesApproval(user.accessToken, id, requestedCashInHand, requestedOffset);
+      setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+    } catch (error) {
+      console.error('Error requesting sales approval:', error);
+      throw error;
+    }
+  };
+
+  const approveDiscrepancy = async (id: string) => {
+    if (!user) return;
+    try {
+      const updatedItem = await api.approveDiscrepancy(user.accessToken, id);
+      setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+    } catch (error) {
+      console.error('Error approving discrepancy:', error);
+      throw error;
+    }
+  };
+
+  const rejectDiscrepancy = async (id: string, reason: string) => {
+    if (!user) return;
+    try {
+      const updatedItem = await api.rejectDiscrepancy(user.accessToken, id, reason);
+      setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+    } catch (error) {
+      console.error('Error rejecting discrepancy:', error);
+      throw error;
+    }
+  };
+
+  const addProductionData = async (item: Omit<ProductionData, 'id'>) => {
+    if (!user) return;
+    try {
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const newItem = await api.addProductionData(itemWithStore);
+      setProductionData([...productionData, newItem]);
+    } catch (error) {
+      console.error('Error adding production data:', error);
+      throw error;
+    }
+  };
+
+  const updateProductionData = async (id: string, item: Omit<ProductionData, 'id'>) => {
+    if (!user) return;
+    try {
+      const itemWithStore = {
+        ...item,
+        storeId: user.storeId || item.storeId
+      };
+      const updatedItem = await api.updateProductionData(id, itemWithStore);
+      setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+    } catch (error) {
+      console.error('Error updating production data:', error);
+      throw error;
+    }
+  };
+
+  const approveProductionData = async (id: string) => {
+    if (!user) return;
+    try {
+      const updatedItem = await api.approveProductionData(id);
+      setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+    } catch (error) {
+      console.error('Error approving production data:', error);
+      throw error;
+    }
+  };
+
   const clearAllData = async () => {
     if (!user) return;
     if (!confirm('⚠️ WARNING: This will delete ALL inventory, overhead, and sales data. This action cannot be undone. Are you sure?')) {
       return;
     }
     try {
-      await api.clearAllData(user.accessToken);
+      await api.clearAllData();
       setInventory([]);
       setOverheads([]);
+      setFixedCosts([]);
       setSalesData([]);
       alert('All data has been cleared successfully.');
     } catch (error) {
@@ -342,19 +918,127 @@ export default function App() {
     }
   };
 
+  // Production House functions
+  const addProductionHouse = async (house: Omit<api.ProductionHouse, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!user) return;
+    try {
+      const newHouse = await api.createProductionHouse(user.accessToken, house);
+      setProductionHouses([...productionHouses, newHouse]);
+    } catch (error) {
+      console.error('Error creating production house:', error);
+      throw error;
+    }
+  };
+
+  const updateProductionHouse = async (id: string, updates: Partial<Omit<api.ProductionHouse, 'id' | 'createdAt'>>) => {
+    if (!user) return;
+    try {
+      const updated = await api.updateProductionHouse(user.accessToken, id, updates);
+      setProductionHouses(productionHouses.map(h => h.id === id ? updated : h));
+    } catch (error) {
+      console.error('Error updating production house:', error);
+      throw error;
+    }
+  };
+
+  const updateProductionHouseInventory = async (id: string, inventory: api.ProductionHouse['inventory']) => {
+    if (!user) return;
+    try {
+      const updated = await api.updateProductionHouseInventory(user.accessToken, id, inventory);
+      setProductionHouses(productionHouses.map(h => h.id === id ? updated : h));
+    } catch (error) {
+      console.error('Error updating production house inventory:', error);
+      throw error;
+    }
+  };
+
+  const deleteProductionHouse = async (id: string) => {
+    if (!user) return;
+    try {
+      await api.deleteProductionHouse(user.accessToken, id);
+      setProductionHouses(productionHouses.filter(h => h.id !== id));
+    } catch (error) {
+      console.error('Error deleting production house:', error);
+      throw error;
+    }
+  };
+
+  // Stock Request functions
+  const createStockRequest = async (request: Omit<api.StockRequest, 'id' | 'fulfilledQuantities' | 'status' | 'fulfilledBy' | 'fulfilledByName' | 'fulfillmentDate' | 'notes'>) => {
+    if (!user) return;
+    try {
+      const newRequest = await api.createStockRequest(user.accessToken, request);
+      setStockRequests([...stockRequests, newRequest]);
+    } catch (error) {
+      console.error('Error creating stock request:', error);
+      throw error;
+    }
+  };
+
+  const fulfillStockRequest = async (id: string, fulfilledQuantities: api.StockRequest['fulfilledQuantities'], fulfilledBy: string, fulfilledByName: string, notes?: string) => {
+    if (!user) return;
+    try {
+      const updated = await api.fulfillStockRequest(user.accessToken, id, fulfilledQuantities, fulfilledBy, fulfilledByName, notes);
+      setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
+      // Reload production houses to get updated inventory
+      const houses = await api.getProductionHouses(user.accessToken);
+      setProductionHouses(houses);
+    } catch (error) {
+      console.error('Error fulfilling stock request:', error);
+      throw error;
+    }
+  };
+
+  const cancelStockRequest = async (id: string) => {
+    if (!user) return;
+    try {
+      const updated = await api.cancelStockRequest(user.accessToken, id);
+      setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
+    } catch (error) {
+      console.error('Error cancelling stock request:', error);
+      throw error;
+    }
+  };
+
   const contextValue: InventoryContextType = {
     inventory,
     overheads,
+    fixedCosts,
     salesData,
+    categorySalesData, // NEW: Detailed category sales data
+    productionData,
+    productionHouses,
+    stockRequests,
+    productionRequests,
+    stores,
+    managedStoreIds,
+    managedProductionHouseIds,
     addInventoryItem,
     addOverheadItem,
+    addFixedCostItem,
     updateInventoryItem,
     updateOverheadItem,
+    updateFixedCostItem,
     deleteInventoryItem,
     deleteOverheadItem,
+    deleteFixedCostItem,
     addSalesData,
     updateSalesData,
     approveSalesData,
+    requestSalesApproval,
+    approveDiscrepancy,
+    rejectDiscrepancy,
+    addProductionData,
+    updateProductionData,
+    approveProductionData,
+    addProductionHouse,
+    updateProductionHouse,
+    updateProductionHouseInventory,
+    deleteProductionHouse,
+    setProductionHouses,
+    createStockRequest,
+    fulfillStockRequest,
+    cancelStockRequest,
     isManager: user?.role === 'manager',
     user
   };
@@ -390,26 +1074,50 @@ export default function App() {
   // Cluster heads should only see the dashboard
   const isClusterHead = user.role === 'cluster_head';
   const isEmployee = user.role === 'employee';
+  const isStoreIncharge = user.role === 'employee' && user.designation === 'store_incharge';
+  // Production incharge can be either employee OR manager with production_incharge designation
+  const isProductionIncharge = user.designation === 'production_incharge';
+  const isProductionHead = isProductionIncharge; // Alias for clarity
+  const isAnyIncharge = isStoreIncharge || isProductionIncharge;
+  const isOperationsManager = user.role === 'manager' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
+  const isManager = user.role === 'manager';
+  const canViewProduction = isProductionIncharge || isOperationsManager || isClusterHead;
+
+  // Debug: Log user permissions
+  console.log('👤 User Permissions:', {
+    role: user.role,
+    designation: user.designation,
+    isClusterHead,
+    isEmployee,
+    isManager,
+    isStoreIncharge,
+    isProductionIncharge,
+    isOperationsManager,
+    isAnyIncharge,
+    canViewProduction
+  });
 
   // If employee, show only employee dashboard
   if (isEmployee) {
     return (
       <div className="min-h-screen bg-gray-50">
         {/* Employee Navigation */}
-        <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
-              <div>
-                <h1 className="text-lg sm:text-xl text-gray-900">Employee Portal</h1>
-                <p className="text-xs sm:text-sm text-gray-500">
-                  {user.name}
-                </p>
+            <div className="flex justify-between items-center py-3">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/30">
+                  <h1 className="text-xl sm:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
+                  <p className="text-xs text-white/90">
+                    {user.name} • {isStoreIncharge ? 'Store Incharge' : isProductionIncharge ? 'Production Head' : 'Employee'}
+                  </p>
+                </div>
               </div>
               
               {/* Mobile Menu Button */}
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="lg:hidden flex items-center gap-2 px-3 py-2 bg-white/20 backdrop-blur-sm text-white rounded-lg hover:bg-white/30 transition-all border border-white/30"
               >
                 {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
@@ -418,40 +1126,148 @@ export default function App() {
               <div className="hidden lg:flex gap-2">
                 <button
                   onClick={() => setActiveView('analytics')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'analytics'
-                      ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
                   <TrendingUp className="w-4 h-4" />
                   <span>Analytics</span>
                 </button>
+                {isAnyIncharge && (
+                  <>
+                    <button
+                      onClick={() => setActiveView('inventory')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                        activeView === 'inventory'
+                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                      }`}
+                    >
+                      <Package className="w-4 h-4" />
+                      <span>Inventory</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveView('sales')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                        activeView === 'sales'
+                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                      }`}
+                    >
+                      <DollarSign className="w-4 h-4" />
+                      <span>Sales</span>
+                    </button>
+                  </>
+                )}
+                {canViewProduction && (
+                  <button
+                    onClick={() => setActiveView('production')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                      activeView === 'production'
+                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                    }`}
+                  >
+                    <Factory className="w-4 h-4" />
+                    <span>Production</span>
+                  </button>
+                )}
+                {isAnyIncharge && (
+                  <button
+                    onClick={() => setActiveView('stock-requests')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                      activeView === 'stock-requests'
+                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                    }`}
+                  >
+                    <Package className="w-4 h-4" />
+                    <span>Stock Requests</span>
+                  </button>
+                )}
+                {isManager && (
+                  <button
+                    onClick={() => setActiveView('advanced-inventory')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                      activeView === 'advanced-inventory'
+                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                    }`}
+                  >
+                    <Activity className="w-4 h-4" />
+                    <span>Inventory Analytics</span>
+                  </button>
+                )}
+
+                {/* Payroll and Attendance for non-manager/cluster-head users */}
                 <button
                   onClick={() => setActiveView('payroll')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'payroll'
-                      ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
+                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
                   <Users className="w-4 h-4" />
-                  <span>My Payouts</span>
+                  <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
                 </button>
                 <button
                   onClick={() => setActiveView('attendance')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'attendance'
-                      ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
+                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
                   <Clock className="w-4 h-4" />
                   <span>Attendance</span>
                 </button>
+
+                {isAnyIncharge && (
+                  <button
+                    onClick={() => setActiveView('export')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                      activeView === 'export'
+                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Export</span>
+                  </button>
+                )}
+                {/* Notification Button for Store Incharge and Production Head */}
+                {isAnyIncharge && (
+                  <Notifications onNavigate={(path, date, requestId) => {
+                    if (path === 'sales') {
+                      setActiveView('sales');
+                      setHighlightRequestId(null);
+                    }
+                    if (path === 'production') {
+                      setActiveView('production');
+                      setHighlightRequestId(null);
+                    }
+                    if (path === 'attendance') {
+                      setActiveView('employees');
+                      setHighlightRequestId(null);
+                    }
+                    if (path === 'production-requests') {
+                      console.log('🔔 Production request notification clicked, requestId:', requestId);
+                      // Clear first to ensure the effect triggers even if it's the same ID
+                      setHighlightRequestId(null);
+                      // Use setTimeout to ensure the clear happens first
+                      setTimeout(() => {
+                        setHighlightRequestId(requestId || null);
+                        setActiveView('analytics');
+                      }, 0);
+                    }
+                  }} />
+                )}
                 <button
                   onClick={handleLogout}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white rounded-xl hover:bg-red-600 transition-all backdrop-blur-sm border-2 border-white/30"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>Logout</span>
@@ -461,52 +1277,151 @@ export default function App() {
             
             {/* Mobile Menu */}
             {isMobileMenuOpen && (
-              <div className="lg:hidden border-t border-gray-200 py-4 space-y-2">
+              <div className="lg:hidden border-t border-white/20 py-4 space-y-2">
                 <button
                   onClick={() => {
                     setActiveView('analytics');
                     setIsMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'analytics'
-                      ? 'bg-[#D4A5FF] text-gray-800'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                      ? 'bg-white text-purple-600'
+                      : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
                   <TrendingUp className="w-5 h-5" />
                   <span>Analytics</span>
                 </button>
+                {isAnyIncharge && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveView('inventory');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        activeView === 'inventory'
+                          ? 'bg-white text-purple-600'
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    >
+                      <Package className="w-5 h-5" />
+                      <span>Inventory</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveView('sales');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        activeView === 'sales'
+                          ? 'bg-white text-purple-600'
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    >
+                      <DollarSign className="w-5 h-5" />
+                      <span>Sales</span>
+                    </button>
+                  </>
+                )}
+                {canViewProduction && (
+                  <button
+                    onClick={() => {
+                      setActiveView('production');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                      activeView === 'production'
+                        ? 'bg-white text-purple-600'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Factory className="w-5 h-5" />
+                    <span>Production</span>
+                  </button>
+                )}
+                {isAnyIncharge && (
+                  <button
+                    onClick={() => {
+                      setActiveView('stock-requests');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                      activeView === 'stock-requests'
+                        ? 'bg-white text-purple-600'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Package className="w-5 h-5" />
+                    <span>Stock Requests</span>
+                  </button>
+                )}
+                {isManager && (
+                  <button
+                    onClick={() => {
+                      setActiveView('advanced-inventory');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                      activeView === 'advanced-inventory'
+                        ? 'bg-white text-purple-600'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Activity className="w-5 h-5" />
+                    <span>Inventory Analytics</span>
+                  </button>
+                )}
+
+                {/* Payroll and Attendance for non-manager/cluster-head users */}
                 <button
                   onClick={() => {
                     setActiveView('payroll');
                     setIsMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'payroll'
-                      ? 'bg-[#B0E0E6] text-gray-800'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                      ? 'bg-white text-purple-600'
+                      : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
                   <Users className="w-5 h-5" />
-                  <span>My Payouts</span>
+                  <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
                 </button>
                 <button
                   onClick={() => {
                     setActiveView('attendance');
                     setIsMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'attendance'
-                      ? 'bg-[#FFDAB9] text-gray-800'
-                      : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
+                      ? 'bg-white text-purple-600'
+                      : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
                   <Clock className="w-5 h-5" />
                   <span>Attendance</span>
                 </button>
+
+                {isAnyIncharge && (
+                  <button
+                    onClick={() => {
+                      setActiveView('export');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                      activeView === 'export'
+                        ? 'bg-white text-purple-600'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    <Download className="w-5 h-5" />
+                    <span>Export</span>
+                  </button>
+                )}
                 <button
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                  className="w-full flex items-center gap-3 px-4 py-3 bg-red-500/90 text-white rounded-lg hover:bg-red-600 transition-all"
                 >
                   <LogOut className="w-5 h-5" />
                   <span>Logout</span>
@@ -519,16 +1434,48 @@ export default function App() {
         {/* Employee Main Content */}
         <main className="pb-6">
           {activeView === 'analytics' ? (
-            <Analytics context={contextValue} />
+            <Analytics context={contextValue} highlightRequestId={highlightRequestId} />
+          ) : activeView === 'inventory' && isAnyIncharge ? (
+            <InventoryView context={contextValue} />
+          ) : activeView === 'sales' && isAnyIncharge ? (
+            <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
+          ) : activeView === 'production' && canViewProduction ? (
+            <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} />
           ) : activeView === 'payroll' ? (
-            <EmployeeDashboard employeeId={user.employeeId || ''} />
+            isAnyIncharge ? (
+              <PayrollManagement 
+                userRole={'manager' as 'manager' | 'cluster_head'} 
+                selectedDate={new Date().toISOString().split('T')[0]}
+                userEmployeeId={user.employeeId}
+                userName={user.name}
+                selectedStoreId={user.storeId}
+                isIncharge={true}
+                inchargeDesignation={user.designation}
+              />
+            ) : (
+              <EmployeeDashboard employeeId={user.employeeId || ''} />
+            )
           ) : activeView === 'attendance' ? (
-            <AttendancePortal user={{
-              employeeId: user.employeeId,
-              name: user.name,
-              email: user.email,
-              role: user.role
-            }} />
+            <AttendancePortal 
+              user={{
+                employeeId: user.employeeId,
+                name: user.name,
+                email: user.email,
+                role: user.role
+              }}
+              isIncharge={isAnyIncharge}
+              inchargeDesignation={user.designation}
+            />
+          ) : activeView === 'export' && isAnyIncharge ? (
+            <ExportData 
+              userRole={'manager' as 'manager' | 'cluster_head'} 
+              selectedStoreId={user.storeId || null}
+              currentUserId={user.email}
+            />
+          ) : activeView === 'stock-requests' && isAnyIncharge ? (
+            <StockRequestManagement context={contextValue} stores={stores} />
+          ) : activeView === 'advanced-inventory' && isManager ? (
+            <AdvancedInventoryManagement context={contextValue} stores={stores} />
           ) : (
             <EmployeeDashboard employeeId={user.employeeId || ''} />
           )}
@@ -540,23 +1487,58 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div>
-              <h1 className="text-lg sm:text-xl text-gray-900">Bhandar-IMS</h1>
-              <p className="text-xs sm:text-sm text-gray-500">
-                {user.name} ({user.role === 'manager' ? 'Manager' : 'Cluster Head'})
-              </p>
+          <div className="flex justify-between items-center py-3">
+            <div className="flex items-center gap-4">
+              <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/30">
+                <h1 className="text-xl sm:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
+                <p className="text-xs text-white/90">
+                  {user.name} • {user.designation === 'store_incharge' ? 'Store Incharge' : user.designation === 'production_incharge' ? 'Production Incharge' : (user.role === 'manager' ? 'Operations Manager' : 'Cluster Head')}
+                </p>
+              </div>
             </div>
             
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+            {/* Notifications Bell & Mobile Menu Button */}
+            <div className="flex items-center gap-3">
+              {/* Notifications - Always visible */}
+              <Notifications onNavigate={(path, date, requestId) => {
+                if (path === 'sales') {
+                  setActiveView('sales');
+                  setHighlightRequestId(null);
+                }
+                else if (path === 'attendance') {
+                  setActiveView('employees');
+                  setHighlightRequestId(null);
+                }
+                else if (path === 'leave') {
+                  setActiveView('employees');
+                  setHighlightRequestId(null);
+                }
+                else if (path === 'production') {
+                  setActiveView('production');
+                  setHighlightRequestId(null);
+                }
+                else if (path === 'production-requests') {
+                  console.log('🔔 Production request notification clicked (mobile), requestId:', requestId);
+                  // Clear first to ensure the effect triggers even if it's the same ID
+                  setHighlightRequestId(null);
+                  // Use setTimeout to ensure the clear happens first
+                  setTimeout(() => {
+                    setHighlightRequestId(requestId || null);
+                    setActiveView('analytics');
+                  }, 0);
+                }
+              }} />
+              
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="lg:hidden flex items-center gap-2 px-4 py-2 bg-white/20 backdrop-blur-sm text-white rounded-xl hover:bg-white/30 transition-all border border-white/30"
+              >
+                {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            </div>
             
             {/* Desktop Menu */}
             <div className="hidden lg:flex gap-2 flex-wrap">
@@ -564,79 +1546,92 @@ export default function App() {
                 <>
                   <button
                     onClick={() => setActiveView('analytics')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'analytics'
-                        ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                        ? 'bg-white text-purple-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <TrendingUp className="w-4 h-4" />
                     <span className="hidden xl:inline">Analytics</span>
                   </button>
                   <button
+                    onClick={() => setActiveView('inventory')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'inventory'
+                        ? 'bg-white text-green-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                    }`}
+                  >
+                    <Package className="w-4 h-4" />
+                    <span className="hidden xl:inline">Inventory</span>
+                  </button>
+                  <button
                     onClick={() => setActiveView('sales')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'sales'
-                        ? 'bg-[#FFD4E5] text-gray-800 border-2 border-[#FFC0D9]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8] border-2 border-transparent'
+                        ? 'bg-white text-pink-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <DollarSign className="w-4 h-4" />
                     <span className="hidden xl:inline">Sales</span>
                   </button>
-                  <button
-                    onClick={() => setActiveView('payroll')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      activeView === 'payroll'
-                        ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
-                    }`}
-                  >
-                    <Users className="w-4 h-4" />
-                    <span className="hidden xl:inline">Payroll</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveView('export')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      activeView === 'export'
-                        ? 'bg-[#FFE5B4] text-gray-800 border-2 border-[#FFD700]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC] border-2 border-transparent'
-                    }`}
-                  >
-                    <Download className="w-4 h-4" />
-                    <span className="hidden xl:inline">Export</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveView('attendance')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      activeView === 'attendance'
-                        ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span className="hidden xl:inline">Attendance</span>
-                  </button>
+                  {canViewProduction && (
+                    <button
+                      onClick={() => setActiveView('production')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                        activeView === 'production'
+                          ? 'bg-white text-amber-600 shadow-lg font-semibold'
+                          : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                      }`}
+                    >
+                      <Factory className="w-4 h-4" />
+                      <span className="hidden xl:inline">Production</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setActiveView('employees')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'employees'
-                        ? 'bg-[#E6E6FA] text-gray-800 border-2 border-[#D8BFD8]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF] border-2 border-transparent'
+                        ? 'bg-white text-indigo-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <UserPlus className="w-4 h-4" />
                     <span className="hidden xl:inline">Employees</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('assets')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'assets'
+                        ? 'bg-white text-rose-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                    }`}
+                  >
+                    <Package className="w-4 h-4" />
+                    <span className="hidden xl:inline">Assets</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('export')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'export'
+                        ? 'bg-white text-yellow-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden xl:inline">Export</span>
                   </button>
                 </>
               ) : (
                 <>
                   <button
                     onClick={() => setActiveView('analytics')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'analytics'
-                        ? 'bg-[#D4A5FF] text-gray-800 border-2 border-[#C7A7FF]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF] border-2 border-transparent'
+                        ? 'bg-white text-purple-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <TrendingUp className="w-4 h-4" />
@@ -644,10 +1639,10 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setActiveView('sales')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'sales'
-                        ? 'bg-[#FFD4E5] text-gray-800 border-2 border-[#FFC0D9]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8] border-2 border-transparent'
+                        ? 'bg-white text-pink-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <DollarSign className="w-4 h-4" />
@@ -655,61 +1650,55 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setActiveView('inventory')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'inventory'
-                        ? 'bg-[#C1E1C1] text-gray-800 border-2 border-[#B4E7CE]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0] border-2 border-transparent'
+                        ? 'bg-white text-green-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <Package className="w-4 h-4" />
                     <span className="hidden xl:inline">Inventory</span>
                   </button>
+                  {canViewProduction && (
+                    <button
+                      onClick={() => setActiveView('production')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                        activeView === 'production'
+                          ? 'bg-white text-amber-600 shadow-lg font-semibold'
+                          : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                      }`}
+                    >
+                      <Factory className="w-4 h-4" />
+                      <span className="hidden xl:inline">Production</span>
+                    </button>
+                  )}
                   <button
-                    onClick={() => setActiveView('payroll')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      activeView === 'payroll'
-                        ? 'bg-[#B0E0E6] text-gray-800 border-2 border-[#AEC6CF]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF] border-2 border-transparent'
+                    onClick={() => setActiveView('employees')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'employees'
+                        ? 'bg-white text-indigo-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
-                    <Users className="w-4 h-4" />
-                    <span className="hidden xl:inline">Payroll</span>
+                    <UserPlus className="w-4 h-4" />
+                    <span className="hidden xl:inline">Employees</span>
                   </button>
                   <button
                     onClick={() => setActiveView('export')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'export'
-                        ? 'bg-[#FFE5B4] text-gray-800 border-2 border-[#FFD700]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC] border-2 border-transparent'
+                        ? 'bg-white text-yellow-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
                     <Download className="w-4 h-4" />
                     <span className="hidden xl:inline">Export</span>
                   </button>
-                  <button
-                    onClick={() => setActiveView('attendance')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      activeView === 'attendance'
-                        ? 'bg-[#FFDAB9] text-gray-800 border-2 border-[#FFB347]'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE] border-2 border-transparent'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span className="hidden xl:inline">Attendance</span>
-                  </button>
                 </>
               )}
               <button
-                onClick={clearAllData}
-                className="flex items-center gap-2 px-3 py-2 bg-[#FFD4D4] text-gray-700 rounded-lg hover:bg-[#FFC0CB] transition-colors border-2 border-[#FFB6C1]"
-                title="Clear all data for testing"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span className="hidden xl:inline">Clear</span>
-              </button>
-              <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-red-500 transition-all duration-300 transform hover:scale-105 border border-white/20"
               >
                 <LogOut className="w-4 h-4" />
                 <span className="hidden xl:inline">Logout</span>
@@ -738,6 +1727,20 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
+                      setActiveView('inventory');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'inventory'
+                        ? 'bg-[#C1E1C1] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0]'
+                    }`}
+                  >
+                    <Package className="w-5 h-5" />
+                    <span>Inventory</span>
+                  </button>
+                  <button
+                    onClick={() => {
                       setActiveView('sales');
                       setIsMobileMenuOpen(false);
                     }}
@@ -750,19 +1753,49 @@ export default function App() {
                     <DollarSign className="w-5 h-5" />
                     <span>Sales</span>
                   </button>
+                  {canViewProduction && (
+                    <button
+                      onClick={() => {
+                        setActiveView('production');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                        activeView === 'production'
+                          ? 'bg-[#FFE4B5] text-gray-800'
+                          : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
+                      }`}
+                    >
+                      <Factory className="w-5 h-5" />
+                      <span>Production</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      setActiveView('payroll');
+                      setActiveView('employees');
                       setIsMobileMenuOpen(false);
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'payroll'
-                        ? 'bg-[#B0E0E6] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                      activeView === 'employees'
+                        ? 'bg-[#E6E6FA] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
                     }`}
                   >
-                    <Users className="w-5 h-5" />
-                    <span>Payroll</span>
+                    <UserPlus className="w-5 h-5" />
+                    <span>Employees</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('assets');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'assets'
+                        ? 'bg-[#FFE4CC] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
+                    }`}
+                  >
+                    <Package className="w-5 h-5" />
+                    <span>Assets</span>
                   </button>
                   <button
                     onClick={() => {
@@ -777,34 +1810,6 @@ export default function App() {
                   >
                     <Download className="w-5 h-5" />
                     <span>Export</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('attendance');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'attendance'
-                        ? 'bg-[#FFDAB9] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
-                    }`}
-                  >
-                    <Clock className="w-5 h-5" />
-                    <span>Attendance</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('employees');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'employees'
-                        ? 'bg-[#E6E6FA] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
-                    }`}
-                  >
-                    <UserPlus className="w-5 h-5" />
-                    <span>Employees</span>
                   </button>
                 </>
               ) : (
@@ -851,19 +1856,35 @@ export default function App() {
                     <Package className="w-5 h-5" />
                     <span>Inventory</span>
                   </button>
+                  {canViewProduction && (
+                    <button
+                      onClick={() => {
+                        setActiveView('production');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                        activeView === 'production'
+                          ? 'bg-[#FFE4B5] text-gray-800'
+                          : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
+                      }`}
+                    >
+                      <Factory className="w-5 h-5" />
+                      <span>Production</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      setActiveView('payroll');
+                      setActiveView('employees');
                       setIsMobileMenuOpen(false);
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'payroll'
-                        ? 'bg-[#B0E0E6] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0F8FF]'
+                      activeView === 'employees'
+                        ? 'bg-[#E6E6FA] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
                     }`}
                   >
-                    <Users className="w-5 h-5" />
-                    <span>Payroll</span>
+                    <UserPlus className="w-5 h-5" />
+                    <span>Employees</span>
                   </button>
                   <button
                     onClick={() => {
@@ -879,29 +1900,8 @@ export default function App() {
                     <Download className="w-5 h-5" />
                     <span>Export</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('attendance');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'attendance'
-                        ? 'bg-[#FFDAB9] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
-                    }`}
-                  >
-                    <Clock className="w-5 h-5" />
-                    <span>Attendance</span>
-                  </button>
                 </>
               )}
-              <button
-                onClick={clearAllData}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-[#FFD4D4] text-gray-700 rounded-lg hover:bg-[#FFC0CB] transition-colors"
-              >
-                <Trash2 className="w-5 h-5" />
-                <span>Clear All Data</span>
-              </button>
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
@@ -913,6 +1913,20 @@ export default function App() {
           )}
         </div>
       </nav>
+
+      {/* Store Selector for Cluster Heads - Hidden on Analytics tab */}
+      {isClusterHead && stores.length > 0 && activeView !== 'analytics' && (
+        <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 border-b border-purple-100 px-4 py-6">
+          <div className="max-w-7xl mx-auto">
+            <StoreSelector
+              stores={stores}
+              selectedStoreId={selectedStoreId}
+              onStoreChange={setSelectedStoreId}
+              showAllStores={true}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Data Error Banner */}
       {dataError && (
@@ -943,38 +1957,50 @@ export default function App() {
       {/* Main Content */}
       <main className="pb-6">
         {activeView === 'sales' ? (
-          <SalesManagement context={contextValue} />
+          <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
         ) : activeView === 'inventory' ? (
-          <InventoryManagement context={contextValue} />
-        ) : activeView === 'payroll' ? (
-          <PayrollManagement 
-            userRole={user.role as 'manager' | 'cluster_head'} 
-            selectedDate={new Date().toISOString().split('T')[0]}
-            userEmployeeId={user.employeeId}
-            userName={user.name}
-          />
+          // Only Operations Manager can edit, others get read-only view
+          user.role === 'manager' ? (
+            <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} />
+          ) : (
+            <InventoryView context={contextValue} selectedStoreId={selectedStoreId} />
+          )
         ) : activeView === 'analytics' ? (
-          <Analytics context={contextValue} />
+          <Analytics context={contextValue} selectedStoreId={selectedStoreId} highlightRequestId={highlightRequestId} />
         ) : activeView === 'export' ? (
-          <ExportData userRole={user.role as 'manager' | 'cluster_head'} />
-        ) : activeView === 'attendance' ? (
-          <AttendancePortal user={{
-            employeeId: user.employeeId,
-            name: user.name,
-            email: user.email,
-            role: user.role
-          }} />
+          <ExportData 
+            userRole={user.role as 'manager' | 'cluster_head'} 
+            selectedStoreId={selectedStoreId}
+            currentUserId={user.email}
+          />
         ) : activeView === 'employees' ? (
-          <EmployeeManagement user={{
-            role: user.role,
-            email: user.email,
-            employeeId: user.employeeId,
-            name: user.name
-          }} />
+          <EmployeeManagement 
+            user={{
+              role: user.role,
+              email: user.email,
+              employeeId: user.employeeId,
+              name: user.name,
+              storeId: user.storeId,
+              accessToken: user.accessToken
+            }}
+            selectedStoreId={selectedStoreId}
+          />
+        ) : activeView === 'assets' ? (
+          <AssetsManagement 
+            context={contextValue} 
+            stores={stores}
+            employees={employees}
+            onRefreshStores={loadStores}
+          />
+        ) : activeView === 'production' && canViewProduction ? (
+          <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} />
         ) : (
           <ClusterDashboard context={contextValue} />
         )}
       </main>
+
+      {/* Debug Panel - Remove this after debugging */}
+      <DebugPanel user={user} productionData={productionData} />
     </div>
   );
 }

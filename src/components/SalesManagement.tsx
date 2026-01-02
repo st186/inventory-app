@@ -1,14 +1,15 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, SalesData } from '../App';
-import { DatePicker } from './DatePicker';
+import { DateSelector } from './DateSelector';
 import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus } from 'lucide-react';
 import * as api from '../utils/api';
 
 type Props = {
   context: InventoryContextType;
+  selectedStoreId?: string | null;
 };
 
-export function SalesManagement({ context }: Props) {
+export function SalesManagement({ context, selectedStoreId }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
@@ -26,6 +27,13 @@ export function SalesManagement({ context }: Props) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const isManager = context.user?.role === 'manager';
+  const isStoreIncharge = context.user?.designation === 'store_incharge';
+  const isOperationsManager = isManager && !isStoreIncharge; // Operations manager (not store incharge)
+  const canEditSales = isStoreIncharge; // Only store incharge can enter/edit sales
+  const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
   
   // Contract worker payout state
   const [contractWorkers, setContractWorkers] = useState<any[]>([]);
@@ -110,10 +118,37 @@ export function SalesManagement({ context }: Props) {
     }, 0);
   }, [contractPayouts]);
 
-  // Get sales data for selected date
+  // Get sales data for selected date (filtered by selected store, not user's store)
   const salesForDate = useMemo(() => {
-    return context.salesData.find(s => s.date === selectedDate);
-  }, [context.salesData, selectedDate]);
+    // Use selectedStoreId prop (from store selector) instead of user's storeId
+    // This allows cluster heads to view data for any selected store
+    const effectiveStoreId = selectedStoreId || context.user?.storeId;
+    console.log('🏪 SalesManagement - effectiveStoreId:', effectiveStoreId);
+    console.log('🏪 SalesManagement - selectedStoreId prop:', selectedStoreId);
+    console.log('🏪 SalesManagement - user storeId:', context.user?.storeId);
+    console.log('🏪 SalesManagement - selectedDate:', selectedDate);
+    console.log('🏪 SalesManagement - all sales data:', context.salesData.map(s => ({ 
+      id: s.id.substring(0, 8), 
+      date: s.date, 
+      storeId: s.storeId,
+      offlineSales: s.offlineSales
+    })));
+    const filteredSales = effectiveStoreId 
+      ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+      : context.salesData;
+    console.log('🏪 SalesManagement - filtered sales:', filteredSales.map(s => ({ 
+      id: s.id.substring(0, 8), 
+      date: s.date, 
+      storeId: s.storeId 
+    })));
+    const result = filteredSales.find(s => s.date === selectedDate);
+    console.log('🏪 SalesManagement - salesForDate result:', result ? { 
+      id: result.id.substring(0, 8), 
+      date: result.date, 
+      storeId: result.storeId 
+    } : 'NOT FOUND');
+    return result;
+  }, [context.salesData, selectedDate, selectedStoreId, context.user?.storeId]);
 
   // Check if this is day 1 (first sales entry ever)
   const isFirstDay = useMemo(() => {
@@ -235,11 +270,11 @@ export function SalesManagement({ context }: Props) {
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
     const offset = actualCash - expectedCashInHand;
 
-    if (needsApproval && !salesForDate?.approvedBy) {
-      alert('Cash discrepancy exceeds ₹500. Cluster head approval required before saving.');
-      return;
-    }
-
+    // Store incharge entries always need approval from operations manager
+    // Operations manager/cluster head can directly approve their own entries
+    const needsManagerApproval = isStoreIncharge;
+    
+    // Don't block saving if discrepancy is high - allow requesting approval
     const salesData: Omit<SalesData, 'id'> = {
       date: selectedDate,
       offlineSales: parseFloat(formData.offlineSales) || 0,
@@ -252,8 +287,18 @@ export function SalesManagement({ context }: Props) {
       actualCashInHand: actualCash,
       cashOffset: offset,
       approvalRequired: needsApproval,
-      approvedBy: salesForDate?.approvedBy || null,
-      approvedAt: salesForDate?.approvedAt || null
+      approvalStatus: needsManagerApproval ? 'pending' : 'approved', // Auto-approve for operations manager
+      createdBy: context.user?.employeeId || context.user?.email || 'unknown',
+      approvedBy: !needsManagerApproval ? (context.user?.employeeId || context.user?.email || 'self') : salesForDate?.approvedBy || null,
+      approvedAt: !needsManagerApproval ? new Date().toISOString() : salesForDate?.approvedAt || null,
+      approvalRequested: salesForDate?.approvalRequested || false,
+      approvalRequestedAt: salesForDate?.approvalRequestedAt || null,
+      requestedCashInHand: salesForDate?.requestedCashInHand || null,
+      requestedOffset: salesForDate?.requestedOffset || null,
+      rejectedBy: salesForDate?.rejectedBy || null,
+      rejectedAt: salesForDate?.rejectedAt || null,
+      rejectionReason: salesForDate?.rejectionReason || null,
+      storeId: selectedStoreId || context.user?.storeId || undefined
     };
 
     try {
@@ -329,6 +374,47 @@ export function SalesManagement({ context }: Props) {
     }
   };
 
+  const handleRequestApproval = async () => {
+    if (!editingId) return;
+    const actualCash = parseFloat(formData.actualCashInHand) || 0;
+    const offset = actualCash - expectedCashInHand;
+    
+    if (!confirm(`Request approval for cash discrepancy of ₹${Math.abs(offset).toFixed(2)}?\n\nThis will notify the cluster head for approval.`)) {
+      return;
+    }
+    
+    try {
+      await context.requestSalesApproval(editingId, actualCash, offset);
+      alert('Approval request sent successfully!');
+    } catch (error) {
+      alert('Failed to request approval. Please try again.');
+    }
+  };
+
+  const handleApproveDiscrepancy = async (saleId: string) => {
+    if (!confirm('Approve this discrepancy? The new cash amount will be accepted.')) {
+      return;
+    }
+    try {
+      await context.approveDiscrepancy(saleId);
+      alert('Discrepancy approved successfully!');
+    } catch (error) {
+      alert('Failed to approve discrepancy. Please try again.');
+    }
+  };
+
+  const handleRejectDiscrepancy = async (saleId: string) => {
+    const reason = prompt('Please enter reason for rejection:');
+    if (!reason) return;
+    
+    try {
+      await context.rejectDiscrepancy(saleId, reason);
+      alert('Discrepancy rejected. Manager must pay the difference.');
+    } catch (error) {
+      alert('Failed to reject discrepancy. Please try again.');
+    }
+  };
+
   const onlineSalesTotal = parseFloat(formData.onlineSales) || 0;
   const offlineSalesTotal = parseFloat(formData.offlineSales) || 0;
   const paytm = parseFloat(formData.paytmAmount) || 0;
@@ -336,12 +422,10 @@ export function SalesManagement({ context }: Props) {
   const offlinePaymentTotal = paytm + cash;
   const paymentMismatch = Math.abs(offlineSalesTotal - offlinePaymentTotal) > 0.01;
 
-  const isClusterHead = context.user?.role === 'cluster_head';
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Date Selector */}
-      <DatePicker selectedDate={selectedDate} onDateChange={setSelectedDate} />
+      <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
       
       {/* Friday Weekly Reporting Reminder */}
       {isFriday && context.isManager && (
@@ -351,7 +435,7 @@ export function SalesManagement({ context }: Props) {
             <h2 className="text-gray-900">Weekly Cash Reporting - Friday</h2>
           </div>
           <p className="text-gray-700 mb-3">
-            📅 Today is Friday! Please report the actual cash left with you after entering today's sales data.
+            Today is Friday! Please report the actual cash left with you after entering today's sales data.
           </p>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
             <p className="text-gray-700">
@@ -363,57 +447,241 @@ export function SalesManagement({ context }: Props) {
 
       {/* Pending Approvals for Cluster Head */}
       {isClusterHead && (
-        <div className="mt-6 bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
-            <h2 className="text-gray-900">Pending Approvals</h2>
-          </div>
-          
-          {context.salesData.filter(s => s.approvalRequired && !s.approvedBy).length === 0 ? (
-            <p className="text-gray-600">No pending approvals at the moment.</p>
-          ) : (
-            <div className="space-y-3">
-              {context.salesData
-                .filter(s => s.approvalRequired && !s.approvedBy)
-                .map(sale => (
-                  <div key={sale.id} className="bg-white rounded-lg p-4 flex items-center justify-between border border-yellow-300">
-                    <div>
-                      <p className="text-gray-900">
-                        {new Date(sale.date).toLocaleDateString('en-US', { 
-                          weekday: 'long', 
-                          year: 'numeric', 
-                          month: 'long', 
-                          day: 'numeric' 
-                        })}
-                      </p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Cash Discrepancy: <span className={sale.cashOffset > 0 ? 'text-green-600' : 'text-red-600'}>
-                          {sale.cashOffset > 0 ? '+' : ''}₹{sale.cashOffset.toFixed(2)}
-                        </span>
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        Expected: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)} | 
-                        Actual: ₹{sale.actualCashInHand.toFixed(2)}
-                      </p>
+        <div className="mt-6 space-y-4">
+          {/* Discrepancy Approval Requests */}
+          {context.salesData.filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy).length > 0 && (
+            <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <AlertTriangle className="w-6 h-6 text-orange-600" />
+                <h2 className="text-gray-900">Discrepancy Approval Requests</h2>
+              </div>
+              
+              <div className="space-y-3">
+                {context.salesData
+                  .filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy)
+                  .map(sale => (
+                    <div key={sale.id} className="bg-white rounded-lg p-4 border border-orange-300">
+                      <div className="mb-3">
+                        <p className="text-gray-900 font-medium">
+                          {new Date(sale.date).toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Expected Cash: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Requested Cash: ₹{(sale.requestedCashInHand || 0).toFixed(2)}
+                        </p>
+                        <p className="text-sm mt-1">
+                          Discrepancy: <span className={(sale.requestedOffset || 0) > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                            {(sale.requestedOffset || 0) > 0 ? '+' : ''}₹{(sale.requestedOffset || 0).toFixed(2)}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleApproveDiscrepancy(sale.id)}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          <CheckSquare className="w-4 h-4" />
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleRejectDiscrepancy(sale.id)}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                          Reject
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await context.approveSalesData(sale.id);
-                          alert('Approved successfully!');
-                        } catch (error) {
-                          alert('Failed to approve');
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                    >
-                      <CheckSquare className="w-4 h-4" />
-                      Approve
-                    </button>
-                  </div>
-                ))}
+                  ))}
+              </div>
             </div>
           )}
+          
+          {/* Regular Pending Approvals (Legacy) */}
+          {context.salesData.filter(s => s.approvalRequired && !s.approvedBy && !s.approvalRequested).length > 0 && (
+            <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
+                <h2 className="text-gray-900">Pending Approvals</h2>
+              </div>
+              
+              <div className="space-y-3">
+                {context.salesData
+                  .filter(s => s.approvalRequired && !s.approvedBy && !s.approvalRequested)
+                  .map(sale => (
+                    <div key={sale.id} className="bg-white rounded-lg p-4 flex items-center justify-between border border-yellow-300">
+                      <div>
+                        <p className="text-gray-900">
+                          {new Date(sale.date).toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Cash Discrepancy: <span className={sale.cashOffset > 0 ? 'text-green-600' : 'text-red-600'}>
+                            {sale.cashOffset > 0 ? '+' : ''}₹{sale.cashOffset.toFixed(2)}
+                          </span>
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Expected: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)} | 
+                          Actual: ₹{sale.actualCashInHand.toFixed(2)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await context.approveSalesData(sale.id);
+                            alert('Approved successfully!');
+                          } catch (error) {
+                            alert('Failed to approve');
+                          }
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        Approve
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+          
+          {/* No pending approvals message */}
+          {context.salesData.filter(s => (s.approvalRequired && !s.approvedBy) || (s.approvalRequested && !s.approvedBy && !s.rejectedBy)).length === 0 && (
+            <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
+                <h2 className="text-gray-900">Pending Approvals</h2>
+              </div>
+              <p className="text-gray-600">No pending approvals at the moment.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pending Approvals for Operations Manager */}
+      {isOperationsManager && (
+        <div className="mt-6 space-y-4">
+          {/* Sales Approval Requests from Store Incharge */}
+          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length > 0 && (
+            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <CheckSquare className="w-6 h-6 text-green-600" />
+                <h2 className="text-gray-900">Sales Pending Approval</h2>
+              </div>
+              
+              <div className="space-y-3">
+                {context.salesData
+                  .filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId)
+                  .map(sale => (
+                    <div key={sale.id} className="bg-white rounded-lg p-4 border border-green-300">
+                      <div className="mb-3">
+                        <p className="text-gray-900 font-medium">
+                          {new Date(sale.date).toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Submitted by: {sale.createdBy}
+                        </p>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <span className="text-gray-600">Total Sales:</span>
+                            <span className="ml-1 font-medium">₹{(sale.offlineSales + sale.onlineSales).toFixed(2)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Cash in Hand:</span>
+                            <span className="ml-1 font-medium">₹{sale.actualCashInHand.toFixed(2)}</span>
+                          </div>
+                        </div>
+                        {Math.abs(sale.cashOffset) > 0 && (
+                          <p className="text-sm mt-1">
+                            Cash Offset: <span className={sale.cashOffset > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                              {sale.cashOffset > 0 ? '+' : ''}₹{sale.cashOffset.toFixed(2)}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Approve sales data for ${new Date(sale.date).toLocaleDateString()}?`)) return;
+                          try {
+                            await context.approveSalesData(sale.id);
+                            alert('Sales data approved successfully!');
+                          } catch (error) {
+                            alert('Failed to approve sales data');
+                          }
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        Approve Sales Data
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+          
+          {/* No pending sales message */}
+          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length === 0 && (
+            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <CheckSquare className="w-6 h-6 text-green-600" />
+                <h2 className="text-gray-900">Sales Pending Approval</h2>
+              </div>
+              <p className="text-gray-600">No pending sales at the moment.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Store Incharge - Show if sales is pending approval */}
+      {isStoreIncharge && salesForDate && salesForDate.approvalStatus === 'pending' && (
+        <div className="mt-6 bg-[#FFF9E6] border-2 border-[#FFD54F] rounded-xl p-6">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="w-6 h-6 text-orange-600" />
+            <h2 className="text-gray-900">Sales Pending Approval</h2>
+          </div>
+          <p className="text-gray-700">
+            Your sales entry for {new Date(salesForDate.date).toLocaleDateString('en-US', { 
+              weekday: 'long', 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric' 
+            })} is awaiting approval from the Operations Manager.
+          </p>
+        </div>
+      )}
+
+      {/* Store Incharge - Show if sales is approved */}
+      {isStoreIncharge && salesForDate && salesForDate.approvalStatus === 'approved' && (
+        <div className="mt-6 bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+          <div className="flex items-center gap-2 mb-2">
+            <CheckCircle className="w-6 h-6 text-green-600" />
+            <h2 className="text-gray-900">Sales Approved</h2>
+          </div>
+          <p className="text-gray-700">
+            ✓ Your sales entry for {new Date(salesForDate.date).toLocaleDateString('en-US', { 
+              weekday: 'long', 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric' 
+            })} has been approved by {salesForDate.approvedBy}.
+          </p>
         </div>
       )}
 
@@ -443,7 +711,7 @@ export function SalesManagement({ context }: Props) {
                     onChange={(e) => setFormData({ ...formData, offlineSales: e.target.value })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                     required
-                    disabled={!context.isManager}
+                    disabled={!canEditSales}
                   />
                 </div>
 
@@ -457,7 +725,7 @@ export function SalesManagement({ context }: Props) {
                       onChange={(e) => setFormData({ ...formData, paytmAmount: e.target.value })}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                       required
-                      disabled={!context.isManager}
+                      disabled={!canEditSales}
                     />
                   </div>
                   <div>
@@ -469,7 +737,7 @@ export function SalesManagement({ context }: Props) {
                       onChange={(e) => setFormData({ ...formData, cashAmount: e.target.value })}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                       required
-                      disabled={!context.isManager}
+                      disabled={!canEditSales}
                     />
                   </div>
                 </div>
@@ -505,7 +773,7 @@ export function SalesManagement({ context }: Props) {
                   onChange={(e) => setFormData({ ...formData, onlineSales: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                   required
-                  disabled={!context.isManager}
+                  disabled={!canEditSales}
                 />
               </div>
             </div>
@@ -518,14 +786,14 @@ export function SalesManagement({ context }: Props) {
               </h3>
               
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Amount Used from Paytm (₹)</label>
+                <label className="block text-sm text-gray-700 mb-1">Amount Used from Paytm ()</label>
                 <input
                   type="number"
                   step="0.01"
                   value={formData.usedOnlineMoney}
                   onChange={(e) => setFormData({ ...formData, usedOnlineMoney: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  disabled={!context.isManager}
+                  disabled={!canEditSales}
                 />
                 <p className="text-xs text-gray-500 mt-1">Enter amount if Paytm balance was used for expenses</p>
               </div>
@@ -657,7 +925,7 @@ export function SalesManagement({ context }: Props) {
                     value={formData.previousCashInHand}
                     onChange={(e) => setFormData({ ...formData, previousCashInHand: e.target.value })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                    disabled={!context.isManager}
+                    disabled={!canEditSales}
                     required
                   />
                   <p className="text-xs text-gray-500 mt-1">
@@ -705,6 +973,16 @@ export function SalesManagement({ context }: Props) {
                       Expenses: ₹{totalExpenses.toFixed(2)} - 
                       Contract Payouts: ₹{totalContractPayout.toFixed(2)}
                     </p>
+                    <details className="mt-2">
+                      <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
+                        View expense breakdown
+                      </summary>
+                      <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                        <p>Inventory Cost: ₹{context.inventory.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.totalCost, 0).toFixed(2)} ({context.inventory.filter(item => item.date === selectedDate).length} items)</p>
+                        <p>Overhead Cost: ₹{context.overheads.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.overheads.filter(item => item.date === selectedDate).length} items)</p>
+                        <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
+                      </div>
+                    </details>
                   </div>
 
                   <div>
@@ -716,7 +994,7 @@ export function SalesManagement({ context }: Props) {
                       onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                       required
-                      disabled={!context.isManager}
+                      disabled={!canEditSales}
                     />
                     <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
                   </div>
@@ -746,9 +1024,15 @@ export function SalesManagement({ context }: Props) {
                           </span>
                         )}
                       </p>
-                      {needsApproval && (
+                      {needsApproval && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
                         <p className="text-xs text-red-600 mt-1">
-                          ⚠️ Exceeds ₹500 limit - Cluster head approval required
+                          ⚠️ Exceeds ₹500 limit - Save first, then request cluster head approval
+                        </p>
+                      )}
+                      {salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
+                        <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          Approval pending from cluster head
                         </p>
                       )}
                       {salesForDate?.approvedBy && (
@@ -757,20 +1041,53 @@ export function SalesManagement({ context }: Props) {
                           Approved by: {salesForDate.approvedBy}
                         </p>
                       )}
+                      {salesForDate?.rejectedBy && (
+                        <div className="text-xs text-red-600 mt-1">
+                          <p className="flex items-center gap-1">
+                            <X className="w-3 h-3" />
+                            Rejected by: {salesForDate.rejectedBy}
+                          </p>
+                          {salesForDate.rejectionReason && (
+                            <p className="mt-1 italic">Reason: {salesForDate.rejectionReason}</p>
+                          )}
+                          <p className="mt-1 font-medium">You must pay the discrepancy from your pocket.</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {context.isManager && (
-              <button
-                type="submit"
-                disabled={paymentMismatch || (needsApproval && !salesForDate?.approvedBy)}
-                className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isEditing ? 'Update Sales Data' : 'Save Sales Data'}
-              </button>
+            {canEditSales && (
+              <div className="space-y-3">
+                <button
+                  type="submit"
+                  disabled={paymentMismatch}
+                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isEditing ? 'Update Sales Data' : 'Save Sales Data'}
+                </button>
+                
+                {/* Request Approval Button - Only show when editing with high discrepancy */}
+                {isEditing && editingId && needsApproval && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+                  <button
+                    type="button"
+                    onClick={handleRequestApproval}
+                    className="w-full px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <AlertTriangle className="w-5 h-5" />
+                    Request Approval from Cluster Head
+                  </button>
+                )}
+                
+                {/* Show if approval is pending */}
+                {isEditing && salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
+                  <div className="w-full px-6 py-3 bg-orange-100 border-2 border-orange-300 text-orange-800 rounded-lg text-center">
+                    ⏳ Approval request sent - Waiting for cluster head response
+                  </div>
+                )}
+              </div>
             )}
           </form>
         </div>
@@ -827,6 +1144,12 @@ export function SalesManagement({ context }: Props) {
                 <div>
                   <p className="text-sm">Expected Cash</p>
                   <p className="text-3xl">₹{expectedCashInHand.toFixed(2)}</p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
+                    ₹{cash.toFixed(2)} - 
+                    ₹{totalExpenses.toFixed(2)} - 
+                    ₹{totalContractPayout.toFixed(2)}
+                  </p>
                 </div>
                 {formData.actualCashInHand && (
                   <>

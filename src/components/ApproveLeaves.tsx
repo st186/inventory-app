@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Calendar, User, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
 
@@ -6,20 +6,56 @@ interface ApproveLeavesProps {
   managerId: string;
   managerName: string;
   role?: string; // Add role to differentiate between manager and cluster_head
+  selectedStoreId?: string | null;
+  isIncharge?: boolean;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
 }
 
-export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesProps) {
+export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, isIncharge = false, inchargeDesignation = null }: ApproveLeavesProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const isClusterHead = role === 'cluster_head';
 
   console.log('ApproveLeaves: managerId prop =', managerId);
   console.log('ApproveLeaves: role prop =', role);
+  console.log('ApproveLeaves: isIncharge =', isIncharge);
+  console.log('ApproveLeaves: inchargeDesignation =', inchargeDesignation);
+  
+  // Filter employees by store and incharge permissions
+  const filteredEmployees = useMemo(() => {
+    let filtered = employees;
+    
+    // Apply store filter (include null/undefined storeIds for backward compatibility)
+    if (selectedStoreId) {
+      filtered = filtered.filter(emp => 
+        emp.storeId === selectedStoreId || 
+        emp.storeId === null || 
+        emp.storeId === undefined
+      );
+    }
+    
+    // Apply incharge permissions - only show employees under the incharge
+    if (isIncharge && managerId) {
+      filtered = filtered.filter(emp => emp.inchargeId === managerId);
+    }
+    
+    return filtered;
+  }, [employees, selectedStoreId, isIncharge, managerId]);
 
   useEffect(() => {
     loadEmployees();
   }, []);
+
+  // Update selected employee when filtered list changes
+  useEffect(() => {
+    if (filteredEmployees.length > 0 && !filteredEmployees.find(e => e.employeeId === selectedEmployee)) {
+      setSelectedEmployee(filteredEmployees[0].employeeId);
+    } else if (filteredEmployees.length === 0) {
+      setSelectedEmployee('');
+    }
+  }, [filteredEmployees]);
 
   useEffect(() => {
     if (selectedEmployee) {
@@ -29,7 +65,7 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
 
   const loadEmployees = async () => {
     try {
-      console.log('ApproveLeaves: Loading employees/managers for role:', role);
+      console.log('ApproveLeaves: Loading employees/managers for role:', role, 'isIncharge:', isIncharge);
       let data;
       
       if (role === 'cluster_head') {
@@ -37,6 +73,11 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
         console.log('ApproveLeaves: Calling getManagersByClusterHead with clusterHeadId:', managerId);
         data = await api.getManagersByClusterHead(managerId);
         console.log('ApproveLeaves: Received managers:', data);
+      } else if (isIncharge) {
+        // Incharges manage employees under them (filtered by inchargeId)
+        console.log('ApproveLeaves: Calling getEmployeesByIncharge with inchargeId:', managerId);
+        data = await api.getEmployeesByIncharge(managerId);
+        console.log('ApproveLeaves: Received employees under incharge:', data);
       } else {
         // Managers manage employees
         console.log('ApproveLeaves: Calling getEmployeesByManager with managerId:', managerId);
@@ -70,6 +111,9 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
   const handleApprove = async (leaveId: string) => {
     try {
       setLoading(true);
+      console.log('Attempting to approve leave:', leaveId);
+      console.log('api.approveLeave function exists?', typeof api.approveLeave);
+      console.log('Available API functions:', Object.keys(api).filter(k => k.includes('Leave')));
       await api.approveLeave(leaveId, managerId, managerName);
       await loadLeaves();
       alert('Leave approved successfully');
@@ -102,8 +146,8 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
   const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
   
   // Dynamic text based on role
-  const entityType = role === 'cluster_head' ? 'Manager' : 'Employee';
-  const entityTypePlural = role === 'cluster_head' ? 'Managers' : 'Employees';
+  const entityType = role === 'cluster_head' ? 'Operations Manager' : 'Employee';
+  const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
@@ -142,8 +186,20 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
               <div>
                 <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
                 <p className="text-sm text-blue-700">
-                  You don't have any {entityTypePlural.toLowerCase()} assigned to you yet. {entityTypePlural} created through Employee Management will appear here.
+                  {role === 'cluster_head' 
+                    ? `No managers are assigned to you (${managerId}). To fix this:`
+                    : `You don't have any employees assigned to you yet.`
+                  }
                 </p>
+                {role === 'cluster_head' && (
+                  <ul className="text-xs text-blue-700 mt-2 ml-4 space-y-1">
+                    <li>• Go to <strong>Employee Management</strong> → <strong>Hierarchy Management</strong> tab</li>
+                    <li>• Click <strong>Edit</strong> on each manager (e.g., BM004)</li>
+                    <li>• Make sure <strong>Cluster Head ID</strong> is set to your ID: <strong>{managerId}</strong></li>
+                    <li>• Click <strong>Save Changes</strong></li>
+                  </ul>
+                )}
+                <p className="text-xs text-blue-600 mt-2">Your ID: {managerId}</p>
               </div>
             </div>
           </div>
@@ -158,7 +214,7 @@ export function ApproveLeaves({ managerId, managerName, role }: ApproveLeavesPro
             className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
             <option value="">-- Select {entityType} --</option>
-            {employees.map(emp => (
+            {filteredEmployees.map(emp => (
               <option key={emp.employeeId} value={emp.employeeId}>
                 {emp.name} ({emp.employeeId})
               </option>

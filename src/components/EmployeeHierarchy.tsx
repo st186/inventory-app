@@ -58,6 +58,11 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
         setStats(statsData);
       }
     } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error && 
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);

@@ -15,7 +15,10 @@ const overheadCategories = [
   { value: 'transportation', label: 'Transportation Cost' },
   { value: 'marketing', label: 'Marketing Cost' },
   { value: 'service_charge', label: 'Service Charge (Food Aggregators)' },
-  { value: 'repair', label: 'Repair Cost' }
+  { value: 'repair', label: 'Repair Cost' },
+  { value: 'party', label: 'Party Cost' },
+  { value: 'lunch', label: 'Lunch Cost' },
+  { value: 'miscellaneous', label: 'Miscellaneous Cost' }
 ] as const;
 
 export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem }: Props) {

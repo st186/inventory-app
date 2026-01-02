@@ -20,7 +20,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
   const [permanentEmployees, setPermanentEmployees] = useState<Employee[]>([]);
   const [credentials, setCredentials] = useState<Record<string, { email: string; password: string }>>({});
   const [processing, setProcessing] = useState(false);
-  const [results, setResults] = useState<{ created: number; updated: number; failed: number; details: any[] } | null>(null);
+  const [results, setResults] = useState<{ deleted: number; failed: number; message?: string; details: any[] } | null>(null);
 
   useEffect(() => {
     // Filter only permanent employees (type === 'fulltime')
@@ -88,10 +88,10 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
       }
 
       setResults({
-        created: result.created,
-        updated: result.updated,
+        deleted: result.deleted || 0,
         failed: result.failed,
-        details: [...result.results, ...result.errors]
+        message: result.message,
+        details: [...(result.results || []), ...(result.errors || [])]
       });
     } catch (error) {
       console.error('Error creating employee accounts:', error);
@@ -134,8 +134,8 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
               <UserPlus className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <h2 className="text-xl">Create Employee Login Accounts</h2>
-              <p className="text-sm text-gray-600">Set up login credentials for {permanentEmployees.length} permanent employees</p>
+              <h2 className="text-xl">Prepare Employee Login Credentials</h2>
+              <p className="text-sm text-gray-600">Generate signup credentials for {permanentEmployees.length} permanent employees</p>
             </div>
           </div>
           <button
@@ -150,21 +150,28 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
         <div className="flex-1 overflow-y-auto p-6">
           {results ? (
             <div className="space-y-4">
+              {/* Important Message */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h3 className="flex items-center gap-2 text-yellow-800 mb-2">
+                  <AlertCircle className="w-5 h-5" />
+                  <span className="font-semibold">Important: Employees Must Complete Signup</span>
+                </h3>
+                <p className="text-yellow-700 text-sm mb-2">
+                  {results.message || 'Old accounts have been deleted. Employees must now signup using their credentials below.'}
+                </p>
+                <p className="text-yellow-700 text-sm">
+                  Download the credentials below and share them with employees. They should go to the login page and click "Sign up" to create their accounts.
+                </p>
+              </div>
+
               {/* Results Summary */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-green-700">
-                    <Check className="w-5 h-5" />
-                    <span>Created</span>
-                  </div>
-                  <div className="text-2xl mt-2">{results.created}</div>
-                </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-center gap-2 text-blue-700">
                     <Check className="w-5 h-5" />
-                    <span>Updated</span>
+                    <span>Accounts Prepared</span>
                   </div>
-                  <div className="text-2xl mt-2">{results.updated}</div>
+                  <div className="text-2xl mt-2">{results.deleted}</div>
                 </div>
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                   <div className="flex items-center gap-2 text-red-700">
@@ -288,12 +295,12 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                   {processing ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Creating Accounts...
+                      Preparing Credentials...
                     </>
                   ) : (
                     <>
                       <UserPlus className="w-4 h-4" />
-                      Create All Accounts
+                      Prepare Signup Credentials
                     </>
                   )}
                 </button>

@@ -1,16 +1,16 @@
 export const INVENTORY_CATEGORIES = {
-  vegetables_herbs: 'Vegetables & Herbs',
-  grocery_spices: 'Grocery / Spices / Sauces',
-  dairy: 'Dairy',
-  meat: 'Meat',
-  packaging: 'Packaging & Consumables',
-  gas_utilities: 'Gas / Utilities',
-  production: 'Production Ingredients',
-  staff_misc: 'Staff / Miscellaneous'
+  fresh_produce: '🥬 Fresh Produce',
+  spices_seasonings: '🌶️ Spices & Seasonings',
+  dairy: '🧈 Dairy Products',
+  meat: '🍖 Meat & Protein',
+  packaging: '📦 Packaging Materials',
+  gas_utilities: '⚡ Gas & Utilities',
+  production: '🔨 Production Ingredients',
+  staff_essentials: '👔 Staff Essentials'
 } as const;
 
 export const CATEGORY_ITEMS = {
-  vegetables_herbs: [
+  fresh_produce: [
     'Tomato',
     'Capsicum',
     'Onion',
@@ -26,7 +26,7 @@ export const CATEGORY_ITEMS = {
     'Carrot',
     'Potato'
   ],
-  grocery_spices: [
+  spices_seasonings: [
     'Soya Sauce',
     'Chilli Sauce',
     'Vinegar',
@@ -46,14 +46,22 @@ export const CATEGORY_ITEMS = {
   packaging: ['Butter Paper', 'Carry Bag', 'Container', 'Tissue Paper'],
   gas_utilities: ['LPG Gas'],
   production: ['Dough', 'Batter', 'Stuffing'],
-  staff_misc: ['Labour', 'Cleaning', 'Water', 'Electricity']
+  staff_essentials: ['Labour', 'Cleaning', 'Water', 'Electricity']
 } as const;
 
 export const OVERHEAD_CATEGORIES = {
-  fuel: 'Fuel Cost',
-  travel: 'Travel Cost',
-  transportation: 'Transportation Cost',
-  marketing: 'Marketing Cost',
-  service_charge: 'Service Charge (Food Aggregators)',
-  repair: 'Repair Cost'
+  fuel: '⛽ Fuel Cost',
+  travel: '🚗 Travel Cost',
+  transportation: '🚛 Transportation Cost',
+  marketing: '📢 Marketing Cost',
+  service_charge: '🍔 Service Charge (Food Aggregators)',
+  repair: '🔧 Repair Cost',
+  party: '🎉 Party Cost',
+  lunch: '🍽️ Lunch Cost',
+  miscellaneous: '📝 Miscellaneous Cost'
 } as const;
+
+export const FIXED_COST_CATEGORIES: Record<string, string> = {
+  electricity: '⚡ Electricity',
+  rent: '🏠 Rent'
+};

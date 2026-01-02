@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Admin Account - Bhandar IMS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 500px;
+            width: 100%;
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .credentials {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        .credential-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .credential-row:last-child {
+            margin-bottom: 0;
+        }
+        .label {
+            font-weight: 600;
+            color: #495057;
+        }
+        .value {
+            color: #212529;
+            font-family: 'Courier New', monospace;
+            background: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        button {
+            width: 100%;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        .message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Create Admin Account</h1>
+        <p class="subtitle">Click the button below to create a cluster head account for Bhandar-IMS</p>
+        
+        <div class="credentials">
+            <div class="credential-row">
+                <span class="label">Email:</span>
+                <span class="value" id="email">admin@bhandar.com</span>
+            </div>
+            <div class="credential-row">
+                <span class="label">Password:</span>
+                <span class="value" id="password">Admin@123</span>
+            </div>
+            <div class="credential-row">
+                <span class="label">Role:</span>
+                <span class="value">Cluster Head</span>
+            </div>
+            <div class="credential-row">
+                <span class="label">Employee ID:</span>
+                <span class="value">BM001</span>
+            </div>
+        </div>
+
+        <button id="createBtn" onclick="createAccount()">
+            Create Cluster Head Account
+        </button>
+
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'https://xssxnhrzxvtejavoqgwg.supabase.co/functions/v1/make-server-c2dd9b9d';
+
+        async function createAccount() {
+            const btn = document.getElementById('createBtn');
+            const msgDiv = document.getElementById('message');
+            
+            btn.disabled = true;
+            btn.innerHTML = 'Creating Account...<div class="loader"></div>';
+            msgDiv.className = 'message';
+            msgDiv.textContent = '';
+
+            try {
+                const response = await fetch(`${SERVER_URL}/auth/setup-test-cluster-head`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to create account');
+                }
+
+                msgDiv.className = 'message success';
+                msgDiv.innerHTML = `
+                    ✅ <strong>Account created successfully!</strong><br><br>
+                    You can now login with:<br>
+                    Email: <code>admin@bhandar.com</code><br>
+                    Password: <code>Admin@123</code><br><br>
+                    <a href="/" style="color: #155724; font-weight: 600;">Go to Login Page →</a>
+                `;
+                btn.innerHTML = '✓ Account Created';
+                btn.style.background = '#28a745';
+            } catch (error) {
+                console.error('Error:', error);
+                msgDiv.className = 'message error';
+                msgDiv.innerHTML = `
+                    ❌ <strong>Error creating account:</strong><br>
+                    ${error.message}<br><br>
+                    Please check the browser console for more details or try the signup form instead.
+                `;
+                btn.disabled = false;
+                btn.innerHTML = 'Try Again';
+            }
+        }
+    </script>
+</body>
+</html>

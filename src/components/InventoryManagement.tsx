@@ -1,23 +1,27 @@
-import { useState } from 'react';
-import { InventoryContextType, InventoryItem, OverheadItem } from '../App';
+import { useState, useMemo, useEffect } from 'react';
+import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { InventoryForm } from './InventoryForm';
 import { OverheadForm } from './OverheadForm';
+import { FixedCostForm } from './FixedCostForm';
 import { InventoryList } from './InventoryList';
-import { DatePicker } from './DatePicker';
+import { DateSelector } from './DateSelector';
 import { Plus } from 'lucide-react';
 
 type Props = {
   context: InventoryContextType;
+  selectedStoreId?: string | null;
 };
 
-export function InventoryManagement({ context }: Props) {
+export function InventoryManagement({ context, selectedStoreId }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
   const [showInventoryForm, setShowInventoryForm] = useState(false);
   const [showOverheadForm, setShowOverheadForm] = useState(false);
+  const [showFixedCostForm, setShowFixedCostForm] = useState(false);
   const [editingInventory, setEditingInventory] = useState<InventoryItem | null>(null);
   const [editingOverhead, setEditingOverhead] = useState<OverheadItem | null>(null);
+  const [editingFixedCost, setEditingFixedCost] = useState<FixedCostItem | null>(null);
 
   const changeDate = (days: number) => {
     const current = new Date(selectedDate);
@@ -35,11 +39,33 @@ export function InventoryManagement({ context }: Props) {
     });
   };
 
+  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
+  // This allows cluster heads to view data for any selected store
+  const effectiveStoreId = selectedStoreId || context.user?.storeId;
+  console.log('🏪 InventoryManagement - effectiveStoreId:', effectiveStoreId);
+  console.log('🏪 InventoryManagement - selectedStoreId prop:', selectedStoreId);
+  console.log('🏪 InventoryManagement - user storeId:', context.user?.storeId);
+
   const filteredInventory = context.inventory.filter(
-    (item) => item.date === selectedDate
+    (item) => {
+      const dateMatch = item.date === selectedDate;
+      const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    }
   );
   const filteredOverheads = context.overheads.filter(
-    (item) => item.date === selectedDate
+    (item) => {
+      const dateMatch = item.date === selectedDate;
+      const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    }
+  );
+  const filteredFixedCosts = context.fixedCosts.filter(
+    (item) => {
+      const dateMatch = item.date === selectedDate;
+      const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    }
   );
 
   const totalInventoryCost = filteredInventory.reduce(
@@ -50,17 +76,21 @@ export function InventoryManagement({ context }: Props) {
     (sum, item) => sum + item.amount,
     0
   );
+  const totalFixedCost = filteredFixedCosts.reduce(
+    (sum, item) => sum + item.amount,
+    0
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Date Selector */}
-      <DatePicker
+      <DateSelector
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
       />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 mb-6">
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/30">
           <p className="text-sm text-blue-100 uppercase tracking-wide">Inventory Cost</p>
           <p className="text-white text-2xl mt-2">₹{totalInventoryCost.toLocaleString()}</p>
@@ -69,10 +99,14 @@ export function InventoryManagement({ context }: Props) {
           <p className="text-sm text-orange-100 uppercase tracking-wide">Overhead Cost</p>
           <p className="text-white text-2xl mt-2">₹{totalOverheadCost.toLocaleString()}</p>
         </div>
+        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 shadow-lg shadow-green-500/30">
+          <p className="text-sm text-green-100 uppercase tracking-wide">Fixed Cost</p>
+          <p className="text-white text-2xl mt-2">₹{totalFixedCost.toLocaleString()}</p>
+        </div>
         <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 shadow-lg shadow-purple-500/30">
           <p className="text-sm text-purple-100 uppercase tracking-wide">Total Expenses</p>
           <p className="text-white text-2xl mt-2">
-            ₹{(totalInventoryCost + totalOverheadCost).toLocaleString()}
+            ₹{(totalInventoryCost + totalOverheadCost + totalFixedCost).toLocaleString()}
           </p>
         </div>
       </div>
@@ -97,12 +131,22 @@ export function InventoryManagement({ context }: Props) {
           <Plus className="w-4 h-4" />
           Add Overhead
         </button>
+        <button
+          onClick={() => setShowFixedCostForm(true)}
+          disabled={!context.isManager}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title={!context.isManager ? 'Only managers can add fixed costs' : ''}
+        >
+          <Plus className="w-4 h-4" />
+          Add Fixed Cost
+        </button>
       </div>
 
       {/* Lists */}
       <InventoryList
         inventory={filteredInventory}
         overheads={filteredOverheads}
+        fixedCosts={filteredFixedCosts}
         onEditInventory={(item) => {
           setEditingInventory(item);
           setShowInventoryForm(true);
@@ -113,6 +157,11 @@ export function InventoryManagement({ context }: Props) {
           setShowOverheadForm(true);
         }}
         onDeleteOverhead={context.deleteOverheadItem}
+        onEditFixedCost={(item) => {
+          setEditingFixedCost(item);
+          setShowFixedCostForm(true);
+        }}
+        onDeleteFixedCost={context.deleteFixedCostItem}
         isManager={context.isManager}
       />
 
@@ -161,6 +210,30 @@ export function InventoryManagement({ context }: Props) {
           onClose={() => {
             setShowOverheadForm(false);
             setEditingOverhead(null);
+          }}
+        />
+      )}
+
+      {showFixedCostForm && (
+        <FixedCostForm
+          selectedDate={selectedDate}
+          editingItem={editingFixedCost}
+          onSubmit={async (item) => {
+            try {
+              if (editingFixedCost) {
+                await context.updateFixedCostItem(editingFixedCost.id, item);
+              } else {
+                await context.addFixedCostItem(item);
+              }
+              setShowFixedCostForm(false);
+              setEditingFixedCost(null);
+            } catch (error) {
+              alert('Failed to save fixed cost. Please try again.');
+            }
+          }}
+          onClose={() => {
+            setShowFixedCostForm(false);
+            setEditingFixedCost(null);
           }}
         />
       )}

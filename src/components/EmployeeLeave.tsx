@@ -147,7 +147,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
             <div>
               <h2 className="text-lg mb-2 opacity-90">Available Leave Balance</h2>
               <div className="text-5xl mb-2">{leaveBalance}</div>
-              <p className="text-sm opacity-90">leaves remaining (4 leaves/month, resets yearly)</p>
+              <p className="text-sm opacity-90">leaves remaining (3 leaves/month, accumulates monthly, resets yearly)</p>
             </div>
             <div className="bg-white/20 rounded-full p-6">
               <Calendar className="w-16 h-16" />
@@ -274,9 +274,10 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
             <div className="text-sm text-blue-900">
               <p className="mb-2"><strong>Leave Policy:</strong></p>
               <ul className="list-disc list-inside space-y-1">
-                <li>4 leaves are credited on the 1st of each month</li>
-                <li>Unused leaves do not carry forward to the next year</li>
-                <li>Leave balance resets to 0 on January 1st each year</li>
+                <li>3 leaves are credited on the 1st of each month (Jan: 3, Feb: 6, Mar: 9, etc.)</li>
+                <li>Unused leaves carry forward within the year</li>
+                <li>All unused leaves lapse on December 31st (reset to 0)</li>
+                <li>New year starts fresh with 3 leaves on January 1st</li>
                 <li>All leave applications require manager approval</li>
                 <li>Approved leaves will prevent timesheet entry for that day</li>
               </ul>

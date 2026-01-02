@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { InventoryItem } from '../App';
 import { INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
 import { X } from 'lucide-react';
+import * as api from '../utils/api';
 
 type Props = {
   selectedDate: string;
@@ -12,19 +13,60 @@ type Props = {
 
 export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: Props) {
   const [formData, setFormData] = useState({
-    category: (editingItem?.category || 'vegetables_herbs') as InventoryItem['category'],
+    category: (editingItem?.category || 'fresh_produce') as InventoryItem['category'],
     itemName: editingItem?.itemName || '',
     customItem: editingItem ? !CATEGORY_ITEMS[editingItem.category].includes(editingItem.itemName) : false,
     quantity: editingItem?.quantity.toString() || '',
     unit: editingItem?.unit || 'kg',
-    costPerUnit: editingItem?.costPerUnit.toString() || ''
+    totalCost: editingItem?.totalCost.toString() || ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
+  const [loadingCustomItems, setLoadingCustomItems] = useState(true);
+
+  // Load custom items on mount
+  useEffect(() => {
+    loadCustomItems();
+  }, []);
+
+  const loadCustomItems = async () => {
+    try {
+      const items = await api.getCustomItems();
+      // Transform array to Record<category, itemName[]>
+      const itemsByCategory: Record<string, string[]> = {};
+      items.forEach((item) => {
+        if (!itemsByCategory[item.category]) {
+          itemsByCategory[item.category] = [];
+        }
+        itemsByCategory[item.category].push(item.itemName);
+      });
+      setCustomItems(itemsByCategory);
+    } catch (error) {
+      // Silently handle error - custom items are optional
+      console.log('Could not load custom items:', error);
+    } finally {
+      setLoadingCustomItems(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const quantity = parseFloat(formData.quantity);
-    const costPerUnit = parseFloat(formData.costPerUnit);
+    const totalCost = parseFloat(formData.totalCost);
+    const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
+    
+    // If this is a new custom item, save it and reload the list
+    if (formData.customItem && formData.itemName) {
+      try {
+        await api.addCustomItem(formData.category, formData.itemName);
+        console.log('Custom item saved:', formData.itemName);
+        // Reload custom items to update the dropdown
+        await loadCustomItems();
+      } catch (error) {
+        console.error('Error saving custom item:', error);
+      }
+    }
     
     onSubmit({
       date: selectedDate,
@@ -33,11 +75,15 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
       quantity,
       unit: formData.unit,
       costPerUnit,
-      totalCost: quantity * costPerUnit
+      totalCost
     });
   };
 
-  const categoryItems = CATEGORY_ITEMS[formData.category];
+  // Merge base items with custom items for the selected category
+  const categoryItems = [
+    ...CATEGORY_ITEMS[formData.category],
+    ...(customItems[formData.category] || [])
+  ];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -162,25 +208,25 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
 
           <div>
             <label className="block text-sm text-gray-700 mb-1">
-              Cost per Unit (₹)
+              Total Cost (₹)
             </label>
             <input
               type="number"
               step="0.01"
-              value={formData.costPerUnit}
+              value={formData.totalCost}
               onChange={(e) =>
-                setFormData({ ...formData, costPerUnit: e.target.value })
+                setFormData({ ...formData, totalCost: e.target.value })
               }
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             />
           </div>
 
-          {formData.quantity && formData.costPerUnit && (
+          {formData.quantity && formData.totalCost && (
             <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-sm text-gray-600">Total Cost</p>
+              <p className="text-sm text-gray-600">Cost per Unit</p>
               <p className="text-gray-900">
-                ₹{(parseFloat(formData.quantity) * parseFloat(formData.costPerUnit)).toFixed(2)}
+                ₹{(parseFloat(formData.totalCost) / parseFloat(formData.quantity)).toFixed(2)}
               </p>
             </div>
           )}

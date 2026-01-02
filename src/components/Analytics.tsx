@@ -1,52 +1,1097 @@
-import { useState } from 'react';
-import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart } from 'lucide-react';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useState, useEffect, useMemo } from 'react';
+import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle } from 'lucide-react';
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
+import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
 import { InventoryContextType } from '../App';
+import { DataCapture } from './DataCapture';
+import { ProductionRequests } from './ProductionRequests';
+import { SalesData as SalesDataComponent } from './SalesData';
+import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
+import { DatePicker } from './DatePicker';
+import { RecalibrationReports } from './RecalibrationReports';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { getSupabaseClient } from '../utils/supabase/client';
 
 interface AnalyticsProps {
   context: InventoryContextType;
+  selectedStoreId?: string | null;
+  highlightRequestId?: string | null;
 }
+
+// Custom Tooltip Component for Bar Charts
+const CustomTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
+        <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <div key={index} className="flex items-center gap-2 mt-1">
+            <div 
+              className="w-3 h-3 rounded-full" 
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
+              {entry.name}:
+            </span>
+            <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
+              ₹{entry.value.toLocaleString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+// Custom Tooltip Component for Pie Charts
+const CustomPieTooltip = ({ active, payload }: TooltipProps<any, any>) => {
+  if (active && payload && payload.length) {
+    const data = payload[0];
+    return (
+      <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
+        <div className="flex items-center gap-2 mb-2">
+          <div 
+            className="w-4 h-4 rounded-full" 
+            style={{ backgroundColor: data.payload.fill }}
+          />
+          <p className="text-gray-900" style={{ fontSize: '14px', fontWeight: '600' }}>
+            {data.name}
+          </p>
+        </div>
+        <div className="space-y-1">
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600" style={{ fontSize: '13px' }}>Amount:</span>
+            <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
+              ₹{data.value.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600" style={{ fontSize: '13px' }}>Percentage:</span>
+            <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
+              {data.payload.percentage}%
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+// Custom Tooltip for Production (Quantity in pieces)
+const ProductionTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
+        <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <div key={index} className="flex items-center gap-2 mt-1">
+            <div 
+              className="w-3 h-3 rounded-full" 
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
+              {entry.name}:
+            </span>
+            <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
+              {entry.value.toLocaleString()} pcs
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+// Custom Tooltip for Wastage (Weight in kg)
+const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
+        <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <div key={index} className="flex items-center gap-2 mt-1">
+            <div 
+              className="w-3 h-3 rounded-full" 
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
+              {entry.name}:
+            </span>
+            <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
+              {entry.value.toFixed(2)} kg
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
 
 type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
-export function Analytics({ context }: AnalyticsProps) {
-  const [activeView, setActiveView] = useState<'profit' | 'expense' | 'sales'>('profit');
+export function Analytics({ context, selectedStoreId, highlightRequestId }: AnalyticsProps) {
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const isManager = context.user?.role === 'manager';
+  const isProductionIncharge = context.user?.designation === 'production_incharge';
+  const isStoreIncharge = context.user?.designation === 'store_incharge';
+  
+  // Analytics Mode: 'store' or 'production'
+  // Production incharges default to production analytics
+  // Store incharges default to store analytics
+  const [analyticsMode, setAnalyticsMode] = useState<'store' | 'production'>(
+    isProductionIncharge ? 'production' : 'store'
+  );
+  
+  // Local store selector for Store Analytics mode
+  // Use selectedStoreId from prop if available (for backwards compatibility), otherwise null for cluster heads/managers/production incharges
+  const [localSelectedStoreId, setLocalSelectedStoreId] = useState<string | null>(
+    selectedStoreId || (isClusterHead || isManager || isProductionIncharge ? null : context.user?.storeId) || null
+  );
+  
+  // For Store Analytics mode, use local store selector
+  // For Production Analytics mode, this is ignored (we use production house selector instead)
+  const effectiveStoreId = analyticsMode === 'store' 
+    ? localSelectedStoreId 
+    : null; // In Production mode, we don't filter by store
+  
+  // DEBUG: Log the effective store ID being used
+  console.log('🏪 Analytics effectiveStoreId:', effectiveStoreId);
+  console.log('🏪 Analytics mode:', analyticsMode);
+  console.log('🏪 Local selected store ID:', localSelectedStoreId);
+  console.log('🏪 All stores in context:', context.stores);
+  console.log('🏪 Number of stores:', context.stores?.length);
+  
+  type ActiveView = 'profit' | 'expense' | 'sales' | 'datacapture' | 'production' | 'production-requests' | 'recalibration-reports' | 'store-recalibration';
+  const [activeView, setActiveView] = useState<ActiveView>(
+    highlightRequestId ? 'production-requests' : 'profit'
+  );
+  
+  // Debug: Log activeView changes
+  useEffect(() => {
+    console.log('📊 activeView changed to:', activeView);
+  }, [activeView]);
+  
+  // When switching analytics mode, change the active view
+  useEffect(() => {
+    if (analyticsMode === 'production' && activeView !== 'production' && activeView !== 'recalibration-reports' && activeView !== 'production-requests') {
+      setActiveView('production');
+    } else if ((activeView === 'production' || activeView === 'recalibration-reports' || activeView === 'production-requests') && analyticsMode === 'store') {
+      setActiveView('profit');
+    } else if (activeView === 'store-recalibration' && analyticsMode === 'production') {
+      setActiveView('production');
+    }
+  }, [analyticsMode]);
+  
+  const [salesSubView, setSalesSubView] = useState<'revenue' | 'category'>('revenue');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('monthly');
+  const [wastageTimeFilter, setWastageTimeFilter] = useState<TimeFilter>('monthly');
   const [dateRange, setDateRange] = useState({
     from: '2025-03-01',
     to: '2025-12-25'
   });
+  const [todayLeaveCount, setTodayLeaveCount] = useState<number>(0);
+  const [loadingLeaves, setLoadingLeaves] = useState(true);
+  const [payoutsData, setPayoutsData] = useState<any[]>([]);
+  const [employeesData, setEmployeesData] = useState<any[]>([]);
+  const [showRecalibration, setShowRecalibration] = useState(false);
+  const [stores, setStores] = useState<api.Store[]>([]);
+  const [latestRecalibration, setLatestRecalibration] = useState<any>(null);
+  const [previousMonthStock, setPreviousMonthStock] = useState<any>(null);
+  const [sopThresholds, setSopThresholds] = useState<any>({
+    chickenMomos: { dough: 25, stuffing: 15 },
+    chickenCheeseMomos: { dough: 25, stuffing: 18 },
+    vegMomos: { dough: 25, stuffing: 12 },
+    cheeseCornMomos: { dough: 25, stuffing: 16 },
+    paneerMomos: { dough: 25, stuffing: 14 },
+    vegKurkure: { dough: 28, stuffing: 12, batter: 10, coating: 5 },
+    chickenKurkure: { dough: 28, stuffing: 15, batter: 10, coating: 5 }
+  });
+  const [editingSop, setEditingSop] = useState(false);
+  const [tempSopThresholds, setTempSopThresholds] = useState<any>(null);
+  const [sopDiversionPercent, setSopDiversionPercent] = useState<number>(5); // Default 5% diversion allowed
+  const [tempDiversionPercent, setTempDiversionPercent] = useState<number>(5);
+  // Production incharges are locked to their production house, cluster heads can select any
+  const [selectedProductionHouseId, setSelectedProductionHouseId] = useState<string | null>(
+    isProductionIncharge ? (context.user?.storeId || null) : null
+  );
   
   const salesData = context.salesData;
   const inventoryData = context.inventory;
   const overheadData = context.overheads;
+  const fixedCostsData = context.fixedCosts;
+  const productionData = context.productionData;
   const loading = false;
+  
+  // Production date selector - defaults to most recent production date
+  const [selectedProductionDate, setSelectedProductionDate] = useState<string | null>(() => {
+    // Get all unique dates from production data for the selected production house
+    const dates = productionData
+      .map(p => p.date)
+      .filter((date, index, self) => self.indexOf(date) === index)
+      .sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
+    
+    // Return the most recent date, or yesterday if no data
+    if (dates.length > 0) {
+      return dates[0];
+    } else {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toISOString().split('T')[0];
+    }
+  });
+  
+  // SOP Compliance date selector - defaults to most recent approved production date
+  const [sopComplianceDate, setSopComplianceDate] = useState<string>(() => {
+    // Get the most recent date with approved production
+    const dates = productionData
+      .filter(p => p.approvalStatus === 'approved')
+      .map(p => p.date)
+      .filter((date, index, self) => self.indexOf(date) === index)
+      .sort((a, b) => b.localeCompare(a));
+    
+    if (dates.length > 0) {
+      return dates[0];
+    } else {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toISOString().split('T')[0];
+    }
+  });
+  
+  // Production date range selector
+  type DateRangeType = 'today' | 'week' | 'month' | 'year' | 'custom';
+  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('today');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  
+  // Helper function to calculate date range based on selection
+  const getDateRangeBounds = (): { startDate: string; endDate: string } => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Helper to convert Date to YYYY-MM-DD in local timezone
+    const toLocalDateString = (date: Date): string => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    let startDate: Date;
+    let endDate: Date;
+    
+    switch (productionDateRange) {
+      case 'today':
+        startDate = new Date(today);
+        endDate = new Date(today);
+        break;
+      
+      case 'week':
+        // Start of current week (Monday)
+        startDate = new Date(today);
+        const dayOfWeek = startDate.getDay();
+        const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Adjust when day is Sunday
+        startDate.setDate(startDate.getDate() + diff);
+        // End of current week (Sunday)
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 6);
+        break;
+      
+      case 'month':
+        // Start of current month
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        // End of current month (last day)
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        break;
+      
+      case 'year':
+        // Start of current year
+        startDate = new Date(today.getFullYear(), 0, 1);
+        // End of current year (December 31)
+        endDate = new Date(today.getFullYear(), 11, 31);
+        break;
+      
+      case 'custom':
+        if (customStartDate && customEndDate) {
+          startDate = new Date(customStartDate + 'T00:00:00');
+          endDate = new Date(customEndDate + 'T00:00:00');
+        } else {
+          // Fallback to today if custom dates not set
+          startDate = new Date(today);
+          endDate = new Date(today);
+        }
+        break;
+      
+      default:
+        startDate = new Date(today);
+        endDate = new Date(today);
+    }
+    
+    return {
+      startDate: toLocalDateString(startDate),
+      endDate: toLocalDateString(endDate)
+    };
+  };
+  
+  // Update selected date when production house changes or production data changes
+  useEffect(() => {
+    // In production analytics mode, always use selectedProductionHouseId
+    const filterById = selectedProductionHouseId;
+    
+    const filteredDates = productionData
+      .filter(p => {
+        if (!filterById) return true;
+        const matchesStoreId = p.storeId === filterById;
+        const matchesProductionHouseId = p.productionHouseId === filterById;
+        const phId = p.productionHouseId || p.storeId;
+        return matchesStoreId || matchesProductionHouseId || phId === filterById;
+      })
+      .map(p => p.date)
+      .filter((date, index, self) => self.indexOf(date) === index)
+      .sort((a, b) => b.localeCompare(a));
+    
+    if (filteredDates.length > 0) {
+      setSelectedProductionDate(filteredDates[0]); // Set to most recent
+    } else {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      setSelectedProductionDate(yesterday.toISOString().split('T')[0]);
+    }
+  }, [selectedProductionHouseId, productionData]);
+
+  // Fetch latest recalibration and calculate previous month's stock for carry-forward
+  useEffect(() => {
+    console.log('🔄 Carry-Forward useEffect triggered:', {
+      analyticsMode,
+      selectedProductionHouseId,
+      hasProductionData: !!context.productionData?.length,
+      hasProductionRequests: !!context.productionRequests?.length
+    });
+    
+    if (analyticsMode === 'production' && selectedProductionHouseId) {
+      console.log('✅ Conditions met - fetching opening balance...');
+      fetchRecalibrationAndCalculateOpeningBalance();
+    } else {
+      console.log('❌ Conditions not met for carry-forward');
+    }
+  }, [selectedProductionHouseId, analyticsMode, context.productionData, context.productionRequests]);
+
+  // Auto-select first production house for Cluster Heads and Managers in Production Analytics mode
+  useEffect(() => {
+    if (
+      (isClusterHead || isManager) && 
+      analyticsMode === 'production' && 
+      !selectedProductionHouseId && 
+      context.productionHouses && 
+      context.productionHouses.length > 0
+    ) {
+      const firstProductionHouse = context.productionHouses[0];
+      console.log('🏭 Auto-selecting first production house for Cluster Head/Manager:', firstProductionHouse.id, firstProductionHouse.name);
+      setSelectedProductionHouseId(firstProductionHouse.id);
+    }
+  }, [analyticsMode, isClusterHead, isManager, context.productionHouses]);
+
+  async function fetchRecalibrationAndCalculateOpeningBalance() {
+    try {
+      const currentMonth = new Date().toISOString().substring(0, 7);
+      
+      console.log('🚀 Starting opening balance calculation:');
+      console.log('   Current month:', currentMonth);
+      console.log('   Selected production house ID:', selectedProductionHouseId);
+      console.log('   Available production data records:', productionData.length);
+      console.log('   Available production requests:', context.productionRequests?.length || 0);
+      
+      // Resolve production house UUID
+      let productionHouseUUID = selectedProductionHouseId;
+      if (selectedProductionHouseId && selectedProductionHouseId.startsWith('STORE-')) {
+        const userStore = context.stores?.find(s => s.id === selectedProductionHouseId);
+        if (userStore?.productionHouseId) {
+          productionHouseUUID = userStore.productionHouseId;
+          console.log('   Resolved production house UUID:', productionHouseUUID);
+        }
+      }
+
+      // Fetch latest recalibration for this production house
+      // IMPORTANT: Recalibration might be saved with either:
+      // 1. The production house UUID (when created by cluster head/operations manager)
+      // 2. The store ID (when created by production incharge who uses their storeId)
+      // We need to try both and use whichever returns data
+      
+      let recalResponse = await api.fetchLatestRecalibration(
+        context.user?.accessToken || '', 
+        productionHouseUUID || ''
+      );
+      
+      // If no recalibration found with UUID, try to find it using the store ID
+      // that maps to this production house (for production incharge created recalibrations)
+      if (!recalResponse?.record && productionHouseUUID) {
+        console.log('   No recalibration found with UUID, checking with mapped store ID...');
+        
+        // Find store(s) that map to this production house
+        const mappedStores = context.stores?.filter(s => s.productionHouseId === productionHouseUUID);
+        console.log('   Stores mapped to this production house:', mappedStores?.map(s => ({ id: s.id, name: s.name })));
+        
+        // Try each mapped store ID (usually there's only one production house store)
+        if (mappedStores && mappedStores.length > 0) {
+          for (const mappedStore of mappedStores) {
+            console.log('   Trying to fetch recalibration with store ID:', mappedStore.id);
+            const storeRecalResponse = await api.fetchLatestRecalibration(
+              context.user?.accessToken || '', 
+              mappedStore.id
+            );
+            
+            if (storeRecalResponse?.record) {
+              console.log('   ✅ Found recalibration using store ID:', mappedStore.id);
+              recalResponse = storeRecalResponse;
+              break;
+            }
+          }
+        }
+      }
+      
+      console.log('📦 Recalibration Response:', recalResponse);
+      
+      // Check if recalibration exists and is from current month
+      let openingBalance: any = null;
+      
+      if (recalResponse?.record) {
+        const recalDate = recalResponse.record.date.substring(0, 7); // "2026-01"
+        
+        console.log('📅 Recalibration date comparison:', {
+          recalDate,
+          currentMonth,
+          match: recalDate === currentMonth
+        });
+        
+        if (recalDate === currentMonth) {
+          // Recalibration exists for current month - use it as opening balance
+          console.log('✅ Using current month recalibration as opening balance');
+          console.log('   Recalibration items:', recalResponse.record.items);
+          openingBalance = {};
+          recalResponse.record.items.forEach((item: any) => {
+            openingBalance[item.itemId] = item.actualQuantity;
+          });
+          console.log('   Parsed opening balance:', openingBalance);
+        } else {
+          // Recalibration is from a previous month - calculate from that point
+          console.log('📅 Recalibration from previous month, calculating forward...');
+          openingBalance = calculateStockFromRecalibration(recalResponse.record, currentMonth);
+        }
+      } else {
+        // No recalibration - calculate from previous month's production/deliveries
+        console.log('🔢 No recalibration found, calculating from previous month...');
+        openingBalance = calculatePreviousMonthClosingStock(productionHouseUUID);
+      }
+      
+      setLatestRecalibration(recalResponse?.record || null);
+      setPreviousMonthStock(openingBalance);
+      
+      console.log('💰 Opening Balance Calculated:', openingBalance);
+    } catch (error) {
+      console.error('Error fetching recalibration:', error);
+    }
+  }
+
+  function calculateStockFromRecalibration(recalRecord: any, targetMonth: string): any {
+    // Get the recalibration date
+    const recalMonth = recalRecord.date.substring(0, 7);
+    
+    // Start with recalibrated quantities
+    const stock: any = {};
+    recalRecord.items.forEach((item: any) => {
+      stock[item.itemId] = item.actualQuantity;
+    });
+    
+    // Calculate months between recalibration and target month
+    const recalDate = new Date(recalMonth + '-01');
+    const targetDate = new Date(targetMonth + '-01');
+    
+    // For each month between recalibration and current, add production and subtract deliveries
+    let currentDate = new Date(recalDate);
+    currentDate.setMonth(currentDate.getMonth() + 1); // Start from month after recalibration
+    
+    while (currentDate < targetDate) {
+      const monthStr = currentDate.toISOString().substring(0, 7);
+      
+      // Get production for this month
+      const monthProduction = getMonthProduction(selectedProductionHouseId, monthStr);
+      const monthDeliveries = getMonthDeliveries(selectedProductionHouseId, monthStr);
+      
+      // Update stock
+      ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'].forEach(type => {
+        stock[type] = (stock[type] || 0) + (monthProduction[type] || 0) - (monthDeliveries[type] || 0);
+      });
+      
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+    
+    return stock;
+  }
+
+  function calculatePreviousMonthClosingStock(productionHouseUUID: string | null): any {
+    // Get previous month - properly handle year boundaries
+    const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
+    const [year, month] = currentMonth.split('-').map(Number);
+    
+    // Calculate previous month
+    let prevYear = year;
+    let prevMonth = month - 1;
+    
+    // Handle year boundary (if current month is January)
+    if (prevMonth === 0) {
+      prevMonth = 12;
+      prevYear = year - 1;
+    }
+    
+    // Format as YYYY-MM
+    const previousMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+    
+    console.log('📊 Calculating previous month closing stock for:', previousMonthStr);
+    console.log('   Current month:', currentMonth, '→ Previous month:', previousMonthStr);
+    
+    // Get production and deliveries for previous month
+    const production = getMonthProduction(productionHouseUUID, previousMonthStr);
+    const deliveries = getMonthDeliveries(productionHouseUUID, previousMonthStr);
+    
+    // Calculate closing stock (production - deliveries)
+    const closingStock: any = {};
+    ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'].forEach(type => {
+      closingStock[type] = (production[type] || 0) - (deliveries[type] || 0);
+    });
+    
+    console.log('  Previous month production:', production);
+    console.log('  Previous month deliveries:', deliveries);
+    console.log('  Calculated closing stock:', closingStock);
+    
+    return closingStock;
+  }
+
+  function getMonthProduction(phId: string | null, monthStr: string): any {
+    if (!phId) {
+      console.log('⚠️ getMonthProduction called with null phId');
+      return {};
+    }
+    
+    console.log(`🔍 Getting production for phId: ${phId}, month: ${monthStr}`);
+    console.log(`   Total production records available: ${productionData.length}`);
+    
+    const filteredProduction = productionData.filter(p => {
+      if (!p.date.startsWith(monthStr)) return false;
+      
+      const matchesStoreId = p.storeId === phId;
+      const matchesProductionHouseId = p.productionHouseId === phId;
+      
+      let recordProductionHouseId = p.productionHouseId;
+      if (!recordProductionHouseId && p.storeId) {
+        const store = context.stores?.find(s => s.id === p.storeId);
+        recordProductionHouseId = store?.productionHouseId || null;
+      }
+      
+      const resolvedPhId = recordProductionHouseId || p.storeId;
+      return matchesStoreId || matchesProductionHouseId || resolvedPhId === phId;
+    });
+    
+    console.log(`   Filtered production records: ${filteredProduction.length}`);
+    
+    return filteredProduction.reduce((acc, p) => ({
+      chicken: acc.chicken + (p.chickenMomos?.final || 0),
+      chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
+      veg: acc.veg + (p.vegMomos?.final || 0),
+      cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
+      paneer: acc.paneer + (p.paneerMomos?.final || 0),
+      vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
+      chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
+    }), {
+      chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
+      paneer: 0, vegKurkure: 0, chickenKurkure: 0
+    });
+  }
+
+  function getMonthDeliveries(phId: string | null, monthStr: string): any {
+    if (!phId) {
+      console.log('⚠️ getMonthDeliveries called with null phId');
+      return {};
+    }
+    
+    console.log(`🚚 Getting deliveries for phId: ${phId}, month: ${monthStr}`);
+    console.log(`   Total production requests available: ${context.productionRequests?.length || 0}`);
+    
+    // Resolve UUID if needed
+    let productionHouseUUID = phId;
+    if (phId && phId.startsWith('STORE-')) {
+      const userStore = context.stores?.find(s => s.id === phId);
+      if (userStore?.productionHouseId) {
+        productionHouseUUID = userStore.productionHouseId;
+        console.log(`   Resolved UUID: ${productionHouseUUID}`);
+      }
+    }
+    
+    const fulfilledRequests = (context.productionRequests || []).filter(req => {
+      if (req.status !== 'delivered') return false;
+      
+      const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+      if (!requestDate || !requestDate.startsWith(monthStr)) return false;
+      
+      const requestingStore = context.stores?.find(s => s.id === req.storeId);
+      return requestingStore?.productionHouseId === productionHouseUUID;
+    });
+    
+    console.log(`   Filtered delivered requests: ${fulfilledRequests.length}`);
+    
+    return fulfilledRequests.reduce((acc, req) => ({
+      chicken: acc.chicken + (req.chickenMomos || 0),
+      chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
+      veg: acc.veg + (req.vegMomos || 0),
+      cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
+      paneer: acc.paneer + (req.paneerMomos || 0),
+      vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
+      chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
+    }), {
+      chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
+      paneer: 0, vegKurkure: 0, chickenKurkure: 0
+    });
+  }
+
+  // DEBUG: Log all production data to see what IDs are present
+  console.log('📊 Analytics - Production Data Debug:');
+  console.log('  - Total production records:', productionData.length);
+  console.log('  - Production data records:', productionData.map(p => ({
+    id: p.id,
+    date: p.date,
+    storeId: p.storeId,
+    productionHouseId: p.productionHouseId,
+    approvalStatus: p.approvalStatus,
+    chickenMomos: p.chickenMomos?.final || 0,
+    totalProduction: (p.chickenMomos?.final || 0) + (p.vegMomos?.final || 0) + (p.chickenCheeseMomos?.final || 0) + (p.cheeseCornMomos?.final || 0) + (p.paneerMomos?.final || 0) + (p.vegKurkureMomos?.final || 0) + (p.chickenKurkureMomos?.final || 0)
+  })));
+  console.log('  - Selected production house ID:', selectedProductionHouseId);
+  console.log('  - Analytics mode:', analyticsMode);
+  console.log('  - User storeId:', context.user?.storeId);
+  console.log('  - User designation:', context.user?.designation);
+  console.log('  - Is Production Incharge:', isProductionIncharge);
+  console.log('  - Available production houses:', context.productionHouses.map(h => ({ id: h.id, name: h.name })));
+  console.log('  - Available stores:', context.stores?.map(s => ({ id: s.id, name: s.name, productionHouseId: s.productionHouseId })));
+  console.log('  🚨 PRODUCTION INCHARGE SPECIFIC DEBUG:');
+  console.log('     - Is this user a production incharge?', isProductionIncharge);
+  console.log('     - User storeId (should be production house ID):', context.user?.storeId);
+  console.log('     - Does user storeId match any production house?', context.productionHouses.find(ph => ph.id === context.user?.storeId));
+  console.log('     - Production data storeIds:', [...new Set(productionData.map(p => p.storeId))]);
+  console.log('     - Production data productionHouseIds:', [...new Set(productionData.map(p => p.productionHouseId))]);
+  console.log('     - Stores that map to user production house:', context.stores?.filter(s => s.productionHouseId === context.user?.storeId).map(s => ({ id: s.id, name: s.name })));
+
+  // Helper function to filter data by time period
+  const filterByTimeRange = (data: any[], dateField: string = 'date') => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    return data.filter(item => {
+      const itemDate = new Date(item[dateField]);
+      const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
+      
+      switch (timeFilter) {
+        case 'daily':
+          // Show last 10 days to support daily trend charts
+          const tenDaysAgo = new Date(today);
+          tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+          return itemDateOnly >= tenDaysAgo && itemDateOnly <= today;
+          
+        case 'weekly':
+          const weekAgo = new Date(today);
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return itemDateOnly >= weekAgo && itemDateOnly <= today;
+          
+        case 'monthly':
+          const monthAgo = new Date(today);
+          monthAgo.setMonth(monthAgo.getMonth() - 1);
+          return itemDateOnly >= monthAgo && itemDateOnly <= today;
+          
+        case 'yearly':
+          const yearAgo = new Date(today);
+          yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+          return itemDateOnly >= yearAgo && itemDateOnly <= today;
+          
+        case 'custom':
+          const fromDate = new Date(dateRange.from);
+          const toDate = new Date(dateRange.to);
+          return itemDateOnly >= fromDate && itemDateOnly <= toDate;
+          
+        default:
+          return true;
+      }
+    });
+  };
+
+  // Apply time filtering first
+  const timeFilteredSalesData = filterByTimeRange(salesData);
+  const timeFilteredInventoryData = filterByTimeRange(inventoryData);
+  const timeFilteredOverheadData = filterByTimeRange(overheadData);
+  const timeFilteredFixedCostsData = filterByTimeRange(fixedCostsData);
+  const timeFilteredPayoutsData = filterByTimeRange(payoutsData, 'payoutDate');
+
+  // Filter data by selected store (after time filtering)
+  const filteredSalesData = useMemo(() => {
+    console.log('🔍 === SALES DATA FILTERING DEBUG ===');
+    console.log('Total sales records (time-filtered):', timeFilteredSalesData.length);
+    console.log('effectiveStoreId:', effectiveStoreId);
+    console.log('User role:', context.user?.role);
+    console.log('All sales storeIds:', timeFilteredSalesData.map(s => s.storeId));
+    console.log('User storeId:', context.user?.storeId);
+    
+    // Debug: Show all sales with their dates and storeIds
+    const dec28Sales = timeFilteredSalesData.filter(sale => {
+      const saleDate = new Date(sale.date);
+      return saleDate.getDate() === 28 && saleDate.getMonth() === 11; // December is month 11
+    });
+    console.log('December 28th sales found:', dec28Sales.length);
+    dec28Sales.forEach(sale => {
+      console.log(`  - Date: ${sale.date}, StoreId: ${sale.storeId}, Revenue: ${(sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0)}`);
+    });
+    
+    if (!effectiveStoreId) {
+      console.log('No store filter - returning all', timeFilteredSalesData.length, 'sales');
+      return timeFilteredSalesData;
+    }
+    
+    // IMPORTANT: Only include sales with exact storeId match
+    // Do NOT include legacy data without storeId when viewing a specific store
+    const filtered = timeFilteredSalesData.filter(sale => 
+      sale.storeId === effectiveStoreId
+    );
+    console.log('After store filtering (exact match only):', filtered.length, 'sales');
+    console.log('Filtered sales details:', filtered.map(s => ({ date: s.date, storeId: s.storeId, total: (s.offlineSales || 0) + (s.onlineSales || 0) })));
+    
+    // Show what got filtered out
+    const filteredOut = timeFilteredSalesData.filter(sale => 
+      sale.storeId !== effectiveStoreId
+    );
+    console.log('Filtered out (all non-matching storeIds):', filteredOut.length, 'sales');
+    if (filteredOut.length > 0) {
+      console.log('Sample filtered out sales storeIds:', filteredOut.slice(0, 5).map(s => s.storeId));
+    }
+    
+    console.log('🔍 === END DEBUG ===');
+    return filtered;
+  }, [timeFilteredSalesData, effectiveStoreId]);
+
+  const filteredInventoryData = useMemo(() => {
+    console.log('🔍 === INVENTORY DATA FILTERING DEBUG ===');
+    console.log('Total inventory records (time-filtered):', timeFilteredInventoryData.length);
+    console.log('effectiveStoreId:', effectiveStoreId);
+    
+    // Debug: Show all inventory with their dates and storeIds
+    const dec28Inventory = timeFilteredInventoryData.filter(item => {
+      const itemDate = new Date(item.date);
+      return itemDate.getDate() === 28 && itemDate.getMonth() === 11; // December is month 11
+    });
+    console.log('December 28th inventory found:', dec28Inventory.length);
+    dec28Inventory.forEach(item => {
+      console.log(`  - Date: ${item.date}, StoreId: ${item.storeId}, Cost: ${item.totalCost || 0}`);
+    });
+    
+    if (!effectiveStoreId) {
+      console.log('No store filter - returning all', timeFilteredInventoryData.length, 'inventory items');
+      return timeFilteredInventoryData;
+    }
+    
+    // IMPORTANT: Only include inventory with exact storeId match
+    const filtered = timeFilteredInventoryData.filter(item => 
+      item.storeId === effectiveStoreId
+    );
+    console.log('After store filtering (exact match only):', filtered.length, 'inventory items');
+    console.log('🔍 === END INVENTORY DEBUG ===');
+    
+    return filtered;
+  }, [timeFilteredInventoryData, effectiveStoreId]);
+
+  const filteredOverheadData = useMemo(() => {
+    console.log('🔍 === OVERHEAD DATA FILTERING DEBUG ===');
+    console.log('Total overhead records (time-filtered):', timeFilteredOverheadData.length);
+    console.log('effectiveStoreId:', effectiveStoreId);
+    
+    // Debug: Show all overhead with their dates and storeIds
+    const dec28Overhead = timeFilteredOverheadData.filter(item => {
+      const itemDate = new Date(item.date);
+      return itemDate.getDate() === 28 && itemDate.getMonth() === 11; // December is month 11
+    });
+    console.log('December 28th overhead found:', dec28Overhead.length);
+    dec28Overhead.forEach(item => {
+      console.log(`  - Date: ${item.date}, StoreId: ${item.storeId}, Amount: ${item.amount || 0}`);
+    });
+    
+    if (!effectiveStoreId) {
+      console.log('No store filter - returning all', timeFilteredOverheadData.length, 'overhead items');
+      return timeFilteredOverheadData;
+    }
+    
+    // IMPORTANT: Only include overhead with exact storeId match
+    const filtered = timeFilteredOverheadData.filter(item => 
+      item.storeId === effectiveStoreId
+    );
+    console.log('After store filtering (exact match only):', filtered.length, 'overhead items');
+    console.log('Filtered overhead storeIds:', filtered.map(o => ({ date: o.date, storeId: o.storeId, amount: o.amount })));
+    console.log('🔍 === END OVERHEAD DEBUG ===');
+    
+    return filtered;
+  }, [timeFilteredOverheadData, effectiveStoreId]);
+
+  const filteredFixedCostsData = useMemo(() => {
+    if (!effectiveStoreId) return timeFilteredFixedCostsData;
+    // IMPORTANT: Only include exact storeId matches
+    return timeFilteredFixedCostsData.filter(item => 
+      item.storeId === effectiveStoreId
+    );
+  }, [timeFilteredFixedCostsData, effectiveStoreId]);
+
+  const filteredEmployeesData = useMemo(() => {
+    if (!effectiveStoreId) return employeesData;
+    // IMPORTANT: Only include exact storeId matches
+    return employeesData.filter(emp => 
+      emp.storeId === effectiveStoreId
+    );
+  }, [employeesData, effectiveStoreId]);
+
+  const filteredPayoutsData = useMemo(() => {
+    // Start with time-filtered payouts
+    let filtered = timeFilteredPayoutsData;
+    
+    // Then filter by store if selected
+    // Use filteredEmployeesData to ensure employees with null storeIds are included
+    if (effectiveStoreId) {
+      const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
+      filtered = filtered.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+    }
+    
+    return filtered;
+  }, [timeFilteredPayoutsData, filteredEmployeesData, effectiveStoreId]);
+
+  // Load payouts and employees data
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [payouts, employees] = await Promise.all([
+          api.getPayouts(),
+          api.getEmployees()
+        ]);
+        setPayoutsData(payouts || []);
+        setEmployeesData(employees || []);
+      } catch (error) {
+        console.error('Error loading payouts and employees:', error);
+        setPayoutsData([]);
+        setEmployeesData([]);
+      }
+    };
+    
+    loadData();
+  }, []);
+
+  // Load stores for cluster heads (for orphaned data fix modal)
+  useEffect(() => {
+    const loadStores = async () => {
+      if (!isClusterHead) return;
+      
+      try {
+        const storesList = await api.getStores();
+        setStores(storesList);
+      } catch (error) {
+        console.error('Error loading stores:', error);
+      }
+    };
+    
+    loadStores();
+  }, [isClusterHead]);
+
+  // Helper function to get fresh access token
+  const getFreshAccessToken = async (): Promise<string | null> => {
+    try {
+      const supabase = getSupabaseClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      return session?.access_token || null;
+    } catch (error) {
+      console.error('Error getting fresh token:', error);
+      return null;
+    }
+  };
+
+  // Load leave data for today
+  useEffect(() => {
+    const loadTodayLeaves = async () => {
+      if (!context.user) return;
+      
+      try {
+        setLoadingLeaves(true);
+        
+        // Get fresh access token
+        const accessToken = await getFreshAccessToken();
+        if (!accessToken) {
+          console.error('No valid access token available');
+          return;
+        }
+        
+        const today = new Date().toISOString().split('T')[0];
+        
+        if (context.user.role === 'cluster_head') {
+          // Cluster head: get all leaves
+          const allLeaves = await api.getAllLeaves(accessToken);
+          const todayApprovedLeaves = allLeaves.filter(
+            (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
+          );
+          
+          // Filter by store if selected (include null/undefined storeIds for backward compatibility)
+          if (context.user.storeId) {
+            // Get employees for this store
+            const employees = await api.getAllEmployees(accessToken);
+            const storeEmployeeIds = employees
+              .filter(emp => 
+                emp.storeId === context.user.storeId || 
+                emp.storeId === null || 
+                emp.storeId === undefined
+              )
+              .map(emp => emp.employeeId);
+            
+            const storeLeaves = todayApprovedLeaves.filter(
+              leave => storeEmployeeIds.includes(leave.employeeId)
+            );
+            setTodayLeaveCount(storeLeaves.length);
+          } else {
+            setTodayLeaveCount(todayApprovedLeaves.length);
+          }
+        } else if (context.user.role === 'manager' && context.user.employeeId) {
+          // Manager: get leaves for their employees
+          const employees = await api.getEmployeesByManager(context.user.employeeId, accessToken);
+          let managerLeaveCount = 0;
+          
+          for (const emp of employees) {
+            const leaves = await api.getLeaves(emp.employeeId, accessToken);
+            const todayLeaves = leaves.filter(
+              (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
+            );
+            managerLeaveCount += todayLeaves.length;
+          }
+          
+          setTodayLeaveCount(managerLeaveCount);
+        } else {
+          setTodayLeaveCount(0);
+        }
+      } catch (error) {
+        console.error('Error loading today\'s leaves:', error);
+        setTodayLeaveCount(0);
+      } finally {
+        setLoadingLeaves(false);
+      }
+    };
+    
+    loadTodayLeaves();
+  }, [context.user]);
+
+  // Auto-switch to production-requests tab when notification is clicked
+  useEffect(() => {
+    console.log('📊 Analytics - highlightRequestId changed:', highlightRequestId);
+    if (highlightRequestId) {
+      console.log('📊 Analytics - Switching to production-requests tab');
+      setActiveView('production-requests');
+    }
+  }, [highlightRequestId]);
+
+  // Get period label for summary cards
+  const getPeriodLabel = () => {
+    switch (timeFilter) {
+      case 'daily': return 'Last 10 days';
+      case 'weekly': return 'Last 7 days';
+      case 'monthly': return 'Last 30 days';
+      case 'yearly': return 'Last 365 days';
+      case 'custom': return `${dateRange.from} to ${dateRange.to}`;
+      default: return 'Current period';
+    }
+  };
 
   // Calculate analytics metrics
   const calculateMetrics = () => {
+    console.log('💰 === METRICS CALCULATION DEBUG ===');
+    console.log('Time filter:', timeFilter);
+    console.log('Filtered sales data count:', filteredSalesData.length);
+    console.log('Filtered inventory data count:', filteredInventoryData.length);
+    console.log('Filtered overhead data count:', filteredOverheadData.length);
+    console.log('Filtered fixed costs data count:', filteredFixedCostsData.length);
+    
     // Calculate revenue from sales
-    const totalRevenue = salesData.reduce((sum, sale) => {
+    const totalRevenue = filteredSalesData.reduce((sum, sale) => {
       return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0);
     }, 0);
+    
+    console.log('Total revenue calculated:', totalRevenue);
 
-    const onlineRevenue = salesData.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
-    const offlineRevenue = salesData.reduce((sum, sale) => {
+    const onlineRevenue = filteredSalesData.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+    const offlineRevenue = filteredSalesData.reduce((sum, sale) => {
       return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0);
     }, 0);
 
     // Calculate expenses from inventory
-    const inventoryExpenses = inventoryData.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+    const inventoryExpenses = filteredInventoryData.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+    console.log('Inventory expenses:', inventoryExpenses);
     
     // Calculate overhead expenses
-    const overheadExpenses = overheadData.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const overheadExpenses = filteredOverheadData.reduce((sum, item) => sum + (item.amount || 0), 0);
 
-    // Calculate expenses from salaries
-    const salaryExpenses = salesData.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+    // Calculate fixed costs
+    const electricityExpenses = filteredFixedCostsData
+      .filter(fc => fc.category === 'electricity')
+      .reduce((sum, fc) => sum + (fc.amount || 0), 0);
+    
+    const rentExpenses = filteredFixedCostsData
+      .filter(fc => fc.category === 'rent')
+      .reduce((sum, fc) => sum + (fc.amount || 0), 0);
 
-    const totalCosts = inventoryExpenses + overheadExpenses + salaryExpenses;
+    // Calculate contract worker expenses (from salesData.employeeSalary)
+    // These are daily wages, so they should be filtered by time
+    const contractWorkerExpenses = filteredSalesData.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+
+    // Calculate permanent employee expenses (from payoutsData)
+    // IMPORTANT: Permanent employee salaries are MONTHLY expenses
+    // They should ONLY appear when viewing "Monthly" or "Yearly" time periods
+    // For daily/weekly, only contract workers appear
+    let permanentEmployeeExpenses = 0;
+    
+    if (timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') {
+      // For monthly/yearly/custom view: Include ALL permanent employee payouts (not date-filtered)
+      // Filter by store if needed
+      let allPayouts = payoutsData;
+      
+      if (effectiveStoreId) {
+        // Use filteredEmployeesData to include employees with null storeIds
+        const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
+        allPayouts = allPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+      }
+      
+      permanentEmployeeExpenses = allPayouts.reduce((sum, payout) => {
+        // Find the employee for this payout
+        const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+        // Only include if employee is fulltime (permanent)
+        if (employee && employee.type === 'fulltime') {
+          return sum + (payout.amount || 0);
+        }
+        return sum;
+      }, 0);
+    }
+    // For daily/weekly view, permanentEmployeeExpenses stays 0
+
+    // Total salary expenses = contract workers + permanent employees
+    const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses;
+
+    // Total fixed costs = electricity + rent + salaries
+    const fixedCostsTotal = electricityExpenses + rentExpenses + salaryExpenses;
+
+    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal;
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
+
+    console.log('Total expenses:', totalCosts);
+    console.log('Net profit:', netProfit);
+    console.log('💰 === END METRICS DEBUG ===');
 
     return {
       totalRevenue,
@@ -55,7 +1100,12 @@ export function Analytics({ context }: AnalyticsProps) {
       totalExpenses: totalCosts,
       inventoryExpenses,
       overheadExpenses,
+      fixedCostsTotal,
+      electricityExpenses,
+      rentExpenses,
       salaryExpenses,
+      contractWorkerExpenses,
+      permanentEmployeeExpenses,
       netProfit,
       profitMargin
     };
@@ -67,7 +1117,7 @@ export function Analytics({ context }: AnalyticsProps) {
   const prepareMonthlyData = () => {
     const monthlyData: any = {};
 
-    salesData.forEach(sale => {
+    filteredSalesData.forEach(sale => {
       const date = new Date(sale.date);
       const monthKey = date.toLocaleString('default', { month: 'short' });
       
@@ -84,7 +1134,7 @@ export function Analytics({ context }: AnalyticsProps) {
       monthlyData[monthKey].revenue += revenue;
     });
 
-    inventoryData.forEach(item => {
+    filteredInventoryData.forEach(item => {
       const date = new Date(item.date);
       const monthKey = date.toLocaleString('default', { month: 'short' });
       
@@ -101,7 +1151,7 @@ export function Analytics({ context }: AnalyticsProps) {
     });
 
     // Add overhead expenses
-    overheadData.forEach(item => {
+    filteredOverheadData.forEach(item => {
       const date = new Date(item.date);
       const monthKey = date.toLocaleString('default', { month: 'short' });
       
@@ -127,11 +1177,349 @@ export function Analytics({ context }: AnalyticsProps) {
 
   const monthlyChartData = prepareMonthlyData();
 
+  // Prepare sales chart data with online/offline breakdown based on time filter
+  const prepareSalesChartData = () => {
+    const now = new Date();
+    const chartData: any[] = [];
+    
+    if (timeFilter === 'daily') {
+      // Show last 10 days
+      for (let i = 9; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        
+        const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
+        const onlineRevenue = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+        const offlineRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        
+        chartData.push({
+          period: dayLabel,
+          online: onlineRevenue,
+          offline: offlineRevenue,
+          total: onlineRevenue + offlineRevenue
+        });
+      }
+    } else if (timeFilter === 'weekly') {
+      // Show last 10 weeks
+      for (let i = 9; i >= 0; i--) {
+        const weekEnd = new Date(now);
+        weekEnd.setDate(weekEnd.getDate() - (i * 7));
+        const weekStart = new Date(weekEnd);
+        weekStart.setDate(weekStart.getDate() - 6);
+        
+        const startLabel = weekStart.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        const endLabel = weekEnd.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        const weekLabel = `${startLabel} - ${endLabel}`;
+        
+        const weekSales = filteredSalesData.filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate >= weekStart && saleDate <= weekEnd;
+        });
+        
+        const onlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+        const offlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        
+        chartData.push({
+          period: weekLabel,
+          online: onlineRevenue,
+          offline: offlineRevenue,
+          total: onlineRevenue + offlineRevenue
+        });
+      }
+    } else if (timeFilter === 'monthly') {
+      // Show last 10 months
+      for (let i = 9; i >= 0; i--) {
+        const date = new Date(now);
+        date.setMonth(date.getMonth() - i);
+        const monthLabel = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+        const monthStr = date.toLocaleString('default', { month: 'short' });
+        const yearStr = date.getFullYear().toString();
+        
+        const monthSales = filteredSalesData.filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate.toLocaleString('default', { month: 'short' }) === monthStr &&
+                 saleDate.getFullYear().toString() === yearStr;
+        });
+        
+        const onlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+        const offlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        
+        chartData.push({
+          period: monthLabel,
+          online: onlineRevenue,
+          offline: offlineRevenue,
+          total: onlineRevenue + offlineRevenue
+        });
+      }
+    } else if (timeFilter === 'yearly') {
+      // Show last 5 years
+      for (let i = 4; i >= 0; i--) {
+        const year = now.getFullYear() - i;
+        
+        const yearSales = filteredSalesData.filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate.getFullYear() === year;
+        });
+        
+        const onlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+        const offlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        
+        chartData.push({
+          period: year.toString(),
+          online: onlineRevenue,
+          offline: offlineRevenue,
+          total: onlineRevenue + offlineRevenue
+        });
+      }
+    } else if (timeFilter === 'custom') {
+      // For custom range, group by month
+      const monthlyData: any = {};
+      
+      filteredSalesData.forEach(sale => {
+        const date = new Date(sale.date);
+        const monthKey = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+        
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = {
+            period: monthKey,
+            online: 0,
+            offline: 0,
+            total: 0
+          };
+        }
+        
+        const onlineRev = sale.onlineSales || 0;
+        const offlineRev = (sale.paytmAmount || 0) + (sale.cashAmount || 0);
+        
+        monthlyData[monthKey].online += onlineRev;
+        monthlyData[monthKey].offline += offlineRev;
+        monthlyData[monthKey].total += onlineRev + offlineRev;
+      });
+      
+      return Object.values(monthlyData);
+    }
+    
+    return chartData;
+  };
+
+  const salesChartData = prepareSalesChartData();
+
+  // Prepare profit chart data with revenue, expenses, profit based on time filter
+  const prepareProfitChartData = () => {
+    const now = new Date();
+    const chartData: any[] = [];
+    
+    if (timeFilter === 'daily') {
+      // Show last 5 days
+      for (let i = 4; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        
+        // Get sales for this day (use filtered data to respect store selection)
+        const daySales = (filteredSalesData || []).filter(sale => sale.date === dateStr);
+        const revenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        
+        // Get expenses for this day (inventory + overhead + contract workers)
+        const dayInventory = (filteredInventoryData || []).filter(item => item.date === dateStr);
+        const dayOverhead = (filteredOverheadData || []).filter(item => item.date === dateStr);
+        const inventoryExp = dayInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+        const overheadExp = dayOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const contractWorkerExp = daySales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+        const expenses = inventoryExp + overheadExp + contractWorkerExp;
+        
+        chartData.push({
+          period: dayLabel,
+          revenue: revenue,
+          expenses: expenses,
+          profit: revenue - expenses
+        });
+      }
+    } else if (timeFilter === 'weekly') {
+      // Show last 5 weeks
+      for (let i = 4; i >= 0; i--) {
+        const weekEnd = new Date(now);
+        weekEnd.setDate(weekEnd.getDate() - (i * 7));
+        const weekStart = new Date(weekEnd);
+        weekStart.setDate(weekStart.getDate() - 6);
+        
+        const startLabel = weekStart.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        const endLabel = weekEnd.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+        const weekLabel = `${startLabel} - ${endLabel}`;
+        
+        // Get sales for this week (use filtered data to respect store selection)
+        const weekSales = (filteredSalesData || []).filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate >= weekStart && saleDate <= weekEnd;
+        });
+        const revenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        
+        // Get expenses for this week (use filtered data to respect store selection)
+        const weekInventory = (filteredInventoryData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate >= weekStart && itemDate <= weekEnd;
+        });
+        const weekOverhead = (filteredOverheadData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate >= weekStart && itemDate <= weekEnd;
+        });
+        const inventoryExp = weekInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+        const overheadExp = weekOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const contractWorkerExp = weekSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+        const expenses = inventoryExp + overheadExp + contractWorkerExp;
+        
+        chartData.push({
+          period: weekLabel,
+          revenue: revenue,
+          expenses: expenses,
+          profit: revenue - expenses
+        });
+      }
+    } else if (timeFilter === 'monthly') {
+      // Show last 5 months
+      for (let i = 4; i >= 0; i--) {
+        const date = new Date(now);
+        date.setMonth(date.getMonth() - i);
+        const monthLabel = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+        const monthNum = date.getMonth(); // 0-11
+        const yearNum = date.getFullYear();
+        
+        // Get sales for this month (use filtered data to respect store selection)
+        const monthSales = (filteredSalesData || []).filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate.getMonth() === monthNum && saleDate.getFullYear() === yearNum;
+        });
+        const revenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        
+        // Get expenses for this month (use filtered data to respect store selection)
+        const monthInventory = (filteredInventoryData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
+        });
+        const monthOverhead = (filteredOverheadData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
+        });
+        const monthFixedCosts = (filteredFixedCostsData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
+        });
+        
+        const inventoryExp = monthInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+        const overheadExp = monthOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const fixedCostsExp = monthFixedCosts.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const contractWorkerExp = monthSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+        
+        // Calculate permanent employee monthly salary cost ONLY for payouts in this specific month
+        let permanentEmployeeExp = 0;
+        let monthPayouts = payoutsData.filter(payout => {
+          const payoutDate = new Date(payout.month + '-01'); // Convert "YYYY-MM" to date
+          return payoutDate.getMonth() === monthNum && payoutDate.getFullYear() === yearNum;
+        });
+        
+        if (effectiveStoreId) {
+          // Use filteredEmployeesData to include employees with null storeIds
+          const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
+          monthPayouts = monthPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+        }
+        
+        permanentEmployeeExp = monthPayouts.reduce((sum, payout) => {
+          const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+          if (employee && employee.type === 'fulltime') {
+            return sum + (payout.amount || 0);
+          }
+          return sum;
+        }, 0);
+        
+        const expenses = inventoryExp + overheadExp + fixedCostsExp + contractWorkerExp + permanentEmployeeExp;
+        
+        chartData.push({
+          period: monthLabel,
+          revenue: revenue,
+          expenses: expenses,
+          profit: revenue - expenses
+        });
+      }
+    } else if (timeFilter === 'yearly') {
+      // Show last 5 years
+      for (let i = 4; i >= 0; i--) {
+        const year = now.getFullYear() - i;
+        
+        // Get sales for this year (use filtered data to respect store selection)
+        const yearSales = (filteredSalesData || []).filter(sale => {
+          const saleDate = new Date(sale.date);
+          return saleDate.getFullYear() === year;
+        });
+        const revenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        
+        // Get expenses for this year (use filtered data to respect store selection)
+        const yearInventory = (filteredInventoryData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getFullYear() === year;
+        });
+        const yearOverhead = (filteredOverheadData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getFullYear() === year;
+        });
+        const yearFixedCosts = (filteredFixedCostsData || []).filter(item => {
+          const itemDate = new Date(item.date);
+          return itemDate.getFullYear() === year;
+        });
+        
+        const inventoryExp = yearInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+        const overheadExp = yearOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const fixedCostsExp = yearFixedCosts.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const contractWorkerExp = yearSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+        
+        // Calculate permanent employee annual salary cost (ALL payouts x 12 months)
+        // This treats salaries as a recurring annual expense
+        let permanentEmployeeExp = 0;
+        let allPayouts = payoutsData;
+        
+        if (effectiveStoreId) {
+          // Use filteredEmployeesData to include employees with null storeIds
+          const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
+          allPayouts = allPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+        }
+        
+        const monthlyPermanentSalary = allPayouts.reduce((sum, payout) => {
+          const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+          if (employee && employee.type === 'fulltime') {
+            return sum + (payout.amount || 0);
+          }
+          return sum;
+        }, 0);
+        
+        // Multiply by 12 to get annual cost
+        permanentEmployeeExp = monthlyPermanentSalary * 12;
+        
+        const expenses = inventoryExp + overheadExp + fixedCostsExp + contractWorkerExp + permanentEmployeeExp;
+        
+        chartData.push({
+          period: year.toString(),
+          revenue: revenue,
+          expenses: expenses,
+          profit: revenue - expenses
+        });
+      }
+    } else if (timeFilter === 'custom') {
+      // For custom range, use the existing monthlyChartData
+      return monthlyChartData;
+    }
+    
+    return chartData;
+  };
+
+  const profitChartData = prepareProfitChartData();
+
   // Prepare expense breakdown by category
   const prepareExpenseBreakdown = () => {
     const categoryExpenses: any = {};
 
-    inventoryData.forEach(item => {
+    filteredInventoryData.forEach(item => {
       const category = item.category || 'Other';
       if (!categoryExpenses[category]) {
         categoryExpenses[category] = 0;
@@ -139,24 +1527,66 @@ export function Analytics({ context }: AnalyticsProps) {
       categoryExpenses[category] += (item.totalCost || 0);
     });
 
-    // Add overhead expenses as a category
-    categoryExpenses['Overheads'] = metrics.overheadExpenses;
+    // Add overhead expenses by category
+    filteredOverheadData.forEach(item => {
+      const category = item.category || 'Other';
+      const displayName = OVERHEAD_CATEGORIES[category] || category;
+      if (!categoryExpenses[displayName]) {
+        categoryExpenses[displayName] = 0;
+      }
+      categoryExpenses[displayName] += (item.amount || 0);
+    });
 
-    // Add salaries as a category
-    categoryExpenses['Salaries'] = metrics.salaryExpenses;
+    // Add fixed costs by category
+    filteredFixedCostsData.forEach(item => {
+      const category = item.category || 'Other';
+      const displayName = FIXED_COST_CATEGORIES[category] || category;
+      if (!categoryExpenses[displayName]) {
+        categoryExpenses[displayName] = 0;
+      }
+      categoryExpenses[displayName] += (item.amount || 0);
+    });
 
-    const breakdown = Object.keys(categoryExpenses).map(category => ({
-      name: category,
-      value: categoryExpenses[category],
-      percentage: ((categoryExpenses[category] / metrics.totalExpenses) * 100).toFixed(1)
-    }));
+    // Add salaries separately (contract + permanent)
+    if (metrics.salaryExpenses > 0) {
+      categoryExpenses['💰 Salaries'] = metrics.salaryExpenses;
+    }
+
+    const breakdown = Object.keys(categoryExpenses).map(category => {
+      // Get display name for inventory categories
+      const displayName = INVENTORY_CATEGORIES[category] || category;
+      
+      return {
+        name: displayName,
+        value: categoryExpenses[category],
+        percentage: ((categoryExpenses[category] / metrics.totalExpenses) * 100).toFixed(1)
+      };
+    });
 
     return breakdown.sort((a, b) => b.value - a.value);
   };
 
   const expenseBreakdown = prepareExpenseBreakdown();
 
-  const COLORS = ['#ec4899', '#a78bfa', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c'];
+  const COLORS = ['#ec4899', '#a78bfa', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c', '#8b5cf6', '#10b981', '#f59e0b'];
+
+  // Calculate total approved cash discrepancies (losses only - negative cashOffset)
+  const calculateCashDiscrepancy = () => {
+    // IMPORTANT: Use filteredSalesData which is already time+store filtered
+    // Sum up approved negative discrepancies (losses)
+    const totalLoss = filteredSalesData
+      .filter(sale => sale.approvalRequired === false && sale.approvedBy) // Only approved
+      .reduce((sum, sale) => {
+        const offset = sale.cashOffset || 0;
+        // Only count negative offsets as losses
+        return sum + (offset < 0 ? Math.abs(offset) : 0);
+      }, 0);
+    return totalLoss;
+  };
+
+  const totalCashDiscrepancy = calculateCashDiscrepancy();
+  const unrealizedProfit = metrics.netProfit;
+  const realizedProfit = unrealizedProfit - totalCashDiscrepancy;
 
   if (loading) {
     return (
@@ -170,43 +1600,392 @@ export function Analytics({ context }: AnalyticsProps) {
     <div className="min-h-screen bg-gray-50 p-3 sm:p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-4 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl text-gray-900 mb-1 sm:mb-2">Analytics Dashboard</h1>
-          <p className="text-sm sm:text-base text-gray-600">Track revenue, expenses, and profitability</p>
+        <div className="mb-4 sm:mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl sm:text-3xl text-gray-900 mb-1 sm:mb-2">Analytics Dashboard</h1>
+            <p className="text-sm sm:text-base text-gray-600">Track revenue, expenses, and profitability</p>
+          </div>
+          
+          {/* Cleanup Button for Cluster Heads */}
+          {isClusterHead && (
+            <div className="flex gap-2">
+              <button
+              onClick={async () => {
+                if (!confirm('⚠️ This will remove all duplicate entries from the database.\n\nDuplicates found:\n- Inventory items\n- Overhead items\n- Sales records\n\nContinue?')) {
+                  return;
+                }
+                
+                try {
+                  if (!context.user?.accessToken) {
+                    alert('Not authenticated');
+                    return;
+                  }
+                  
+                  const result = await api.cleanupDuplicates(context.user.accessToken);
+                  
+                  alert(`✅ Cleanup Complete!\n\nRemoved ${result.removed} duplicates:\n\n` +
+                    `Inventory: ${result.details.inventory.removed} removed (${result.details.inventory.before} → ${result.details.inventory.after})\n` +
+                    `Overheads: ${result.details.overheads.removed} removed (${result.details.overheads.before} → ${result.details.overheads.after})\n` +
+                    `Sales: ${result.details.sales.removed} removed (${result.details.sales.before} → ${result.details.sales.after})\n\n` +
+                    `Please refresh the page to see updated data.`
+                  );
+                  
+                  // Reload the page to fetch clean data
+                  window.location.reload();
+                } catch (error) {
+                  console.error('Cleanup error:', error);
+                  alert('Failed to cleanup duplicates. Please try again.');
+                }
+              }}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm flex items-center gap-2 shadow-lg"
+              title="Remove duplicate entries from database"
+            >
+              <ClipboardCheck className="w-4 h-4" />
+              <span className="hidden sm:inline">Clean Database</span>
+              <span className="sm:hidden">Clean DB</span>
+              </button>
+            </div>
+          )}
         </div>
 
+        {/* Leave Alert Bar */}
+        {!loadingLeaves && (context.user?.role === 'cluster_head' || context.user?.role === 'manager') && (
+          <div className={`mb-4 sm:mb-6 rounded-lg shadow-sm border-2 p-4 transition-all ${
+            todayLeaveCount === 0
+              ? 'bg-green-50 border-green-200'
+              : 'bg-orange-50 border-orange-200'
+          }`}>
+            <div className="flex items-center gap-3">
+              {todayLeaveCount === 0 ? (
+                <>
+                  <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <Users className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-green-900">
+                      <span className="text-green-600">✓</span> Everyone is working today
+                    </p>
+                    <p className="text-sm text-green-700 mt-0.5">
+                      {context.user.storeId ? 'No employees on leave in this store' : 'No employees on leave across all stores'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex-shrink-0 w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                    <UserX className="w-5 h-5 text-orange-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-orange-900">
+                      <span className="text-orange-700">{todayLeaveCount}</span> {todayLeaveCount === 1 ? 'person is' : 'people are'} on leave today
+                    </p>
+                    <p className="text-sm text-orange-700 mt-0.5">
+                      {context.user.storeId ? 'In this store' : 'Across all stores'}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, and Store Incharges */}
+        {(isClusterHead || isManager || isProductionIncharge || isStoreIncharge) && (
+        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl shadow-lg mb-6 p-4 border border-purple-200">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-purple-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+              {isStoreIncharge ? 'Store Analytics Dashboard' : 'Analytics Dashboard'}
+            </h3>
+            {/* Only show mode selector if not Store Incharge (they only see Store Analytics) */}
+            {!isStoreIncharge && (
+            <div className="flex items-center gap-2 bg-white rounded-lg p-1 shadow-sm">
+              <button
+                onClick={() => setAnalyticsMode('store')}
+                className={`px-4 py-2 rounded-md transition-all duration-200 ${
+                  analyticsMode === 'store'
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4" />
+                  <span style={{ fontSize: '14px', fontWeight: '600' }}>Store Analytics</span>
+                </div>
+              </button>
+              <button
+                onClick={() => setAnalyticsMode('production')}
+                className={`px-4 py-2 rounded-md transition-all duration-200 ${
+                  analyticsMode === 'production'
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Factory className="w-4 h-4" />
+                  <span style={{ fontSize: '14px', fontWeight: '600' }}>Production Analytics</span>
+                </div>
+              </button>
+            </div>
+            )}
+          </div>
+          <p className="text-purple-700 text-sm">
+            {analyticsMode === 'store' 
+              ? 'Track revenue, expenses, and profitability across stores' 
+              : 'Monitor production metrics, wastage, and SOP compliance'}
+          </p>
+        </div>
+        )}
+
+        {/* Local Store Selector - Only in Store Analytics Mode */}
+        {analyticsMode === 'store' && (
+          <>
+            {(isClusterHead || isManager || isProductionIncharge) ? (
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+                      Store Selection
+                    </h3>
+                    <p className="text-blue-700 text-sm mt-1">
+                      Select a store to view its analytics data
+                    </p>
+                  </div>
+                  <select
+                    value={localSelectedStoreId || ''}
+                    onChange={(e) => setLocalSelectedStoreId(e.target.value || null)}
+                    className="px-4 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    style={{ fontSize: '14px', fontWeight: '600' }}
+                  >
+                    <option value="">All Stores</option>
+                    {context.stores?.map((store) => (
+                      <option key={store.id} value={store.id}>
+                        {store.name} (ID: {store.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : (
+              // Info banner for employees showing their store
+              context.user?.storeId && (
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <ShoppingCart className="w-6 h-6 text-blue-600" />
+                    <div>
+                      <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+                        Your Store Analytics
+                      </h3>
+                      <p className="text-blue-700 text-sm mt-1">
+                        Viewing data for: {context.stores?.find(s => s.id === context.user?.storeId)?.name || 'Your Store'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )
+            )}
+          </>
+        )}
+
+        {/* Production House Selector - Only in Production Analytics Mode */}
+        {analyticsMode === 'production' && (
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl shadow-lg mb-6 p-4 border border-orange-200">
+            {(isClusterHead || isManager) ? (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-orange-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+                    Production House Selection
+                  </h3>
+                  <p className="text-orange-700 text-sm mt-1">
+                    View production metrics and recalibration data for a specific production house
+                  </p>
+                </div>
+                <select
+                  value={selectedProductionHouseId || ''}
+                  onChange={(e) => {
+                    const newValue = e.target.value || null;
+                    console.log('🏭 Production Analytics - Production House Selector Changed:', newValue);
+                    setSelectedProductionHouseId(newValue);
+                  }}
+                  className="px-4 py-2 bg-white border-2 border-orange-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  style={{ fontSize: '14px', fontWeight: '600' }}
+                >
+                  <option value="">All Production Houses</option>
+                  {context.productionHouses?.map((ph) => (
+                    <option key={ph.id} value={ph.id}>
+                      {ph.name} (ID: {ph.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : isProductionIncharge && context.user?.storeId ? (
+              // Info banner for production incharge showing their production house
+              <div className="flex items-center gap-3">
+                <Factory className="w-6 h-6 text-orange-600" />
+                <div>
+                  <h3 className="text-orange-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+                    Your Production House Analytics
+                  </h3>
+                  <p className="text-orange-700 text-sm mt-1">
+                    Viewing data for: {(() => {
+                      const userStore = context.stores?.find(s => s.id === context.user?.storeId);
+                      const productionHouse = context.productionHouses?.find(ph => ph.id === userStore?.productionHouseId);
+                      return productionHouse?.name || 'Your Production House';
+                    })()}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         {/* View Selector */}
-        <div className="bg-white rounded-lg shadow-sm mb-4 sm:mb-6 p-1 flex gap-1 sm:gap-2 overflow-x-auto">
-          <button
-            onClick={() => setActiveView('profit')}
-            className={`px-3 sm:px-6 py-2 sm:py-3 rounded-lg transition-colors whitespace-nowrap text-sm sm:text-base ${
-              activeView === 'profit' 
-                ? 'bg-blue-600 text-white' 
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Profit Analysis
-          </button>
-          <button
-            onClick={() => setActiveView('expense')}
-            className={`px-3 sm:px-6 py-2 sm:py-3 rounded-lg transition-colors whitespace-nowrap text-sm sm:text-base ${
-              activeView === 'expense' 
-                ? 'bg-blue-600 text-white' 
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Expense Breakdown
-          </button>
-          <button
-            onClick={() => setActiveView('sales')}
-            className={`px-3 sm:px-6 py-2 sm:py-3 rounded-lg transition-colors whitespace-nowrap text-sm sm:text-base ${
-              activeView === 'sales' 
-                ? 'bg-blue-600 text-white' 
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            Sales Analytics
-          </button>
+        <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl shadow-lg mb-6 p-2 border border-gray-200">
+          {analyticsMode === 'store' ? (
+            // Store Analytics Tabs
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
+              <button
+                onClick={() => setActiveView('profit')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'profit' 
+                    ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <TrendingUp className={`w-6 h-6 ${activeView === 'profit' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Profit Analysis</span>
+                </div>
+                {activeView === 'profit' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-emerald-500 rounded-full"></div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveView('expense')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'expense' 
+                    ? 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-lg shadow-rose-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <DollarSign className={`w-6 h-6 ${activeView === 'expense' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Expenses</span>
+                </div>
+                {activeView === 'expense' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveView('sales')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'sales' 
+                    ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <ShoppingCart className={`w-6 h-6 ${activeView === 'sales' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Sales</span>
+                </div>
+                {activeView === 'sales' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveView('datacapture')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'datacapture' 
+                    ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <Package className={`w-6 h-6 ${activeView === 'datacapture' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Data Capture</span>
+                </div>
+                {activeView === 'datacapture' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-purple-500 rounded-full"></div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveView('production-requests')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'production-requests' 
+                    ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <ClipboardList className={`w-6 h-6 ${activeView === 'production-requests' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Stock Requests</span>
+                </div>
+                {activeView === 'production-requests' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-indigo-500 rounded-full"></div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveView('store-recalibration')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'store-recalibration' 
+                    ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <CheckCircle className={`w-6 h-6 ${activeView === 'store-recalibration' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Recalibration</span>
+                </div>
+                {activeView === 'store-recalibration' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-teal-500 rounded-full"></div>
+                )}
+              </button>
+            </div>
+          ) : (
+            // Production Analytics Tabs - Production and Recalibration
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setActiveView('production')}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'production' 
+                    ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <Factory className={`w-6 h-6 ${activeView === 'production' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Production</span>
+                </div>
+                {activeView === 'production' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-orange-500 rounded-full"></div>
+                )}
+              </button>
+
+              <button
+                onClick={() => {
+                  console.log('🔄 Recalibration button clicked!');
+                  setActiveView('recalibration-reports');
+                }}
+                className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                  activeView === 'recalibration-reports' 
+                    ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50' 
+                    : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <CheckCircle className={`w-6 h-6 ${activeView === 'recalibration-reports' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+                  <span className="font-semibold text-sm">Recalibration</span>
+                </div>
+                {activeView === 'recalibration-reports' && (
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-teal-500 rounded-full"></div>
+                )}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Profit Analysis View */}
@@ -267,18 +2046,18 @@ export function Analytics({ context }: AnalyticsProps) {
                 <div className="bg-blue-100 rounded-lg p-3 sm:p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Revenue</div>
                   <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalRevenue.toLocaleString()}</div>
-                  <div className="text-xs text-gray-600">Current period</div>
+                  <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
                 </div>
 
                 <div className="bg-red-100 rounded-lg p-3 sm:p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
                   <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalExpenses.toLocaleString()}</div>
-                  <div className="text-xs text-gray-600">Current period</div>
+                  <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
                 </div>
 
                 <div className="bg-green-100 rounded-lg p-3 sm:p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Net Profit</div>
-                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.netProfit.toLocaleString()}</div>
+                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{realizedProfit.toLocaleString()}</div>
                   {metrics.totalRevenue > 0 ? (
                     <div className="flex items-center gap-1 text-xs text-gray-600">
                       <TrendingUp className="w-3 h-3" />
@@ -296,22 +2075,70 @@ export function Analytics({ context }: AnalyticsProps) {
                 </div>
               </div>
 
+              {/* Profit Breakdown - Realized vs Unrealized */}
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8 border-2 border-indigo-200">
+                <h3 className="text-base sm:text-lg text-gray-900 mb-4 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-indigo-600" />
+                  Profit Breakdown
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Unrealized Profit */}
+                  <div className="bg-white rounded-lg p-4 shadow-sm">
+                    <div className="text-xs sm:text-sm text-gray-600 mb-2">Unrealized Profit</div>
+                    <div className="text-xl sm:text-2xl text-indigo-600 mb-2">₹{unrealizedProfit.toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Before cash discrepancies</div>
+                  </div>
+                  
+                  {/* Cash Discrepancy */}
+                  <div className="bg-white rounded-lg p-4 shadow-sm">
+                    <div className="text-xs sm:text-sm text-gray-600 mb-2">Cash Discrepancy (Loss)</div>
+                    <div className="text-xl sm:text-2xl text-red-600 mb-2">-₹{totalCashDiscrepancy.toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Approved losses</div>
+                  </div>
+                  
+                  {/* Realized Profit */}
+                  <div className="bg-white rounded-lg p-4 shadow-sm border-2 border-green-300">
+                    <div className="text-xs sm:text-sm text-gray-600 mb-2 flex items-center gap-1">
+                      Realized Profit
+                      <span className="text-xs text-green-600">(Actual)</span>
+                    </div>
+                    <div className="text-xl sm:text-2xl text-green-600 mb-2">₹{realizedProfit.toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">
+                      {metrics.totalRevenue > 0 
+                        ? `${((realizedProfit / metrics.totalRevenue) * 100).toFixed(1)}% margin`
+                        : 'No data yet'}
+                    </div>
+                  </div>
+                </div>
+                
+                {totalCashDiscrepancy > 0 && (
+                  <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5" />
+                      <div className="text-xs text-amber-800">
+                        <strong>Impact:</strong> Cash discrepancies represent actual cash shortages that have been approved by management and reduce the realized profit by ₹{totalCashDiscrepancy.toLocaleString()}.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Bar Chart */}
               <div className="mb-6 sm:mb-8 overflow-x-auto">
+                <h3 className="text-base sm:text-lg text-gray-900 mb-4">
+                  Profit Trend - {timeFilter === 'daily' ? 'Last 5 Days' : timeFilter === 'weekly' ? 'Last 5 Weeks' : timeFilter === 'monthly' ? 'Last 5 Months' : timeFilter === 'yearly' ? 'Last 5 Years' : 'Custom Range'}
+                </h3>
                 <div className="min-w-[300px]">
                   <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={monthlyChartData}>
+                    <BarChart data={profitChartData} barGap={8} barCategoryGap="20%">
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="month" stroke="#666" tick={{ fontSize: 12 }} />
+                      <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 12 }} />
                       <YAxis stroke="#666" tick={{ fontSize: 12 }} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px' }}
-                        formatter={(value: any) => `₹${value.toLocaleString()}`}
-                      />
+                      <Tooltip content={<CustomTooltip />} />
                       <Legend wrapperStyle={{ fontSize: '12px' }} />
-                      <Bar dataKey="revenue" fill="#a5b4fc" name="Revenue" />
-                      <Bar dataKey="expenses" fill="#fca5a5" name="Expenses" />
-                      <Bar dataKey="profit" fill="#86efac" name="Profit" />
+                      <Bar dataKey="revenue" fill="#a5b4fc" name="Revenue" radius={[8, 8, 0, 0]} maxBarSize={60} />
+                      <Bar dataKey="expenses" fill="#fca5a5" name="Expenses" radius={[8, 8, 0, 0]} maxBarSize={60} />
+                      <Bar dataKey="profit" fill="#86efac" name="Profit" radius={[8, 8, 0, 0]} maxBarSize={60} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -353,21 +2180,38 @@ export function Analytics({ context }: AnalyticsProps) {
                   </div>
                   <div className="space-y-3 sm:space-y-4">
                     <div className="bg-purple-50 p-3 sm:p-4 rounded-lg">
-                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Break-even Point</div>
-                      <div className="text-lg sm:text-xl text-gray-900 mb-1">₹{metrics.totalExpenses.toLocaleString()}</div>
-                      <div className="text-xs text-gray-600">Monthly target</div>
+                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Cost-to-Revenue Ratio</div>
+                      <div className="text-lg sm:text-xl text-gray-900 mb-1">
+                        {metrics.totalRevenue > 0 
+                          ? `${((metrics.totalExpenses / metrics.totalRevenue) * 100).toFixed(1)}%`
+                          : 'N/A'}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7
+                          ? '✓ Healthy ratio'
+                          : metrics.totalRevenue > 0 
+                          ? '⚠️ High expense ratio'
+                          : 'No sales yet'}
+                      </div>
                     </div>
                     <div className="bg-green-50 p-3 sm:p-4 rounded-lg">
-                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Revenue Growth</div>
-                      {metrics.totalRevenue > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <TrendingUp className="w-4 h-4 text-green-600" />
-                          <span className="text-lg sm:text-xl text-gray-600">Track multiple periods</span>
-                        </div>
-                      ) : (
-                        <div className="text-lg sm:text-xl text-gray-600">No data</div>
-                      )}
-                      <div className="text-xs text-gray-600">vs last period</div>
+                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Profit per ₹100 Revenue</div>
+                      <div className="text-lg sm:text-xl text-gray-900 mb-1">
+                        {metrics.totalRevenue > 0 
+                          ? `₹${((metrics.netProfit / metrics.totalRevenue) * 100).toFixed(1)}`
+                          : 'N/A'}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {metrics.totalRevenue > 0 && metrics.profitMargin > 30
+                          ? '🎯 Excellent margins'
+                          : metrics.totalRevenue > 0 && metrics.profitMargin > 15
+                          ? '✓ Good margins'
+                          : metrics.totalRevenue > 0 && metrics.profitMargin > 0
+                          ? '⚠️ Thin margins'
+                          : metrics.totalRevenue > 0
+                          ? '❌ Operating at loss'
+                          : 'No sales yet'}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -379,120 +2223,280 @@ export function Analytics({ context }: AnalyticsProps) {
         {/* Expense Breakdown View */}
         {activeView === 'expense' && (
           <div>
-            <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
+            <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
                 <div>
                   <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Expense Breakdown</h2>
-                  <p className="text-xs sm:text-sm text-gray-600">Monthly expenses by category</p>
+                  <p className="text-xs sm:text-sm text-gray-600">Detailed analysis of all expenses by category</p>
                 </div>
 
-                {/* Month Selector */}
+                {/* Time Filter */}
                 <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {['Dec', 'Nov', 'Oct', 'Sep'].map((month) => (
+                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
                     <button
-                      key={month}
-                      className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        month === 'Nov'
+                      key={filter}
+                      onClick={() => setTimeFilter(filter as TimeFilter)}
+                      className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
+                        timeFilter === filter
                           ? 'bg-gray-900 text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      {month}
+                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 mb-6 sm:mb-8">
-                {/* Pie Chart */}
-                <div className="overflow-x-auto">
-                  <div className="min-w-[280px]">
-                    <ResponsiveContainer width="100%" height={280}>
-                      <PieChart>
-                        <Pie
-                          data={expenseBreakdown}
-                          cx="50%"
-                          cy="50%"
-                          labelLine={false}
-                          label={({ percentage }) => `${percentage}%`}
-                          outerRadius={90}
-                          fill="#8884d8"
-                          dataKey="value"
-                        >
-                          {expenseBreakdown.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip 
-                          formatter={(value: any) => `₹${value.toLocaleString()}`}
-                          contentStyle={{ fontSize: '12px' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+              {/* Date Range */}
+              {timeFilter === 'custom' && (
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <label className="text-xs sm:text-sm text-gray-600">From:</label>
+                    <input
+                      type="date"
+                      value={dateRange.from}
+                      onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                      className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs sm:text-sm text-gray-600">To:</label>
+                    <input
+                      type="date"
+                      value={dateRange.to}
+                      onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                      className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                    />
                   </div>
                 </div>
+              )}
 
-                {/* Summary Cards */}
-                <div className="space-y-3 sm:space-y-4">
-                  <div className="bg-purple-100 rounded-lg p-3 sm:p-4">
-                    <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
-                    <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalExpenses.toLocaleString()}</div>
-                    <div className="flex items-center gap-1 text-xs text-red-600">
-                      <TrendingUp className="w-3 h-3" />
-                      +4.2% vs last month
+              {/* Total Expense Summary */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
+                <div className="bg-gradient-to-br from-red-100 to-red-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalExpenses.toLocaleString()}</div>
+                </div>
+                <div className="bg-gradient-to-br from-pink-100 to-pink-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Inventory Costs</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.inventoryExpenses.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+                </div>
+                <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Salary Costs</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{((metrics.salaryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+                </div>
+              </div>
+
+              {/* Pie Chart */}
+              <div className="mb-6 sm:mb-8">
+                <h3 className="text-base sm:text-lg text-gray-900 mb-4">Expense Distribution</h3>
+                <div className="flex flex-col lg:flex-row gap-6 items-center">
+                  <div className="w-full lg:w-1/2 relative">
+                    {/* Add shadow and background */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl blur-xl opacity-50"></div>
+                    <div className="relative bg-white rounded-2xl p-6 shadow-lg">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <PieChart>
+                          <defs>
+                            {/* Add gradient definitions for each color */}
+                            {COLORS.map((color, index) => (
+                              <linearGradient key={`gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={color} stopOpacity={0.9} />
+                                <stop offset="100%" stopColor={color} stopOpacity={0.7} />
+                              </linearGradient>
+                            ))}
+                          </defs>
+                          <Pie
+                            data={expenseBreakdown}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={{
+                              stroke: '#666',
+                              strokeWidth: 1,
+                              strokeDasharray: '3 3'
+                            }}
+                            label={({ percentage }) => `${percentage}%`}
+                            outerRadius={110}
+                            innerRadius={40}
+                            fill="#8884d8"
+                            dataKey="value"
+                            paddingAngle={2}
+                            animationBegin={0}
+                            animationDuration={800}
+                            animationEasing="ease-out"
+                          >
+                            {expenseBreakdown.map((entry, index) => (
+                              <Cell 
+                                key={`cell-${index}`} 
+                                fill={`url(#gradient-${index % COLORS.length})`}
+                                stroke="#fff"
+                                strokeWidth={3}
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<CustomPieTooltip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
                     </div>
                   </div>
-
-                  <div className="bg-yellow-100 rounded-lg p-3 sm:p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="text-xs sm:text-sm text-gray-700">Fixed Costs</div>
-                      <div className="text-xs text-gray-600">53.8%</div>
-                    </div>
-                    <div className="text-lg sm:text-xl text-gray-900 mb-1">₹{metrics.salaryExpenses.toLocaleString()}</div>
-                    <div className="text-xs text-orange-600">+2.8%</div>
-                  </div>
-
-                  <div className="bg-pink-100 rounded-lg p-3 sm:p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="text-xs sm:text-sm text-gray-700">Variable Costs</div>
-                      <div className="text-xs text-gray-600">25.1%</div>
-                    </div>
-                    <div className="text-lg sm:text-xl text-gray-900 mb-1">₹{metrics.inventoryExpenses.toLocaleString()}</div>
-                    <div className="text-xs text-red-600">+1.2%</div>
-                  </div>
-
-                  <div className="bg-blue-100 rounded-lg p-3 sm:p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="text-xs sm:text-sm text-gray-700">Other Costs</div>
-                      <div className="text-xs text-gray-600">21.0%</div>
-                    </div>
-                    <div className="text-lg sm:text-xl text-gray-900 mb-1">₹{(metrics.totalExpenses * 0.21).toLocaleString()}</div>
-                    <div className="text-xs text-green-600">+11.6%</div>
+                  <div className="w-full lg:w-1/2 space-y-3">
+                    {expenseBreakdown.map((item, index) => (
+                      <div 
+                        key={item.name} 
+                        className="group relative border border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-gray-300 transition-all duration-300 cursor-pointer bg-white overflow-hidden"
+                      >
+                        {/* Animated background gradient on hover */}
+                        <div 
+                          className="absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300"
+                          style={{ 
+                            background: `linear-gradient(135deg, ${COLORS[index % COLORS.length]}40, ${COLORS[index % COLORS.length]}10)` 
+                          }}
+                        ></div>
+                        
+                        <div className="relative">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-3">
+                              <div 
+                                className="w-5 h-5 rounded-full shadow-md group-hover:scale-110 transition-transform duration-300" 
+                                style={{ 
+                                  background: `linear-gradient(135deg, ${COLORS[index % COLORS.length]}, ${COLORS[(index + 1) % COLORS.length]})` 
+                                }}
+                              />
+                              <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-600 bg-gray-100 px-2 py-1 rounded-lg">
+                                {item.percentage}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-xl font-semibold text-gray-900 group-hover:text-gray-700 transition-colors">
+                            ₹{item.value.toLocaleString()}
+                          </div>
+                          {/* Progress bar */}
+                          <div className="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full rounded-full transition-all duration-700 ease-out"
+                              style={{ 
+                                width: `${item.percentage}%`,
+                                background: `linear-gradient(90deg, ${COLORS[index % COLORS.length]}, ${COLORS[(index + 1) % COLORS.length]})`
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              {/* Detailed Expenses List */}
-              <div>
-                <h3 className="text-base sm:text-lg text-gray-900 mb-3 sm:mb-4">Detailed Expenses - November 2024</h3>
-                <div className="space-y-2 sm:space-y-3">
-                  {expenseBreakdown.slice(0, 6).map((expense, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                      <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-                        <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0`} style={{ backgroundColor: COLORS[index % COLORS.length] + '33' }}>
-                          <Package className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: COLORS[index % COLORS.length] }} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm sm:text-base text-gray-900 truncate">{expense.name}</div>
-                          <div className="text-xs sm:text-sm text-gray-600">{expense.percentage}% of total</div>
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <div className="text-sm sm:text-base text-gray-900">₹{expense.value.toLocaleString()}</div>
-                        <div className="text-xs text-red-600">+2.1%</div>
+              {/* Detailed Breakdown */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
+                  <h3 className="text-base sm:text-lg text-gray-900 mb-4">Salary Breakdown</h3>
+                  
+                  {/* Info Note for Monthly/Yearly/Custom views */}
+                  {(timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') && metrics.permanentEmployeeExpenses > 0 && (
+                    <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <p className="text-xs text-blue-800">
+                          <strong>Note:</strong> Permanent employee salaries (₹{metrics.permanentEmployeeExpenses.toLocaleString()}) are monthly payouts and included in this view. Contract worker wages are date-filtered.
+                        </p>
                       </div>
                     </div>
-                  ))}
+                  )}
+                  
+                  <div className="space-y-3">
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <div className="text-xs text-gray-600 mb-1">Contract Workers</div>
+                      <div className="text-xl text-gray-900">₹{metrics.contractWorkerExpenses.toLocaleString()}</div>
+                      <div className="text-xs text-gray-600 mt-1">Daily wages from sales data</div>
+                    </div>
+                    <div className="bg-pink-50 p-4 rounded-lg">
+                      <div className="text-xs text-gray-600 mb-1">Permanent Employees</div>
+                      <div className="text-xl text-gray-900">₹{metrics.permanentEmployeeExpenses.toLocaleString()}</div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        {(timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') 
+                          ? 'Total monthly salary payouts (all periods)' 
+                          : 'Only shown in monthly/yearly views'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
+                  <h3 className="text-base sm:text-lg text-gray-900 mb-4">Overhead Costs</h3>
+                  <div className="bg-yellow-50 p-4 rounded-lg">
+                    <div className="text-xs text-gray-600 mb-1">Total Overheads</div>
+                    <div className="text-xl text-gray-900">₹{metrics.overheadExpenses.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600 mt-1">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total expenses</div>
+                    <div className="text-xs text-gray-500 mt-2">Fuel, travel, marketing, and other variable costs</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fixed Costs Breakdown with Bar Chart */}
+              <div className="mt-6 sm:mt-8 border border-gray-200 rounded-lg p-4 sm:p-6">
+                <h3 className="text-base sm:text-lg text-gray-900 mb-4">Fixed Costs Breakdown</h3>
+                <p className="text-xs sm:text-sm text-gray-600 mb-4">Monthly fixed expenses breakdown</p>
+                
+                {/* Fixed Costs Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-lg p-4">
+                    <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Fixed Costs</div>
+                    <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.fixedCostsTotal.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600">{((metrics.fixedCostsTotal / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-lg p-4">
+                    <div className="text-xs sm:text-sm text-gray-700 mb-1">⚡ Electricity</div>
+                    <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.electricityExpenses.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.electricityExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
+                    <div className="text-xs sm:text-sm text-gray-700 mb-1">🏠 Rent</div>
+                    <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.rentExpenses.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.rentExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
+                    <div className="text-xs sm:text-sm text-gray-700 mb-1">💰 Salaries</div>
+                    <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.salaryExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+                  </div>
+                </div>
+
+                {/* Bar Chart for Fixed Costs */}
+                <div className="overflow-x-auto">
+                  <div className="min-w-[300px]">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart 
+                        data={[
+                          { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
+                          { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
+                          { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#a78bfa' }
+                        ]}
+                        barCategoryGap="30%"
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="name" stroke="#666" tick={{ fontSize: 12 }} />
+                        <YAxis stroke="#666" tick={{ fontSize: 12 }} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Bar dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} maxBarSize={80}>
+                          {[
+                            { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
+                            { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
+                            { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#a78bfa' }
+                          ].map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               </div>
             </div>
@@ -502,88 +2506,1787 @@ export function Analytics({ context }: AnalyticsProps) {
         {/* Sales Analytics View */}
         {activeView === 'sales' && (
           <div>
-            <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
+            {/* Sub-tabs for Sales */}
+            <div className="bg-white rounded-2xl shadow-lg p-2 mb-6 border border-gray-200">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSalesSubView('revenue')}
+                  className={`flex-1 px-6 py-3 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                    salesSubView === 'revenue'
+                      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg'
+                      : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <ShoppingCart className="w-5 h-5" />
+                    <span className="font-semibold">Revenue Tracking</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setSalesSubView('category')}
+                  className={`flex-1 px-6 py-3 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                    salesSubView === 'category'
+                      ? 'bg-gradient-to-r from-teal-500 to-teal-600 text-white shadow-lg'
+                      : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5" />
+                    <span className="font-semibold">Category Sales</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Revenue Tracking Sub-view */}
+            {salesSubView === 'revenue' && (
+            <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
                 <div>
-                  <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Sales Analytics</h2>
-                  <p className="text-xs sm:text-sm text-gray-600">Online vs Offline sales comparison</p>
+                  <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Revenue Analytics</h2>
+                  <p className="text-xs sm:text-sm text-gray-600">Track daily revenue from Paytm, Cash, and Online sales</p>
                 </div>
 
                 {/* Time Filter */}
                 <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {['Day', 'Week', 'Month', 'Custom'].map((filter) => (
+                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
                     <button
                       key={filter}
-                      className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        filter === 'Month'
+                      onClick={() => setTimeFilter(filter as TimeFilter)}
+                      className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
+                        timeFilter === filter
                           ? 'bg-gray-900 text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      {filter}
+                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Metrics Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
-                <div className="bg-purple-100 rounded-lg p-3 sm:p-4">
+              {/* Date Range */}
+              {timeFilter === 'custom' && (
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <label className="text-xs sm:text-sm text-gray-600">From:</label>
+                    <input
+                      type="date"
+                      value={dateRange.from}
+                      onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                      className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs sm:text-sm text-gray-600">To:</label>
+                    <input
+                      type="date"
+                      value={dateRange.to}
+                      onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                      className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Sales Summary Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+                <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Sales</div>
-                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalRevenue.toLocaleString()}</div>
-                  <div className="flex items-center gap-1 text-xs text-purple-700">
-                    <TrendingUp className="w-3 h-3" />
-                    12.5% vs last month
-                  </div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalRevenue.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
                 </div>
-
-                <div className="bg-green-100 rounded-lg p-3 sm:p-4">
+                <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Online Sales</div>
-                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.onlineRevenue.toLocaleString()}</div>
-                  <div className="text-xs text-gray-600">
-                    {((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total
-                  </div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
                 </div>
-
-                <div className="bg-blue-100 rounded-lg p-3 sm:p-4">
+                <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Offline Sales</div>
-                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.offlineRevenue.toLocaleString()}</div>
-                  <div className="text-xs text-gray-600">
-                    {((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
+                </div>
+                <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Transactions</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">{filteredSalesData.length}</div>
+                  <div className="text-xs text-gray-600">Sales records</div>
+                </div>
+              </div>
+
+              {/* Sales Trend Chart */}
+              <div className="mb-6 sm:mb-8">
+                <h3 className="text-base sm:text-lg text-gray-900 mb-4">
+                  Sales Trend - {timeFilter === 'daily' ? 'Last 10 Days' : timeFilter === 'weekly' ? 'Last 10 Weeks' : timeFilter === 'monthly' ? 'Last 10 Months' : timeFilter === 'yearly' ? 'Last 5 Years' : 'Custom Range'}
+                </h3>
+                <div className="overflow-x-auto">
+                  <div className="min-w-[300px]">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={salesChartData} barCategoryGap="25%">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 12 }} />
+                        <YAxis stroke="#666" tick={{ fontSize: 12 }} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend wrapperStyle={{ fontSize: '12px' }} />
+                        <Bar dataKey="online" stackId="a" fill="#60a5fa" name="Online Sales" radius={[0, 0, 0, 0]} maxBarSize={80} />
+                        <Bar dataKey="offline" stackId="a" fill="#a78bfa" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
               </div>
 
-              {/* Sales Comparison Chart */}
-              <div className="overflow-x-auto">
-                <div className="min-w-[300px]">
-                  <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={monthlyChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="month" stroke="#666" tick={{ fontSize: 12 }} />
-                      <YAxis stroke="#666" tick={{ fontSize: 12 }} />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#e5e7eb', 
-                          border: 'none', 
-                          borderRadius: '8px',
-                          padding: '12px',
-                          fontSize: '12px'
-                        }}
-                        formatter={(value: any) => `₹${value.toLocaleString()}`}
-                        labelStyle={{ color: '#111827', fontWeight: 600, marginBottom: '4px' }}
+              {/* Sales Breakdown */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <ShoppingCart className="w-5 h-5 text-green-600" />
+                    <h3 className="text-base sm:text-lg text-gray-900">Payment Methods</h3>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="bg-green-50 p-4 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-gray-600">Online Payments</span>
+                        <span className="text-sm text-green-600">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="text-xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-gray-600">Cash & Paytm</span>
+                        <span className="text-sm text-blue-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="text-xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <TrendingUp className="w-5 h-5 text-purple-600" />
+                    <h3 className="text-base sm:text-lg text-gray-900">Performance Metrics</h3>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <div className="text-xs text-gray-600 mb-1">Average Transaction</div>
+                      <div className="text-xl text-gray-900">
+                        ₹{filteredSalesData.length > 0 ? (metrics.totalRevenue / filteredSalesData.length).toFixed(0) : 0}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">Per sale</div>
+                    </div>
+                    <div className="bg-pink-50 p-4 rounded-lg">
+                      <div className="text-xs text-gray-600 mb-1">Profit per Sale</div>
+                      <div className="text-xl text-gray-900">
+                        ₹{filteredSalesData.length > 0 ? (metrics.netProfit / filteredSalesData.length).toFixed(0) : 0}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">Average margin</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            )}
+
+            {/* Category Sales Sub-view */}
+            {salesSubView === 'category' && (
+              <SalesDataComponent context={context} selectedStoreId={selectedStoreId} />
+            )}
+          </div>
+        )}
+
+        {/* Data Capture View */}
+        {activeView === 'datacapture' && (
+          <div>
+            <DataCapture context={context} selectedStoreId={selectedStoreId} />
+          </div>
+        )}
+
+        {/* Production Analytics View */}
+        {activeView === 'production' && (
+          <div>
+            {/* Date Range Selector for Production Data */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+              <div className="flex flex-col gap-4">
+                <div>
+                  <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+                    Production Date Range
+                  </h3>
+                  <p className="text-blue-700 text-sm mt-1">
+                    View production data for a selected time period
+                  </p>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-3">
+                  {/* Date Range Preset Buttons */}
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: 'today' as DateRangeType, label: 'Today' },
+                      { value: 'week' as DateRangeType, label: 'This Week' },
+                      { value: 'month' as DateRangeType, label: 'This Month' },
+                      { value: 'year' as DateRangeType, label: 'This Year' },
+                      { value: 'custom' as DateRangeType, label: 'Custom Range' },
+                    ].map(option => (
+                      <button
+                        key={option.value}
+                        onClick={() => setProductionDateRange(option.value)}
+                        className={`px-4 py-2 rounded-lg text-sm border-2 transition-all ${
+                          productionDateRange === option.value
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-700 border-blue-300 hover:border-blue-500'
+                        }`}
+                        style={{ fontSize: '14px', fontWeight: '600' }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Custom Date Range Inputs */}
+                {productionDateRange === 'custom' && (
+                  <div className="flex flex-col sm:flex-row gap-3 bg-white/50 p-3 rounded-lg border border-blue-200">
+                    <div className="flex-1">
+                      <label className="text-xs text-blue-700 block mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => setCustomStartDate(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
-                      <Legend wrapperStyle={{ fontSize: '12px' }} />
-                      <Bar dataKey="revenue" fill="#86efac" name="Online Sales" />
-                      <Bar dataKey="expenses" fill="#93c5fd" name="Offline Sales" />
-                    </BarChart>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-blue-700 block mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => setCustomEndDate(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {/* Display Selected Range */}
+                <div className="bg-white/70 rounded-lg p-3 border border-blue-200">
+                  <div className="text-xs text-blue-700 mb-1">Selected Range:</div>
+                  <div className="text-sm text-blue-900 font-semibold">
+                    {(() => {
+                      const { startDate, endDate } = getDateRangeBounds();
+                      const start = new Date(startDate).toLocaleDateString('en-US', { 
+                        month: 'short', day: 'numeric', year: 'numeric' 
+                      });
+                      const end = new Date(endDate).toLocaleDateString('en-US', { 
+                        month: 'short', day: 'numeric', year: 'numeric' 
+                      });
+                      return startDate === endDate ? start : `${start} - ${end}`;
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Old single date selector - HIDDEN */}
+            <div className="hidden">
+              <select
+                  value={selectedProductionDate || ''}
+                  onChange={(e) => setSelectedProductionDate(e.target.value || null)}
+                  className="px-4 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{ fontSize: '14px', fontWeight: '600' }}
+                >
+                  {(() => {
+                    // Get unique dates from production data, filtered by selected production house
+                    const filterById = analyticsMode === 'production'
+                      ? selectedProductionHouseId
+                      : selectedProductionHouseId;
+                    
+                    const filteredDates = productionData
+                      .filter(p => {
+                        if (!filterById) return true;
+                        const matchesStoreId = p.storeId === filterById;
+                        const matchesProductionHouseId = p.productionHouseId === filterById;
+                        const phId = p.productionHouseId || p.storeId;
+                        return matchesStoreId || matchesProductionHouseId || phId === filterById;
+                      })
+                      .map(p => p.date)
+                      .filter((date, index, self) => self.indexOf(date) === index)
+                      .sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
+                    
+                    return filteredDates.map(date => (
+                      <option key={date} value={date}>
+                        {new Date(date).toLocaleDateString('en-US', { 
+                          weekday: 'short', 
+                          year: 'numeric', 
+                          month: 'short', 
+                          day: 'numeric' 
+                        })}
+                      </option>
+                    ));
+                  })()}
+                </select>
+            </div>
+
+            {/* Production Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              {(() => {
+                // Use consistent production house filtering logic
+                const filterById = selectedProductionHouseId;  // Always use production house selector in production analytics
+                
+                console.log('🏭 Production Summary Cards Filter Debug:');
+                console.log('  - analyticsMode:', analyticsMode);
+                console.log('  - selectedProductionHouseId:', selectedProductionHouseId);
+                console.log('  - effectiveStoreId:', effectiveStoreId);
+                console.log('  - filterById:', filterById);
+                console.log('  - Total production records:', productionData.length);
+                
+                // Find the selected production house by its id
+                const selectedProductionHouse = filterById 
+                  ? context.productionHouses?.find(ph => ph.id === filterById)
+                  : null;
+                
+                console.log('  - Selected production house object:', selectedProductionHouse);
+                
+                // Get date range bounds for filtering
+                const { startDate, endDate } = getDateRangeBounds();
+                
+                console.log('📅 Date Range Filter:', {
+                  rangeType: productionDateRange,
+                  startDate,
+                  endDate,
+                  customStart: customStartDate,
+                  customEnd: customEndDate
+                });
+                
+                const filteredProduction = productionData.filter(p => {
+                  // Filter by date range first
+                  if (p.date < startDate || p.date > endDate) {
+                    return false;
+                  }
+                  
+                  if (!filterById) return true; // No filter selected, show all
+                  
+                  // For production incharges, the filterById is their storeId
+                  // Production data has BOTH storeId (where production happened) and productionHouseId (UUID)
+                  // We should match EITHER:
+                  // 1. Production data's storeId === filterById (for production houses that are also stores)
+                  // 2. Production data's productionHouseId === filterById (for when filterById is the UUID)
+                  
+                  const matchesStoreId = p.storeId === filterById;
+                  const matchesProductionHouseId = p.productionHouseId === filterById;
+                  
+                  // Get the production house ID from the record
+                  let recordProductionHouseId = p.productionHouseId;
+                  
+                  // If record doesn't have productionHouseId, look it up via storeId
+                  if (!recordProductionHouseId && p.storeId) {
+                    const store = context.stores?.find(s => s.id === p.storeId);
+                    recordProductionHouseId = store?.productionHouseId || null;
+                  }
+                  
+                  const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
+                  
+                  console.log('  🔍 Checking record:', {
+                    recordId: p.id.slice(0, 8),
+                    recordStoreId: p.storeId,
+                    recordProductionHouseId: p.productionHouseId,
+                    resolvedProductionHouseId: recordProductionHouseId,
+                    phId,
+                    filterById,
+                    matchesStoreId,
+                    matchesProductionHouseId,
+                    match: matchesStoreId || matchesProductionHouseId || phId === filterById
+                  });
+                  
+                  // Match if ANY of these are true
+                  const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
+                  
+                  return matches;
+                });
+                
+                console.log('  - Filtered production records:', filteredProduction.length);
+
+                const totalProduction = filteredProduction.reduce((sum, p) => {
+                  return sum + 
+                    (p.chickenMomos?.final || 0) + 
+                    (p.chickenCheeseMomos?.final || 0) + 
+                    (p.vegMomos?.final || 0) + 
+                    (p.cheeseCornMomos?.final || 0) + 
+                    (p.paneerMomos?.final || 0) + 
+                    (p.vegKurkureMomos?.final || 0) + 
+                    (p.chickenKurkureMomos?.final || 0);
+                }, 0);
+
+                const totalWastage = filteredProduction.reduce((sum, p) => {
+                  return sum + 
+                    (p.wastage?.dough || 0) + 
+                    (p.wastage?.stuffing || 0) + 
+                    (p.wastage?.batter || 0) + 
+                    (p.wastage?.coating || 0);
+                }, 0);
+
+                const approvedCount = filteredProduction.filter(p => p.approvalStatus === 'approved').length;
+                const pendingCount = filteredProduction.filter(p => p.approvalStatus === 'pending').length;
+
+                return (
+                  <>
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl shadow-lg p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Factory className="w-6 h-6 text-orange-600" />
+                        <p className="text-sm text-gray-600">Total Production</p>
+                      </div>
+                      <p className="text-3xl text-gray-900">{totalProduction.toLocaleString()}</p>
+                      <p className="text-xs text-gray-600 mt-1">pieces</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl shadow-lg p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Trash2 className="w-6 h-6 text-red-600" />
+                        <p className="text-sm text-gray-600">Total Wastage</p>
+                      </div>
+                      <p className="text-3xl text-gray-900">{totalWastage.toFixed(2)}</p>
+                      <p className="text-xs text-gray-600 mt-1">kg</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl shadow-lg p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <ClipboardCheck className="w-6 h-6 text-green-600" />
+                        <p className="text-sm text-gray-600">Approved Entries</p>
+                      </div>
+                      <p className="text-3xl text-gray-900">{approvedCount}</p>
+                      <p className="text-xs text-gray-600 mt-1">records</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl shadow-lg p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertCircle className="w-6 h-6 text-yellow-600" />
+                        <p className="text-sm text-gray-600">Pending Approval</p>
+                      </div>
+                      <p className="text-3xl text-gray-900">{pendingCount}</p>
+                      <p className="text-xs text-gray-600 mt-1">records</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Production House Stock Status */}
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-orange-200">
+              <div className="mb-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+                      <Package className="w-6 h-6 text-orange-600" />
+                      Production House Stock Status
+                    </h2>
+                    <p className="text-sm text-gray-600">
+                      Total produced - Total sent to stores (delivered production requests)
+                    </p>
+                  </div>
+                  
+                  {/* Recalibrate Stock Button - For Operations Managers and Production Incharge in Production Analytics Mode */}
+                  {analyticsMode === 'production' && (isManager || isProductionIncharge) && (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => setShowRecalibration(true)}
+                        className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
+                        title="Recalibrate production house stock (available on 1st of each month)"
+                      >
+                        <Calendar className="w-5 h-5" />
+                        Recalibrate Stock
+                      </button>
+                      {latestRecalibration && (
+                        <p className="text-xs text-gray-500 text-center">
+                          Last recalibrated: {new Date(latestRecalibration.date).toLocaleDateString()}
+                        </p>
+                      )}
+                      {previousMonthStock && !latestRecalibration && (
+                        <p className="text-xs text-blue-600 text-center">
+                          ℹ️ Using auto carry-forward from previous month
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Production House Selector for Cluster Heads - Only in Store Analytics Mode */}
+                  {analyticsMode === 'store' && context.user?.role === 'cluster_head' && context.productionHouses && context.productionHouses.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-gray-600">Production House:</label>
+                      <select
+                        value={selectedProductionHouseId || 'all'}
+                        onChange={(e) => {
+                          const newValue = e.target.value === 'all' ? null : e.target.value;
+                          console.log('🏭 Production House Selector Changed:', newValue);
+                          setSelectedProductionHouseId(newValue);
+                        }}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      >
+                        <option value="all">All Production Houses</option>
+                        {context.productionHouses.map(ph => (
+                          <option key={ph.id} value={ph.id}>
+                            {ph.name} (ID: {ph.id})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {(() => {
+                // Calculate Production House Stock = Total Production - Total Fulfilled Stock Requests
+                // In production analytics mode, always use selectedProductionHouseId
+                const effectiveProductionHouseId = selectedProductionHouseId;
+                
+                console.log('🏭 Production House Stock Status Filter Debug:');
+                console.log('  - analyticsMode:', analyticsMode);
+                console.log('  - selectedProductionHouseId:', selectedProductionHouseId);
+                console.log('  - effectiveProductionHouseId:', effectiveProductionHouseId);
+                
+                // Find the selected production house by its id
+                const selectedProductionHouseForStock = effectiveProductionHouseId 
+                  ? context.productionHouses?.find(ph => ph.id === effectiveProductionHouseId)
+                  : null;
+                
+                console.log('  - Selected production house for stock:', selectedProductionHouseForStock);
+                
+                // Get all production data for the production house
+                const filteredProduction = productionData.filter(p => {
+                  if (!effectiveProductionHouseId) return true; // No filter selected, show all
+                  
+                  // Match on storeId OR productionHouseId
+                  const matchesStoreId = p.storeId === effectiveProductionHouseId;
+                  const matchesProductionHouseId = p.productionHouseId === effectiveProductionHouseId;
+                  
+                  // Get the production house ID from the record
+                  let recordProductionHouseId = p.productionHouseId;
+                  
+                  // If record doesn't have productionHouseId, look it up via storeId
+                  if (!recordProductionHouseId && p.storeId) {
+                    const store = context.stores?.find(s => s.id === p.storeId);
+                    recordProductionHouseId = store?.productionHouseId || null;
+                  }
+                  
+                  const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
+                  
+                  // Match if ANY of these are true
+                  return matchesStoreId || matchesProductionHouseId || phId === effectiveProductionHouseId;
+                });
+                
+                console.log('  - Filtered production for stock status:', filteredProduction.length);
+
+                // Filter by current month only (monthly reset logic)
+                const currentMonth = new Date().toISOString().substring(0, 7); // "2025-12"
+                const monthlyFilteredProduction = filteredProduction.filter(p => p.date.startsWith(currentMonth));
+                
+                console.log('  - Monthly filtered production:', monthlyFilteredProduction.length, 'for month:', currentMonth);
+
+                // Calculate total production by momo type (for current month only)
+                const totalProduced = monthlyFilteredProduction.reduce((acc, p) => ({
+                  chicken: acc.chicken + (p.chickenMomos?.final || 0),
+                  chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
+                  veg: acc.veg + (p.vegMomos?.final || 0),
+                  cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
+                  paneer: acc.paneer + (p.paneerMomos?.final || 0),
+                  vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
+                  chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
+                }), {
+                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
+                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
+                });
+
+                // Calculate total fulfilled stock requests (sent to stores)
+                // Use ProductionRequests (which have 'delivered' status), not StockRequests
+                
+                // First, resolve the production house UUID
+                // For production incharges, effectiveProductionHouseId is their storeId
+                // We need to find the corresponding production house UUID
+                let productionHouseUUID = effectiveProductionHouseId;
+                
+                // Check if effectiveProductionHouseId is a storeId (starts with 'STORE-')
+                if (effectiveProductionHouseId && effectiveProductionHouseId.startsWith('STORE-')) {
+                  // Find the store
+                  const userStore = context.stores?.find(s => s.id === effectiveProductionHouseId);
+                  if (userStore?.productionHouseId) {
+                    productionHouseUUID = userStore.productionHouseId;
+                    console.log('🔧 Resolved production house UUID:', {
+                      userStoreId: effectiveProductionHouseId,
+                      resolvedUUID: productionHouseUUID
+                    });
+                  }
+                }
+                
+                const fulfilledRequests = context.productionRequests?.filter(req => {
+                  // Only count delivered requests (completed deliveries to stores)
+                  if (req.status !== 'delivered') return false;
+                  
+                  // Filter by current month only (monthly reset)
+                  // Check what date field exists on production requests
+                  const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+                  
+                  if (!requestDate || !requestDate.startsWith(currentMonth)) {
+                    console.log('❌ Filtered out request - wrong month:', {
+                      requestId: req.id.slice(0, 8),
+                      requestDate,
+                      currentMonth,
+                      matches: requestDate?.startsWith(currentMonth)
+                    });
+                    return false;
+                  }
+                  
+                  // Find the store that made this request
+                  const requestingStore = context.stores?.find(s => s.id === req.storeId);
+                  
+                  // Filter by production house if one is selected
+                  if (productionHouseUUID) {
+                    const matches = requestingStore?.productionHouseId === productionHouseUUID;
+                    console.log('🔍 Checking production request:', {
+                      requestId: req.id.slice(0, 8),
+                      storeId: req.storeId,
+                      storeName: requestingStore?.name,
+                      storeProductionHouseId: requestingStore?.productionHouseId,
+                      productionHouseUUID,
+                      deliveredDate: req.deliveredDate,
+                      matches
+                    });
+                    return matches;
+                  }
+                  
+                  // If no production house selected, show all
+                  return true;
+                }) || [];
+
+                console.log('🏭 Production Stock Calculation:', {
+                  effectiveProductionHouseId,
+                  isProductionIncharge: context.user?.designation === 'production_incharge',
+                  totalProductionRequests: context.productionRequests?.length || 0,
+                  deliveredRequests: context.productionRequests?.filter(r => r.status === 'delivered').length || 0,
+                  fulfilledRequestsCount: fulfilledRequests.length,
+                  stores: context.stores?.map(s => ({ id: s.id, name: s.name, productionHouseId: s.productionHouseId })) || [],
+                  filteredProductionRecords: filteredProduction.length,
+                  allProductionData: productionData.map(p => ({
+                    id: p.id.slice(0, 8),
+                    date: p.date,
+                    productionHouseId: p.productionHouseId,
+                    storeId: p.storeId,
+                    resolvedId: p.productionHouseId || p.storeId
+                  })),
+                  sampleRequest: fulfilledRequests[0],
+                  sampleRequestData: fulfilledRequests[0] ? {
+                    id: fulfilledRequests[0].id,
+                    storeId: fulfilledRequests[0].storeId,
+                    requestDate: fulfilledRequests[0].requestDate,
+                    status: fulfilledRequests[0].status,
+                    chickenMomos: fulfilledRequests[0].chickenMomos,
+                    vegMomos: fulfilledRequests[0].vegMomos
+                  } : null
+                });
+
+                const totalSentToStores = fulfilledRequests.reduce((acc, req) => ({
+                  chicken: acc.chicken + (req.chickenMomos || 0),
+                  chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
+                  veg: acc.veg + (req.vegMomos || 0),
+                  cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
+                  paneer: acc.paneer + (req.paneerMomos || 0),
+                  vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
+                  chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
+                }), {
+                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
+                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
+                });
+
+                // Calculate remaining stock with carry-forward from previous month
+                // Stock = Opening Balance + Current Month Production - Current Month Deliveries
+                const openingBalance = previousMonthStock || {
+                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
+                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
+                };
+                
+                console.log('💰 Stock Calculation with Carry-Forward:');
+                console.log('  Opening Balance:', openingBalance);
+                console.log('  Current Month Production:', totalProduced);
+                console.log('  Current Month Deliveries:', totalSentToStores);
+                
+                const productionHouseStock = {
+                  chicken: (openingBalance.chicken || 0) + totalProduced.chicken - totalSentToStores.chicken,
+                  chickenCheese: (openingBalance.chickenCheese || 0) + totalProduced.chickenCheese - totalSentToStores.chickenCheese,
+                  veg: (openingBalance.veg || 0) + totalProduced.veg - totalSentToStores.veg,
+                  cheeseCorn: (openingBalance.cheeseCorn || 0) + totalProduced.cheeseCorn - totalSentToStores.cheeseCorn,
+                  paneer: (openingBalance.paneer || 0) + totalProduced.paneer - totalSentToStores.paneer,
+                  vegKurkure: (openingBalance.vegKurkure || 0) + totalProduced.vegKurkure - totalSentToStores.vegKurkure,
+                  chickenKurkure: (openingBalance.chickenKurkure || 0) + totalProduced.chickenKurkure - totalSentToStores.chickenKurkure,
+                };
+                
+                console.log('  Final Stock:', productionHouseStock);
+
+                const momoTypes = [
+                  { key: 'chicken', label: 'Chicken', color: 'purple' },
+                  { key: 'chickenCheese', label: 'Chicken Cheese', color: 'pink' },
+                  { key: 'veg', label: 'Veg', color: 'green' },
+                  { key: 'cheeseCorn', label: 'Cheese Corn', color: 'yellow' },
+                  { key: 'paneer', label: 'Paneer', color: 'blue' },
+                  { key: 'vegKurkure', label: 'Veg Kurkure', color: 'teal' },
+                  { key: 'chickenKurkure', label: 'Chicken Kurkure', color: 'red' },
+                ];
+
+                // Show info if no production data
+                if (filteredProduction.length === 0) {
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+                      <Package className="w-12 h-12 text-blue-400 mx-auto mb-3" />
+                      <h3 className="text-lg text-gray-900 mb-2">No Production Data</h3>
+                      <p className="text-sm text-gray-600">
+                        {effectiveProductionHouseId 
+                          ? 'No production records found for the selected production house.' 
+                          : 'No production records found. Start logging production to see stock status.'}
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    {/* Stock Calculation Info */}
+                    {(openingBalance && Object.values(openingBalance).some((v: any) => v > 0)) && (
+                      <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded">
+                        <div className="flex items-start gap-2">
+                          <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <h4 className="text-sm font-semibold text-blue-900">Automatic Stock Carry-Forward Active</h4>
+                            <p className="text-xs text-blue-700 mt-1">
+                              Stock calculation: <span className="font-mono">Opening Balance + This Month's Production - Deliveries</span>
+                            </p>
+                            <p className="text-xs text-blue-600 mt-1">
+                              {latestRecalibration 
+                                ? `Opening balance from recalibration on ${new Date(latestRecalibration.date).toLocaleDateString()}`
+                                : 'Opening balance auto-calculated from previous month\'s closing stock'
+                              }
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {momoTypes.map(({ key, label, color }) => {
+                        const opening = (openingBalance as any)[key] || 0;
+                      const produced = (totalProduced as any)[key];
+                      const sent = (totalSentToStores as any)[key];
+                      const stock = (productionHouseStock as any)[key];
+                      
+                      // Absolute stock thresholds (not relative)
+                      const isLowStock = stock < 1000;
+                      const isMidStock = stock >= 3000 && stock < 6000;
+                      const isHighStock = stock >= 6000;
+                      
+                      // Determine status label
+                      let stockStatus = '';
+                      if (stock < 0) {
+                        stockStatus = '⚠️ Over-distributed';
+                      } else if (isLowStock) {
+                        stockStatus = '⚠️ Low Stock';
+                      }
+                      
+                      const stockPercentage = produced > 0 ? ((stock / produced) * 100).toFixed(0) : '0';
+                      
+                      return (
+                        <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300`}>
+                          <h3 className="text-sm font-semibold text-gray-900 mb-3">{label} Momos</h3>
+                          
+                          <div className="space-y-2">
+                            {opening > 0 && (
+                              <div className="flex justify-between items-center bg-blue-100 px-3 py-2 rounded-lg">
+                                <span className="text-sm text-blue-700 font-semibold">Opening Balance:</span>
+                                <span className="text-xl font-bold text-blue-800">{opening}</span>
+                              </div>
+                            )}
+                            
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs text-gray-600">This Month Produced:</span>
+                              <span className={`text-lg font-bold text-${color}-600`}>{produced}</span>
+                            </div>
+                            
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs text-gray-600">Sent to Stores:</span>
+                              <span className={`text-lg font-bold text-${color}-700`}>{sent}</span>
+                            </div>
+                            
+                            <div className="border-t-2 border-gray-300 pt-2 mt-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
+                                <span className={`text-2xl font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
+                                  {stock}
+                                </span>
+                              </div>
+                              {produced > 0 && (
+                                <div className="mt-2">
+                                  <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                    <span>{stockPercentage}% remaining</span>
+                                  </div>
+                                  <div className="w-full bg-gray-200 rounded-full h-2">
+                                    <div 
+                                      className={`h-2 rounded-full ${isLowStock || stock < 0 ? 'bg-red-500' : `bg-${color}-500`}`}
+                                      style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            
+                            {stockStatus && (
+                              <div className="bg-red-100 border border-red-300 rounded-lg px-2 py-1 mt-2">
+                                <p className="text-xs text-red-800 font-semibold">
+                                  {stockStatus}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Momo Production Charts */}
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl text-gray-900 mb-1">Momo Production Analysis</h2>
+                  <p className="text-sm text-gray-600">Daily, weekly, monthly, and yearly production trends</p>
+                </div>
+
+                {/* Time Filter */}
+                <div className="flex gap-2">
+                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setTimeFilter(filter as TimeFilter)}
+                      className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                        timeFilter === filter
+                          ? 'bg-orange-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Date Range Picker */}
+              {timeFilter === 'custom' && (
+                <div className="mb-6 bg-blue-50 p-4 rounded-lg">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-2">From Date</label>
+                      <input
+                        type="date"
+                        value={dateRange.from}
+                        onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-700 mb-2">To Date</label>
+                      <input
+                        type="date"
+                        value={dateRange.to}
+                        onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Production Bar Chart */}
+              <ResponsiveContainer width="100%" height={400}>
+                <BarChart data={(() => {
+                  // Use consistent production house filtering logic
+                  const filterById = analyticsMode === 'production'
+                    ? selectedProductionHouseId  // In production mode, use production house selector
+                    : (context.user?.designation === 'production_incharge'
+                        ? effectiveStoreId  // Production incharge in store mode uses their store ID
+                        : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
+                  
+                  // Find the selected production house to get BOTH its id and storeId
+                  const selectedProductionHouseForChart = filterById 
+                    ? context.productionHouses?.find(ph => ph.id === filterById || ph.storeId === filterById)
+                    : null;
+                  
+                  const filteredProduction = productionData.filter(p => {
+                    // Match on storeId OR productionHouseId
+                    if (filterById) {
+                      const matchesStoreId = p.storeId === filterById;
+                      const matchesProductionHouseId = p.productionHouseId === filterById;
+                      
+                      // Get the production house ID from the record
+                      let recordProductionHouseId = p.productionHouseId;
+                      
+                      // If record doesn't have productionHouseId, look it up via storeId
+                      if (!recordProductionHouseId && p.storeId) {
+                        const store = context.stores?.find(s => s.id === p.storeId);
+                        recordProductionHouseId = store?.productionHouseId || null;
+                      }
+                      
+                      const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
+                      
+                      const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
+                      if (!matches) return false;
+                    }
+                    
+                    if (timeFilter === 'custom') {
+                      return p.date >= dateRange.from && p.date <= dateRange.to;
+                    }
+                    return true;
+                  });
+
+                  // Group by time period
+                  const grouped = new Map();
+                  filteredProduction.forEach(p => {
+                    let key = p.date;
+                    let displayLabel = p.date;
+                    
+                    if (timeFilter === 'weekly') {
+                      const date = new Date(p.date);
+                      const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
+                      const weekEnd = new Date(weekStart);
+                      weekEnd.setDate(weekEnd.getDate() + 6);
+                      key = weekStart.toISOString().split('T')[0];
+                      // Format as "Dec 21 - Dec 27"
+                      displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                    } else if (timeFilter === 'monthly') {
+                      key = p.date.substring(0, 7); // YYYY-MM
+                      displayLabel = key;
+                    } else if (timeFilter === 'yearly') {
+                      key = p.date.substring(0, 4); // YYYY
+                      displayLabel = key;
+                    }
+
+                    if (!grouped.has(key)) {
+                      grouped.set(key, {
+                        period: displayLabel,
+                        chickenMomos: 0,
+                        chickenCheeseMomos: 0,
+                        vegMomos: 0,
+                        cheeseCornMomos: 0,
+                        paneerMomos: 0,
+                        vegKurkure: 0,
+                        chickenKurkure: 0,
+                      });
+                    }
+
+                    const data = grouped.get(key)!;
+                    data.chickenMomos += p.chickenMomos?.final || 0;
+                    data.chickenCheeseMomos += p.chickenCheeseMomos?.final || 0;
+                    data.vegMomos += p.vegMomos?.final || 0;
+                    data.cheeseCornMomos += p.cheeseCornMomos?.final || 0;
+                    data.paneerMomos += p.paneerMomos?.final || 0;
+                    data.vegKurkure += p.vegKurkureMomos?.final || 0;
+                    data.chickenKurkure += p.chickenKurkureMomos?.final || 0;
+                  });
+
+                  return Array.from(grouped.values()).sort((a, b) => 
+                    a.period.localeCompare(b.period)
+                  );
+                })()}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                  <XAxis 
+                    dataKey="period" 
+                    tick={{ fontSize: 12 }}
+                    stroke="#666"
+                    angle={timeFilter === 'weekly' ? -15 : 0}
+                    textAnchor={timeFilter === 'weekly' ? 'end' : 'middle'}
+                    height={timeFilter === 'weekly' ? 60 : 30}
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12 }}
+                    stroke="#666"
+                    label={{ value: 'Pieces', angle: -90, position: 'insideLeft' }}
+                  />
+                  <Tooltip content={<ProductionTooltip />} />
+                  <Legend />
+                  <Bar dataKey="chickenMomos" name="Chicken Momos" fill="#ef4444" />
+                  <Bar dataKey="chickenCheeseMomos" name="Chicken Cheese" fill="#f97316" />
+                  <Bar dataKey="vegMomos" name="Veg Momos" fill="#10b981" />
+                  <Bar dataKey="cheeseCornMomos" name="Cheese Corn" fill="#fbbf24" />
+                  <Bar dataKey="paneerMomos" name="Paneer Momos" fill="#3b82f6" />
+                  <Bar dataKey="vegKurkure" name="Veg Kurkure" fill="#84cc16" />
+                  <Bar dataKey="chickenKurkure" name="Chicken Kurkure" fill="#f59e0b" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Wastage Analysis Charts */}
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl text-gray-900 mb-1">Wastage Analysis</h2>
+                  <p className="text-sm text-gray-600">Track and minimize production wastage</p>
+                </div>
+              </div>
+
+              {/* Wastage Bar Charts by Time Period */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                {/* Daily Wastage */}
+                <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4">
+                  <h3 className="text-gray-900 mb-3">Daily Wastage Trend</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={(() => {
+                      const last5Days = [];
+                      for (let i = 4; i >= 0; i--) {
+                        const date = new Date();
+                        date.setDate(date.getDate() - i);
+                        const dateStr = date.toISOString().split('T')[0];
+                        
+                        const dayProduction = productionData.filter(p => {
+                          const filterById = analyticsMode === 'production'
+                            ? selectedProductionHouseId
+                            : (context.user?.designation === 'production_incharge'
+                                ? effectiveStoreId
+                                : selectedProductionHouseId);
+                          if (filterById) {
+                            const matchesStoreId = p.storeId === filterById;
+                            const matchesProductionHouseId = p.productionHouseId === filterById;
+                            const phId = p.productionHouseId || p.storeId;
+                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                          }
+                          return p.date === dateStr;
+                        });
+
+                        const totalWastage = dayProduction.reduce((sum, p) => {
+                          return sum + 
+                            (p.wastage?.dough || 0) + 
+                            (p.wastage?.stuffing || 0) + 
+                            (p.wastage?.batter || 0) + 
+                            (p.wastage?.coating || 0);
+                        }, 0);
+
+                        last5Days.push({
+                          date: dateStr.substring(5),
+                          wastage: totalWastage
+                        });
+                      }
+                      return last5Days;
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#fca5a5" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="wastage" stroke="#dc2626" strokeWidth={2} />
+                    </LineChart>
                   </ResponsiveContainer>
+                </div>
+
+                {/* Weekly Wastage */}
+                <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4">
+                  <h3 className="text-gray-900 mb-3">Weekly Wastage Trend</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={(() => {
+                      const last5Weeks = [];
+                      for (let i = 4; i >= 0; i--) {
+                        const date = new Date();
+                        date.setDate(date.getDate() - (i * 7));
+                        const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
+                        const weekEnd = new Date(weekStart);
+                        weekEnd.setDate(weekEnd.getDate() + 6);
+                        
+                        const weekProduction = productionData.filter(p => {
+                          const filterById = analyticsMode === 'production'
+                            ? selectedProductionHouseId
+                            : (context.user?.designation === 'production_incharge'
+                                ? effectiveStoreId
+                                : selectedProductionHouseId);
+                          if (filterById) {
+                            const matchesStoreId = p.storeId === filterById;
+                            const matchesProductionHouseId = p.productionHouseId === filterById;
+                            const phId = p.productionHouseId || p.storeId;
+                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                          }
+                          return p.date >= weekStart.toISOString().split('T')[0] && 
+                                 p.date <= weekEnd.toISOString().split('T')[0];
+                        });
+
+                        const totalWastage = weekProduction.reduce((sum, p) => {
+                          return sum + 
+                            (p.wastage?.dough || 0) + 
+                            (p.wastage?.stuffing || 0) + 
+                            (p.wastage?.batter || 0) + 
+                            (p.wastage?.coating || 0);
+                        }, 0);
+
+                        last5Weeks.push({
+                          week: `W${5-i}`,
+                          wastage: totalWastage
+                        });
+                      }
+                      return last5Weeks;
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#fed7aa" />
+                      <XAxis dataKey="week" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="wastage" stroke="#ea580c" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Monthly Wastage */}
+                <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg p-4">
+                  <h3 className="text-gray-900 mb-3">Monthly Wastage Trend</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={(() => {
+                      const last5Months = [];
+                      for (let i = 4; i >= 0; i--) {
+                        const date = new Date();
+                        date.setMonth(date.getMonth() - i);
+                        const monthStr = date.toISOString().substring(0, 7);
+                        
+                        const monthProduction = productionData.filter(p => {
+                          const filterById = analyticsMode === 'production'
+                            ? selectedProductionHouseId
+                            : (context.user?.designation === 'production_incharge'
+                                ? effectiveStoreId
+                                : selectedProductionHouseId);
+                          if (filterById) {
+                            const matchesStoreId = p.storeId === filterById;
+                            const matchesProductionHouseId = p.productionHouseId === filterById;
+                            const phId = p.productionHouseId || p.storeId;
+                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                          }
+                          return p.date.startsWith(monthStr);
+                        });
+
+                        const totalWastage = monthProduction.reduce((sum, p) => {
+                          return sum + 
+                            (p.wastage?.dough || 0) + 
+                            (p.wastage?.stuffing || 0) + 
+                            (p.wastage?.batter || 0) + 
+                            (p.wastage?.coating || 0);
+                        }, 0);
+
+                        last5Months.push({
+                          month: monthStr.substring(5),
+                          wastage: totalWastage
+                        });
+                      }
+                      return last5Months;
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#fde68a" />
+                      <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="wastage" stroke="#ca8a04" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Wastage Breakdown by Type with Time Filter */}
+              <div className="bg-white rounded-lg border-2 border-gray-200 p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl text-gray-900">Wastage Breakdown by Type</h3>
+                  
+                  {/* Time Filter for Wastage */}
+                  <div className="flex gap-2">
+                    {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                      <button
+                        key={filter}
+                        onClick={() => setWastageTimeFilter(filter as TimeFilter)}
+                        className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                          wastageTimeFilter === filter
+                            ? 'bg-red-600 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <ResponsiveContainer width="100%" height={400}>
+                  <BarChart data={(() => {
+                    // Use consistent production house filtering logic
+                    const filterById = analyticsMode === 'production'
+                      ? selectedProductionHouseId  // In production mode, use production house selector
+                      : (context.user?.designation === 'production_incharge'
+                          ? effectiveStoreId  // Production incharge in store mode uses their store ID
+                          : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
+                    
+                    const filteredProduction = productionData.filter(p => {
+                      if (filterById) {
+                        const matchesStoreId = p.storeId === filterById;
+                        const matchesProductionHouseId = p.productionHouseId === filterById;
+                        const phId = p.productionHouseId || p.storeId;
+                        if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                      }
+                      if (wastageTimeFilter === 'custom') {
+                        return p.date >= dateRange.from && p.date <= dateRange.to;
+                      }
+                      
+                      const today = new Date();
+                      const pDate = new Date(p.date);
+                      
+                      if (wastageTimeFilter === 'daily') {
+                        // Last 5 days
+                        const fiveDaysAgo = new Date(today);
+                        fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+                        return pDate >= fiveDaysAgo;
+                      } else if (wastageTimeFilter === 'weekly') {
+                        // Last 5 weeks
+                        const fiveWeeksAgo = new Date(today);
+                        fiveWeeksAgo.setDate(fiveWeeksAgo.getDate() - 35);
+                        return pDate >= fiveWeeksAgo;
+                      } else if (wastageTimeFilter === 'monthly') {
+                        // Last 5 months
+                        const fiveMonthsAgo = new Date(today);
+                        fiveMonthsAgo.setMonth(fiveMonthsAgo.getMonth() - 5);
+                        return pDate >= fiveMonthsAgo;
+                      } else if (wastageTimeFilter === 'yearly') {
+                        // Last 5 years
+                        const fiveYearsAgo = new Date(today);
+                        fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+                        return pDate >= fiveYearsAgo;
+                      }
+                      
+                      return true;
+                    });
+
+                    // Group by time period (similar to production chart)
+                    const grouped = new Map();
+                    filteredProduction.forEach(p => {
+                      let key = p.date;
+                      let displayLabel = p.date;
+                      
+                      if (wastageTimeFilter === 'weekly') {
+                        const date = new Date(p.date);
+                        const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
+                        const weekEnd = new Date(weekStart);
+                        weekEnd.setDate(weekEnd.getDate() + 6);
+                        key = weekStart.toISOString().split('T')[0];
+                        // Format as "Dec 21 - Dec 27"
+                        displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                      } else if (wastageTimeFilter === 'monthly') {
+                        key = p.date.substring(0, 7); // YYYY-MM
+                        displayLabel = key;
+                      } else if (wastageTimeFilter === 'yearly') {
+                        key = p.date.substring(0, 4); // YYYY
+                        displayLabel = key;
+                      }
+
+                      if (!grouped.has(key)) {
+                        grouped.set(key, {
+                          period: displayLabel,
+                          dough: 0,
+                          stuffing: 0,
+                          batter: 0,
+                          coating: 0
+                        });
+                      }
+
+                      const data = grouped.get(key)!;
+                      data.dough += p.wastage?.dough || 0;
+                      data.stuffing += p.wastage?.stuffing || 0;
+                      data.batter += p.wastage?.batter || 0;
+                      data.coating += p.wastage?.coating || 0;
+                    });
+
+                    return Array.from(grouped.values()).sort((a, b) => 
+                      a.period.localeCompare(b.period)
+                    );
+                  })()}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis 
+                      dataKey="period" 
+                      tick={{ fontSize: 12 }} 
+                      angle={wastageTimeFilter === 'weekly' ? -15 : 0}
+                      textAnchor={wastageTimeFilter === 'weekly' ? 'end' : 'middle'}
+                      height={wastageTimeFilter === 'weekly' ? 60 : 30}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} label={{ value: 'kg', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip content={<WastageTooltip />} />
+                    <Legend />
+                    <Bar dataKey="dough" name="Dough" fill="#dc2626" />
+                    <Bar dataKey="stuffing" name="Stuffing" fill="#f97316" />
+                    <Bar dataKey="batter" name="Batter" fill="#fbbf24" />
+                    <Bar dataKey="coating" name="Coating" fill="#a855f7" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* SOP Maintenance Section - Cluster Head Only */}
+              {isClusterHead && (
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg border-2 border-blue-200 p-6 mt-6">
+                  <div className="flex justify-between items-center mb-6">
+                    <div>
+                      <h3 className="text-xl text-gray-900 flex items-center gap-2">
+                        <ClipboardCheck className="w-6 h-6 text-blue-600" />
+                        SOP Maintenance - Threshold Limits
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1">Set standard ingredient usage per piece (in grams)</p>
+                    </div>
+                    {!editingSop ? (
+                      <button
+                        onClick={() => {
+                          setTempSopThresholds(JSON.parse(JSON.stringify(sopThresholds)));
+                          setTempDiversionPercent(sopDiversionPercent);
+                          setEditingSop(true);
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                      >
+                        <Edit className="w-4 h-4" />
+                        Edit SOP
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setSopThresholds(tempSopThresholds);
+                            setSopDiversionPercent(tempDiversionPercent);
+                            setEditingSop(false);
+                            // TODO: Save to backend
+                            toast.success('SOP thresholds and diversion limit updated successfully');
+                          }}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                        >
+                          <Check className="w-4 h-4" />
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingSop(false);
+                            setTempSopThresholds(null);
+                          }}
+                          className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors flex items-center gap-2"
+                        >
+                          <X className="w-4 h-4" />
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SOP Diversion Percentage Setting */}
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-gray-900 font-semibold flex items-center gap-2">
+                          <AlertCircle className="w-5 h-5 text-yellow-600" />
+                          Maximum Allowed Diversion from SOP
+                        </h4>
+                        <p className="text-sm text-gray-600 mt-1">Set the acceptable deviation range (±%) from SOP standards. Using too little OR too much is non-compliant.</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-sm text-gray-700">Max Diversion:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          step="1"
+                          value={editingSop ? tempDiversionPercent : sopDiversionPercent}
+                          onChange={(e) => {
+                            if (editingSop) {
+                              setTempDiversionPercent(Number(e.target.value));
+                            }
+                          }}
+                          disabled={!editingSop}
+                          className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                        />
+                        <span className="text-gray-700">%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {Object.entries(editingSop ? tempSopThresholds : sopThresholds).map(([key, values]: [string, any]) => {
+                      const momoNames: any = {
+                        chickenMomos: 'Chicken Momos',
+                        chickenCheeseMomos: 'Chicken Cheese Momos',
+                        vegMomos: 'Veg Momos',
+                        cheeseCornMomos: 'Cheese Corn Momos',
+                        paneerMomos: 'Paneer Momos',
+                        vegKurkure: 'Veg Kurkure',
+                        chickenKurkure: 'Chicken Kurkure'
+                      };
+
+                      return (
+                        <div key={key} className="bg-white rounded-lg p-4 border border-gray-200">
+                          <h4 className="text-gray-900 mb-3">{momoNames[key]}</h4>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs text-gray-600">Dough (g/pc)</label>
+                              <input
+                                type="number"
+                                value={values.dough}
+                                disabled={!editingSop}
+                                onChange={(e) => {
+                                  if (editingSop) {
+                                    setTempSopThresholds({
+                                      ...tempSopThresholds,
+                                      [key]: { ...tempSopThresholds[key], dough: Number(e.target.value) }
+                                    });
+                                  }
+                                }}
+                                className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Stuffing (g/pc)</label>
+                              <input
+                                type="number"
+                                value={values.stuffing}
+                                disabled={!editingSop}
+                                onChange={(e) => {
+                                  if (editingSop) {
+                                    setTempSopThresholds({
+                                      ...tempSopThresholds,
+                                      [key]: { ...tempSopThresholds[key], stuffing: Number(e.target.value) }
+                                    });
+                                  }
+                                }}
+                                className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+                              />
+                            </div>
+                            {values.batter !== undefined && (
+                              <div>
+                                <label className="text-xs text-gray-600">Batter (g/pc)</label>
+                                <input
+                                  type="number"
+                                  value={values.batter}
+                                  disabled={!editingSop}
+                                  onChange={(e) => {
+                                    if (editingSop) {
+                                      setTempSopThresholds({
+                                        ...tempSopThresholds,
+                                        [key]: { ...tempSopThresholds[key], batter: Number(e.target.value) }
+                                      });
+                                    }
+                                  }}
+                                  className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+                                />
+                              </div>
+                            )}
+                            {values.coating !== undefined && (
+                              <div>
+                                <label className="text-xs text-gray-600">Coating (g/pc)</label>
+                                <input
+                                  type="number"
+                                  value={values.coating}
+                                  disabled={!editingSop}
+                                  onChange={(e) => {
+                                    if (editingSop) {
+                                      setTempSopThresholds({
+                                        ...tempSopThresholds,
+                                        [key]: { ...tempSopThresholds[key], coating: Number(e.target.value) }
+                                      });
+                                    }
+                                  }}
+                                  className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Daily Usage vs SOP Compliance */}
+              <div className="bg-white rounded-lg border-2 border-gray-200 p-6 mt-6">
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xl text-gray-900 flex items-center gap-2">
+                      <TrendingUp className="w-6 h-6 text-indigo-600" />
+                      Daily Ingredient Usage & SOP Compliance
+                    </h3>
+                    
+                    {/* Date Selector for SOP Compliance */}
+                    <DatePicker
+                      label="Date:"
+                      value={sopComplianceDate}
+                      onChange={setSopComplianceDate}
+                    />
+                  </div>
+                  <p className="text-sm text-gray-600">Regular momos only - Actual usage per piece vs SOP limits with diversion %</p>
+                </div>
+
+                <div className="space-y-6">
+                  {(() => {
+                    // Debug logging for SOP Compliance filtering
+                    const filterById = analyticsMode === 'production'
+                      ? selectedProductionHouseId
+                      : (context.user?.designation === 'production_incharge'
+                          ? effectiveStoreId
+                          : selectedProductionHouseId);
+                    console.log('🔍 SOP Compliance Filter - analyticsMode:', analyticsMode);
+                    console.log('🔍 SOP Compliance Filter - selectedProductionHouseId:', selectedProductionHouseId);
+                    console.log('🔍 SOP Compliance Filter - effectiveStoreId:', effectiveStoreId);
+                    console.log('🔍 SOP Compliance Filter - filterById:', filterById);
+                    console.log('🔍 SOP Compliance Filter - user designation:', context.user?.designation);
+                    console.log('🔍 SOP Compliance Filter - sopComplianceDate:', sopComplianceDate);
+                    
+                    // Use the SOP compliance date selector
+                    const datesToShow = [sopComplianceDate];
+                    
+                    const last5Days = [];
+                    for (const dateStr of datesToShow) {
+                      const dayProduction = productionData.filter(p => {
+                        // Use consistent production house filtering logic
+                        const filterById = analyticsMode === 'production'
+                          ? selectedProductionHouseId  // In production mode, use production house selector
+                          : (context.user?.designation === 'production_incharge'
+                              ? effectiveStoreId  // Production incharge in store mode uses their store ID
+                              : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
+                        if (filterById) {
+                          const matchesStoreId = p.storeId === filterById;
+                          const matchesProductionHouseId = p.productionHouseId === filterById;
+                          const phId = p.productionHouseId || p.storeId;
+                          if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                        }
+                        return p.date === dateStr && p.approvalStatus === 'approved';
+                      });
+                      
+                      console.log(`🔍 SOP Compliance - Date ${dateStr}: Found ${dayProduction.length} production records`);
+
+                      if (dayProduction.length === 0) continue;
+
+                      // Map production data fields to SOP threshold keys
+                      const fieldMapping: any = {
+                        chickenMomos: 'chickenMomos',
+                        chickenCheeseMomos: 'chickenCheeseMomos',
+                        vegMomos: 'vegMomos',
+                        cheeseCornMomos: 'cheeseCornMomos',
+                        paneerMomos: 'paneerMomos',
+                        vegKurkureMomos: 'vegKurkure',
+                        chickenKurkureMomos: 'chickenKurkure'
+                      };
+
+                      const usageByType: any = {};
+                      
+                      dayProduction.forEach(p => {
+                        // Process regular momos (with dough and stuffing)
+                        ['chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos'].forEach(field => {
+                          const momoData = p[field];
+                          if (momoData && momoData.final > 0) {
+                            const sopKey = fieldMapping[field];
+                            if (!usageByType[sopKey]) {
+                              usageByType[sopKey] = {
+                                quantity: 0,
+                                totalDough: 0,
+                                totalStuffing: 0,
+                                totalBatter: 0,
+                                totalCoating: 0
+                              };
+                            }
+                            usageByType[sopKey].quantity += momoData.final;
+                            usageByType[sopKey].totalDough += momoData.dough || 0;
+                            usageByType[sopKey].totalStuffing += momoData.stuffing || 0;
+                          }
+                        });
+
+                        // Process kurkure momos (with batter and coating)
+                        ['vegKurkureMomos', 'chickenKurkureMomos'].forEach(field => {
+                          const momoData = p[field];
+                          if (momoData && momoData.final > 0) {
+                            const sopKey = fieldMapping[field];
+                            if (!usageByType[sopKey]) {
+                              usageByType[sopKey] = {
+                                quantity: 0,
+                                totalDough: 0,
+                                totalStuffing: 0,
+                                totalBatter: 0,
+                                totalCoating: 0
+                              };
+                            }
+                            usageByType[sopKey].quantity += momoData.final;
+                            usageByType[sopKey].totalBatter += momoData.batter || 0;
+                            usageByType[sopKey].totalCoating += momoData.coating || 0;
+                          }
+                        });
+                      });
+
+                      last5Days.push({ date: dateStr, usage: usageByType });
+                    }
+
+                    if (last5Days.length === 0) {
+                      return (
+                        <div className="text-center py-12 text-gray-500">
+                          <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                          <p>No approved production data found for {new Date(sopComplianceDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                          <p className="text-sm mt-1">Production entries must be approved to appear here</p>
+                        </div>
+                      );
+                    }
+
+                    return last5Days.map(({ date, usage }) => (
+                      <div key={date} className="border border-gray-200 rounded-lg p-4">
+                        <h4 className="text-gray-900 mb-4">{new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</h4>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {Object.entries(usage).map(([momoType, data]: [string, any]) => {
+                            if (data.quantity === 0) return null;
+                            
+                            // Skip Kurkure momos - SOP compliance not required
+                            if (momoType === 'vegKurkure' || momoType === 'chickenKurkure') {
+                              return null;
+                            }
+
+                            const momoNames: any = {
+                              chickenMomos: 'Chicken Momos',
+                              chickenCheeseMomos: 'Chicken Cheese',
+                              vegMomos: 'Veg Momos',
+                              cheeseCornMomos: 'Cheese Corn',
+                              paneerMomos: 'Paneer Momos',
+                              vegKurkure: 'Veg Kurkure',
+                              chickenKurkure: 'Chicken Kurkure'
+                            };
+
+                            // Convert kg to g by multiplying by 1000
+                            const avgDough = data.quantity > 0 ? (data.totalDough * 1000) / data.quantity : 0;
+                            const avgStuffing = data.quantity > 0 ? (data.totalStuffing * 1000) / data.quantity : 0;
+                            const avgBatter = data.quantity > 0 ? (data.totalBatter * 1000) / data.quantity : 0;
+                            const avgCoating = data.quantity > 0 ? (data.totalCoating * 1000) / data.quantity : 0;
+
+                            // Calculate diversion percentages
+                            const doughDiversion = sopThresholds[momoType].dough > 0 ? ((avgDough - sopThresholds[momoType].dough) / sopThresholds[momoType].dough) * 100 : 0;
+                            const stuffingDiversion = sopThresholds[momoType].stuffing > 0 ? ((avgStuffing - sopThresholds[momoType].stuffing) / sopThresholds[momoType].stuffing) * 100 : 0;
+                            const batterDiversion = sopThresholds[momoType].batter > 0 ? ((avgBatter - sopThresholds[momoType].batter) / sopThresholds[momoType].batter) * 100 : 0;
+                            const coatingDiversion = sopThresholds[momoType].coating > 0 ? ((avgCoating - sopThresholds[momoType].coating) / sopThresholds[momoType].coating) * 100 : 0;
+
+                            // Use dynamic diversion percentage - check BOTH upper and lower bounds
+                            const minDiversion = 1 - (sopDiversionPercent / 100);
+                            const maxDiversion = 1 + (sopDiversionPercent / 100);
+                            const doughCompliance = avgDough >= sopThresholds[momoType].dough * minDiversion && avgDough <= sopThresholds[momoType].dough * maxDiversion;
+                            const stuffingCompliance = avgStuffing >= sopThresholds[momoType].stuffing * minDiversion && avgStuffing <= sopThresholds[momoType].stuffing * maxDiversion;
+                            const batterCompliance = !sopThresholds[momoType].batter || (avgBatter >= sopThresholds[momoType].batter * minDiversion && avgBatter <= sopThresholds[momoType].batter * maxDiversion);
+                            const coatingCompliance = !sopThresholds[momoType].coating || (avgCoating >= sopThresholds[momoType].coating * minDiversion && avgCoating <= sopThresholds[momoType].coating * maxDiversion);
+
+                            const overallCompliance = doughCompliance && stuffingCompliance && batterCompliance && coatingCompliance;
+
+                            return (
+                              <div 
+                                key={momoType} 
+                                className={`p-3 rounded-lg border-2 ${overallCompliance ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <p className="text-sm text-gray-900">{momoNames[momoType]}</p>
+                                  {overallCompliance ? (
+                                    <Check className="w-5 h-5 text-green-600" />
+                                  ) : (
+                                    <AlertCircle className="w-5 h-5 text-red-600" />
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 mb-2">Qty: {data.quantity} pcs</p>
+                                
+                                <div className="space-y-1 text-xs">
+                                  <div className={`flex justify-between items-center ${!doughCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+                                    <span>Dough:</span>
+                                    <div className="text-right">
+                                      <div>{avgDough.toFixed(1)}g / {sopThresholds[momoType].dough}g</div>
+                                      <div className={`text-[10px] ${Math.abs(doughDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+                                        {doughDiversion > 0 ? '+' : ''}{doughDiversion.toFixed(1)}%
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className={`flex justify-between items-center ${!stuffingCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+                                    <span>Stuffing:</span>
+                                    <div className="text-right">
+                                      <div>{avgStuffing.toFixed(1)}g / {sopThresholds[momoType].stuffing}g</div>
+                                      <div className={`text-[10px] ${Math.abs(stuffingDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+                                        {stuffingDiversion > 0 ? '+' : ''}{stuffingDiversion.toFixed(1)}%
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {sopThresholds[momoType].batter && (
+                                    <div className={`flex justify-between items-center ${!batterCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+                                      <span>Batter:</span>
+                                      <div className="text-right">
+                                        <div>{avgBatter.toFixed(1)}g / {sopThresholds[momoType].batter}g</div>
+                                        <div className={`text-[10px] ${Math.abs(batterDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+                                          {batterDiversion > 0 ? '+' : ''}{batterDiversion.toFixed(1)}%
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {sopThresholds[momoType].coating && (
+                                    <div className={`flex justify-between items-center ${!coatingCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+                                      <span>Coating:</span>
+                                      <div className="text-right">
+                                        <div>{avgCoating.toFixed(1)}g / {sopThresholds[momoType].coating}g</div>
+                                        <div className={`text-[10px] ${Math.abs(coatingDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+                                          {coatingDiversion > 0 ? '+' : ''}{coatingDiversion.toFixed(1)}%
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ));
+                  })()}
                 </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Production Requests View */}
+        {activeView === 'production-requests' && (
+          <div>
+            <ProductionRequests context={context} highlightRequestId={highlightRequestId || null} selectedStoreId={localSelectedStoreId} />
+          </div>
+        )}
+
+        {/* Recalibration Reports View - Production Analytics */}
+        {activeView === 'recalibration-reports' && (
+          <div>
+            <RecalibrationReports 
+              context={context} 
+              selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : selectedStoreId}
+              onOpenRecalibration={() => setShowRecalibration(true)}
+              locationType="production_house"
+            />
+          </div>
+        )}
+
+        {/* Store Recalibration View - Store Analytics */}
+        {activeView === 'store-recalibration' && (
+          <div>
+            <RecalibrationReports 
+              context={context} 
+              selectedStoreId={effectiveStoreId}
+              locationType="store"
+            />
+          </div>
+        )}
       </div>
+      
+      {/* Monthly Stock Recalibration Modal */}
+      {showRecalibration && (
+        <MonthlyStockRecalibration
+          context={context}
+          selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : effectiveStoreId}
+          onClose={() => {
+            setShowRecalibration(false);
+            // Refresh opening balance data after recalibration
+            if (analyticsMode === 'production') {
+              console.log('🔄 Recalibration modal closed - refreshing data...');
+              // Small delay to ensure backend has processed the save
+              setTimeout(() => {
+                fetchRecalibrationAndCalculateOpeningBalance();
+              }, 500);
+            }
+          }}
+          isProductionHouse={analyticsMode === 'production'}
+        />
+      )}
     </div>
   );
 }

@@ -5,12 +5,14 @@ import { getSupabaseClient } from '../utils/supabase/client';
 
 interface ExportDataProps {
   userRole: 'manager' | 'cluster_head';
+  selectedStoreId?: string | null;
+  currentUserId?: string;
 }
 
 type DateRange = 'today' | 'weekly' | 'monthly' | 'custom';
 type ExportFormat = 'csv' | 'pdf' | 'excel';
 
-export function ExportData({ userRole }: ExportDataProps) {
+export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportDataProps) {
   const [dateRange, setDateRange] = useState<DateRange>('today');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -79,19 +81,30 @@ export function ExportData({ userRole }: ExportDataProps) {
     try {
       setLoading(true);
 
-      const [inventory, overheads, sales, employees, payouts] = await Promise.all([
+      const [inventory, overheads, sales, employees, payouts, production] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
         api.fetchSalesData(accessToken),
         api.getEmployees(),
-        api.getPayouts()
+        api.getPayouts(),
+        api.fetchProductionData()
       ]);
 
-      // Filter data by date range
+      // Filter data by date range and store
       const filterByDate = (items: any[], dateField: string = 'date') => {
         return items.filter((item: any) => {
           const itemDate = item[dateField];
-          return itemDate >= startDate && itemDate <= endDate;
+          const matchesDate = itemDate >= startDate && itemDate <= endDate;
+          
+          // If selectedStoreId is provided, ONLY show exact matches
+          // Do NOT include legacy data without storeId when viewing a specific store
+          if (selectedStoreId) {
+            const itemStoreId = item.storeId;
+            const matchesStore = itemStoreId === selectedStoreId;
+            return matchesDate && matchesStore;
+          }
+          
+          return matchesDate;
         });
       };
 
@@ -99,6 +112,20 @@ export function ExportData({ userRole }: ExportDataProps) {
       const filteredOverheads = filterByDate(overheads);
       const filteredSales = filterByDate(sales);
       const filteredPayouts = filterByDate(payouts);
+      const filteredProduction = filterByDate(production);
+
+      // Debug logging
+      console.log('Export Data Debug:', {
+        selectedStoreId,
+        totalInventory: inventory.length,
+        filteredInventory: filteredInventory.length,
+        totalSales: sales.length,
+        filteredSales: filteredSales.length,
+        totalOverheads: overheads.length,
+        filteredOverheads: filteredOverheads.length,
+        sampleSalesStoreIds: sales.slice(0, 3).map((s: any) => ({ date: s.date, storeId: s.storeId })),
+        sampleOverheadStoreIds: overheads.slice(0, 3).map((o: any) => ({ date: o.date, storeId: o.storeId }))
+      });
 
       // Calculate totals based on the actual data structure
       const totalInventorySpend = filteredInventory.reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
@@ -109,11 +136,13 @@ export function ExportData({ userRole }: ExportDataProps) {
       return {
         startDate,
         endDate,
+        storeId: selectedStoreId,
         inventory: filteredInventory,
         overheads: filteredOverheads,
         sales: filteredSales,
         employees,
         payouts: filteredPayouts,
+        production: filteredProduction,
         summary: {
           totalInventorySpend,
           totalOverheadSpend,
@@ -141,12 +170,15 @@ export function ExportData({ userRole }: ExportDataProps) {
   const generateCSV = (data: any) => {
     let csv = `Data Export Report\n`;
     csv += `Period: ${data.startDate} to ${data.endDate}\n`;
+    if (data.storeId) {
+      csv += `Store ID: ${data.storeId}\n`;
+    }
     csv += `Generated on: ${new Date().toLocaleString()}\n\n`;
 
     // Summary Section
     csv += `SUMMARY\n`;
     csv += `Total Inventory Spend,₹${data.summary.totalInventorySpend.toLocaleString()}\n`;
-    csv += `Total Overhead Spend,₹${data.summary.totalOverheadSpend.toLocaleString()}\n`;
+    csv += `Total Overhead Spend,${data.summary.totalOverheadSpend.toLocaleString()}\n`;
     csv += `Total Sales,₹${data.summary.totalSales.toLocaleString()}\n`;
     csv += `Total Payouts,₹${data.summary.totalPayouts.toLocaleString()}\n`;
     csv += `Net Profit/Loss,₹${(data.summary.totalSales - data.summary.totalInventorySpend - data.summary.totalOverheadSpend - data.summary.totalPayouts).toLocaleString()}\n\n`;
@@ -155,8 +187,17 @@ export function ExportData({ userRole }: ExportDataProps) {
     csv += `\nINVENTORY ITEMS\n`;
     csv += `Date,Category,Item Name,Quantity,Unit,Price per Unit,Total Cost\n`;
     data.inventory.forEach((item: any) => {
-      csv += `${item.date},"${item.category}","${item.itemName}",${item.quantity},"${item.unit}",₹${item.costPerUnit},₹${item.totalCost}\n`;
+      csv += `${item.date},"${item.category}","${item.itemName}",${item.quantity},"${item.unit}",₹${item.price || 0},₹${item.totalCost}\n`;
     });
+
+    // Production Section
+    if (data.production && data.production.length > 0) {
+      csv += `\nPRODUCTION DATA\n`;
+      csv += `Date,Chicken Momos,Chicken Cheese,Veg Momos,Cheese Corn,Paneer,Veg Kurkure,Chicken Kurkure,Wastage (kg)\n`;
+      data.production.forEach((item: any) => {
+        csv += `${item.date},${item.chickenMomos?.final || 0},${item.chickenCheeseMomos?.final || 0},${item.vegMomos?.final || 0},${item.cheeseCornMomos?.final || 0},${item.paneerMomos?.final || 0},${item.vegKurkureMomos?.final || 0},${item.chickenKurkureMomos?.final || 0},${item.wastage?.total || 0}\n`;
+      });
+    }
 
     // Overheads Section
     csv += `\nOVERHEAD EXPENSES\n`;
@@ -167,9 +208,9 @@ export function ExportData({ userRole }: ExportDataProps) {
 
     // Sales Section
     csv += `\nSALES DATA\n`;
-    csv += `Date,Offline Sales (Paytm),Offline Sales (Cash),Online Sales,Employee Salaries,Cash in Hand,Discrepancy,Status\n`;
+    csv += `Date,Offline Sales (Paytm),Offline Sales (Cash),Online Sales,Employee Salaries,Cash in Hand,Cash Offset,Status\n`;
     data.sales.forEach((item: any) => {
-      csv += `${item.date},₹${item.offlinePaytm || 0},₹${item.offlineCash || 0},₹${item.onlineSales || 0},₹${item.employeeSalaries || 0},₹${item.cashInHand || 0},₹${item.discrepancy || 0},"${item.approvalRequired ? 'Pending Approval' : 'Approved'}"\n`;
+      csv += `${item.date},₹${item.paytmAmount || 0},₹${item.cashAmount || 0},₹${item.onlineSales || 0},₹${item.employeeSalary || 0},₹${item.actualCashInHand || 0},₹${item.cashOffset || 0},"${item.approvalRequired ? 'Pending Approval' : 'Approved'}"\n`;
     });
 
     // Payouts Section
@@ -218,6 +259,7 @@ export function ExportData({ userRole }: ExportDataProps) {
         <body>
           <h1>Data Export Report</h1>
           <p><strong>Period:</strong> ${data.startDate} to ${data.endDate}</p>
+          ${data.storeId ? `<p><strong>Store ID:</strong> ${data.storeId}</p>` : ''}
           <p><strong>Generated on:</strong> ${new Date().toLocaleString()}</p>
           
           <div class="summary">
@@ -232,7 +274,7 @@ export function ExportData({ userRole }: ExportDataProps) {
           <h2>Inventory Items</h2>
           <table>
             <thead>
-              <tr><th>Date</th><th>Category</th><th>Item Name</th><th>Quantity</th><th>Unit</th><th>Price/Unit</th><th>Amount</th></tr>
+              <tr><th>Date</th><th>Category</th><th>Item Name</th><th>Quantity</th><th>Unit</th><th>Price/Unit</th><th>Total Cost</th></tr>
             </thead>
             <tbody>
               ${data.inventory.map((item: any) => `
@@ -242,12 +284,36 @@ export function ExportData({ userRole }: ExportDataProps) {
                   <td>${item.itemName}</td>
                   <td>${item.quantity}</td>
                   <td>${item.unit}</td>
-                  <td>₹${item.pricePerUnit}</td>
-                  <td>₹${item.amount}</td>
+                  <td>₹${item.price || 0}</td>
+                  <td>₹${item.totalCost}</td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
+
+          ${data.production && data.production.length > 0 ? `
+          <h2>Production Data</h2>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Chicken Momos</th><th>Chicken Cheese</th><th>Veg Momos</th><th>Cheese Corn</th><th>Paneer</th><th>Veg Kurkure</th><th>Chicken Kurkure</th><th>Wastage (kg)</th></tr>
+            </thead>
+            <tbody>
+              ${data.production.map((item: any) => `
+                <tr>
+                  <td>${item.date}</td>
+                  <td>${item.chickenMomos?.final || 0}</td>
+                  <td>${item.chickenCheeseMomos?.final || 0}</td>
+                  <td>${item.vegMomos?.final || 0}</td>
+                  <td>${item.cheeseCornMomos?.final || 0}</td>
+                  <td>${item.paneerMomos?.final || 0}</td>
+                  <td>${item.vegKurkureMomos?.final || 0}</td>
+                  <td>${item.chickenKurkureMomos?.final || 0}</td>
+                  <td>${item.wastage?.total || 0}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
 
           <h2>Overhead Expenses</h2>
           <table>
@@ -269,18 +335,18 @@ export function ExportData({ userRole }: ExportDataProps) {
           <h2>Sales Data</h2>
           <table>
             <thead>
-              <tr><th>Date</th><th>Offline (Paytm)</th><th>Offline (Cash)</th><th>Online</th><th>Salaries</th><th>Cash in Hand</th><th>Discrepancy</th><th>Status</th></tr>
+              <tr><th>Date</th><th>Offline (Paytm)</th><th>Offline (Cash)</th><th>Online</th><th>Salaries</th><th>Cash in Hand</th><th>Cash Offset</th><th>Status</th></tr>
             </thead>
             <tbody>
               ${data.sales.map((item: any) => `
                 <tr>
                   <td>${item.date}</td>
-                  <td>₹${item.offlinePaytm || 0}</td>
-                  <td>₹${item.offlineCash || 0}</td>
+                  <td>₹${item.paytmAmount || 0}</td>
+                  <td>₹${item.cashAmount || 0}</td>
                   <td>₹${item.onlineSales || 0}</td>
-                  <td>₹${item.employeeSalaries || 0}</td>
-                  <td>₹${item.cashInHand || 0}</td>
-                  <td>₹${item.discrepancy || 0}</td>
+                  <td>₹${item.employeeSalary || 0}</td>
+                  <td>₹${item.actualCashInHand || 0}</td>
+                  <td>₹${item.cashOffset || 0}</td>
                   <td>${item.approvalRequired ? 'Pending' : 'Approved'}</td>
                 </tr>
               `).join('')}
@@ -381,6 +447,11 @@ export function ExportData({ userRole }: ExportDataProps) {
         <div className="mb-8">
           <h1 className="text-3xl text-gray-900 mb-2">Export Data</h1>
           <p className="text-gray-600">Download comprehensive reports in multiple formats</p>
+          {selectedStoreId && (
+            <div className="mt-2 inline-block bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm">
+              Store: {selectedStoreId}
+            </div>
+          )}
         </div>
 
         {/* Export Configuration Card */}
@@ -515,6 +586,7 @@ export function ExportData({ userRole }: ExportDataProps) {
             <h3 className="font-medium text-gray-900 mb-2">Export Will Include:</h3>
             <ul className="space-y-1 text-sm text-gray-700">
               <li>✓ Complete Inventory Items with quantities and costs</li>
+              <li>✓ Production Data with all momo types and wastage</li>
               <li>✓ All Overhead Expenses categorized</li>
               <li>✓ Sales Data with payment breakdowns</li>
               <li>✓ Employee Payouts with detailed records</li>
@@ -613,10 +685,14 @@ export function ExportData({ userRole }: ExportDataProps) {
               </div>
 
               {/* Counts */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                 <div className="bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Inventory Items</div>
                   <div className="text-2xl text-gray-900">{previewData.inventory.length}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="text-sm text-gray-600">Production Logs</div>
+                  <div className="text-2xl text-gray-900">{previewData.production?.length || 0}</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Overhead Entries</div>
@@ -634,6 +710,7 @@ export function ExportData({ userRole }: ExportDataProps) {
 
               <div className="text-sm text-gray-600 text-center">
                 <p>Period: {previewData.startDate} to {previewData.endDate}</p>
+                {previewData.storeId && <p>Store ID: {previewData.storeId}</p>}
                 <p className="mt-2">Click "Export Data" to download the complete report</p>
               </div>
             </div>

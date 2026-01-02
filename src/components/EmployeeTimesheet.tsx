@@ -294,156 +294,156 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
 
         {/* Week Navigator */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <button
-              onClick={previousWeek}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              Previous Week
-            </button>
-            
-            <div className="text-center">
-              <div className="flex items-center gap-2 justify-center mb-1">
-                <Calendar className="w-5 h-5 text-purple-600" />
-                <span className="text-lg text-gray-900">
-                  {currentWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  {' - '}
-                  {weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
+              <div className="flex items-center justify-between mb-4">
+                <button
+                  onClick={previousWeek}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Previous Week
+                </button>
+                
+                <div className="text-center">
+                  <div className="flex items-center gap-2 justify-center mb-1">
+                    <Calendar className="w-5 h-5 text-purple-600" />
+                    <span className="text-lg text-gray-900">
+                      {currentWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {' - '}
+                      {weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600">Week View</p>
+                </div>
+                
+                <button
+                  onClick={nextWeek}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                >
+                  Next Week
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
-              <p className="text-sm text-gray-600">Week View</p>
+              
+              {/* Copy from Previous Week Button */}
+              <div className="flex justify-center pt-2 border-t border-gray-200">
+                <button
+                  onClick={copyFromPreviousWeek}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg hover:from-blue-600 hover:to-cyan-600 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copy from Previous Week
+                </button>
+              </div>
             </div>
-            
-            <button
-              onClick={nextWeek}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
-            >
-              Next Week
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-          
-          {/* Copy from Previous Week Button */}
-          <div className="flex justify-center pt-2 border-t border-gray-200">
-            <button
-              onClick={copyFromPreviousWeek}
-              disabled={loading}
-              className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg hover:from-blue-600 hover:to-cyan-600 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Copy className="w-4 h-4" />
-              Copy from Previous Week
-            </button>
-          </div>
-        </div>
 
         {/* Timesheet Grid */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gradient-to-r from-purple-600 to-pink-600 text-white">
-                <tr>
-                  <th className="px-6 py-4 text-left">Date</th>
-                  <th className="px-6 py-4 text-left">Day</th>
-                  <th className="px-6 py-4 text-left">Start Time</th>
-                  <th className="px-6 py-4 text-left">End Time</th>
-                  <th className="px-6 py-4 text-left">Total Hours</th>
-                  <th className="px-6 py-4 text-left">Status</th>
-                  <th className="px-6 py-4 text-left">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {weekDates.map((date, index) => {
-                  const entry = getTimesheetEntry(date);
-                  const onLeave = isOnLeave(date);
-                  
-                  return (
-                    <tr key={index} className={onLeave ? 'bg-yellow-50' : index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                      <td className="px-6 py-4 text-gray-900">
-                        {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      </td>
-                      <td className="px-6 py-4 text-gray-700">
-                        {date.toLocaleDateString('en-US', { weekday: 'short' })}
-                      </td>
-                      <td className="px-6 py-4">
-                        {onLeave ? (
-                          <span className="text-yellow-700 text-sm">On Leave</span>
-                        ) : (
-                          <input
-                            type="time"
-                            value={entry.startTime}
-                            onChange={(e) => handleTimeChange(date, 'startTime', e.target.value)}
-                            disabled={entry.status === 'approved'}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
-                          />
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {onLeave ? (
-                          <span className="text-yellow-700 text-sm">On Leave</span>
-                        ) : (
-                          <input
-                            type="time"
-                            value={entry.endTime}
-                            onChange={(e) => handleTimeChange(date, 'endTime', e.target.value)}
-                            disabled={entry.status === 'approved'}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
-                          />
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {onLeave ? (
-                          <span className="text-yellow-700">-</span>
-                        ) : (
-                          <span className={`${entry.totalHours >= 4 ? 'text-green-700' : entry.totalHours > 0 ? 'text-red-700' : 'text-gray-500'}`}>
-                            {entry.totalHours > 0 ? `${entry.totalHours.toFixed(2)} hrs` : '-'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {onLeave ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
-                            <AlertCircle className="w-4 h-4" />
-                            Leave
-                          </span>
-                        ) : entry.status === 'approved' ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
-                            <CheckCircle className="w-4 h-4" />
-                            Approved
-                          </span>
-                        ) : entry.status === 'rejected' ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">
-                            <XCircle className="w-4 h-4" />
-                            Rejected
-                          </span>
-                        ) : entry.startTime && entry.endTime ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
-                            <Clock className="w-4 h-4" />
-                            Pending
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-sm">Not filled</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {!onLeave && entry.status !== 'approved' && (
-                          <button
-                            onClick={() => saveSingleDay(date)}
-                            disabled={loading || !entry.startTime || !entry.endTime}
-                            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                          >
-                            <Save className="w-4 h-4" />
-                            Save
-                          </button>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gradient-to-r from-purple-600 to-pink-600 text-white">
+                    <tr>
+                      <th className="px-6 py-4 text-left">Date</th>
+                      <th className="px-6 py-4 text-left">Day</th>
+                      <th className="px-6 py-4 text-left">Start Time</th>
+                      <th className="px-6 py-4 text-left">End Time</th>
+                      <th className="px-6 py-4 text-left">Total Hours</th>
+                      <th className="px-6 py-4 text-left">Status</th>
+                      <th className="px-6 py-4 text-left">Action</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {weekDates.map((date, index) => {
+                      const entry = getTimesheetEntry(date);
+                      const onLeave = isOnLeave(date);
+                      
+                      return (
+                        <tr key={index} className={onLeave ? 'bg-yellow-50' : index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                          <td className="px-6 py-4 text-gray-900">
+                            {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </td>
+                          <td className="px-6 py-4 text-gray-700">
+                            {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                          </td>
+                          <td className="px-6 py-4">
+                            {onLeave ? (
+                              <span className="text-yellow-700 text-sm">On Leave</span>
+                            ) : (
+                              <input
+                                type="time"
+                                value={entry.startTime}
+                                onChange={(e) => handleTimeChange(date, 'startTime', e.target.value)}
+                                disabled={entry.status === 'approved'}
+                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
+                              />
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {onLeave ? (
+                              <span className="text-yellow-700 text-sm">On Leave</span>
+                            ) : (
+                              <input
+                                type="time"
+                                value={entry.endTime}
+                                onChange={(e) => handleTimeChange(date, 'endTime', e.target.value)}
+                                disabled={entry.status === 'approved'}
+                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
+                              />
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {onLeave ? (
+                              <span className="text-yellow-700">-</span>
+                            ) : (
+                              <span className={`${entry.totalHours >= 4 ? 'text-green-700' : entry.totalHours > 0 ? 'text-red-700' : 'text-gray-500'}`}>
+                                {entry.totalHours > 0 ? `${entry.totalHours.toFixed(2)} hrs` : '-'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {onLeave ? (
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
+                                <AlertCircle className="w-4 h-4" />
+                                Leave
+                              </span>
+                            ) : entry.status === 'approved' ? (
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
+                                <CheckCircle className="w-4 h-4" />
+                                Approved
+                              </span>
+                            ) : entry.status === 'rejected' ? (
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">
+                                <XCircle className="w-4 h-4" />
+                                Rejected
+                              </span>
+                            ) : entry.startTime && entry.endTime ? (
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
+                                <Clock className="w-4 h-4" />
+                                Pending
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-sm">Not filled</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {!onLeave && entry.status !== 'approved' && (
+                              <button
+                                onClick={() => saveSingleDay(date)}
+                                disabled={loading || !entry.startTime || !entry.endTime}
+                                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                              >
+                                <Save className="w-4 h-4" />
+                                Save
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
         {/* Save Week Button */}
         <div className="mt-6 flex justify-end">

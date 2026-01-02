@@ -1,37 +1,34 @@
 import { useState } from 'react';
-import { InventoryItem, OverheadItem } from '../App';
-import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
-import { Package, Receipt, Edit2, Trash2 } from 'lucide-react';
+import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { Package, Receipt, Wallet, Edit2, Trash2 } from 'lucide-react';
 
 type Props = {
   inventory: InventoryItem[];
   overheads: OverheadItem[];
+  fixedCosts: FixedCostItem[];
   onEditInventory: (item: InventoryItem) => void;
   onDeleteInventory: (id: string) => void;
   onEditOverhead: (item: OverheadItem) => void;
   onDeleteOverhead: (id: string) => void;
+  onEditFixedCost: (item: FixedCostItem) => void;
+  onDeleteFixedCost: (id: string) => void;
   isManager?: boolean;
-};
-
-const overheadLabels: Record<OverheadItem['category'], string> = {
-  fuel: 'Fuel Cost',
-  travel: 'Travel Cost',
-  transportation: 'Transportation Cost',
-  marketing: 'Marketing Cost',
-  service_charge: 'Service Charge',
-  repair: 'Repair Cost'
 };
 
 export function InventoryList({ 
   inventory, 
   overheads,
+  fixedCosts,
   onEditInventory,
   onDeleteInventory,
   onEditOverhead,
   onDeleteOverhead,
+  onEditFixedCost,
+  onDeleteFixedCost,
   isManager = true
 }: Props) {
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead', id: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead' | 'fixedcost', id: string } | null>(null);
 
   // Group inventory by category
   const groupedInventory = inventory.reduce((acc, item) => {
@@ -42,11 +39,13 @@ export function InventoryList({
     return acc;
   }, {} as Record<string, InventoryItem[]>);
 
-  const handleDelete = (type: 'inventory' | 'overhead', id: string) => {
+  const handleDelete = (type: 'inventory' | 'overhead' | 'fixedcost', id: string) => {
     if (type === 'inventory') {
       onDeleteInventory(id);
-    } else {
+    } else if (type === 'overhead') {
       onDeleteOverhead(id);
+    } else {
+      onDeleteFixedCost(id);
     }
     setDeleteConfirm(null);
   };
@@ -139,7 +138,7 @@ export function InventoryList({
                 >
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex-1">
-                      <p className="text-gray-900">{overheadLabels[item.category]}</p>
+                      <p className="text-gray-900">{OVERHEAD_CATEGORIES[item.category]}</p>
                       <p className="text-sm text-gray-500">{item.description}</p>
                     </div>
                     <div className="flex items-center gap-3">
@@ -169,6 +168,57 @@ export function InventoryList({
             </div>
           )}
         </div>
+
+        {/* Fixed Costs */}
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Wallet className="w-5 h-5 text-green-600" />
+            <h3 className="text-gray-900">Fixed Costs</h3>
+          </div>
+
+          {fixedCosts.length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-8">
+              No fixed costs for this date
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {fixedCosts.map((item) => (
+                <div
+                  key={item.id}
+                  className="border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors group"
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex-1">
+                      <p className="text-gray-900">{FIXED_COST_CATEGORIES[item.category]}</p>
+                      <p className="text-sm text-gray-500">{item.description}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-green-600">₹{item.amount.toLocaleString()}</span>
+                      {isManager && (
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => onEditFixedCost(item)}
+                            className="p-1.5 hover:bg-green-50 rounded text-green-600 transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirm({ type: 'fixedcost', id: item.id })}
+                            className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Delete Confirmation Modal */}
@@ -177,7 +227,7 @@ export function InventoryList({
           <div className="bg-white rounded-lg max-w-md w-full p-6">
             <h3 className="text-gray-900 mb-4">Confirm Delete</h3>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to delete this {deleteConfirm.type === 'inventory' ? 'inventory item' : 'overhead cost'}? This action cannot be undone.
+              Are you sure you want to delete this {deleteConfirm.type === 'inventory' ? 'inventory item' : deleteConfirm.type === 'overhead' ? 'overhead cost' : 'fixed cost'}? This action cannot be undone.
             </p>
             <div className="flex gap-3">
               <button

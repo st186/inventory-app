@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Clock, User, Calendar, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
 import { RouteDebugger } from './RouteDebugger';
@@ -6,20 +6,56 @@ import { RouteDebugger } from './RouteDebugger';
 interface ApproveTimesheetsProps {
   managerId: string;
   role?: string; // Add role to differentiate between manager and cluster_head
+  selectedStoreId?: string | null;
+  isIncharge?: boolean;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
 }
 
-export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
+export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null }: ApproveTimesheetsProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [timesheets, setTimesheets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const isClusterHead = role === 'cluster_head';
 
   console.log('ApproveTimesheets: managerId prop =', managerId);
   console.log('ApproveTimesheets: role prop =', role);
+  console.log('ApproveTimesheets: isIncharge =', isIncharge);
+  console.log('ApproveTimesheets: inchargeDesignation =', inchargeDesignation);
+  
+  // Filter employees by store and incharge permissions
+  const filteredEmployees = useMemo(() => {
+    let filtered = employees;
+    
+    // Apply store filter (include null/undefined storeIds for backward compatibility)
+    if (selectedStoreId) {
+      filtered = filtered.filter(emp => 
+        emp.storeId === selectedStoreId || 
+        emp.storeId === null || 
+        emp.storeId === undefined
+      );
+    }
+    
+    // Apply incharge permissions - only show employees under the incharge
+    if (isIncharge && managerId) {
+      filtered = filtered.filter(emp => emp.inchargeId === managerId);
+    }
+    
+    return filtered;
+  }, [employees, selectedStoreId, isIncharge, managerId]);
 
   useEffect(() => {
     loadEmployees();
   }, []);
+
+  // Update selected employee when filtered list changes
+  useEffect(() => {
+    if (filteredEmployees.length > 0 && !filteredEmployees.find(e => e.employeeId === selectedEmployee)) {
+      setSelectedEmployee(filteredEmployees[0].employeeId);
+    } else if (filteredEmployees.length === 0) {
+      setSelectedEmployee('');
+    }
+  }, [filteredEmployees]);
 
   useEffect(() => {
     if (selectedEmployee) {
@@ -29,7 +65,7 @@ export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
 
   const loadEmployees = async () => {
     try {
-      console.log('ApproveTimesheets: Loading employees/managers for role:', role);
+      console.log('ApproveTimesheets: Loading employees/managers for role:', role, 'isIncharge:', isIncharge);
       let data;
       
       if (role === 'cluster_head') {
@@ -37,6 +73,19 @@ export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
         console.log('ApproveTimesheets: Calling getManagersByClusterHead with clusterHeadId:', managerId);
         data = await api.getManagersByClusterHead(managerId);
         console.log('ApproveTimesheets: Received managers:', data);
+        
+        // Log each manager's details for debugging
+        if (data.length > 0) {
+          console.log('📋 MANAGERS RETURNED:');
+          data.forEach((mgr: any) => {
+            console.log(`  - ${mgr.employeeId} (${mgr.name}) - clusterHeadId: ${mgr.clusterHeadId}, role: ${mgr.role}`);
+          });
+        }
+      } else if (isIncharge) {
+        // Incharges manage employees under them (filtered by inchargeId)
+        console.log('ApproveTimesheets: Calling getEmployeesByIncharge with inchargeId:', managerId);
+        data = await api.getEmployeesByIncharge(managerId);
+        console.log('ApproveTimesheets: Received employees under incharge:', data);
       } else {
         // Managers manage employees
         console.log('ApproveTimesheets: Calling getEmployeesByManager with managerId:', managerId);
@@ -102,8 +151,8 @@ export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
   const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
   
   // Dynamic text based on role
-  const entityType = role === 'cluster_head' ? 'Manager' : 'Employee';
-  const entityTypePlural = role === 'cluster_head' ? 'Managers' : 'Employees';
+  const entityType = role === 'cluster_head' ? 'Operations Manager' : 'Employee';
+  const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
@@ -142,9 +191,20 @@ export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
               <div>
                 <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
                 <p className="text-sm text-blue-700">
-                  You don't have any {entityTypePlural.toLowerCase()} assigned to you yet. {entityTypePlural} created through Employee Management will appear here.
+                  {role === 'cluster_head' 
+                    ? `No managers are assigned to you (${managerId}). To fix this:`
+                    : `You don't have any employees assigned to you yet.`
+                  }
                 </p>
-                <p className="text-xs text-blue-600 mt-1">Manager ID: {managerId}</p>
+                {role === 'cluster_head' && (
+                  <ul className="text-xs text-blue-700 mt-2 ml-4 space-y-1">
+                    <li>• Go to <strong>Employee Management</strong> → <strong>Hierarchy Management</strong> tab</li>
+                    <li>• Click <strong>Edit</strong> on each manager (e.g., BM004)</li>
+                    <li>• Make sure <strong>Cluster Head ID</strong> is set to your ID: <strong>{managerId}</strong></li>
+                    <li>• Click <strong>Save Changes</strong></li>
+                  </ul>
+                )}
+                <p className="text-xs text-blue-600 mt-2">Your ID: {managerId}</p>
               </div>
             </div>
           </div>
@@ -179,12 +239,33 @@ export function ApproveTimesheets({ managerId, role }: ApproveTimesheetsProps) {
             className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
             <option value="">-- Select {entityType} --</option>
-            {employees.map(emp => (
+            {filteredEmployees.map(emp => (
               <option key={emp.employeeId} value={emp.employeeId}>
                 {emp.name} ({emp.employeeId})
               </option>
             ))}
           </select>
+          
+          {/* Debug Info for Cluster Heads */}
+          {role === 'cluster_head' && employees.length > 0 && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-xs text-blue-900 font-medium mb-2">
+                🔍 Debug: {employees.length} manager{employees.length > 1 ? 's' : ''} with clusterHeadId = {managerId}
+              </p>
+              <div className="space-y-1">
+                {employees.map((emp: any) => (
+                  <div key={emp.employeeId} className="text-xs text-blue-800 flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-blue-100 rounded">{emp.employeeId}</span>
+                    <span>{emp.name}</span>
+                    <span className="text-blue-600">({emp.role})</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-blue-700 mt-2">
+                💡 If you see unexpected managers here, go to <strong>Employee Management → Hierarchy</strong> and check their Cluster Head ID
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Employee Info Card */}
