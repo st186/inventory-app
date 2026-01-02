@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle } from 'lucide-react';
+import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings } from 'lucide-react';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
@@ -17,6 +17,7 @@ interface AnalyticsProps {
   context: InventoryContextType;
   selectedStoreId?: string | null;
   highlightRequestId?: string | null;
+  onNavigateToManageItems?: () => void;
 }
 
 // Custom Tooltip Component for Bar Charts
@@ -134,7 +135,7 @@ const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
 
 type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
-export function Analytics({ context, selectedStoreId, highlightRequestId }: AnalyticsProps) {
+export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
   const isProductionIncharge = context.user?.designation === 'production_incharge';
@@ -215,6 +216,27 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
   const [tempSopThresholds, setTempSopThresholds] = useState<any>(null);
   const [sopDiversionPercent, setSopDiversionPercent] = useState<number>(5); // Default 5% diversion allowed
   const [tempDiversionPercent, setTempDiversionPercent] = useState<number>(5);
+  // Stock Alert Thresholds - Three levels (High, Medium, Low)
+  const [stockAlertThresholds, setStockAlertThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({
+    chicken: { high: 1200, medium: 600, low: 300 },
+    chickenCheese: { high: 600, medium: 300, low: 150 },
+    veg: { high: 600, medium: 300, low: 150 },
+    cheeseCorn: { high: 600, medium: 300, low: 150 },
+    paneer: { high: 600, medium: 300, low: 150 },
+    vegKurkure: { high: 400, medium: 200, low: 100 },
+    chickenKurkure: { high: 400, medium: 200, low: 100 }
+  });
+  const [showStockAlertModal, setShowStockAlertModal] = useState(false);
+  const [tempStockAlertThresholds, setTempStockAlertThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({});
+  
+  // Plate Conversion Settings - For displaying stock in plates
+  const [momosPerPlate, setMomosPerPlate] = useState<number>(() => {
+    const saved = localStorage.getItem('momosPerPlate');
+    return saved ? parseInt(saved, 10) : 6; // Default 6 momos per plate
+  });
+  const [showPlateSettingsModal, setShowPlateSettingsModal] = useState(false);
+  const [tempMomosPerPlate, setTempMomosPerPlate] = useState<number>(6);
+  
   // Production incharges are locked to their production house, cluster heads can select any
   const [selectedProductionHouseId, setSelectedProductionHouseId] = useState<string | null>(
     isProductionIncharge ? (context.user?.storeId || null) : null
@@ -265,7 +287,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
   
   // Production date range selector
   type DateRangeType = 'today' | 'week' | 'month' | 'year' | 'custom';
-  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('today');
+  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('monthly');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   
@@ -405,11 +427,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
       console.log('   Selected production house ID:', selectedProductionHouseId);
       console.log('   Available production data records:', productionData.length);
       console.log('   Available production requests:', context.productionRequests?.length || 0);
+      console.log('   Available stores (local):', stores.length);
       
       // Resolve production house UUID
+      // Use local stores state (loaded in useEffect) or fallback to context.stores
+      const allStores = stores.length > 0 ? stores : (context.stores || []);
       let productionHouseUUID = selectedProductionHouseId;
       if (selectedProductionHouseId && selectedProductionHouseId.startsWith('STORE-')) {
-        const userStore = context.stores?.find(s => s.id === selectedProductionHouseId);
+        const userStore = allStores.find(s => s.id === selectedProductionHouseId);
         if (userStore?.productionHouseId) {
           productionHouseUUID = userStore.productionHouseId;
           console.log('   Resolved production house UUID:', productionHouseUUID);
@@ -422,9 +447,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
       // 2. The store ID (when created by production incharge who uses their storeId)
       // We need to try both and use whichever returns data
       
+      // Skip API call if no production house is selected
+      if (!productionHouseUUID) {
+        console.log('   ⚠️ No production house UUID available, skipping recalibration fetch');
+        setLatestRecalibration(null);
+        setPreviousMonthStock(null);
+        return;
+      }
+      
       let recalResponse = await api.fetchLatestRecalibration(
         context.user?.accessToken || '', 
-        productionHouseUUID || ''
+        productionHouseUUID
       );
       
       // If no recalibration found with UUID, try to find it using the store ID
@@ -433,8 +466,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
         console.log('   No recalibration found with UUID, checking with mapped store ID...');
         
         // Find store(s) that map to this production house
-        const mappedStores = context.stores?.filter(s => s.productionHouseId === productionHouseUUID);
-        console.log('   Stores mapped to this production house:', mappedStores?.map(s => ({ id: s.id, name: s.name })));
+        const mappedStores = allStores.filter(s => s.productionHouseId === productionHouseUUID);
+        console.log('   Stores mapped to this production house:', mappedStores.map(s => ({ id: s.id, name: s.name })));
         
         // Try each mapped store ID (usually there's only one production house store)
         if (mappedStores && mappedStores.length > 0) {
@@ -474,7 +507,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
           console.log('   Recalibration items:', recalResponse.record.items);
           openingBalance = {};
           recalResponse.record.items.forEach((item: any) => {
-            openingBalance[item.itemId] = item.actualQuantity;
+            // Map itemId to stock key
+            // itemId can be either UUID or snake_case name like "chicken_momo"
+            const inventoryItem = context.inventoryItems?.find(invItem => 
+              invItem.id === item.itemId || invItem.name === item.itemId
+            );
+            
+            if (inventoryItem) {
+              // Convert snake_case to camelCase, then remove _momo suffix
+              // e.g., "chicken_momo" -> "chickenMomo" -> "chicken"
+              const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+              const stockKey = camelName.replace(/Momo(s)?$/i, '');
+              openingBalance[stockKey] = item.actualQuantity;
+              console.log(`  📦 Opening balance mapping: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
+            } else {
+              // Fallback: use itemId as-is
+              openingBalance[item.itemId] = item.actualQuantity;
+              console.log(`  ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
+            }
           });
           console.log('   Parsed opening balance:', openingBalance);
         } else {
@@ -504,7 +554,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
     // Start with recalibrated quantities
     const stock: any = {};
     recalRecord.items.forEach((item: any) => {
-      stock[item.itemId] = item.actualQuantity;
+      // Map itemId to stock key
+      // itemId can be either UUID or snake_case name like "chicken_momo"
+      const inventoryItem = context.inventoryItems?.find(invItem => 
+        invItem.id === item.itemId || invItem.name === item.itemId
+      );
+      
+      if (inventoryItem) {
+        // Convert snake_case to camelCase, then remove _momo suffix
+        // e.g., "chicken_momo" -> "chickenMomo" -> "chicken"
+        const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+        const stockKey = camelName.replace(/Momo(s)?$/i, '');
+        stock[stockKey] = item.actualQuantity;
+        console.log(`  📦 Recalibration item mapping: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
+      } else {
+        // Fallback: use itemId as-is
+        stock[item.itemId] = item.actualQuantity;
+        console.log(`  ⚠️ Recalibration item not found in inventory: ${item.itemId}, using as-is`);
+      }
     });
     
     // Calculate months between recalibration and target month
@@ -587,8 +654,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
       const matchesProductionHouseId = p.productionHouseId === phId;
       
       let recordProductionHouseId = p.productionHouseId;
-      if (!recordProductionHouseId && p.storeId) {
-        const store = context.stores?.find(s => s.id === p.storeId);
+      if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+        // Use local stores state (loaded in useEffect) or fallback to context.stores
+        const allStores = stores.length > 0 ? stores : (context.stores || []);
+        const store = allStores.find(s => s.id === p.storeId);
         recordProductionHouseId = store?.productionHouseId || null;
       }
       
@@ -622,9 +691,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
     console.log(`   Total production requests available: ${context.productionRequests?.length || 0}`);
     
     // Resolve UUID if needed
+    // Use local stores state (loaded in useEffect) or fallback to context.stores
+    const allStores = stores.length > 0 ? stores : (context.stores || []);
     let productionHouseUUID = phId;
     if (phId && phId.startsWith('STORE-')) {
-      const userStore = context.stores?.find(s => s.id === phId);
+      const userStore = allStores.find(s => s.id === phId);
       if (userStore?.productionHouseId) {
         productionHouseUUID = userStore.productionHouseId;
         console.log(`   Resolved UUID: ${productionHouseUUID}`);
@@ -637,7 +708,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
       const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
       if (!requestDate || !requestDate.startsWith(monthStr)) return false;
       
-      const requestingStore = context.stores?.find(s => s.id === req.storeId);
+      const requestingStore = allStores.find(s => s.id === req.storeId);
       return requestingStore?.productionHouseId === productionHouseUUID;
     });
     
@@ -889,21 +960,35 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
     loadData();
   }, []);
 
-  // Load stores for cluster heads (for orphaned data fix modal)
+  // Load stores for production analytics (needed for production house filtering)
   useEffect(() => {
     const loadStores = async () => {
-      if (!isClusterHead) return;
+      // Load stores for cluster heads OR when in production analytics mode
+      // Production analytics needs stores to resolve production house mappings
+      console.log('🔧 Store Loading Check:', {
+        isClusterHead,
+        analyticsMode,
+        shouldLoad: isClusterHead || analyticsMode === 'production'
+      });
+      
+      if (!isClusterHead && analyticsMode !== 'production') return;
       
       try {
         const storesList = await api.getStores();
         setStores(storesList);
+        console.log('📍 Loaded stores for analytics:', storesList.length, 'stores');
+        console.log('📍 Store details:', storesList.map(s => ({
+          id: s.id,
+          name: s.name,
+          productionHouseId: s.productionHouseId
+        })));
       } catch (error) {
-        console.error('Error loading stores:', error);
+        console.error('❌ Error loading stores:', error);
       }
     };
     
     loadStores();
-  }, [isClusterHead]);
+  }, [isClusterHead, analyticsMode]);
 
   // Helper function to get fresh access token
   const getFreshAccessToken = async (): Promise<string | null> => {
@@ -1057,17 +1142,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
     let permanentEmployeeExpenses = 0;
     
     if (timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') {
-      // For monthly/yearly/custom view: Include ALL permanent employee payouts (not date-filtered)
+      // For monthly/yearly/custom view: Use DATE-FILTERED payouts to respect the selected time range
       // Filter by store if needed
-      let allPayouts = payoutsData;
+      let relevantPayouts = filteredPayoutsData;
       
       if (effectiveStoreId) {
         // Use filteredEmployeesData to include employees with null storeIds
         const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
-        allPayouts = allPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+        relevantPayouts = relevantPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
       }
       
-      permanentEmployeeExpenses = allPayouts.reduce((sum, payout) => {
+      permanentEmployeeExpenses = relevantPayouts.reduce((sum, payout) => {
         // Find the employee for this payout
         const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
         // Only include if employee is fulltime (permanent)
@@ -2859,10 +2944,18 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                 const filteredProduction = productionData.filter(p => {
                   // Filter by date range first
                   if (p.date < startDate || p.date > endDate) {
+                    console.log('❌ Date filter excluded record:', { date: p.date, startDate, endDate });
                     return false;
                   }
                   
                   if (!filterById) return true; // No filter selected, show all
+                  
+                  console.log('🔎 Filtering production record:', {
+                    recordStoreId: p.storeId,
+                    recordProductionHouseId: p.productionHouseId,
+                    filterById,
+                    date: p.date
+                  });
                   
                   // For production incharges, the filterById is their storeId
                   // Production data has BOTH storeId (where production happened) and productionHouseId (UUID)
@@ -2876,9 +2969,18 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                   // Get the production house ID from the record
                   let recordProductionHouseId = p.productionHouseId;
                   
-                  // If record doesn't have productionHouseId, look it up via storeId
-                  if (!recordProductionHouseId && p.storeId) {
-                    const store = context.stores?.find(s => s.id === p.storeId);
+                  // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
+                  if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+                    // Use local stores state (loaded in useEffect) or fallback to context.stores
+                    const allStores = stores.length > 0 ? stores : (context.stores || []);
+                    const store = allStores.find(s => s.id === p.storeId);
+                    console.log('    🔎 Production Summary - Store lookup:', {
+                      pStoreId: p.storeId,
+                      localStoresCount: stores.length,
+                      contextStoresCount: context.stores?.length || 0,
+                      allStoresCount: allStores.length,
+                      foundStore: store ? { id: store.id, name: store.name, productionHouseId: store.productionHouseId } : null
+                    });
                     recordProductionHouseId = store?.productionHouseId || null;
                   }
                   
@@ -2893,6 +2995,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                     filterById,
                     matchesStoreId,
                     matchesProductionHouseId,
+                    localStores: stores.length,
                     match: matchesStoreId || matchesProductionHouseId || phId === filterById
                   });
                   
@@ -2978,30 +3081,71 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                       Production House Stock Status
                     </h2>
                     <p className="text-sm text-gray-600">
-                      Total produced - Total sent to stores (delivered production requests)
+                      Opening balance + This month produced - Sent to stores (delivered requests)
                     </p>
                   </div>
                   
-                  {/* Recalibrate Stock Button - For Operations Managers and Production Incharge in Production Analytics Mode */}
+                  {/* Recalibrate Stock Button and Alert Settings - For Operations Managers and Production Incharge in Production Analytics Mode */}
                   {analyticsMode === 'production' && (isManager || isProductionIncharge) && (
-                    <div className="flex flex-col gap-2">
+                    <div className="flex gap-2 items-start">
+                      {/* Stock Alert Settings Button */}
                       <button
-                        onClick={() => setShowRecalibration(true)}
-                        className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
-                        title="Recalibrate production house stock (available on 1st of each month)"
+                        onClick={() => {
+                          setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds)));
+                          setShowStockAlertModal(true);
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-lg hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2 shadow-lg"
+                        title="Configure Stock Alert Thresholds"
                       >
-                        <Calendar className="w-5 h-5" />
-                        Recalibrate Stock
+                        <Settings className="w-5 h-5" />
+                        Alert Settings
                       </button>
-                      {latestRecalibration && (
-                        <p className="text-xs text-gray-500 text-center">
-                          Last recalibrated: {new Date(latestRecalibration.date).toLocaleDateString()}
-                        </p>
-                      )}
-                      {previousMonthStock && !latestRecalibration && (
-                        <p className="text-xs text-blue-600 text-center">
-                          ℹ️ Using auto carry-forward from previous month
-                        </p>
+                      
+                      {/* Plate Conversion Settings Button */}
+                      <button
+                        onClick={() => {
+                          setTempMomosPerPlate(momosPerPlate);
+                          setShowPlateSettingsModal(true);
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 transition-all flex items-center gap-2 shadow-lg"
+                        title="Configure Momos Per Plate"
+                      >
+                        <Settings className="w-5 h-5" />
+                        Plate Settings
+                      </button>
+                      
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => setShowRecalibration(true)}
+                          className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
+                          title="Recalibrate production house stock (available on 1st of each month)"
+                        >
+                          <Calendar className="w-5 h-5" />
+                          Recalibrate Stock
+                        </button>
+                        {latestRecalibration && (
+                          <p className="text-xs text-gray-500 text-center">
+                            Last recalibrated: {new Date(latestRecalibration.date).toLocaleDateString()}
+                          </p>
+                        )}
+                        {previousMonthStock && !latestRecalibration && (
+                          <p className="text-xs text-blue-600 text-center">
+                            ℹ️ Using auto carry-forward from previous month
+                          </p>
+                        )}
+                      </div>
+                      {(isManager || isClusterHead) && onNavigateToManageItems && (
+                        <button
+                          onClick={() => {
+                            console.log('🔘 Manage Items button clicked in Analytics');
+                            onNavigateToManageItems();
+                          }}
+                          className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg font-semibold"
+                          title="Manage inventory items"
+                        >
+                          <Package className="w-5 h-5" />
+                          Manage Items
+                        </button>
                       )}
                     </div>
                   )}
@@ -3047,6 +3191,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                   : null;
                 
                 console.log('  - Selected production house for stock:', selectedProductionHouseForStock);
+                console.log('  - Total production records available:', productionData.length);
+                if (productionData.length > 0 && productionData.length <= 3) {
+                  console.log('  - All production records:', productionData.map(p => ({
+                    id: p.id,
+                    storeId: p.storeId,
+                    productionHouseId: p.productionHouseId,
+                    date: p.date
+                  })));
+                }
                 
                 // Get all production data for the production house
                 const filteredProduction = productionData.filter(p => {
@@ -3059,9 +3212,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                   // Get the production house ID from the record
                   let recordProductionHouseId = p.productionHouseId;
                   
-                  // If record doesn't have productionHouseId, look it up via storeId
-                  if (!recordProductionHouseId && p.storeId) {
-                    const store = context.stores?.find(s => s.id === p.storeId);
+                  // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
+                  if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+                    // Use local stores state (loaded in useEffect) or fallback to context.stores
+                    const allStores = stores.length > 0 ? stores : (context.stores || []);
+                    const store = allStores.find(s => s.id === p.storeId);
                     recordProductionHouseId = store?.productionHouseId || null;
                   }
                   
@@ -3072,25 +3227,71 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                 });
                 
                 console.log('  - Filtered production for stock status:', filteredProduction.length);
+                if (filteredProduction.length > 0) {
+                  console.log('  - Sample production record:', {
+                    id: filteredProduction[0].id,
+                    storeId: filteredProduction[0].storeId,
+                    productionHouseId: filteredProduction[0].productionHouseId,
+                    date: filteredProduction[0].date
+                  });
+                }
 
                 // Filter by current month only (monthly reset logic)
-                const currentMonth = new Date().toISOString().substring(0, 7); // "2025-12"
+                const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
                 const monthlyFilteredProduction = filteredProduction.filter(p => p.date.startsWith(currentMonth));
                 
                 console.log('  - Monthly filtered production:', monthlyFilteredProduction.length, 'for month:', currentMonth);
+                if (monthlyFilteredProduction.length > 0) {
+                  console.log('  - Sample monthly production record:', monthlyFilteredProduction[0]);
+                }
 
-                // Calculate total production by momo type (for current month only)
-                const totalProduced = monthlyFilteredProduction.reduce((acc, p) => ({
-                  chicken: acc.chicken + (p.chickenMomos?.final || 0),
-                  chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
-                  veg: acc.veg + (p.vegMomos?.final || 0),
-                  cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
-                  paneer: acc.paneer + (p.paneerMomos?.final || 0),
-                  vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
-                  chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
-                }), {
-                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
+                // Get all finished product inventory items FIRST (we need this for dynamic calculations)
+                const finishedProductsForCalc = context.inventoryItems?.filter(item => 
+                  item.category === 'finished_product' && 
+                  item.isActive &&
+                  (item.linkedEntityType === 'global' || 
+                   (item.linkedEntityType === 'production_house' && item.linkedEntityId === effectiveProductionHouseId))
+                ) || [];
+                
+                // Helper function to convert snake_case to camelCase
+                const snakeToCamelForCalc = (str: string) => {
+                  return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                };
+                
+                // Helper to get the base name for stock lookup (remove _momo/_momos suffix)
+                const getStockKey = (itemName: string) => {
+                  // For items like "chicken_momo", "veg_momo", etc., we want "chicken", "veg"
+                  const baseName = itemName.replace(/_momo(s)?$/i, '');
+                  return snakeToCamelForCalc(baseName);
+                };
+
+                // Calculate total production by momo type (for current month only) - DYNAMIC
+                const totalProduced: Record<string, number> = {};
+                
+                // Initialize all finished products to 0
+                finishedProductsForCalc.forEach(item => {
+                  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                  totalProduced[stockKey] = 0;
+                });
+                
+                // Aggregate production data
+                monthlyFilteredProduction.forEach(p => {
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                    // Support multiple field formats for backwards compatibility
+                    let fieldValue = 0;
+                    const fieldWithMomos = (p as any)[stockKey + 'Momos'];
+                    const fieldWithoutMomos = (p as any)[stockKey];
+                    
+                    if (fieldWithMomos) {
+                      // If it's an object with .final, extract that; otherwise use the value directly
+                      fieldValue = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
+                    } else if (fieldWithoutMomos) {
+                      fieldValue = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
+                    }
+                    
+                    totalProduced[stockKey] = (totalProduced[stockKey] || 0) + fieldValue;
+                  });
                 });
 
                 // Calculate total fulfilled stock requests (sent to stores)
@@ -3133,7 +3334,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                   }
                   
                   // Find the store that made this request
-                  const requestingStore = context.stores?.find(s => s.id === req.storeId);
+                  // Use local stores state (loaded in useEffect) or fallback to context.stores
+                  const allStores = stores.length > 0 ? stores : (context.stores || []);
+                  const requestingStore = allStores.find(s => s.id === req.storeId);
                   
                   // Filter by production house if one is selected
                   if (productionHouseUUID) {
@@ -3145,6 +3348,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                       storeProductionHouseId: requestingStore?.productionHouseId,
                       productionHouseUUID,
                       deliveredDate: req.deliveredDate,
+                      availableStores: allStores.length,
                       matches
                     });
                     return matches;
@@ -3180,55 +3384,114 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                   } : null
                 });
 
-                const totalSentToStores = fulfilledRequests.reduce((acc, req) => ({
-                  chicken: acc.chicken + (req.chickenMomos || 0),
-                  chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
-                  veg: acc.veg + (req.vegMomos || 0),
-                  cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
-                  paneer: acc.paneer + (req.paneerMomos || 0),
-                  vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
-                  chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
-                }), {
-                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
+                // Calculate total fulfilled stock requests (sent to stores) - DYNAMIC
+                const totalSentToStores: Record<string, number> = {};
+                
+                // Initialize all finished products to 0
+                finishedProductsForCalc.forEach(item => {
+                  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                  totalSentToStores[stockKey] = 0;
+                });
+                
+                // Aggregate delivered requests
+                fulfilledRequests.forEach(req => {
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                    // Support both old format (chickenMomos with 's') and new format (chickenMomo without 's')
+                    const requestedQty = (req as any)[stockKey + 'Momos'] || // Old: chickenMomos
+                                        (req as any)[stockKey] ||            // New: chicken
+                                        0;
+                    totalSentToStores[stockKey] = (totalSentToStores[stockKey] || 0) + requestedQty;
+                  });
                 });
 
-                // Calculate remaining stock with carry-forward from previous month
+                // Calculate remaining stock with carry-forward from previous month - DYNAMIC
                 // Stock = Opening Balance + Current Month Production - Current Month Deliveries
-                const openingBalance = previousMonthStock || {
-                  chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-                  paneer: 0, vegKurkure: 0, chickenKurkure: 0
-                };
+                const openingBalance: Record<string, number> = {};
+                finishedProductsForCalc.forEach(item => {
+                  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                  // Try multiple key formats: stockKey ("chicken"), item.name ("chicken_momo"), and item.id (UUID)
+                  openingBalance[stockKey] = (previousMonthStock as any)?.[stockKey] || 
+                                             (previousMonthStock as any)?.[item.name] || 
+                                             (previousMonthStock as any)?.[item.id] || 
+                                             0;
+                });
                 
                 console.log('💰 Stock Calculation with Carry-Forward:');
-                console.log('  Opening Balance:', openingBalance);
+                console.log('  previousMonthStock (raw):', previousMonthStock);
+                console.log('  Opening Balance (processed):', openingBalance);
                 console.log('  Current Month Production:', totalProduced);
                 console.log('  Current Month Deliveries:', totalSentToStores);
                 
-                const productionHouseStock = {
-                  chicken: (openingBalance.chicken || 0) + totalProduced.chicken - totalSentToStores.chicken,
-                  chickenCheese: (openingBalance.chickenCheese || 0) + totalProduced.chickenCheese - totalSentToStores.chickenCheese,
-                  veg: (openingBalance.veg || 0) + totalProduced.veg - totalSentToStores.veg,
-                  cheeseCorn: (openingBalance.cheeseCorn || 0) + totalProduced.cheeseCorn - totalSentToStores.cheeseCorn,
-                  paneer: (openingBalance.paneer || 0) + totalProduced.paneer - totalSentToStores.paneer,
-                  vegKurkure: (openingBalance.vegKurkure || 0) + totalProduced.vegKurkure - totalSentToStores.vegKurkure,
-                  chickenKurkure: (openingBalance.chickenKurkure || 0) + totalProduced.chickenKurkure - totalSentToStores.chickenKurkure,
-                };
+                // Calculate production house stock dynamically
+                const productionHouseStock: Record<string, number> = {};
+                finishedProductsForCalc.forEach(item => {
+                  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                  productionHouseStock[stockKey] = 
+                    (openingBalance[stockKey] || 0) + 
+                    (totalProduced[stockKey] || 0) - 
+                    (totalSentToStores[stockKey] || 0);
+                });
                 
                 console.log('  Final Stock:', productionHouseStock);
 
-                const momoTypes = [
-                  { key: 'chicken', label: 'Chicken', color: 'purple' },
-                  { key: 'chickenCheese', label: 'Chicken Cheese', color: 'pink' },
-                  { key: 'veg', label: 'Veg', color: 'green' },
-                  { key: 'cheeseCorn', label: 'Cheese Corn', color: 'yellow' },
-                  { key: 'paneer', label: 'Paneer', color: 'blue' },
-                  { key: 'vegKurkure', label: 'Veg Kurkure', color: 'teal' },
-                  { key: 'chickenKurkure', label: 'Chicken Kurkure', color: 'red' },
-                ];
+                // Get all finished product inventory items for this production house or global
+                const finishedProducts = context.inventoryItems?.filter(item => 
+                  item.category === 'finished_product' && 
+                  item.isActive &&
+                  (item.linkedEntityType === 'global' || 
+                   (item.linkedEntityType === 'production_house' && item.linkedEntityId === effectiveProductionHouseId))
+                ) || [];
+                
+                console.log('📦 Finished Products for Stock Display:', finishedProducts.map(item => {
+                  const stockKey = getStockKey(item.name); // Convert to camelCase base key
+                  return {
+                    name: item.name,
+                    displayName: item.displayName,
+                    stock: productionHouseStock[stockKey]
+                  };
+                }));
 
-                // Show info if no production data
-                if (filteredProduction.length === 0) {
+                // Helper function to convert snake_case to camelCase for stock lookup
+                const snakeToCamel = (str: string) => {
+                  return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                };
+
+                // Color mapping for the 7 core momos (for backwards compatibility)
+                const colorMap: Record<string, string> = {
+                  'chicken': 'purple',
+                  'chickenCheese': 'pink',
+                  'chicken_cheese': 'pink',
+                  'veg': 'green',
+                  'cheeseCorn': 'yellow',
+                  'cheese_corn': 'yellow',
+                  'paneer': 'blue',
+                  'vegKurkure': 'teal',
+                  'veg_kurkure': 'teal',
+                  'chickenKurkure': 'red',
+                  'chicken_kurkure': 'red',
+                };
+
+                // Map inventory items to display format
+                const momoTypes = finishedProducts.map(item => {
+                  // Get the base stock key (e.g., "chicken" from "chicken_momo")
+                  const baseName = item.name.replace(/_momo(s)?$/i, '');
+                  const stockKey = snakeToCamel(baseName);
+                  
+                  return {
+                    key: item.name,
+                    camelKey: stockKey, // Base key for stock lookup (e.g., "chicken")
+                    label: item.displayName, // Keep full display name including "Momo"
+                    color: colorMap[baseName] || colorMap[stockKey] || 'indigo',
+                    unit: item.unit
+                  };
+                });
+
+                // Check if we have any stock to display (from opening balance or production)
+                const hasOpeningBalance = Object.values(openingBalance).some((v: any) => v > 0);
+
+                // Show info if no production data AND no opening balance
+                if (filteredProduction.length === 0 && !hasOpeningBalance) {
                   return (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
                       <Package className="w-12 h-12 text-blue-400 mx-auto mb-3" />
@@ -3266,77 +3529,148 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                     )}
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                      {momoTypes.map(({ key, label, color }) => {
-                        const opening = (openingBalance as any)[key] || 0;
-                      const produced = (totalProduced as any)[key];
-                      const sent = (totalSentToStores as any)[key];
-                      const stock = (productionHouseStock as any)[key];
+                      {momoTypes.map(({ key, camelKey, label, color, unit }) => {
+                        // Use camelCase key for stock lookup (handles both snake_case and camelCase)
+                        const opening = (openingBalance as any)[camelKey] || (openingBalance as any)[key] || 0;
+                      const produced = (totalProduced as any)[camelKey] || (totalProduced as any)[key] || 0;
+                      const sent = (totalSentToStores as any)[camelKey] || (totalSentToStores as any)[key] || 0;
+                      const stock = (productionHouseStock as any)[camelKey] || (productionHouseStock as any)[key] || 0;
                       
-                      // Absolute stock thresholds (not relative)
-                      const isLowStock = stock < 1000;
-                      const isMidStock = stock >= 3000 && stock < 6000;
-                      const isHighStock = stock >= 6000;
+                      // Check if this item has any production data
+                      const hasData = opening > 0 || produced > 0 || sent > 0 || stock !== undefined;
                       
-                      // Determine status label
+                      // Get the three-level alert thresholds for this item
+                      const thresholds = stockAlertThresholds[camelKey] ?? stockAlertThresholds[key] ?? { high: 600, medium: 300, low: 150 };
+                      
+                      // Determine stock level based on three-level thresholds
+                      const isCriticalStock = stock < thresholds.low; // Red - Below low threshold
+                      const isLowStock = stock >= thresholds.low && stock < thresholds.medium; // Orange - Between low and medium
+                      const isMediumStock = stock >= thresholds.medium && stock < thresholds.high; // Yellow - Between medium and high
+                      const isHighStock = stock >= thresholds.high; // Green - Above high threshold
+                      
+                      // Determine status label and color
                       let stockStatus = '';
+                      let stockStatusColor = '';
+                      let stockValueColor = '';
+                      
                       if (stock < 0) {
                         stockStatus = '⚠️ Over-distributed';
-                      } else if (isLowStock) {
-                        stockStatus = '⚠️ Low Stock';
+                        stockStatusColor = 'bg-red-100 border-red-300 text-red-800';
+                        stockValueColor = 'text-red-600';
+                      } else if (hasData && isCriticalStock) {
+                        stockStatus = '🔴 Critical: Below Low Threshold';
+                        stockStatusColor = 'bg-red-100 border-red-300 text-red-800';
+                        stockValueColor = 'text-red-600';
+                      } else if (hasData && isLowStock) {
+                        stockStatus = '🟠 Low: Between Low & Medium';
+                        stockStatusColor = 'bg-orange-100 border-orange-300 text-orange-800';
+                        stockValueColor = 'text-orange-600';
+                      } else if (hasData && isMediumStock) {
+                        stockStatus = '🟡 Medium: Between Medium & High';
+                        stockStatusColor = 'bg-yellow-100 border-yellow-300 text-yellow-800';
+                        stockValueColor = 'text-yellow-700';
+                      } else if (hasData && isHighStock) {
+                        stockStatus = '🟢 Healthy: Above High Threshold';
+                        stockStatusColor = 'bg-green-100 border-green-300 text-green-800';
+                        stockValueColor = 'text-green-600';
                       }
                       
                       const stockPercentage = produced > 0 ? ((stock / produced) * 100).toFixed(0) : '0';
                       
                       return (
                         <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300`}>
-                          <h3 className="text-sm font-semibold text-gray-900 mb-3">{label} Momos</h3>
+                          <h3 className="text-sm font-semibold text-gray-900 mb-3">{label}</h3>
                           
                           <div className="space-y-2">
-                            {opening > 0 && (
-                              <div className="flex justify-between items-center bg-blue-100 px-3 py-2 rounded-lg">
-                                <span className="text-sm text-blue-700 font-semibold">Opening Balance:</span>
-                                <span className="text-xl font-bold text-blue-800">{opening}</span>
+                            {!hasData ? (
+                              // Show placeholder for items without production data
+                              <div className="bg-white/80 rounded-lg p-3">
+                                <p className="text-xs text-gray-600 mb-1">Current Stock</p>
+                                <div className="flex items-baseline gap-2">
+                                  <span className="text-2xl font-bold text-gray-400">0</span>
+                                  <span className="text-xs text-gray-500">{unit || 'pieces'}</span>
+                                </div>
+                                <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-2 py-1 mt-2">
+                                  <p className="text-xs text-yellow-800">
+                                    💡 Track in production logging to see stock
+                                  </p>
+                                </div>
                               </div>
-                            )}
-                            
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs text-gray-600">This Month Produced:</span>
-                              <span className={`text-lg font-bold text-${color}-600`}>{produced}</span>
-                            </div>
-                            
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs text-gray-600">Sent to Stores:</span>
-                              <span className={`text-lg font-bold text-${color}-700`}>{sent}</span>
-                            </div>
-                            
-                            <div className="border-t-2 border-gray-300 pt-2 mt-2">
-                              <div className="flex justify-between items-center">
-                                <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
-                                <span className={`text-2xl font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
-                                  {stock}
-                                </span>
-                              </div>
-                              {produced > 0 && (
-                                <div className="mt-2">
-                                  <div className="flex justify-between text-xs text-gray-600 mb-1">
-                                    <span>{stockPercentage}% remaining</span>
+                            ) : (
+                              <>
+                                {opening > 0 && (
+                                  <div className="flex justify-between items-center bg-blue-100 px-3 py-2 rounded-lg">
+                                    <span className="text-sm text-blue-700 font-semibold">Opening Balance:</span>
+                                    <span className="text-xl font-bold text-blue-800">{opening}</span>
                                   </div>
-                                  <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
-                                      className={`h-2 rounded-full ${isLowStock || stock < 0 ? 'bg-red-500' : `bg-${color}-500`}`}
-                                      style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
-                                    ></div>
+                                )}
+                                
+                                <div className="flex justify-between items-center">
+                                  <span className="text-xs text-gray-600">This Month Produced:</span>
+                                  <span className={`text-lg font-bold text-${color}-600`}>{produced}</span>
+                                </div>
+                                
+                                <div className="flex justify-between items-center">
+                                  <span className="text-xs text-gray-600">Sent to Stores:</span>
+                                  <span className={`text-lg font-bold text-${color}-700`}>{sent}</span>
+                                </div>
+                                
+                                <div className="border-t-2 border-gray-300 pt-2 mt-2">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
+                                    <div className="text-right">
+                                      <div className={`text-2xl font-bold ${stockValueColor || `text-${color}-800`}`}>
+                                        {stock} pcs / {Math.round(stock / momosPerPlate)} plates
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {produced > 0 && (
+                                    <div className="mt-2">
+                                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                        <span>{stockPercentage}% remaining</span>
+                                      </div>
+                                      <div className="w-full bg-gray-200 rounded-full h-2">
+                                        <div 
+                                          className={`h-2 rounded-full ${
+                                            isCriticalStock || stock < 0 ? 'bg-red-500' : 
+                                            isLowStock ? 'bg-orange-500' :
+                                            isMediumStock ? 'bg-yellow-500' :
+                                            isHighStock ? 'bg-green-500' :
+                                            `bg-${color}-500`
+                                          }`}
+                                          style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
+                                        ></div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {stockStatus && (
+                                  <div className={`border rounded-lg px-2 py-1 mt-2 ${stockStatusColor}`}>
+                                    <p className="text-xs font-semibold">
+                                      {stockStatus}
+                                    </p>
+                                  </div>
+                                )}
+                                
+                                {/* Show Alert Thresholds */}
+                                <div className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 mt-2">
+                                  <div className="grid grid-cols-3 gap-1 text-xs">
+                                    <div>
+                                      <div className="text-gray-600">Low</div>
+                                      <div className="font-semibold text-red-600">{thresholds.low}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-gray-600">Med</div>
+                                      <div className="font-semibold text-yellow-600">{thresholds.medium}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-gray-600">High</div>
+                                      <div className="font-semibold text-green-600">{thresholds.high}</div>
+                                    </div>
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                            
-                            {stockStatus && (
-                              <div className="bg-red-100 border border-red-300 rounded-lg px-2 py-1 mt-2">
-                                <p className="text-xs text-red-800 font-semibold">
-                                  {stockStatus}
-                                </p>
-                              </div>
+                              </>
                             )}
                           </div>
                         </div>
@@ -3424,8 +3758,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
                       // Get the production house ID from the record
                       let recordProductionHouseId = p.productionHouseId;
                       
-                      // If record doesn't have productionHouseId, look it up via storeId
-                      if (!recordProductionHouseId && p.storeId) {
+                      // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
+                      if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
                         const store = context.stores?.find(s => s.id === p.storeId);
                         recordProductionHouseId = store?.productionHouseId || null;
                       }
@@ -4240,7 +4574,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
         {/* Production Requests View */}
         {activeView === 'production-requests' && (
           <div>
-            <ProductionRequests context={context} highlightRequestId={highlightRequestId || null} selectedStoreId={localSelectedStoreId} />
+            <ProductionRequests 
+              context={context} 
+              highlightRequestId={highlightRequestId || null} 
+              selectedStoreId={localSelectedStoreId}
+              onNavigateToManageItems={onNavigateToManageItems}
+            />
           </div>
         )}
 
@@ -4278,14 +4617,294 @@ export function Analytics({ context, selectedStoreId, highlightRequestId }: Anal
             // Refresh opening balance data after recalibration
             if (analyticsMode === 'production') {
               console.log('🔄 Recalibration modal closed - refreshing data...');
-              // Small delay to ensure backend has processed the save
+              // Clear existing opening balance to force refetch
+              setPreviousMonthStock(null);
+              setLatestRecalibration(null);
+              // Longer delay to ensure backend has processed and committed the save
               setTimeout(() => {
+                console.log('⏰ Timeout complete - fetching latest recalibration...');
                 fetchRecalibrationAndCalculateOpeningBalance();
-              }, 500);
+              }, 1500);
             }
           }}
           isProductionHouse={analyticsMode === 'production'}
         />
+      )}
+
+      {/* Stock Alert Thresholds Modal */}
+      {showStockAlertModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 p-6 rounded-t-2xl">
+              <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
+              <div className="relative flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center border-2 border-white/30">
+                    <Settings className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl text-white">Stock Alert Thresholds</h2>
+                    <p className="text-white/80 text-sm">Customize alert levels for each momo type</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowStockAlertModal(false);
+                    setTempStockAlertThresholds({});
+                  }}
+                  className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center border-2 border-white/30 hover:bg-white/30 transition-all"
+                >
+                  <X className="w-6 h-6 text-white" />
+                </button>
+              </div>
+            </div>
+
+            {/* How It Works */}
+            <div className="p-6 bg-blue-50 border-b-2 border-blue-200">
+              <h3 className="text-gray-900 font-semibold mb-2">How it works:</h3>
+              <p className="text-sm text-gray-700 mb-3">
+                Set three threshold levels for each momo type. When stock falls below these levels, color-coded alerts will appear on the stock cards.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="flex items-center gap-2 bg-white rounded-lg p-2 border border-green-200">
+                  <div className="w-4 h-4 bg-green-500 rounded"></div>
+                  <span className="text-xs text-gray-700">High: Stock above high threshold</span>
+                </div>
+                <div className="flex items-center gap-2 bg-white rounded-lg p-2 border border-yellow-200">
+                  <div className="w-4 h-4 bg-yellow-500 rounded"></div>
+                  <span className="text-xs text-gray-700">Medium: Between medium and high</span>
+                </div>
+                <div className="flex items-center gap-2 bg-white rounded-lg p-2 border border-orange-200">
+                  <div className="w-4 h-4 bg-orange-500 rounded"></div>
+                  <span className="text-xs text-gray-700">Low: Between low and medium</span>
+                </div>
+                <div className="flex items-center gap-2 bg-white rounded-lg p-2 border border-red-200">
+                  <div className="w-4 h-4 bg-red-500 rounded"></div>
+                  <span className="text-xs text-gray-700">Critical: Below low threshold or zero</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Threshold Inputs */}
+            <div className="p-6 space-y-6">
+              {(() => {
+                // Get dynamic momo types from inventory items
+                const finishedProducts = context.inventoryItems?.filter(item => 
+                  item.category === 'finished_product' && item.isActive
+                ) || [];
+
+                const momoTypesList = finishedProducts.map(item => {
+                  const camelKey = item.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                  return {
+                    key: item.name,
+                    camelKey,
+                    label: item.displayName
+                  };
+                });
+
+                return momoTypesList.map(({ key, camelKey, label }) => {
+                  const currentThresholds = tempStockAlertThresholds[camelKey] ?? stockAlertThresholds[camelKey] ?? { high: 600, medium: 300, low: 150 };
+                  
+                  return (
+                    <div key={camelKey} className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-4">
+                      <h3 className="text-gray-900 font-semibold mb-3">{label}</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* High Threshold */}
+                        <div>
+                          <label className="text-xs text-green-700 font-semibold mb-1 block">High Threshold (plates)</label>
+                          <input
+                            type="number"
+                            value={currentThresholds.high}
+                            onChange={(e) => {
+                              setTempStockAlertThresholds({
+                                ...tempStockAlertThresholds,
+                                [camelKey]: {
+                                  ...currentThresholds,
+                                  high: Number(e.target.value)
+                                }
+                              });
+                            }}
+                            className="w-full px-3 py-2 border-2 border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-green-50"
+                            placeholder="e.g., 1200"
+                          />
+                        </div>
+
+                        {/* Medium Threshold */}
+                        <div>
+                          <label className="text-xs text-yellow-700 font-semibold mb-1 block">Medium Threshold (plates)</label>
+                          <input
+                            type="number"
+                            value={currentThresholds.medium}
+                            onChange={(e) => {
+                              setTempStockAlertThresholds({
+                                ...tempStockAlertThresholds,
+                                [camelKey]: {
+                                  ...currentThresholds,
+                                  medium: Number(e.target.value)
+                                }
+                              });
+                            }}
+                            className="w-full px-3 py-2 border-2 border-yellow-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent bg-yellow-50"
+                            placeholder="e.g., 600"
+                          />
+                        </div>
+
+                        {/* Low Threshold */}
+                        <div>
+                          <label className="text-xs text-red-700 font-semibold mb-1 block">Low Threshold (plates)</label>
+                          <input
+                            type="number"
+                            value={currentThresholds.low}
+                            onChange={(e) => {
+                              setTempStockAlertThresholds({
+                                ...tempStockAlertThresholds,
+                                [camelKey]: {
+                                  ...currentThresholds,
+                                  low: Number(e.target.value)
+                                }
+                              });
+                            }}
+                            className="w-full px-3 py-2 border-2 border-red-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent bg-red-50"
+                            placeholder="e.g., 300"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-gray-50 rounded-b-2xl border-t-2 border-gray-200 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  setShowStockAlertModal(false);
+                  setTempStockAlertThresholds({});
+                }}
+                className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setStockAlertThresholds(tempStockAlertThresholds);
+                  setShowStockAlertModal(false);
+                  setTempStockAlertThresholds({});
+                  toast.success('Stock alert thresholds updated successfully');
+                }}
+                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2"
+              >
+                <Check className="w-5 h-5" />
+                Save Thresholds
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plate Conversion Settings Modal */}
+      {showPlateSettingsModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full">
+            {/* Header */}
+            <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-blue-500 to-blue-600 p-6 rounded-t-2xl">
+              <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
+              <div className="relative flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center border-2 border-white/30">
+                    <Settings className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl text-white">Plate Conversion Settings</h2>
+                    <p className="text-white/80 text-sm">Configure momos per plate</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowPlateSettingsModal(false);
+                    setTempMomosPerPlate(momosPerPlate);
+                  }}
+                  className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center border-2 border-white/30 hover:bg-white/30 transition-all"
+                >
+                  <X className="w-6 h-6 text-white" />
+                </button>
+              </div>
+            </div>
+
+            {/* Explanation */}
+            <div className="p-6 bg-blue-50 border-b-2 border-blue-200">
+              <h3 className="text-gray-900 font-semibold mb-2">How it works:</h3>
+              <p className="text-sm text-gray-700">
+                Stock will be displayed as both pieces and plates. For example, if you have 170 momos and each plate contains 6 momos, 
+                it will show as <span className="font-mono bg-white px-2 py-1 rounded">170 pcs / 28 plates</span>.
+              </p>
+            </div>
+
+            {/* Input */}
+            <div className="p-6">
+              <label className="text-gray-900 font-semibold mb-3 block">
+                Momos Per Plate
+              </label>
+              <div className="bg-gradient-to-r from-blue-50 to-blue-100 border-2 border-blue-300 rounded-xl p-4">
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={tempMomosPerPlate}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (value >= 1 && value <= 20) {
+                      setTempMomosPerPlate(value);
+                    }
+                  }}
+                  className="w-full px-4 py-3 border-2 border-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-center text-2xl font-bold"
+                  placeholder="6"
+                />
+                <p className="text-xs text-blue-700 mt-2 text-center">
+                  Enter a number between 1 and 20
+                </p>
+              </div>
+              
+              {/* Preview */}
+              <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-600 mb-2">Preview:</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-gray-700">Stock Available:</span>
+                  <span className="text-lg font-bold text-blue-600">
+                    170 pcs / {Math.round(170 / tempMomosPerPlate)} plates
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-gray-50 rounded-b-2xl border-t-2 border-gray-200 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  setShowPlateSettingsModal(false);
+                  setTempMomosPerPlate(momosPerPlate);
+                }}
+                className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setMomosPerPlate(tempMomosPerPlate);
+                  localStorage.setItem('momosPerPlate', tempMomosPerPlate.toString());
+                  setShowPlateSettingsModal(false);
+                  toast.success(`Plate conversion updated: ${tempMomosPerPlate} momos per plate`);
+                }}
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl hover:from-blue-700 hover:to-blue-600 transition-all flex items-center gap-2"
+              >
+                <Check className="w-5 h-5" />
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

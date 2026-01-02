@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
@@ -13,9 +13,10 @@ interface ProductionRequestsProps {
   context: InventoryContextType;
   highlightRequestId?: string | null;
   selectedStoreId?: string | null;
+  onNavigateToManageItems?: () => void;
 }
 
-export function ProductionRequests({ context, highlightRequestId, selectedStoreId }: ProductionRequestsProps) {
+export function ProductionRequests({ context, highlightRequestId, selectedStoreId, onNavigateToManageItems }: ProductionRequestsProps) {
   const [requests, setRequests] = useState<api.ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -28,16 +29,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   });
   const [salesData, setSalesData] = useState<any[]>([]);
   
-  // Form state for new request
-  const [chickenMomos, setChickenMomos] = useState(0);
-  const [chickenCheeseMomos, setChickenCheeseMomos] = useState(0);
-  const [vegMomos, setVegMomos] = useState(0);
-  const [cheeseCornMomos, setCheeseCornMomos] = useState(0);
-  const [paneerMomos, setPaneerMomos] = useState(0);
-  const [vegKurkureMomos, setVegKurkureMomos] = useState(0);
-  const [chickenKurkureMomos, setChickenKurkureMomos] = useState(0);
+  // Form state for new request - DYNAMIC for all finished products
+  const [momoQuantities, setMomoQuantities] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
-  const [requestDate, setRequestDate] = useState(new Date().toISOString().split('T')[0]);
+  // Always default to today (no time restriction)
+  const getDefaultRequestDate = () => {
+    return new Date().toISOString().split('T')[0];
+  };
+  const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
+  const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
 
   // Kitchen Utilities state (item -> {quantity, unit})
   const [kitchenUtilities, setKitchenUtilities] = useState<Record<string, { quantity: number; unit: string }>>({});
@@ -57,16 +57,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Store opening balance state
   const [storeOpeningBalance, setStoreOpeningBalance] = useState<any>(null);
   
-  // Stock alert thresholds state
+  // Stock alert thresholds state - DYNAMIC
   const [showThresholdSettings, setShowThresholdSettings] = useState(false);
-  const [stockThresholds, setStockThresholds] = useState({
-    chicken: { high: 1200, medium: 600, low: 300 },
-    chickenCheese: { high: 600, medium: 300, low: 150 },
-    veg: { high: 600, medium: 300, low: 150 },
-    cheeseCorn: { high: 600, medium: 300, low: 150 },
-    paneer: { high: 600, medium: 300, low: 150 },
-    vegKurkure: { high: 600, medium: 300, low: 150 },
-    chickenKurkure: { high: 600, medium: 300, low: 150 },
+  const [stockThresholds, setStockThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({});
+
+  // Plate Conversion Settings - Shared with Production Analytics
+  const [momosPerPlate, setMomosPerPlate] = useState<number>(() => {
+    const saved = localStorage.getItem('momosPerPlate');
+    return saved ? parseInt(saved, 10) : 6; // Default 6 momos per plate
   });
 
   // Kitchen Utilities list with specific units
@@ -104,6 +102,26 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const isClusterHead = context.user?.role === 'cluster_head';
   const canViewAll = isOperationsHead || isClusterHead || isProductionHead;
 
+  // Get dynamic finished products from inventory items
+  const finishedProducts = useMemo(() => {
+    return (context.inventoryItems?.filter(item => 
+      item.category === 'finished_product' && item.isActive
+    ) || []).map(item => {
+      // Legacy mapping for old sales data (hardcoded names with 's' at end)
+      const legacySalesKey = item.displayName.endsWith('Momo') 
+        ? item.displayName + 's' 
+        : item.displayName;
+      
+      return {
+        key: item.name, // snake_case key for backend
+        camelKey: item.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase()), // camelCase for frontend
+        label: item.displayName,
+        legacySalesKey, // For matching old sales data
+        unit: item.unit
+      };
+    });
+  }, [context.inventoryItems]);
+
   // Helper function to get fresh access token
   const getFreshAccessToken = async (): Promise<string | null> => {
     try {
@@ -137,10 +155,57 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
   // Load opening balance after salesData is loaded
   useEffect(() => {
-    if (salesData.length >= 0) {
+    if (salesData.length >= 0 && context.inventoryItems && context.inventoryItems.length > 0) {
       loadStoreOpeningBalance();
     }
-  }, [salesData, context.user, selectedStoreId]);
+  }, [salesData, context.user, selectedStoreId, context.inventoryItems]);
+
+  // Daily 3 PM reminder to submit stock request
+  useEffect(() => {
+    // Only run for store in-charges
+    if (!isStoreIncharge || !context.user?.storeId) return;
+
+    const checkAndNotify = () => {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      const today = now.toISOString().split('T')[0];
+      
+      // Check if it's 3:00 PM (15:00) and we haven't sent a reminder today
+      if (currentHour === 15 && currentMinute === 0 && lastReminderDate !== today) {
+        // Calculate tomorrow's date
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowDate = tomorrow.toISOString().split('T')[0];
+        
+        // Check if user has already submitted a request for tomorrow
+        const hasTomorrowRequest = requests.some(req => 
+          req.storeId === context.user?.storeId && 
+          req.requestDate === tomorrowDate &&
+          req.status !== 'cancelled'
+        );
+        
+        if (!hasTomorrowRequest) {
+          console.log('📅 3 PM Reminder: No stock request found for tomorrow');
+          toast.warning('⏰ Reminder: You haven\'t submitted a stock request for tomorrow yet!', {
+            duration: 10000,
+            description: 'Please submit your production request to ensure timely preparation.'
+          });
+          
+          // Update last reminder date
+          setLastReminderDate(today);
+        }
+      }
+    };
+
+    // Check immediately
+    checkAndNotify();
+
+    // Then check every minute
+    const interval = setInterval(checkAndNotify, 60000);
+
+    return () => clearInterval(interval);
+  }, [isStoreIncharge, context.user, requests, lastReminderDate]);
 
   const loadStockThresholds = async () => {
     if (!context.user) return;
@@ -255,10 +320,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         console.log('  📊 Calculating aggregate opening balance for all stores');
         
         const allStores = context.stores || [];
-        let aggregatedBalance = {
-          chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-          paneer: 0, vegKurkure: 0, chickenKurkure: 0
-        };
+        let aggregatedBalance: Record<string, number> = {};
+        finishedProducts.forEach(({ camelKey }) => {
+          aggregatedBalance[camelKey] = 0;
+        });
         
         for (const store of allStores) {
           // Try to get recalibration for each store
@@ -274,18 +339,25 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             if (recalDate === currentMonth) {
               // Use current month recalibration
               recalResponse.record.items.forEach((item: any) => {
-                aggregatedBalance[item.itemId as keyof typeof aggregatedBalance] += item.actualQuantity;
+                // Map itemId to camelKey - itemId can be either UUID or snake_case name
+                const inventoryItem = context.inventoryItems?.find(invItem => 
+                  invItem.id === item.itemId || invItem.name === item.itemId
+                );
+                if (inventoryItem) {
+                  const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                  aggregatedBalance[camelKey as keyof typeof aggregatedBalance] += item.actualQuantity;
+                }
               });
             } else {
               // Calculate from previous month for this store
-              const balance = calculatePreviousMonthStoreStock(store.id, currentMonth);
+              const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
               Object.keys(balance).forEach(key => {
                 aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
               });
             }
           } else {
             // No recalibration - calculate from previous month
-            const balance = calculatePreviousMonthStoreStock(store.id, currentMonth);
+            const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
             Object.keys(balance).forEach(key => {
               aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
             });
@@ -299,6 +371,12 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       
       // Single store logic (existing code)
       // Try to fetch last recalibration for STORE (not production house)
+      if (!effectiveStoreId) {
+        console.log('  ⚠️ No effectiveStoreId available, skipping recalibration fetch');
+        setStoreOpeningBalance({});
+        return;
+      }
+      
       const recalResponse = await api.getLastRecalibration(
         context.user.accessToken,
         effectiveStoreId,
@@ -320,8 +398,23 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         if (recalDate === currentMonth) {
           // Recalibration from current month - use it as opening balance
           const balance: any = {};
+          console.log('  📝 Processing recalibration items:', recalResponse.record.items.length);
+          console.log('  📝 Available inventory items:', context.inventoryItems?.length || 0);
+          
           recalResponse.record.items.forEach((item: any) => {
-            balance[item.itemId] = item.actualQuantity;
+            console.log('    Processing item:', { itemId: item.itemId, actualQuantity: item.actualQuantity });
+            // Map itemId to camelKey - itemId can be either UUID or snake_case name
+            const inventoryItem = context.inventoryItems?.find(invItem => 
+              invItem.id === item.itemId || invItem.name === item.itemId
+            );
+            console.log('    Found inventory item:', inventoryItem ? { name: inventoryItem.name, displayName: inventoryItem.displayName } : 'NOT FOUND');
+            if (inventoryItem) {
+              const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+              balance[camelKey] = item.actualQuantity;
+              console.log('    Mapped to camelKey:', camelKey, '=', item.actualQuantity);
+            } else {
+              console.log('    ⚠️ Could not find inventory item for itemId:', item.itemId);
+            }
           });
           console.log('  ✅ Using current month recalibration as opening balance:', balance);
           setStoreOpeningBalance(balance);
@@ -334,19 +427,30 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       }
       
       // No current month recalibration - calculate from previous month
-      const balance = calculatePreviousMonthStoreStock(effectiveStoreId, currentMonth);
+      const balance = await calculatePreviousMonthStoreStock(effectiveStoreId, currentMonth);
       setStoreOpeningBalance(balance);
     } catch (error) {
       console.error('Error loading opening balance:', error);
       // Set to zero balance on error
-      setStoreOpeningBalance({
-        chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-        paneer: 0, vegKurkure: 0, chickenKurkure: 0
+      const zeroBalance: Record<string, number> = {};
+      finishedProducts.forEach(({ camelKey }) => {
+        zeroBalance[camelKey] = 0;
       });
+      setStoreOpeningBalance(zeroBalance);
     }
   };
 
-  const calculatePreviousMonthStoreStock = (storeId: string, currentMonth: string): any => {
+  const calculatePreviousMonthStoreStock = async (storeId: string, currentMonth: string): Promise<any> => {
+    // Return zero balance if storeId is not provided
+    if (!storeId) {
+      console.warn('  ⚠️ calculatePreviousMonthStoreStock called with empty storeId');
+      const zeroBalance: Record<string, number> = {};
+      finishedProducts.forEach(({ camelKey }) => {
+        zeroBalance[camelKey] = 0;
+      });
+      return zeroBalance;
+    }
+    
     // Get previous month
     const [year, month] = currentMonth.split('-').map(Number);
     let prevYear = year;
@@ -362,8 +466,52 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     console.log('📊 Store Opening Balance Calculation:');
     console.log('  Store ID:', storeId);
     console.log('  Previous Month:', previousMonthStr);
-    console.log('  Total salesData records:', salesData.length);
-    console.log('  Sample salesData:', salesData.slice(0, 2));
+    
+    // First, try to get recalibration from the previous month
+    let prevMonthOpeningBalance: Record<string, number> = {};
+    
+    try {
+      const prevRecalResponse = await api.getLastRecalibration(
+        context.user.accessToken,
+        storeId,
+        'store'
+      );
+      
+      if (prevRecalResponse?.record) {
+        const recalMonth = prevRecalResponse.record.date.substring(0, 7);
+        console.log('  📦 Found recalibration from:', recalMonth);
+        
+        if (recalMonth === previousMonthStr) {
+          // Perfect! We have recalibration from the previous month
+          prevRecalResponse.record.items.forEach((item: any) => {
+            // Map itemId to camelKey - itemId can be either UUID or snake_case name
+            const inventoryItem = context.inventoryItems?.find(invItem => 
+              invItem.id === item.itemId || invItem.name === item.itemId
+            );
+            if (inventoryItem) {
+              const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+              prevMonthOpeningBalance[camelKey] = item.actualQuantity;
+            }
+          });
+          console.log('  ✅ Using previous month recalibration as opening:', prevMonthOpeningBalance);
+        } else {
+          console.log('  ⚠️ Recalibration is from different month, assuming zero opening balance');
+          finishedProducts.forEach(({ camelKey }) => {
+            prevMonthOpeningBalance[camelKey] = 0;
+          });
+        }
+      } else {
+        console.log('  ⚠️ No recalibration found, assuming zero opening balance');
+        finishedProducts.forEach(({ camelKey }) => {
+          prevMonthOpeningBalance[camelKey] = 0;
+        });
+      }
+    } catch (error) {
+      console.error('  ❌ Error fetching recalibration:', error);
+      finishedProducts.forEach(({ camelKey }) => {
+        prevMonthOpeningBalance[camelKey] = 0;
+      });
+    }
     
     // Calculate from previous month's deliveries and sales
     const prevReceived = (context.productionRequests || [])
@@ -373,18 +521,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
         return requestDate && requestDate.startsWith(previousMonthStr);
       })
-      .reduce((acc, req) => ({
-        chicken: acc.chicken + (req.chickenMomos || 0),
-        chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
-        veg: acc.veg + (req.vegMomos || 0),
-        cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
-        paneer: acc.paneer + (req.paneerMomos || 0),
-        vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
-        chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
-      }), {
-        chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-        paneer: 0, vegKurkure: 0, chickenKurkure: 0
-      });
+      .reduce((acc, req) => {
+        // Dynamically accumulate all finished product quantities
+        // Support both new format (chickenMomo) and old format (chickenMomos with 's')
+        finishedProducts.forEach(({ camelKey }) => {
+          const newFormat = (req as any)[camelKey] || 0;
+          const oldFormat = (req as any)[camelKey + 's'] || 0; // Old requests have 's' at end
+          acc[camelKey] = (acc[camelKey] || 0) + newFormat + oldFormat;
+        });
+        return acc;
+      }, {} as Record<string, number>);
     
     const prevSalesFiltered = (salesData || [])
       .filter(sale => {
@@ -392,37 +538,25 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         return sale.date && sale.date.startsWith(previousMonthStr);
       });
     
-    console.log('  Filtered sales records for previous month:', prevSalesFiltered.length);
-    console.log('  Sample filtered sales:', prevSalesFiltered.slice(0, 2));
-    
     const prevSold = prevSalesFiltered
-      .reduce((acc, sale) => ({
-        chicken: acc.chicken + (sale.data?.['Chicken Momos'] || 0),
-        chickenCheese: acc.chickenCheese + (sale.data?.['Chicken Cheese Momos'] || 0),
-        veg: acc.veg + (sale.data?.['Veg Momos'] || 0),
-        cheeseCorn: acc.cheeseCorn + (sale.data?.['Corn Cheese Momos'] || 0),
-        paneer: acc.paneer + (sale.data?.['Paneer Momos'] || 0),
-        vegKurkure: acc.vegKurkure + (sale.data?.['Veg Kurkure Momos'] || 0),
-        chickenKurkure: acc.chickenKurkure + (sale.data?.['Chicken Kurkure Momos'] || 0),
-      }), {
-        chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-        paneer: 0, vegKurkure: 0, chickenKurkure: 0
-      });
+      .reduce((acc, sale) => {
+        // Dynamically accumulate sales for all finished products
+        finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
+          acc[camelKey] = (acc[camelKey] || 0) + (sale.data?.[legacySalesKey] || 0);
+        });
+        return acc;
+      }, {} as Record<string, number>);
     
-    // Calculate closing stock
-    const closingStock = {
-      chicken: prevReceived.chicken - prevSold.chicken,
-      chickenCheese: prevReceived.chickenCheese - prevSold.chickenCheese,
-      veg: prevReceived.veg - prevSold.veg,
-      cheeseCorn: prevReceived.cheeseCorn - prevSold.cheeseCorn,
-      paneer: prevReceived.paneer - prevSold.paneer,
-      vegKurkure: prevReceived.vegKurkure - prevSold.vegKurkure,
-      chickenKurkure: prevReceived.chickenKurkure - prevSold.chickenKurkure,
-    };
+    // Calculate closing stock = Opening Balance + Received - Sold (FIXED!)
+    const closingStock: Record<string, number> = {};
+    finishedProducts.forEach(({ camelKey }) => {
+      closingStock[camelKey] = (prevMonthOpeningBalance[camelKey] || 0) + (prevReceived[camelKey] || 0) - (prevSold[camelKey] || 0);
+    });
     
+    console.log('  Previous Month Opening Balance:', prevMonthOpeningBalance);
     console.log('  Previous Month Received:', prevReceived);
     console.log('  Previous Month Sold:', prevSold);
-    console.log('  Calculated Opening Balance (Closing Stock):', closingStock);
+    console.log('  Calculated Closing Stock (= Opening + Received - Sold):', closingStock);
     
     return closingStock;
   };
@@ -430,8 +564,22 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('🚀 handleSubmitRequest called');
+    console.log('  User info:', {
+      hasAccessToken: !!context.user?.accessToken,
+      hasEmployeeId: !!context.user?.employeeId,
+      hasStoreId: !!context.user?.storeId,
+      user: context.user
+    });
+    console.log('  Form data:', {
+      momoQuantities,
+      totalQuantity: Object.values(momoQuantities).reduce((sum, qty) => sum + qty, 0),
+      requestDate,
+      notes
+    });
+    
     if (!context.user?.accessToken || !context.user?.employeeId || !context.user?.storeId) {
-      console.error('Missing user information:', {
+      console.error('❌ Missing user information:', {
         hasAccessToken: !!context.user?.accessToken,
         hasEmployeeId: !!context.user?.employeeId,
         hasStoreId: !!context.user?.storeId,
@@ -441,68 +589,51 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       return;
     }
 
-    const totalQuantity = chickenMomos + chickenCheeseMomos + vegMomos + 
-                         cheeseCornMomos + paneerMomos + vegKurkureMomos + chickenKurkureMomos;
+    const totalQuantity = Object.values(momoQuantities).reduce((sum, qty) => sum + qty, 0);
     
     if (totalQuantity === 0) {
+      console.log('❌ No quantities specified');
       toast.error('Please specify at least one item quantity');
       return;
     }
 
-    // Check if it's before 9:00 AM
-    const now = new Date();
-    const hours = now.getHours();
-    const selectedDate = new Date(requestDate);
-    const isToday = selectedDate.toDateString() === now.toDateString();
-    
-    if (isToday && hours >= 9) {
-      toast.error('Production requests must be submitted before 9:00 AM');
-      return;
-    }
+    // Time restriction removed - requests can be submitted anytime
+    console.log('📝 Submitting request for date:', requestDate);
 
     try {
       setSubmitting(true);
+      console.log('✅ Validation passed, submitting request...');
       
       // Backend will automatically fetch and populate storeName from storeId
+      // Spread dynamic momo quantities into the request
       await api.createProductionRequest(context.user.accessToken, {
         requestDate,
         storeId: context.user.storeId,
         storeName: undefined, // Let backend populate this
         requestedBy: context.user.employeeId,
         requestedByName: context.user.name || context.user.email,
-        chickenMomos,
-        chickenCheeseMomos,
-        vegMomos,
-        cheeseCornMomos,
-        paneerMomos,
-        vegKurkureMomos,
-        chickenKurkureMomos,
+        ...momoQuantities, // Spread all dynamic momo quantities
         kitchenUtilities: Object.keys(kitchenUtilities).length > 0 ? kitchenUtilities : undefined,
         sauces: Object.keys(sauces).length > 0 ? sauces : undefined,
         utilities: Object.keys(utilities).length > 0 ? utilities : undefined,
         notes,
       });
 
+      console.log('✅ Request submitted successfully');
       toast.success('Production request submitted successfully');
       
       // Reset form
-      setChickenMomos(0);
-      setChickenCheeseMomos(0);
-      setVegMomos(0);
-      setCheeseCornMomos(0);
-      setPaneerMomos(0);
-      setVegKurkureMomos(0);
-      setChickenKurkureMomos(0);
+      setMomoQuantities({});
       setKitchenUtilities({});
       setSauces({});
       setUtilities({});
       setNotes('');
-      setRequestDate(new Date().toISOString().split('T')[0]);
+      setRequestDate(getDefaultRequestDate());
       
       // Reload requests
       await loadRequests();
     } catch (error: any) {
-      console.error('Error submitting production request:', error);
+      console.error('❌ Error submitting production request:', error);
       toast.error(error.message || 'Failed to submit request');
     } finally {
       setSubmitting(false);
@@ -684,19 +815,20 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       today: now.toISOString().split('T')[0]
     });
 
-    // Group requests by period
+    console.log('📊 Requests for chart:', {
+      totalRequests: requests.length,
+      requestDates: requests.map(r => ({ date: r.requestDate, id: r.id.slice(0, 8), chickenMomo: (r as any).chickenMomo, chickenMomos: (r as any).chickenMomos }))
+    });
+
+    // Group requests by period - DYNAMIC
     const periodData: Record<string, any> = {};
     periods.forEach(period => {
-      periodData[period] = {
-        period,
-        Chicken: 0,
-        'Chicken Cheese': 0,
-        Veg: 0,
-        'Cheese Corn': 0,
-        Paneer: 0,
-        'Veg Kurkure': 0,
-        'Chicken Kurkure': 0,
-      };
+      const entry: any = { period };
+      // Initialize all finished products to 0
+      finishedProducts.forEach(({ label }) => {
+        entry[label] = 0;
+      });
+      periodData[period] = entry;
     });
 
     // Aggregate requests into periods
@@ -715,13 +847,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       }
 
       if (periodData[periodKey]) {
-        periodData[periodKey].Chicken += req.chickenMomos;
-        periodData[periodKey]['Chicken Cheese'] += req.chickenCheeseMomos;
-        periodData[periodKey].Veg += req.vegMomos;
-        periodData[periodKey]['Cheese Corn'] += req.cheeseCornMomos;
-        periodData[periodKey].Paneer += req.paneerMomos;
-        periodData[periodKey]['Veg Kurkure'] += req.vegKurkureMomos;
-        periodData[periodKey]['Chicken Kurkure'] += req.chickenKurkureMomos;
+        // Dynamically accumulate all finished product quantities
+        // Support both new format (chickenMomo) and old format (chickenMomos with 's')
+        finishedProducts.forEach(({ camelKey, label }) => {
+          const newFormat = (req as any)[camelKey] || 0;
+          const oldFormat = (req as any)[camelKey + 's'] || 0;
+          periodData[periodKey][label] = (periodData[periodKey][label] || 0) + newFormat + oldFormat;
+        });
       } else {
         console.log('⚠️ Request not matching any period:', {
           requestDate: req.requestDate,
@@ -853,13 +985,24 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                     Opening balance + Current month received - Current month sold
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowThresholdSettings(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all"
-                >
-                  <Settings className="w-4 h-4" />
-                  <span className="text-sm font-semibold">Alert Settings</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowThresholdSettings(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span className="text-sm font-semibold">Alert Settings</span>
+                  </button>
+                  {onNavigateToManageItems && (isOperationsHead || isClusterHead) && (
+                    <button
+                      onClick={onNavigateToManageItems}
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+                    >
+                      <Package className="w-4 h-4" />
+                      <span className="text-sm font-semibold">Manage Items</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -873,6 +1016,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
           
           // Get current month's delivered production requests for this store
+          console.log('📦 Stock Status Calculation Debug:', {
+            currentMonth,
+            totalRequests: context.productionRequests?.length || 0,
+            deliveredRequests: context.productionRequests?.filter(r => r.status === 'delivered').length || 0,
+            requestStatuses: context.productionRequests?.map(r => ({ id: r.id.slice(0, 8), status: r.status, date: r.requestDate })) || []
+          });
+          
           const deliveredRequests = context.productionRequests?.filter(req => {
             // Only count delivered requests
             if (req.status !== 'delivered') return false;
@@ -890,18 +1040,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           }) || [];
           
           // Aggregate current month's received quantities
-          const totalReceived = deliveredRequests.reduce((acc, req) => ({
-            chicken: acc.chicken + (req.chickenMomos || 0),
-            chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
-            veg: acc.veg + (req.vegMomos || 0),
-            cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
-            paneer: acc.paneer + (req.paneerMomos || 0),
-            vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
-            chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
-          }), {
-            chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0, 
-            paneer: 0, vegKurkure: 0, chickenKurkure: 0
-          });
+          const totalReceived = deliveredRequests.reduce((acc, req) => {
+            // Dynamically accumulate all finished product quantities
+            // Support both new format (chickenMomo) and old format (chickenMomos with 's')
+            finishedProducts.forEach(({ camelKey }) => {
+              const newFormat = (req as any)[camelKey] || 0;
+              const oldFormat = (req as any)[camelKey + 's'] || 0; // Old requests have 's' at end
+              acc[camelKey] = (acc[camelKey] || 0) + newFormat + oldFormat;
+            });
+            return acc;
+          }, {} as Record<string, number>);
           
           // Get current month's sales data for this store
           const storeSales = salesData.filter((s: any) => {
@@ -916,70 +1064,78 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             return s.storeId === effectiveStoreId;
           });
           
-          // Aggregate current month's sales
-          const totalSales = storeSales.reduce((acc: any, sale: any) => ({
-            chicken: acc.chicken + (sale.data?.['Chicken Momos'] || 0),
-            chickenCheese: acc.chickenCheese + (sale.data?.['Chicken Cheese Momos'] || 0),
-            veg: acc.veg + (sale.data?.['Veg Momos'] || 0),
-            cheeseCorn: acc.cheeseCorn + (sale.data?.['Corn Cheese Momos'] || 0),
-            paneer: acc.paneer + (sale.data?.['Paneer Momos'] || 0),
-            vegKurkure: acc.vegKurkure + (sale.data?.['Veg Kurkure Momos'] || 0),
-            chickenKurkure: acc.chickenKurkure + (sale.data?.['Chicken Kurkure Momos'] || 0),
-          }), {
-            chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0, 
-            paneer: 0, vegKurkure: 0, chickenKurkure: 0
+          // Aggregate current month's sales dynamically
+          const totalSales = storeSales.reduce((acc: any, sale: any) => {
+            finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
+              acc[camelKey] = (acc[camelKey] || 0) + (sale.data?.[legacySalesKey] || 0);
+            });
+            return acc;
+          }, {} as Record<string, number>);
+          
+          // Get opening balance from state (or initialize with zeros for all products)
+          const openingBalance = storeOpeningBalance || 
+            finishedProducts.reduce((acc, { camelKey }) => {
+              acc[camelKey] = 0;
+              return acc;
+            }, {} as Record<string, number>);
+          
+          console.log('📊 Store Stock Status Calculation Debug:');
+          console.log('  storeOpeningBalance from state:', storeOpeningBalance);
+          console.log('  openingBalance being used:', openingBalance);
+          console.log('  totalReceived:', totalReceived);
+          console.log('  totalSales:', totalSales);
+          console.log('  finishedProducts count:', finishedProducts.length);
+          
+          // Calculate store stock = Opening Balance + Received - Sold (dynamically)
+          const storeStock: Record<string, number> = {};
+          finishedProducts.forEach(({ camelKey }) => {
+            storeStock[camelKey] = (openingBalance[camelKey] || 0) + (totalReceived[camelKey] || 0) - (totalSales[camelKey] || 0);
           });
           
-          // Get opening balance from state
-          const openingBalance = storeOpeningBalance || {
-            chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
-            paneer: 0, vegKurkure: 0, chickenKurkure: 0
-          };
+          console.log('  storeStock calculated:', storeStock);
           
-          // Calculate store stock = Opening Balance + Received - Sold
-          const storeStock = {
-            chicken: openingBalance.chicken + totalReceived.chicken - totalSales.chicken,
-            chickenCheese: openingBalance.chickenCheese + totalReceived.chickenCheese - totalSales.chickenCheese,
-            veg: openingBalance.veg + totalReceived.veg - totalSales.veg,
-            cheeseCorn: openingBalance.cheeseCorn + totalReceived.cheeseCorn - totalSales.cheeseCorn,
-            paneer: openingBalance.paneer + totalReceived.paneer - totalSales.paneer,
-            vegKurkure: openingBalance.vegKurkure + totalReceived.vegKurkure - totalSales.vegKurkure,
-            chickenKurkure: openingBalance.chickenKurkure + totalReceived.chickenKurkure - totalSales.chickenKurkure,
-          };
-          
-          const momoTypes = [
-            { key: 'chicken', label: 'Chicken', color: 'purple' },
-            { key: 'chickenCheese', label: 'Chicken Cheese', color: 'pink' },
-            { key: 'veg', label: 'Veg', color: 'green' },
-            { key: 'cheeseCorn', label: 'Cheese Corn', color: 'yellow' },
-            { key: 'paneer', label: 'Paneer', color: 'blue' },
-            { key: 'vegKurkure', label: 'Veg Kurkure', color: 'teal' },
-            { key: 'chickenKurkure', label: 'Chicken Kurkure', color: 'red' },
-          ];
+          // Color palette for momo cards
+          const colorPalette = ['purple', 'pink', 'green', 'yellow', 'blue', 'teal', 'red', 'indigo', 'orange', 'cyan'];
           
           const totalReceivedSum = Object.values(totalReceived).reduce((sum, val) => sum + val, 0);
           const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum, val) => sum + val, 0);
           const totalStockSum = totalReceivedSum + totalOpeningBalanceSum;
           
+          console.log('  totalReceivedSum:', totalReceivedSum);
+          console.log('  totalOpeningBalanceSum:', totalOpeningBalanceSum);
+          console.log('  totalStockSum:', totalStockSum);
+          
           if (totalStockSum === 0) {
             return (
               <div className="bg-gray-50 rounded-lg p-8 text-center">
                 <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-600">No inventory available</p>
-                <p className="text-sm text-gray-500 mt-2">Stock will appear here once your requests are fulfilled or recalibration is performed</p>
+                <p className="text-gray-600">No inventory available for {currentMonth}</p>
+                <p className="text-sm text-gray-500 mt-2">
+                  Stock will appear here once:
+                </p>
+                <ul className="text-sm text-gray-500 mt-2 list-disc list-inside">
+                  <li>Your requests are <strong>delivered</strong> by the production house</li>
+                  <li>OR you perform a stock recalibration (1st-5th of each month)</li>
+                </ul>
+                <p className="text-xs text-blue-600 mt-4">
+                  💡 Tip: Check if your requests have been marked as "Delivered" below
+                </p>
               </div>
             );
           }
           
           return (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {momoTypes.map(({ key, label, color }) => {
-                const received = (totalReceived as any)[key];
-                const sold = (totalSales as any)[key];
-                const stock = (storeStock as any)[key];
+              {finishedProducts.map(({ camelKey, label }, index) => {
+                const received = totalReceived[camelKey] || 0;
+                const sold = totalSales[camelKey] || 0;
+                const stock = storeStock[camelKey] || 0;
+                const opening = openingBalance[camelKey] || 0;
+                const totalAvailable = opening + received; // Total available = opening + received
+                const color = colorPalette[index % colorPalette.length];
                 
                 // Get threshold levels for this momo type
-                const thresholds = (stockThresholds as any)[key] || { high: 600, medium: 300, low: 150 };
+                const thresholds = stockThresholds[camelKey] || { high: 600, medium: 300, low: 150 };
                 
                 // Determine stock level and alert
                 let stockLevel: 'high' | 'medium' | 'low' | 'critical' = 'high';
@@ -1016,11 +1172,11 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 
                 // Show all momo types
                 
-                const stockPercentage = received > 0 ? ((stock / received) * 100).toFixed(0) : '0';
-                const isLowStock = stock < received * 0.2 && received > 0; // Less than 20%
+                const stockPercentage = totalAvailable > 0 ? ((stock / totalAvailable) * 100).toFixed(0) : '0';
+                const isLowStock = stock < totalAvailable * 0.2 && totalAvailable > 0; // Less than 20%
                 
                 return (
-                  <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300 relative`}>
+                  <div key={camelKey} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300 relative`}>
                     {/* Stock Alert Badge */}
                     {stockLevel !== 'high' && (
                       <div className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg ${alertBgColor} border ${alertBorderColor}`}>
@@ -1029,7 +1185,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                       </div>
                     )}
                     
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3 pr-20">{label} Momos</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-3 pr-20">{label}</h3>
                     
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -1045,11 +1201,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                       <div className="border-t-2 border-gray-300 pt-2 mt-2">
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
-                          <span className={`text-2xl font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
-                            {stock}
-                          </span>
+                          <div className="text-right">
+                            <div className={`text-2xl font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
+                              {stock} pcs / {Math.round(stock / momosPerPlate)} plates
+                            </div>
+                          </div>
                         </div>
-                        {received > 0 && (
+                        {totalAvailable > 0 && (
                           <div className="mt-2">
                             <div className="flex justify-between text-xs text-gray-600 mb-1">
                               <span>{stockPercentage}% remaining</span>
@@ -1088,6 +1246,23 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             Submit Stock Request
           </h2>
           
+          {/* Info banner for after 9 AM */}
+          {new Date().getHours() >= 9 && (
+            <div className="mb-4 bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-blue-900 font-semibold mb-1">
+                    It's past 9:00 AM
+                  </p>
+                  <p className="text-xs text-blue-800">
+                    Same-day production requests are no longer accepted. The request date has been automatically set to tomorrow. You can also select any future date for advance orders.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
           <form onSubmit={handleSubmitRequest} className="space-y-6">
             <div>
               <DatePicker
@@ -1096,7 +1271,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 onChange={setRequestDate}
                 className="w-full"
               />
-              <p className="text-xs text-gray-500 mt-1">Requests for today must be submitted before 9:00 AM</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Same-day requests must be submitted before 9:00 AM. After 9 AM, please select tomorrow or a future date for advance orders.
+              </p>
             </div>
 
             <div>
@@ -1105,166 +1282,43 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 Momos Quantities
               </h3>
               <div className="space-y-3 sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3">
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Chicken Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={chickenMomos || 0}
-                    onChange={(e) => setChickenMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[150, 300, 450, 600].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setChickenMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Chicken Cheese Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={chickenCheeseMomos || 0}
-                    onChange={(e) => setChickenCheeseMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setChickenCheeseMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Veg Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={vegMomos || 0}
-                    onChange={(e) => setVegMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setVegMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Cheese Corn Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={cheeseCornMomos || 0}
-                    onChange={(e) => setCheeseCornMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setCheeseCornMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Paneer Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={paneerMomos || 0}
-                    onChange={(e) => setPaneerMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setPaneerMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Veg Kurkure Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={vegKurkureMomos || 0}
-                    onChange={(e) => setVegKurkureMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setVegKurkureMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Chicken Kurkure Momos</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={chickenKurkureMomos || 0}
-                    onChange={(e) => setChickenKurkureMomos(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
-                  />
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {[60, 120, 180, 300].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setChickenKurkureMomos(val)}
-                        className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {finishedProducts.map(({ camelKey, label }) => {
+                  // Quick preset values based on typical order sizes
+                  const presetValues = camelKey === 'chicken' 
+                    ? [150, 300, 450, 600] 
+                    : [60, 120, 180, 300];
+                  
+                  return (
+                    <div key={camelKey}>
+                      <label className="block text-sm text-gray-700 mb-2">{label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={momoQuantities[camelKey] || 0}
+                        onChange={(e) => setMomoQuantities({
+                          ...momoQuantities,
+                          [camelKey]: parseInt(e.target.value) || 0
+                        })}
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
+                      />
+                      <div className="flex gap-2 mt-2 flex-wrap">
+                        {presetValues.map(val => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setMomoQuantities({
+                              ...momoQuantities,
+                              [camelKey]: val
+                            })}
+                            className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
+                          >
+                            {val}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1630,13 +1684,17 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             <YAxis />
             <Tooltip />
             <Legend />
-            <Bar dataKey="Chicken" name="Chicken" fill="#8b5cf6" />
-            <Bar dataKey="Chicken Cheese" name="Chicken Cheese" fill="#ec4899" />
-            <Bar dataKey="Veg" name="Veg" fill="#10b981" />
-            <Bar dataKey="Cheese Corn" name="Cheese Corn" fill="#f59e0b" />
-            <Bar dataKey="Paneer" name="Paneer" fill="#3b82f6" />
-            <Bar dataKey="Veg Kurkure" name="Veg Kurkure" fill="#14b8a6" />
-            <Bar dataKey="Chicken Kurkure" name="Chicken Kurkure" fill="#ef4444" />
+            {finishedProducts.map((product, index) => {
+              const colors = ['#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#3b82f6', '#14b8a6', '#ef4444', '#f97316'];
+              return (
+                <Bar 
+                  key={product.label} 
+                  dataKey={product.label} 
+                  name={product.label} 
+                  fill={colors[index % colors.length]} 
+                />
+              );
+            })}
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -1658,24 +1716,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             const isExpanded = expandedDates[date];
             const storeCount = new Set(dateRequests.map((r) => r.storeName)).size;
             const totalQuantities = dateRequests.reduce(
-              (acc, req) => ({
-                chicken: acc.chicken + req.chickenMomos,
-                chickenCheese: acc.chickenCheese + req.chickenCheeseMomos,
-                veg: acc.veg + req.vegMomos,
-                cheeseCorn: acc.cheeseCorn + req.cheeseCornMomos,
-                paneer: acc.paneer + req.paneerMomos,
-                vegKurkure: acc.vegKurkure + req.vegKurkureMomos,
-                chickenKurkure: acc.chickenKurkure + req.chickenKurkureMomos,
-              }),
-              {
-                chicken: 0,
-                chickenCheese: 0,
-                veg: 0,
-                cheeseCorn: 0,
-                paneer: 0,
-                vegKurkure: 0,
-                chickenKurkure: 0,
-              }
+              (acc, req) => {
+                // Support both new format (chickenMomo) and old format (chickenMomos with 's')
+                finishedProducts.forEach(({ camelKey }) => {
+                  const newFormat = (req as any)[camelKey] || 0;
+                  const oldFormat = (req as any)[camelKey + 's'] || 0;
+                  acc[camelKey] = (acc[camelKey] || 0) + newFormat + oldFormat;
+                });
+                return acc;
+              },
+              {} as Record<string, number>
             );
 
             return (
@@ -1865,52 +1915,21 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                               <span>Requested by: {request.requestedByName || request.requestedBy}</span>
                             </div>
 
-                            {/* Momos Quantities */}
+                            {/* Momos Quantities - DYNAMIC */}
                             <div className="bg-gray-50 rounded-lg p-3 mb-3">
                               <h5 className="text-xs sm:text-sm text-gray-600 mb-3">Momos Quantities</h5>
                               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2 sm:gap-3">
-                                {request.chickenMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.chickenMomos}</p>
-                                    <p className="text-xs text-gray-600">Chicken</p>
-                                  </div>
-                                )}
-                                {request.chickenCheeseMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.chickenCheeseMomos}</p>
-                                    <p className="text-xs text-gray-600">Chicken Cheese</p>
-                                  </div>
-                                )}
-                                {request.vegMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.vegMomos}</p>
-                                    <p className="text-xs text-gray-600">Veg</p>
-                                  </div>
-                                )}
-                                {request.cheeseCornMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.cheeseCornMomos}</p>
-                                    <p className="text-xs text-gray-600">Cheese Corn</p>
-                                  </div>
-                                )}
-                                {request.paneerMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.paneerMomos}</p>
-                                    <p className="text-xs text-gray-600">Paneer</p>
-                                  </div>
-                                )}
-                                {request.vegKurkureMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.vegKurkureMomos}</p>
-                                    <p className="text-xs text-gray-600">Veg Kurkure</p>
-                                  </div>
-                                )}
-                                {request.chickenKurkureMomos > 0 && (
-                                  <div className="text-center">
-                                    <p className="text-gray-900">{request.chickenKurkureMomos}</p>
-                                    <p className="text-xs text-gray-600">Chicken Kurkure</p>
-                                  </div>
-                                )}
+                                {finishedProducts.map(({ camelKey, label }) => {
+                                  const quantity = (request as any)[camelKey];
+                                  if (!quantity || quantity === 0) return null;
+                                  
+                                  return (
+                                    <div key={camelKey} className="text-center">
+                                      <p className="text-gray-900">{quantity}</p>
+                                      <p className="text-xs text-gray-600">{label.replace(' Momos', '')}</p>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
 

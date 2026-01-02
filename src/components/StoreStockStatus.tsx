@@ -1,14 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import * as api from '../utils/api';
-import { Package, TrendingDown, TrendingUp, AlertTriangle, ArrowRight, CheckCircle, Store, Factory } from 'lucide-react';
+import { Package, TrendingDown, TrendingUp, AlertTriangle, ArrowRight, CheckCircle, Store, Factory, Info } from 'lucide-react';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { QuickAddInventoryItem } from './QuickAddInventoryItem';
 
 type Props = {
   context: InventoryContextType;
   stores: api.Store[];
+  onNavigateToManageItems?: () => void;
 };
 
 type StockStatus = {
@@ -28,7 +30,7 @@ type StockStatus = {
   lastUpdated: string;
 };
 
-export function StoreStockStatus({ context, stores }: Props) {
+export function StoreStockStatus({ context, stores, onNavigateToManageItems }: Props) {
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<'7days' | '30days' | 'all'>('30days');
 
@@ -146,6 +148,23 @@ export function StoreStockStatus({ context, stores }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Info Banner about Dynamic Inventory Items */}
+      <Card className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-semibold text-blue-900 mb-1">Dynamic Inventory Items</h3>
+            <p className="text-sm text-blue-700 mb-2">
+              You can now add custom inventory items beyond the default 7 momo types! 
+              Manage all items from the <strong>"Manage Items"</strong> page in the navigation.
+            </p>
+            <p className="text-xs text-blue-600">
+              💡 Items can be store-specific or global (available to all stores)
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -163,6 +182,15 @@ export function StoreStockStatus({ context, stores }: Props) {
               <option key={store.id} value={store.id}>{store.name}</option>
             ))}
           </select>
+          {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
+            <button
+              onClick={onNavigateToManageItems}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+            >
+              <Package className="w-4 h-4" />
+              <span className="text-sm font-semibold">Manage Items</span>
+            </button>
+          )}
         </div>
       </div>
 

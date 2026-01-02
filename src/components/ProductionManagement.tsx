@@ -146,17 +146,43 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
       if (userProductionHouse && productionForDate) {
         const newInventory = { ...userProductionHouse.inventory };
         
-        // Add final production quantities to inventory
-        newInventory.chicken += productionForDate.chickenMomos?.final || 0;
-        newInventory.chickenCheese += productionForDate.chickenCheeseMomos?.final || 0;
-        newInventory.veg += productionForDate.vegMomos?.final || 0;
-        newInventory.cheeseCorn += productionForDate.cheeseCornMomos?.final || 0;
-        newInventory.paneer += productionForDate.paneerMomos?.final || 0;
-        newInventory.vegKurkure += productionForDate.vegKurkureMomos?.final || 0;
-        newInventory.chickenKurkure += productionForDate.chickenKurkureMomos?.final || 0;
+        // Dynamically add final production quantities to inventory
+        // Support both old hardcoded fields and new dynamic structure
+        const productionObj = productionForDate as any;
+        
+        // Old hardcoded format mapping
+        const oldFieldMapping: Record<string, string> = {
+          'chickenMomos': 'chicken',
+          'chickenCheeseMomos': 'chickenCheese',
+          'vegMomos': 'veg',
+          'cheeseCornMomos': 'cheeseCorn',
+          'paneerMomos': 'paneer',
+          'vegKurkureMomos': 'vegKurkure',
+          'chickenKurkureMomos': 'chickenKurkure'
+        };
+        
+        // Process old format
+        Object.entries(oldFieldMapping).forEach(([oldKey, inventoryKey]) => {
+          const finalQty = productionObj[oldKey]?.final || 0;
+          if (finalQty > 0) {
+            newInventory[inventoryKey] = (newInventory[inventoryKey] || 0) + finalQty;
+            console.log(`  📦 Added ${finalQty} ${inventoryKey} from ${oldKey}`);
+          }
+        });
+        
+        // Process new dynamic format (if it exists in future)
+        if (productionObj.items) {
+          Object.entries(productionObj.items).forEach(([itemKey, itemData]: [string, any]) => {
+            const finalQty = itemData?.final || 0;
+            if (finalQty > 0) {
+              newInventory[itemKey] = (newInventory[itemKey] || 0) + finalQty;
+              console.log(`  📦 Added ${finalQty} ${itemKey} from dynamic items`);
+            }
+          });
+        }
         
         await context.updateProductionHouseInventory(userProductionHouse.id, newInventory);
-        console.log('✅ Production house inventory updated after approval');
+        console.log('✅ Production house inventory updated after approval:', newInventory);
       }
       
       alert('Production data approved successfully! Inventory updated.');

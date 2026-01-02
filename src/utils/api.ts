@@ -293,6 +293,26 @@ export async function clearAllData(): Promise<void> {
   });
 }
 
+// Selective cleanup for production launch - removes only transactional data
+export async function cleanupProductionData(): Promise<{
+  success: boolean;
+  message: string;
+  stats: any;
+  totalDeleted: number;
+}> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/cleanup-production-data`, session.access_token, {
+    method: 'POST',
+  });
+  return data;
+}
+
 // ============================================
 // NOTIFICATION API
 // ============================================
@@ -1001,6 +1021,133 @@ export async function deletePayout(id: string): Promise<void> {
 }
 
 // ============================================
+// INVENTORY ITEMS API (Dynamic Product Types)
+// ============================================
+
+export interface DynamicInventoryItem {
+  id: string;
+  name: string;
+  displayName: string;
+  category: 'finished_product' | 'raw_material' | 'sauce_chutney';
+  unit: string;
+  linkedEntityType: 'store' | 'production_house' | 'global';
+  linkedEntityId?: string;
+  createdBy: string;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export async function fetchInventoryItems(
+  entityType?: string,
+  entityId?: string,
+  category?: string
+): Promise<DynamicInventoryItem[]> {
+  try {
+    const params = new URLSearchParams();
+    if (entityType) params.append('entityType', entityType);
+    if (entityId) params.append('entityId', entityId);
+    if (category) params.append('category', category);
+
+    const response = await fetch(
+      `${API_BASE}/inventory-items?${params.toString()}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${publicAnonKey}`
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Error fetching inventory items:', errorText);
+      // Return empty array instead of throwing to prevent app crashes
+      return [];
+    }
+
+    const data = await response.json();
+    return data.items || [];
+  } catch (error) {
+    console.error('❌ Error fetching inventory items:', error);
+    // Return empty array on any error
+    return [];
+  }
+}
+
+export async function addInventoryItem(
+  item: Omit<DynamicInventoryItem, 'id' | 'createdAt' | 'isActive'>
+): Promise<DynamicInventoryItem> {
+  const response = await fetch(`${API_BASE}/inventory-items`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${publicAnonKey}`
+    },
+    body: JSON.stringify(item),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to create inventory item');
+  }
+
+  const data = await response.json();
+  return data.item;
+}
+
+export async function updateInventoryItem(
+  id: string,
+  updates: Partial<DynamicInventoryItem>
+): Promise<DynamicInventoryItem> {
+  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${publicAnonKey}`
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to update inventory item');
+  }
+
+  const data = await response.json();
+  return data.item;
+}
+
+export async function deleteInventoryItem(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${publicAnonKey}`
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to delete inventory item');
+  }
+}
+
+export async function initializeDefaultInventoryItems(): Promise<DynamicInventoryItem[]> {
+  const response = await fetch(`${API_BASE}/inventory-items/initialize-defaults`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${publicAnonKey}`
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to initialize default items');
+  }
+
+  const data = await response.json();
+  return data.items || [];
+}
+
+// ============================================
 // CLUSTER HEAD API
 // ============================================
 
@@ -1365,8 +1512,15 @@ export async function deleteSalesData(recordId: string, accessToken: string): Pr
 // PRODUCTION HOUSE API FUNCTIONS
 // ============================================
 
-export async function getProductionHouses(accessToken: string): Promise<ProductionHouse[]> {
-  const data = await fetchWithAuth(`${API_BASE}/production-houses`, accessToken);
+export async function getProductionHouses(): Promise<ProductionHouse[]> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/production-houses`, session.access_token);
   return data.productionHouses || [];
 }
 
@@ -1553,9 +1707,11 @@ export async function submitStockRecalibration(accessToken: string, data: StockR
 }
 
 export async function getLastRecalibration(accessToken: string, locationId: string, locationType?: string) {
+  // Add cache-busting timestamp to ensure fresh data
+  const timestamp = new Date().getTime();
   const url = locationType 
-    ? `${API_BASE}/stock-recalibration/latest/${locationId}?locationType=${locationType}`
-    : `${API_BASE}/stock-recalibration/latest/${locationId}`;
+    ? `${API_BASE}/stock-recalibration/latest/${locationId}?locationType=${locationType}&_t=${timestamp}`
+    : `${API_BASE}/stock-recalibration/latest/${locationId}?_t=${timestamp}`;
   const response = await fetchWithAuth(url, accessToken);
   return response;
 }

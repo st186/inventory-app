@@ -6,9 +6,10 @@ import { Package, Bell, FileText, Send, Activity, BarChart3, Target, Trophy, Fac
 type Props = {
   context: InventoryContextType;
   stores: api.Store[];
+  onNavigateToManageItems?: () => void;
 };
 
-export function AdvancedInventoryManagement({ context, stores }: Props) {
+export function AdvancedInventoryManagement({ context, stores, onNavigateToManageItems }: Props) {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'alerts' | 'requests' | 'reports' | 'predictive' | 'performance'>('dashboard');
 
   return (
@@ -69,7 +70,11 @@ export function AdvancedInventoryManagement({ context, stores }: Props) {
 
           {/* Stock Status */}
           <TabsContent value="stock-status">
-            <ProductionHouseStockStatus context={context} productionHouses={context.productionHouses} />
+            <ProductionHouseStockStatus 
+              context={context} 
+              productionHouses={context.productionHouses}
+              onNavigateToManageItems={onNavigateToManageItems}
+            />
           </TabsContent>
 
           {/* Alerts */}

@@ -26,6 +26,8 @@ import { ProductionHouseManagement } from './components/ProductionHouseManagemen
 import { AssetsManagement } from './components/AssetsManagement';
 import { StockRequestManagement } from './components/StockRequestManagement';
 import { AdvancedInventoryManagement } from './components/AdvancedInventoryManagement';
+import { InventoryItemsManagement } from './components/InventoryItemsManagement';
+import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
 import { DebugPanel } from './components/DebugPanel';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
@@ -179,6 +181,8 @@ export type InventoryContextType = {
   stores: api.Store[];
   managedStoreIds?: string[];
   managedProductionHouseIds?: string[];
+  inventoryItems: api.DynamicInventoryItem[];
+  loadInventoryItems: () => Promise<void>;
   addInventoryItem: (item: Omit<InventoryItem, 'id'>) => Promise<void>;
   addOverheadItem: (item: Omit<OverheadItem, 'id'>) => Promise<void>;
   addFixedCostItem: (item: Omit<FixedCostItem, 'id'>) => Promise<void>;
@@ -211,7 +215,7 @@ export type InventoryContextType = {
 
 export default function App() {
   // All useState hooks must be at the top, before any conditional returns
-  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory'>('analytics');
+  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items'>('analytics');
   const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -233,6 +237,7 @@ export default function App() {
   const [employees, setEmployees] = useState<api.Employee[]>([]);
   const [managedStoreIds, setManagedStoreIds] = useState<string[]>([]);
   const [managedProductionHouseIds, setManagedProductionHouseIds] = useState<string[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<api.DynamicInventoryItem[]>([]);
 
   // Get singleton Supabase client
   const supabaseClient = getSupabaseClient();
@@ -294,7 +299,7 @@ export default function App() {
     setIsLoadingData(true);
     setDataError(null);
     try {
-      const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData] = await Promise.all([
+      const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
         api.fetchFixedCosts(accessToken),
@@ -303,7 +308,8 @@ export default function App() {
         api.fetchProductionData(),
         api.getProductionHouses(accessToken),
         api.getStockRequests(accessToken),
-        api.fetchProductionRequests(accessToken)
+        api.fetchProductionRequests(accessToken),
+        api.fetchInventoryItems() // NEW: Dynamic inventory items metadata
       ]);
       
       // Debug logging to check for duplicates
@@ -386,6 +392,7 @@ export default function App() {
       setProductionHouses(productionHousesData);
       setStockRequests(stockRequestsData);
       setProductionRequests(productionRequestsData);
+      setInventoryItems(inventoryItemsData); // NEW: Set inventory items metadata
     } catch (error) {
       // Silently handle authentication errors (user not logged in yet)
       if (error instanceof Error && 
@@ -396,6 +403,110 @@ export default function App() {
       setDataError('Failed to load inventory data. Please refresh the page.');
     } finally {
       setIsLoadingData(false);
+    }
+  };
+
+  // Load inventory items metadata
+  const loadInventoryItems = async () => {
+    try {
+      const items = await api.fetchInventoryItems();
+      
+      // If no items exist, initialize defaults
+      if (items.length === 0) {
+        console.log('📦 No inventory items found, initializing defaults...');
+        try {
+          await api.initializeDefaultInventoryItems();
+          // Reload after initialization
+          const reloadedItems = await api.fetchInventoryItems();
+          setInventoryItems(reloadedItems);
+          console.log(`✅ Initialized ${reloadedItems.length} default inventory items`);
+          return;
+        } catch (initError) {
+          console.error('Error initializing default items:', initError);
+          // Continue with empty array
+          setInventoryItems([]);
+          return;
+        }
+      }
+      
+      setInventoryItems(items);
+      
+      // Auto-migrate: Ensure the 7 core momo types exist as inventory items
+      await ensureCoreMomosExist(items);
+    } catch (error) {
+      console.error('Error loading inventory items:', error);
+      setInventoryItems([]);
+    }
+  };
+
+  // Ensure the 7 core momo types exist as inventory items (migration/setup)
+  const ensureCoreMomosExist = async (existingItems: api.DynamicInventoryItem[]) => {
+    const coreMomos = [
+      { name: 'chicken', displayName: 'Chicken Momos', variations: ['chicken momo', 'chicken momos'] },
+      { name: 'chickenCheese', displayName: 'Chicken Cheese Momos', variations: ['chicken cheese momo', 'chicken cheese momos', 'chicken cheese'] },
+      { name: 'veg', displayName: 'Veg Momos', variations: ['veg momo', 'veg momos', 'vegetable momos'] },
+      { name: 'cheeseCorn', displayName: 'Cheese Corn Momos', variations: ['cheese corn momo', 'cheese corn momos', 'corn cheese'] },
+      { name: 'paneer', displayName: 'Paneer Momos', variations: ['paneer momo', 'paneer momos'] },
+      { name: 'vegKurkure', displayName: 'Veg Kurkure Momos', variations: ['veg kurkure momo', 'veg kurkure momos', 'veg kurkure'] },
+      { name: 'chickenKurkure', displayName: 'Chicken Kurkure Momos', variations: ['chicken kurkure momo', 'chicken kurkure momos', 'chicken kurkure'] },
+    ];
+
+    try {
+      let needsReload = false;
+      
+      for (const momo of coreMomos) {
+        // Find existing item by name match (exact)
+        let existingItem = existingItems.find(item => 
+          item.name.toLowerCase() === momo.name.toLowerCase()
+        );
+
+        // If not found by name, try to find by displayName or variations
+        if (!existingItem) {
+          existingItem = existingItems.find(item => {
+            const itemNameLower = item.displayName.toLowerCase();
+            const momoNameLower = momo.displayName.toLowerCase();
+            
+            // Check if display names match (with or without "Momos")
+            if (itemNameLower === momoNameLower) return true;
+            if (itemNameLower.replace(/\s*momos?\s*/i, '').trim() === momoNameLower.replace(/\s*momos?\s*/i, '').trim()) return true;
+            
+            // Check variations
+            return momo.variations.some(v => itemNameLower.includes(v.toLowerCase()));
+          });
+        }
+
+        if (existingItem) {
+          // Item exists but might have wrong name field - update it
+          if (existingItem.name !== momo.name) {
+            console.log(`🔧 Updating inventory item name: "${existingItem.displayName}" from "${existingItem.name}" to "${momo.name}"`);
+            await api.updateInventoryItem(existingItem.id, {
+              name: momo.name,
+              displayName: momo.displayName,
+            });
+            needsReload = true;
+          }
+        } else {
+          // Item doesn't exist - create it
+          console.log(`📦 Creating core inventory item: ${momo.displayName}`);
+          await api.addInventoryItem({
+            name: momo.name,
+            displayName: momo.displayName,
+            category: 'finished_product',
+            unit: 'pieces',
+            linkedEntityType: 'global',
+            createdBy: 'system'
+          });
+          needsReload = true;
+        }
+      }
+      
+      // Reload items after migration if changes were made
+      if (needsReload) {
+        const updatedItems = await api.fetchInventoryItems();
+        setInventoryItems(updatedItems);
+      }
+    } catch (error) {
+      console.error('Error ensuring core momos exist:', error);
     }
   };
 
@@ -436,11 +547,13 @@ export default function App() {
           // Load data for the user
           await loadData(session.access_token);
           
-          // Load stores and employees for cluster heads
-          if (userData.role === 'cluster_head') {
+          // Load stores and employees for managers (cluster heads and operations managers need this for production house filtering)
+          if (userData.role === 'cluster_head' || userData.role === 'manager') {
             await loadStores();
             await loadEmployees();
-            await loadClusterData(session.access_token);
+            if (userData.role === 'cluster_head') {
+              await loadClusterData(session.access_token);
+            }
           }
         }
       } catch (error) {
@@ -557,8 +670,8 @@ export default function App() {
         // Load data for the user
         await loadData(data.session.access_token);
         
-        // Load stores and employees for cluster heads
-        if (userData.role === 'cluster_head') {
+        // Load stores and employees for managers (cluster heads and operations managers need this for production house filtering)
+        if (userData.role === 'cluster_head' || userData.role === 'manager') {
           await loadStores();
           await loadEmployees();
         }
@@ -1013,6 +1126,8 @@ export default function App() {
     stores,
     managedStoreIds,
     managedProductionHouseIds,
+    inventoryItems,
+    loadInventoryItems,
     addInventoryItem,
     addOverheadItem,
     addFixedCostItem,
@@ -1096,13 +1211,19 @@ export default function App() {
     isAnyIncharge,
     canViewProduction
   });
+  
+  console.log('📍 Current activeView:', activeView);
 
   // If employee, show only employee dashboard
   if (isEmployee) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        {/* Employee Navigation */}
-        <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
+      <>
+        {/* Stock Request Reminder Scheduler - runs in background */}
+        <StockRequestReminderScheduler />
+        
+        <div className="min-h-screen bg-gray-50">
+          {/* Employee Navigation */}
+          <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center py-3">
               <div className="flex items-center gap-4">
@@ -1188,17 +1309,30 @@ export default function App() {
                   </button>
                 )}
                 {isManager && (
-                  <button
-                    onClick={() => setActiveView('advanced-inventory')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
-                      activeView === 'advanced-inventory'
-                        ? 'bg-white text-purple-600 border-white shadow-lg'
-                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
-                    }`}
-                  >
-                    <Activity className="w-4 h-4" />
-                    <span>Inventory Analytics</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setActiveView('advanced-inventory')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                        activeView === 'advanced-inventory'
+                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                      }`}
+                    >
+                      <Activity className="w-4 h-4" />
+                      <span>Inventory Analytics</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveView('inventory-items')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                        activeView === 'inventory-items'
+                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                      }`}
+                    >
+                      <Package className="w-4 h-4" />
+                      <span>Manage Items</span>
+                    </button>
+                  </>
                 )}
 
                 {/* Payroll and Attendance for non-manager/cluster-head users */}
@@ -1357,20 +1491,36 @@ export default function App() {
                   </button>
                 )}
                 {isManager && (
-                  <button
-                    onClick={() => {
-                      setActiveView('advanced-inventory');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                      activeView === 'advanced-inventory'
-                        ? 'bg-white text-purple-600'
-                        : 'bg-white/20 text-white hover:bg-white/30'
-                    }`}
-                  >
-                    <Activity className="w-5 h-5" />
-                    <span>Inventory Analytics</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveView('advanced-inventory');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        activeView === 'advanced-inventory'
+                          ? 'bg-white text-purple-600'
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    >
+                      <Activity className="w-5 h-5" />
+                      <span>Inventory Analytics</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveView('inventory-items');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        activeView === 'inventory-items'
+                          ? 'bg-white text-purple-600'
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    >
+                      <Package className="w-5 h-5" />
+                      <span>Manage Items</span>
+                    </button>
+                  </>
                 )}
 
                 {/* Payroll and Attendance for non-manager/cluster-head users */}
@@ -1434,7 +1584,14 @@ export default function App() {
         {/* Employee Main Content */}
         <main className="pb-6">
           {activeView === 'analytics' ? (
-            <Analytics context={contextValue} highlightRequestId={highlightRequestId} />
+            <Analytics 
+              context={contextValue} 
+              highlightRequestId={highlightRequestId}
+              onNavigateToManageItems={() => {
+                console.log('🔄 App.tsx: Changing activeView to inventory-items');
+                setActiveView('inventory-items');
+              }}
+            />
           ) : activeView === 'inventory' && isAnyIncharge ? (
             <InventoryView context={contextValue} />
           ) : activeView === 'sales' && isAnyIncharge ? (
@@ -1475,17 +1632,34 @@ export default function App() {
           ) : activeView === 'stock-requests' && isAnyIncharge ? (
             <StockRequestManagement context={contextValue} stores={stores} />
           ) : activeView === 'advanced-inventory' && isManager ? (
-            <AdvancedInventoryManagement context={contextValue} stores={stores} />
+            <AdvancedInventoryManagement 
+              context={contextValue} 
+              stores={stores}
+              onNavigateToManageItems={() => setActiveView('inventory-items')}
+            />
+          ) : activeView === 'inventory-items' && (isManager || isAnyIncharge) ? (
+            (() => {
+              console.log('✅ Rendering InventoryItemsManagement:', { activeView, isManager, isAnyIncharge });
+              return <InventoryItemsManagement context={contextValue} />;
+            })()
           ) : (
-            <EmployeeDashboard employeeId={user.employeeId || ''} />
+            (() => {
+              console.log('❌ Falling through to EmployeeDashboard:', { activeView, isManager, isAnyIncharge });
+              return <EmployeeDashboard employeeId={user.employeeId || ''} />;
+            })()
           )}
         </main>
       </div>
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <>
+      {/* Stock Request Reminder Scheduler - runs in background */}
+      <StockRequestReminderScheduler />
+      
+      <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
       <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1966,7 +2140,15 @@ export default function App() {
             <InventoryView context={contextValue} selectedStoreId={selectedStoreId} />
           )
         ) : activeView === 'analytics' ? (
-          <Analytics context={contextValue} selectedStoreId={selectedStoreId} highlightRequestId={highlightRequestId} />
+          <Analytics 
+            context={contextValue} 
+            selectedStoreId={selectedStoreId} 
+            highlightRequestId={highlightRequestId}
+            onNavigateToManageItems={() => {
+              console.log('🔄 App.tsx: Changing activeView to inventory-items');
+              setActiveView('inventory-items');
+            }}
+          />
         ) : activeView === 'export' ? (
           <ExportData 
             userRole={user.role as 'manager' | 'cluster_head'} 
@@ -1994,6 +2176,22 @@ export default function App() {
           />
         ) : activeView === 'production' && canViewProduction ? (
           <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} />
+        ) : activeView === 'stock-requests' ? (
+          <StockRequestManagement context={contextValue} stores={stores} />
+        ) : activeView === 'advanced-inventory' ? (
+          <AdvancedInventoryManagement 
+            context={contextValue} 
+            stores={stores}
+            onNavigateToManageItems={() => {
+              console.log('🔄 App.tsx (Manager): Changing activeView to inventory-items');
+              setActiveView('inventory-items');
+            }}
+          />
+        ) : activeView === 'inventory-items' ? (
+          (() => {
+            console.log('✅ Rendering InventoryItemsManagement (Manager section):', { activeView, isManager });
+            return <InventoryItemsManagement context={contextValue} />;
+          })()
         ) : (
           <ClusterDashboard context={contextValue} />
         )}
@@ -2002,5 +2200,6 @@ export default function App() {
       {/* Debug Panel - Remove this after debugging */}
       <DebugPanel user={user} productionData={productionData} />
     </div>
+    </>
   );
 }

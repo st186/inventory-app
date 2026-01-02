@@ -633,6 +633,70 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </div>
           </div>
         </div>
+
+        {/* Production Launch Cleanup - Cluster Heads Only */}
+        {userRole === 'cluster_head' && (
+          <div className="mt-6 bg-red-50 border-2 border-red-200 rounded-lg p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-lg">⚠️</span>
+              </div>
+              <div className="flex-1">
+                <h4 className="font-medium text-red-900 mb-2">Production Data Cleanup</h4>
+                <p className="text-sm text-red-800 mb-4">
+                  Remove ALL transactional data (inventory logs, sales, stock requests, production data, notifications, etc.) to prepare for production launch.
+                  <strong className="block mt-2">⚠️ This will DELETE:</strong>
+                </p>
+                <ul className="text-sm text-red-800 space-y-1 ml-4 mb-3">
+                  <li>❌ All inventory purchase logs</li>
+                  <li>❌ All sales records</li>
+                  <li>❌ All production logs & requests</li>
+                  <li>❌ All stock requests & recalibrations</li>
+                  <li>❌ All overhead & fixed costs</li>
+                  <li>❌ All notifications</li>
+                </ul>
+                <p className="text-sm text-green-800 mb-4">
+                  <strong className="block mt-2">✅ This will PRESERVE:</strong>
+                </p>
+                <ul className="text-sm text-green-800 space-y-1 ml-4 mb-4">
+                  <li>✓ Inventory Items (product metadata)</li>
+                  <li>✓ Employee Master Data</li>
+                  <li>✓ Employee Payouts, Timesheets & Leaves</li>
+                  <li>✓ Stores & Production Houses</li>
+                </ul>
+                <button
+                  onClick={async () => {
+                    if (!confirm('⚠️ CRITICAL WARNING: This will PERMANENTLY remove ALL transactional data:\n\n❌ Inventory logs, Sales, Production data, Stock requests, Overheads, Fixed costs, Notifications\n\n✅ PRESERVED: Inventory items metadata, Employee master data, Payouts, Timesheets, Leaves, Stores, Production houses\n\nThis action CANNOT be undone!\n\nAre you absolutely sure you want to proceed?')) {
+                      return;
+                    }
+                    
+                    try {
+                      setLoading(true);
+                      const result = await api.cleanupProductionData();
+                      alert(`✅ ${result.message}\n\n📊 Total Deleted: ${result.totalDeleted} records\n\n🗑️ Breakdown:\n- Inventory Logs: ${result.stats.inventory}\n- Sales: ${result.stats.sales}\n- Item Sales: ${result.stats.itemSales}\n- Overheads: ${result.stats.overheads}\n- Fixed Costs: ${result.stats.fixedCosts}\n- Stock Requests: ${result.stats.stockRequests}\n- Stock Recalibrations: ${result.stats.stockRecalibrations}\n- Production Data: ${result.stats.productionData}\n- Production Requests: ${result.stats.productionRequests}\n- Notifications: ${result.stats.notifications}`);
+                      
+                      // Reload the page to refresh all data
+                      window.location.reload();
+                    } catch (error) {
+                      console.error('Error during cleanup:', error);
+                      alert(`❌ Failed to cleanup production data: ${error.message}`);
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading}
+                  className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                >
+                  <span>🗑️</span>
+                  {loading ? 'Cleaning up...' : 'Cleanup Production Data'}
+                </button>
+                <p className="text-xs text-red-700 mt-3">
+                  ⚠️ This action cannot be undone. Make sure you have exported all necessary data first.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Preview Modal */}

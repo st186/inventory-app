@@ -1,13 +1,15 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { Package, TrendingUp, TrendingDown, Calendar, Factory } from 'lucide-react';
+import { Package, TrendingUp, TrendingDown, Calendar, Factory, Info } from 'lucide-react';
 import { Card } from './ui/card';
 import { getSupabaseClient } from '../utils/supabase/client';
+import { QuickAddInventoryItem } from './QuickAddInventoryItem';
 
 type Props = {
   context: InventoryContextType;
   productionHouses: api.ProductionHouse[];
+  onNavigateToManageItems?: () => void;
 };
 
 type ProductionHouseStock = {
@@ -22,6 +24,7 @@ type ProductionHouseStock = {
     paneer: { produced: number; sent: number; available: number; percentage: number };
     vegKurkure: { produced: number; sent: number; available: number; percentage: number };
     chickenKurkure: { produced: number; sent: number; available: number; percentage: number };
+    schezwan: { produced: number; sent: number; available: number; percentage: number };
   };
   totalProduced: number;
   totalWastage: number;
@@ -29,12 +32,13 @@ type ProductionHouseStock = {
   pendingApproval: number;
 };
 
-export function ProductionHouseStockStatus({ context, productionHouses }: Props) {
+export function ProductionHouseStockStatus({ context, productionHouses, onNavigateToManageItems }: Props) {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedProductionHouse, setSelectedProductionHouse] = useState<string | null>(null);
   const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
   const [stores, setStores] = useState<api.Store[]>([]);
   const [loading, setLoading] = useState(true);
+  const [productionHouseOpeningBalance, setProductionHouseOpeningBalance] = useState<Record<string, Record<string, number>>>({});
 
   // Helper function to get fresh access token
   const getFreshAccessToken = async (): Promise<string | null> => {
@@ -74,6 +78,77 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
 
     loadData();
   }, []);
+
+  // Load production house opening balance from recalibration
+  useEffect(() => {
+    const loadProductionHouseOpeningBalances = async () => {
+      const token = await getFreshAccessToken();
+      if (!token) return;
+
+      console.log('🔄 Loading production house opening balances...');
+      console.log('  Production houses count:', productionHouses.length);
+      console.log('  Inventory items count:', context.inventoryItems?.length || 0);
+
+      const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
+      const balances: Record<string, Record<string, number>> = {};
+
+      for (const house of productionHouses) {
+        console.log(`  Fetching recalibration for ${house.name} (${house.id})...`);
+        try {
+          const recalResponse = await api.getLastRecalibration(token, house.id, 'production_house');
+          
+          console.log(`  Recalibration response for ${house.name}:`, recalResponse);
+          
+          if (recalResponse?.record) {
+            const recalDate = recalResponse.record.date.substring(0, 7);
+            
+            console.log(`  Recalibration date: ${recalDate}, Current month: ${currentMonth}`);
+            
+            if (recalDate === currentMonth) {
+              // Use recalibration data as opening balance
+              const balance: Record<string, number> = {};
+              
+              recalResponse.record.items.forEach((item: any) => {
+                // Map itemId to camelKey - itemId can be either UUID or snake_case name
+                const inventoryItem = context.inventoryItems?.find(invItem => 
+                  invItem.id === item.itemId || invItem.name === item.itemId
+                );
+                
+                console.log(`    Item ${item.itemId}: ${inventoryItem ? 'Found' : 'NOT FOUND'}`, inventoryItem);
+                
+                if (inventoryItem) {
+                  const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+                  balance[camelKey] = item.actualQuantity;
+                  console.log(`    Mapped to ${camelKey} = ${item.actualQuantity}`);
+                }
+              });
+              
+              balances[house.id] = balance;
+              console.log(`✅ Loaded opening balance for ${house.name}:`, balance);
+            } else {
+              console.log(`  ⚠️ Recalibration month ${recalDate} doesn't match current month ${currentMonth}`);
+            }
+          } else {
+            console.log(`  ℹ️ No recalibration found for ${house.name}`);
+          }
+        } catch (error) {
+          console.error(`❌ Error fetching recalibration for ${house.name}:`, error);
+        }
+      }
+
+      console.log('🏁 Final opening balances:', balances);
+      setProductionHouseOpeningBalance(balances);
+    };
+
+    if (productionHouses.length > 0 && context.inventoryItems && context.inventoryItems.length > 0) {
+      loadProductionHouseOpeningBalances();
+    } else {
+      console.log('⚠️ Skipping opening balance load:', {
+        productionHousesCount: productionHouses.length,
+        inventoryItemsCount: context.inventoryItems?.length || 0
+      });
+    }
+  }, [productionHouses, context.inventoryItems]);
 
   // Calculate stock for production houses on selected date
   const productionHouseStocks = useMemo(() => {
@@ -175,7 +250,31 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         paneer: 0,
         vegKurkure: 0,
         chickenKurkure: 0,
+        schezwan: 0,
       };
+
+      // Add opening balance from recalibration if available
+      const openingBalance = productionHouseOpeningBalance[house.id] || {};
+      
+      // Map camelCase keys from recalibration to short keys used in production
+      const keyMapping: Record<string, keyof typeof cumulativeProduction> = {
+        'chickenMomo': 'chicken',
+        'chickenCheeseMomo': 'chickenCheese',
+        'vegMomo': 'veg',
+        'cheeseCornMomo': 'cheeseCorn',
+        'paneerMomo': 'paneer',
+        'vegKurkureMomo': 'vegKurkure',
+        'chickenKurkureMomo': 'chickenKurkure',
+        'schezwanMomo': 'schezwan',
+      };
+      
+      Object.keys(openingBalance).forEach(key => {
+        const mappedKey = keyMapping[key] || key;
+        if (mappedKey in cumulativeProduction) {
+          cumulativeProduction[mappedKey as keyof typeof cumulativeProduction] = openingBalance[key];
+          console.log(`  📦 Applied opening balance: ${key} -> ${mappedKey} = ${openingBalance[key]}`);
+        }
+      });
 
       allPreviousProduction.forEach(prod => {
         cumulativeProduction.chicken += prod.chickenMomos?.final || 0;
@@ -185,6 +284,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         cumulativeProduction.paneer += prod.paneerMomos?.final || 0;
         cumulativeProduction.vegKurkure += prod.vegKurkureMomos?.final || 0;
         cumulativeProduction.chickenKurkure += prod.chickenKurkureMomos?.final || 0;
+        cumulativeProduction.schezwan += prod.schezwanMomos?.final || 0;
       });
 
       // Calculate cumulative sent up to selected date
@@ -196,6 +296,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         paneer: 0,
         vegKurkure: 0,
         chickenKurkure: 0,
+        schezwan: 0,
       };
 
       allDeliveredRequests.forEach(req => {
@@ -206,6 +307,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         cumulativeSent.paneer += req.paneerMomos || 0;
         cumulativeSent.vegKurkure += req.vegKurkureMomos || 0;
         cumulativeSent.chickenKurkure += req.chickenKurkureMomos || 0;
+        cumulativeSent.schezwan += req.schezwanMomos || 0;
       });
 
       // Production for today (selected date)
@@ -217,6 +319,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         paneer: todayProduction?.paneerMomos?.final || 0,
         vegKurkure: todayProduction?.vegKurkureMomos?.final || 0,
         chickenKurkure: todayProduction?.chickenKurkureMomos?.final || 0,
+        schezwan: todayProduction?.schezwanMomos?.final || 0,
       };
 
       // Sent today (selected date)
@@ -228,6 +331,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         paneer: 0,
         vegKurkure: 0,
         chickenKurkure: 0,
+        schezwan: 0,
       };
 
       todayDeliveredRequests.forEach(req => {
@@ -238,6 +342,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         todaySentQuantities.paneer += req.paneerMomos || 0;
         todaySentQuantities.vegKurkure += req.vegKurkureMomos || 0;
         todaySentQuantities.chickenKurkure += req.chickenKurkureMomos || 0;
+        todaySentQuantities.schezwan += req.schezwanMomos || 0;
       });
 
       // Calculate available stock (cumulative approach with carry-forward)
@@ -284,6 +389,12 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
           available: Math.max(0, cumulativeProduction.chickenKurkure - cumulativeSent.chickenKurkure),
           percentage: 0,
         },
+        schezwan: {
+          produced: todayProductionQuantities.schezwan,
+          sent: todaySentQuantities.schezwan,
+          available: Math.max(0, cumulativeProduction.schezwan - cumulativeSent.schezwan),
+          percentage: 0,
+        },
       };
 
       // Calculate percentages
@@ -327,10 +438,19 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
         approvedEntries,
         pendingApproval,
       });
+      
+      console.log(`  📊 Stock entry created for ${house.name}:`, {
+        totalProduced,
+        totalWastage,
+        availableStock: stock,
+        hasOpeningBalance: Object.keys(openingBalance).length > 0,
+        openingBalance
+      });
     });
 
+    console.log('🏁 Final stocks array:', stocks);
     return stocks;
-  }, [context.productionData, productionRequests, stores, productionHouses, selectedDate]);
+  }, [context.productionData, productionRequests, stores, productionHouses, selectedDate, productionHouseOpeningBalance]);
 
   const filteredStocks = selectedProductionHouse
     ? productionHouseStocks.filter(s => s.productionHouseId === selectedProductionHouse)
@@ -344,6 +464,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
     paneer: 'Paneer Momos',
     vegKurkure: 'Veg Kurkure Momos',
     chickenKurkure: 'Chicken Kurkure Momos',
+    schezwan: 'Schezwan Momos',
   };
 
   const getStockColor = (percentage: number) => {
@@ -356,12 +477,29 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
 
   return (
     <div className="space-y-6">
+      {/* Info Banner about Dynamic Inventory Items */}
+      <Card className="p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-semibold text-orange-900 mb-1">Dynamic Inventory Items</h3>
+            <p className="text-sm text-orange-700 mb-2">
+              You can now add custom production items beyond the default 7 momo types! 
+              Manage all items from the <strong>"Manage Items"</strong> page in the navigation.
+            </p>
+            <p className="text-xs text-orange-600">
+              💡 Items can be production house-specific or global (available to all facilities)
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {/* Header with Date Selector */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl">Production House Stock Status</h2>
           <p className="text-muted-foreground">
-            Total produced - Total sent to stores (fulfilled stock requests)
+            Opening balance + This month produced - Sent to stores (delivered requests)
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -385,6 +523,15 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
               <option key={house.id} value={house.id}>{house.name}</option>
             ))}
           </select>
+          {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
+            <button
+              onClick={onNavigateToManageItems}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+            >
+              <Package className="w-4 h-4" />
+              <span className="text-sm font-semibold">Manage Items</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -451,7 +598,7 @@ export function ProductionHouseStockStatus({ context, productionHouses }: Props)
                     
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Total Produced:</span>
+                        <span className="text-muted-foreground">This Month Produced:</span>
                         <span className={colors.text}>{data.produced}</span>
                       </div>
                       

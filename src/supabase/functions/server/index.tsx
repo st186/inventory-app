@@ -3,11 +3,12 @@ import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
+import inventoryItemsRoutes from './inventory-items.tsx';
 
 const app = new Hono();
 
 // Server version for debugging
-console.log('=== Bhandar-IMS Server v1.2 - Cluster Management Update ===');
+console.log('=== Bhandar-IMS Server v1.3 - Dynamic Inventory Items ===');
 console.log('Timestamp:', new Date().toISOString());
 
 app.use('*', cors());
@@ -4786,6 +4787,90 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
       case 'delivered':
         updates.deliveredAt = now;
         updates.deliveredBy = updatedBy;
+        
+        // Update store inventory when delivered
+        console.log('📦 Updating store inventory for delivered request:', { 
+          requestId: id, 
+          storeId: existingRequest.storeId 
+        });
+        
+        try {
+          // Get current store inventory
+          const storeKey = `store_${existingRequest.storeId}`;
+          const store = await kv.get(storeKey);
+          
+          if (store) {
+            const currentInventory = store.inventory || {};
+            
+            // Get all inventory items to build field mapping
+            const inventoryItemsData = await kv.getByPrefix('inventory_item_');
+            const finishedProducts = inventoryItemsData
+              .filter((item: any) => item.category === 'finished_product' && item.isActive)
+              .map((item: any) => ({
+                key: item.name,
+                camelKey: item.name.replace(/_([a-z])/g, (_: string, letter: string) => letter.toUpperCase()),
+                displayName: item.displayName
+              }));
+            
+            // Add requested quantities to store inventory
+            finishedProducts.forEach(({ camelKey, key }: any) => {
+              const requestedQty = existingRequest[camelKey] || existingRequest[camelKey + 's'] || 0;
+              if (requestedQty > 0) {
+                currentInventory[camelKey] = (currentInventory[camelKey] || 0) + requestedQty;
+                console.log(`  ✅ Added ${requestedQty} ${camelKey} to store inventory`);
+              }
+            });
+            
+            // Save updated store inventory
+            await kv.set(storeKey, {
+              ...store,
+              inventory: currentInventory,
+              updatedAt: now
+            });
+            
+            console.log('✅ Store inventory updated successfully:', currentInventory);
+            
+            // Also deduct from production house inventory
+            const productionHouseId = store.productionHouseId;
+            if (productionHouseId) {
+              console.log('🏭 Deducting from production house inventory:', productionHouseId);
+              
+              const productionHouseKey = `production_house_${productionHouseId}`;
+              const productionHouse = await kv.get(productionHouseKey);
+              
+              if (productionHouse) {
+                const phInventory = productionHouse.inventory || {};
+                
+                // Deduct requested quantities from production house inventory
+                finishedProducts.forEach(({ camelKey }: any) => {
+                  const requestedQty = existingRequest[camelKey] || existingRequest[camelKey + 's'] || 0;
+                  if (requestedQty > 0) {
+                    phInventory[camelKey] = (phInventory[camelKey] || 0) - requestedQty;
+                    console.log(`  ⬇️ Deducted ${requestedQty} ${camelKey} from production house inventory`);
+                  }
+                });
+                
+                // Save updated production house inventory
+                await kv.set(productionHouseKey, {
+                  ...productionHouse,
+                  inventory: phInventory,
+                  updatedAt: now
+                });
+                
+                console.log('✅ Production house inventory updated:', phInventory);
+              } else {
+                console.warn('⚠️ Production house not found:', productionHouseId);
+              }
+            } else {
+              console.warn('⚠️ Store has no mapped production house');
+            }
+          } else {
+            console.warn('⚠️ Store not found for inventory update:', existingRequest.storeId);
+          }
+        } catch (invError) {
+          console.error('❌ Error updating store inventory:', invError);
+          // Don't fail the whole request update if inventory update fails
+        }
         break;
     }
     
@@ -6536,5 +6621,279 @@ app.post('/make-server-c2dd9b9d/push/send-multiple', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 });
+
+// ============================================
+// STOCK REQUEST REMINDER NOTIFICATIONS (3PM Daily)
+// ============================================
+// This endpoint checks for Store Incharges who haven't submitted
+// stock requests for today and sends them a reminder notification.
+// Can be called manually or via cron job at 3pm daily.
+app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
+  try {
+    console.log('=== STOCK REQUEST REMINDER CHECK (3PM) ===');
+    console.log('Timestamp:', new Date().toISOString());
+    
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0];
+    console.log('Checking for stock requests on:', today);
+    
+    // Get all stock requests for today
+    const todaysRequests = await kv.getByPrefix('stock-request:');
+    const todayRequestStoreIds = todaysRequests
+      .filter((req: any) => req.requestDate === today)
+      .map((req: any) => req.storeId);
+    
+    console.log('Stores with requests today:', todayRequestStoreIds.length);
+    
+    // Get all stores
+    const stores = await kv.getByPrefix('store:');
+    console.log('Total stores:', stores.length);
+    
+    // Get all employees
+    const employees = await kv.getByPrefix('unified-employee:');
+    
+    // Find all Store Incharges
+    const storeIncharges = employees.filter((emp: any) => emp.designation === 'store_incharge');
+    console.log('Total store incharges:', storeIncharges.length);
+    
+    // Find Store Incharges who haven't submitted requests today
+    const reminderTargets: any[] = [];
+    
+    for (const employee of storeIncharges) {
+      const storeId = employee.storeId;
+      
+      // Skip if no store assigned
+      if (!storeId) continue;
+      
+      // Skip if this store already has a request today
+      if (todayRequestStoreIds.includes(storeId)) {
+        console.log(`Store ${storeId} already has request - skipping`);
+        continue;
+      }
+      
+      // Find the store details
+      const store = stores.find((s: any) => s.id === storeId);
+      
+      // Skip if store doesn't have a production house mapped
+      if (!store || !store.productionHouseId) {
+        console.log(`Store ${storeId} has no production house - skipping`);
+        continue;
+      }
+      
+      // This incharge needs a reminder
+      reminderTargets.push({
+        employeeId: employee.id,
+        userId: employee.userId,
+        name: employee.name,
+        storeName: store.name,
+        storeId: storeId,
+      });
+    }
+    
+    console.log('Sending reminders to:', reminderTargets.length, 'store incharges');
+    
+    // Send notifications to all targets
+    let sent = 0;
+    let failed = 0;
+    
+    for (const target of reminderTargets) {
+      try {
+        const success = await push.sendPushNotification(target.userId, {
+          title: '⏰ Stock Request Reminder',
+          message: `Hi ${target.name}, you haven't submitted a stock request for ${target.storeName} today. Please submit your request to ensure timely stock delivery.`,
+          icon: '/icon-192x192.png',
+          tag: 'stock-request-reminder',
+          data: {
+            type: 'stock-request-reminder',
+            storeId: target.storeId,
+            date: today,
+          },
+        });
+        
+        if (success) {
+          sent++;
+          console.log(`✓ Sent reminder to ${target.name} (${target.storeName})`);
+        } else {
+          failed++;
+          console.log(`✗ Failed to send reminder to ${target.name} (no subscription)`);
+        }
+      } catch (error) {
+        failed++;
+        console.error(`Error sending reminder to ${target.name}:`, error);
+      }
+    }
+    
+    console.log(`=== REMINDER SUMMARY: ${sent} sent, ${failed} failed ===`);
+    
+    return c.json({
+      success: true,
+      message: `Stock request reminders processed`,
+      summary: {
+        totalStoreIncharges: storeIncharges.length,
+        storesWithRequests: todayRequestStoreIds.length,
+        remindersSent: sent,
+        remindersFailed: failed,
+        targets: reminderTargets.map(t => ({
+          name: t.name,
+          store: t.storeName,
+        })),
+      },
+    });
+  } catch (error: any) {
+    console.error('Error sending stock request reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// PRODUCTION DATA CLEANUP
+// ============================================
+// Selective cleanup for production launch - removes ALL transactional data
+// while preserving master data (inventory items, employees, stores, etc.)
+//
+// DELETES:
+// - inventory: (purchase logs)
+// - overhead: (expense logs) 
+// - fixedcost: (fixed cost logs)
+// - sales: (sales records)
+// - production: (production logs)
+// - production-request: (production requests)
+// - item-sales: (category sales)
+// - notification: (all notifications)
+// - stock-request: (stock requests)
+// - stock-recalibration: (monthly recalibrations)
+//
+// PRESERVES:
+// - employee: / unified-employee: / attendance-employee: (master data)
+// - inventory_item_ (product metadata)
+// - store: / production-house: (locations)
+// - archived-employee: (historical records)
+// - payout: (employee payouts)
+// - timesheet: (daily timesheets)
+// - leave: (leave applications)
+// ============================================
+
+app.post('/make-server-c2dd9b9d/cleanup-production-data', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    
+    // Only cluster heads can run cleanup
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can cleanup production data' }, 403);
+    }
+
+    console.log('🗑️ Starting selective production data cleanup...');
+    console.log('📅 Removing transactional data for production launch');
+    
+    const stats = {
+      inventory: 0,
+      sales: 0,
+      itemSales: 0,
+      stockRequests: 0,
+      stockRecalibrations: 0,
+      productionData: 0,
+      productionRequests: 0,
+      notifications: 0,
+      overheads: 0,
+      fixedCosts: 0
+    };
+
+    // Get all keys from database
+    const { data: allRecords, error: fetchError } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key');
+    
+    if (fetchError) {
+      throw new Error(`Failed to fetch keys: ${fetchError.message}`);
+    }
+
+    console.log(`📊 Total records in database: ${allRecords?.length || 0}`);
+
+    // Filter and delete transactional data keys
+    const keysToDelete: string[] = [];
+    
+    for (const record of allRecords || []) {
+      const key = record.key;
+      
+      // TRANSACTIONAL DATA TO DELETE
+      // These are all daily operations and transactions
+      const isTransactional = 
+        key.startsWith('inventory:') ||           // Daily inventory purchases
+        key.startsWith('overhead:') ||            // Daily overhead expenses
+        key.startsWith('fixedcost:') ||           // Fixed costs
+        key.startsWith('sales:') ||               // Daily sales data
+        key.startsWith('production:') ||          // Production logs
+        key.startsWith('item-sales:') ||          // Category sales tracking
+        key.startsWith('notification:') ||        // Notifications
+        key.startsWith('stock-request:') ||       // Stock requests
+        key.startsWith('stock-recalibration:') || // Monthly stock recalibrations
+        key.startsWith('production-request:');    // Production requests
+      
+      // MASTER DATA TO PRESERVE
+      // These are configuration and employee records
+      const isMasterData = 
+        key.startsWith('employee:') ||
+        key.startsWith('unified-employee:') ||
+        key.startsWith('unified_employee:') ||
+        key.startsWith('attendance-employee:') ||
+        key.startsWith('attendance-manager:') ||
+        key.startsWith('archived-employee:') ||
+        key.startsWith('inventory_item_') ||      // Product metadata
+        key.startsWith('store:') ||
+        key.startsWith('production-house:') ||
+        key.startsWith('payout:') ||              // Employee payouts (keep per request)
+        key.startsWith('timesheet:') ||           // Timesheets (keep per request)
+        key.startsWith('leave:');                 // Leave data (keep per request)
+      
+      if (isTransactional && !isMasterData) {
+        keysToDelete.push(key);
+      }
+    }
+
+    console.log(`🗑️  Deleting ${keysToDelete.length} transactional records...`);
+    
+    // Count by type for detailed reporting
+    stats.inventory = keysToDelete.filter(k => k.startsWith('inventory:')).length;
+    stats.sales = keysToDelete.filter(k => k.startsWith('sales:')).length;
+    stats.itemSales = keysToDelete.filter(k => k.startsWith('item-sales:')).length;
+    stats.overheads = keysToDelete.filter(k => k.startsWith('overhead:')).length;
+    stats.fixedCosts = keysToDelete.filter(k => k.startsWith('fixedcost:')).length;
+    stats.stockRequests = keysToDelete.filter(k => k.startsWith('stock-request:')).length;
+    stats.stockRecalibrations = keysToDelete.filter(k => k.startsWith('stock-recalibration:')).length;
+    stats.productionData = keysToDelete.filter(k => k.startsWith('production:')).length;
+    stats.productionRequests = keysToDelete.filter(k => k.startsWith('production-request:')).length;
+    stats.notifications = keysToDelete.filter(k => k.startsWith('notification:')).length;
+
+    // Delete in batches
+    const batchSize = 100;
+    for (let i = 0; i < keysToDelete.length; i += batchSize) {
+      const batch = keysToDelete.slice(i, i + batchSize);
+      await kv.mdel(batch);
+      console.log(`✅ Deleted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(keysToDelete.length / batchSize)}`);
+    }
+
+    console.log('✅ Production data cleanup completed!');
+    console.log('📊 Summary:', stats);
+    console.log('✅ PRESERVED: Inventory Items, Employee Master Data, Payroll, Timesheets, Leaves, Stores, Production Houses');
+
+    return c.json({ 
+      success: true, 
+      message: 'Production data cleaned successfully. All transactional data removed. Preserved: inventory items metadata, employee master data, payroll, timesheets, leaves, stores, and production houses.',
+      stats,
+      totalDeleted: keysToDelete.length
+    });
+  } catch (error) {
+    console.error('❌ Error during production cleanup:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Mount inventory items routes
+app.route('/', inventoryItemsRoutes);
 
 Deno.serve(app.fetch);

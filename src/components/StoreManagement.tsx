@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Store, Plus, MapPin, User, Edit2, Check, X, UserCog, Download } from 'lucide-react';
+import { Store, Plus, MapPin, User, Edit2, Check, X, UserCog, Download, Factory } from 'lucide-react';
 import * as api from '../utils/api';
 
 type StoreManagementProps = {
@@ -10,10 +10,12 @@ type StoreManagementProps = {
 export function StoreManagement({ onStoreCreated, userRole }: StoreManagementProps) {
   const [stores, setStores] = useState<api.Store[]>([]);
   const [managers, setManagers] = useState<any[]>([]);
+  const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingStore, setEditingStore] = useState<string | null>(null);
   const [assigningManager, setAssigningManager] = useState<string | null>(null);
+  const [changingProductionHouse, setChangingProductionHouse] = useState<string | null>(null);
   
   // Create form
   const [newStoreName, setNewStoreName] = useState('');
@@ -29,9 +31,14 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
   const [selectedManagerId, setSelectedManagerId] = useState<string>('');
   const [assigning, setAssigning] = useState(false);
 
+  // Production house assignment
+  const [selectedProductionHouseId, setSelectedProductionHouseId] = useState<string>('');
+  const [assigningProductionHouse, setAssigningProductionHouse] = useState(false);
+
   useEffect(() => {
     loadStores();
     loadManagers();
+    loadProductionHouses();
   }, []);
 
   const loadStores = async () => {
@@ -58,6 +65,15 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
       setManagers(managersList);
     } catch (error) {
       console.error('Error loading managers:', error);
+    }
+  };
+
+  const loadProductionHouses = async () => {
+    try {
+      const data = await api.getProductionHouses();
+      setProductionHouses(data);
+    } catch (error) {
+      console.error('Error loading production houses:', error);
     }
   };
 
@@ -170,10 +186,50 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     }
   };
 
+  const handleStartChangeProductionHouse = (store: api.Store) => {
+    setChangingProductionHouse(store.id);
+    setSelectedProductionHouseId(store.productionHouseId || '');
+  };
+
+  const handleChangeProductionHouse = async (storeId: string) => {
+    if (!selectedProductionHouseId) {
+      alert('Please select a production house');
+      return;
+    }
+
+    setAssigningProductionHouse(true);
+    try {
+      await api.assignProductionHouseToStore(storeId, selectedProductionHouseId);
+      setChangingProductionHouse(null);
+      setSelectedProductionHouseId('');
+      await loadStores();
+      await loadProductionHouses();
+      // Notify parent to refresh stores
+      if (onStoreCreated) onStoreCreated();
+      alert('Production house assigned successfully!');
+    } catch (error: any) {
+      console.error('Error assigning production house:', error);
+      alert(error.message || 'Failed to assign production house');
+    } finally {
+      setAssigningProductionHouse(false);
+    }
+  };
+
+  const handleCancelChangeProductionHouse = () => {
+    setChangingProductionHouse(null);
+    setSelectedProductionHouseId('');
+  };
+
   const getManagerName = (managerId?: string) => {
     if (!managerId) return null;
     const manager = managers.find(m => m.employeeId === managerId);
     return manager ? `${manager.name} (${manager.employeeId})` : 'Unknown Manager';
+  };
+
+  const getProductionHouseName = (productionHouseId?: string) => {
+    if (!productionHouseId) return null;
+    const productionHouse = productionHouses.find(ph => ph.id === productionHouseId);
+    return productionHouse ? `${productionHouse.name} (${productionHouse.id})` : 'Unknown Production House';
   };
 
   if (loading) {
@@ -350,6 +406,47 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                     </button>
                   </div>
                 </div>
+              ) : changingProductionHouse === store.id ? (
+                // Production House Assignment Mode
+                <div className="space-y-4">
+                  <h4 className="text-gray-900">Assign Production House to {store.name}</h4>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Select Production House</label>
+                    <select
+                      value={selectedProductionHouseId}
+                      onChange={(e) => setSelectedProductionHouseId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                      <option value="">Choose a production house...</option>
+                      {productionHouses.map((productionHouse) => (
+                        <option key={productionHouse.id} value={productionHouse.id}>
+                          {productionHouse.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Select which production house will serve this store
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleChangeProductionHouse(store.id)}
+                      disabled={assigningProductionHouse || !selectedProductionHouseId}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm disabled:opacity-50"
+                    >
+                      <Check className="w-4 h-4" />
+                      {assigningProductionHouse ? 'Assigning...' : 'Assign'}
+                    </button>
+                    <button
+                      onClick={handleCancelChangeProductionHouse}
+                      disabled={assigningProductionHouse}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm disabled:opacity-50"
+                    >
+                      <X className="w-4 h-4" />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               ) : (
                 // View Mode
                 <>
@@ -384,6 +481,17 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                         )}
                       </span>
                     </div>
+
+                    <div className="flex items-center gap-2 text-sm">
+                      <Factory className="w-4 h-4 text-gray-400" />
+                      <span className="text-gray-600">
+                        {store.productionHouseId ? (
+                          <span className="text-green-600">{getProductionHouseName(store.productionHouseId)}</span>
+                        ) : (
+                          <span className="text-orange-600">No Production House Mapped</span>
+                        )}
+                      </span>
+                    </div>
                     
                     <button
                       onClick={() => handleStartAssignManager(store)}
@@ -391,6 +499,14 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                     >
                       <UserCog className="w-4 h-4" />
                       {store.managerId ? 'Change Manager' : 'Assign Manager'}
+                    </button>
+
+                    <button
+                      onClick={() => handleStartChangeProductionHouse(store)}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
+                    >
+                      <Factory className="w-4 h-4" />
+                      {store.productionHouseId ? 'Change Production House' : 'Assign Production House'}
                     </button>
                     
                     {userRole === 'cluster_head' && (

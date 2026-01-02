@@ -241,29 +241,38 @@ export function MonthlyStockRecalibration({
     console.log('🔄 Recalibration - Total Received/Produced:', totalProduced);
     console.log('🔄 Recalibration - Total Sent/Sold:', totalSent);
     
-    // Calculate stock available for each type with carry-forward
-    const momoTypes = [
-      { id: 'chicken', name: 'Chicken Momos', category: 'Regular Momos' },
-      { id: 'chickenCheese', name: 'Chicken Cheese Momos', category: 'Regular Momos' },
-      { id: 'veg', name: 'Veg Momos', category: 'Regular Momos' },
-      { id: 'cheeseCorn', name: 'Cheese Corn Momos', category: 'Regular Momos' },
-      { id: 'paneer', name: 'Paneer Momos', category: 'Regular Momos' },
-      { id: 'vegKurkure', name: 'Veg Kurkure Momos', category: 'Kurkure Momos' },
-      { id: 'chickenKurkure', name: 'Chicken Kurkure Momos', category: 'Kurkure Momos' },
-    ];
+    // Get finished product inventory items from context
+    const finishedProducts = context.inventoryItems?.filter(item => 
+      item.category === 'finished_product' && 
+      item.isActive &&
+      (item.linkedEntityType === 'global' || 
+       (item.linkedEntityType === 'production_house' && item.linkedEntityId === locationIdForRecalibration) ||
+       (item.linkedEntityType === 'store' && item.linkedEntityId === effectiveStoreId))
+    ) || [];
     
-    const recalItems: RecalibrationItem[] = momoTypes.map(type => {
+    console.log('🔄 Recalibration - Finished Products from Context:', finishedProducts.length);
+    
+    // Helper to convert snake_case to camelCase for stock lookups
+    const snakeToCamel = (str: string) => {
+      return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+    };
+    
+    const recalItems: RecalibrationItem[] = finishedProducts.map(item => {
       // Stock = Opening Balance + Received/Produced - Sent/Sold
-      const opening = openingBalance[type.id] || 0;
-      const produced = totalProduced[type.id as keyof typeof totalProduced];
-      const sent = totalSent[type.id as keyof typeof totalSent];
+      // Try both snake_case and camelCase versions for backwards compatibility
+      const camelKey = snakeToCamel(item.name);
+      const opening = openingBalance[camelKey] || openingBalance[item.name] || 0;
+      const produced = totalProduced[camelKey] || totalProduced[item.name] || 0;
+      const sent = totalSent[camelKey] || totalSent[item.name] || 0;
       const stockAvailable = opening + produced - sent;
       
+      console.log(`📊 ${item.displayName}: Opening=${opening}, Produced=${produced}, Sent=${sent}, Stock=${stockAvailable}`);
+      
       return {
-        itemId: type.id,
-        itemName: type.name,
-        category: type.category,
-        unit: 'pcs',
+        itemId: item.name, // Use the name field as itemId for matching with production data
+        itemName: item.displayName,
+        category: item.category,
+        unit: item.unit,
         systemQuantity: stockAvailable,
         actualQuantity: stockAvailable, // Default to system quantity
         difference: 0,
@@ -315,8 +324,9 @@ export function MonthlyStockRecalibration({
         console.log('🔄 fetchOpeningBalance - Found recalibration from:', recalDate);
         console.log('🔄 fetchOpeningBalance - Recalibration data:', recalResponse.record);
         
-        // Check if recalibration is from LAST month (or earlier)
-        if (recalDate === previousMonthStr || recalDate < previousMonthStr) {
+        // Check if recalibration is from CURRENT month (opening balance) or LAST month (closing = this month's opening)
+        // A recalibration for the current month IS the opening balance (done at start of month)
+        if (recalDate === currentMonth || recalDate === previousMonthStr || recalDate < previousMonthStr) {
           // Use the recalibration's actual quantity as opening balance
           const balance: any = {};
           recalResponse.record.items.forEach((item: any) => {
@@ -324,6 +334,7 @@ export function MonthlyStockRecalibration({
           });
           
           console.log('🔄 fetchOpeningBalance - Using recalibration as opening balance:', balance);
+          console.log('🔄 fetchOpeningBalance - Recalibration was from:', recalDate === currentMonth ? 'CURRENT month (opening balance set)' : 'PREVIOUS month (closing = opening)');
           return balance;
         }
       }

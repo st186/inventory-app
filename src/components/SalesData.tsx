@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import * as XLSX from 'xlsx';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { DatePicker } from './DatePicker';
@@ -44,6 +44,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
   });
+  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(new Date().getDay()); // 0-6 for Sun-Sat
   
   const effectiveStoreId = selectedStoreId || context.user?.storeId || null;
 
@@ -654,6 +655,212 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         </div>
       )}
 
+      {/* Day of Week Analysis */}
+      {salesRecords.length > 0 && (() => {
+        // Group sales by day of week
+        const dayOfWeekData: Record<string, { counts: Record<string, number[]>, dayName: string }> = {
+          '0': { dayName: 'Sunday', counts: {} },
+          '1': { dayName: 'Monday', counts: {} },
+          '2': { dayName: 'Tuesday', counts: {} },
+          '3': { dayName: 'Wednesday', counts: {} },
+          '4': { dayName: 'Thursday', counts: {} },
+          '5': { dayName: 'Friday', counts: {} },
+          '6': { dayName: 'Saturday', counts: {} }
+        };
+
+        // Initialize category arrays for each day
+        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
+        Object.keys(dayOfWeekData).forEach(day => {
+          categories.forEach(cat => {
+            dayOfWeekData[day].counts[cat] = [];
+          });
+        });
+
+        // Collect all sales for each day of the week
+        salesRecords.forEach(record => {
+          const date = new Date(record.date);
+          const dayOfWeek = date.getDay().toString();
+          
+          Object.entries(record.data).forEach(([category, count]) => {
+            if (dayOfWeekData[dayOfWeek].counts[category]) {
+              dayOfWeekData[dayOfWeek].counts[category].push(count);
+            }
+          });
+        });
+
+        // Calculate averages for all days
+        const allDaysData = Object.entries(dayOfWeekData).map(([dayNum, day]) => {
+          const avgData: any = { day: day.dayName, dayNum: parseInt(dayNum) };
+          
+          categories.forEach(category => {
+            const values = day.counts[category];
+            const avg = values.length > 0 
+              ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
+              : 0;
+            avgData[category] = avg;
+          });
+          
+          return avgData;
+        });
+
+        // Get data for selected day only - restructure so each category is its own row
+        const selectedDayData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
+        
+        // Transform data: instead of one row with 7 columns, create 7 rows with category and average
+        const chartData = selectedDayData ? categories.map((category, index) => ({
+          category,
+          average: selectedDayData[category],
+          fill: getChartColor(index)
+        })) : [];
+
+        // Days of week for toggle buttons
+        const daysOfWeek = [
+          { num: 0, name: 'Sun', fullName: 'Sunday' },
+          { num: 1, name: 'Mon', fullName: 'Monday' },
+          { num: 2, name: 'Tue', fullName: 'Tuesday' },
+          { num: 3, name: 'Wed', fullName: 'Wednesday' },
+          { num: 4, name: 'Thu', fullName: 'Thursday' },
+          { num: 5, name: 'Fri', fullName: 'Friday' },
+          { num: 6, name: 'Sat', fullName: 'Saturday' }
+        ];
+
+        return (
+          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+            <div className="mb-6">
+              <h2 className="text-2xl text-gray-900 mb-2 flex items-center gap-3">
+                <TrendingUp className="w-7 h-7 text-indigo-600" />
+                Weekly Pattern Analysis
+              </h2>
+              <p className="text-sm text-gray-600 mb-4">
+                Average momo sales by day of the week across all records
+              </p>
+              
+              {/* Day Toggle Buttons */}
+              <div className="flex gap-2 flex-wrap">
+                {daysOfWeek.map((day) => (
+                  <button
+                    key={day.num}
+                    onClick={() => setSelectedDayOfWeek(day.num)}
+                    className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform hover:scale-105 ${
+                      selectedDayOfWeek === day.num
+                        ? 'bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {day.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <ResponsiveContainer width="100%" height={500}>
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis 
+                  dataKey="category" 
+                  tick={{ fontSize: 11 }}
+                  angle={-15}
+                  textAnchor="end"
+                  height={100}
+                />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                  }}
+                  formatter={(value: any) => [`${value} pcs (avg)`, 'Average']}
+                  labelFormatter={(label: string) => label}
+                />
+                <Bar dataKey="average" radius={[8, 8, 0, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+
+            {/* Day of Week Insights */}
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(() => {
+                // Find best day for each category (across all days)
+                const bestDays: Record<string, { day: string, avg: number }> = {};
+                
+                categories.forEach(category => {
+                  let maxAvg = 0;
+                  let bestDay = '';
+                  
+                  allDaysData.forEach(dayData => {
+                    if (dayData[category] > maxAvg) {
+                      maxAvg = dayData[category];
+                      bestDay = dayData.day;
+                    }
+                  });
+                  
+                  bestDays[category] = { day: bestDay, avg: maxAvg };
+                });
+
+                // Find overall busiest day
+                const busiestDay = allDaysData.reduce((prev, curr) => {
+                  const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
+                  const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
+                  return currTotal > prevTotal ? curr : prev;
+                });
+                
+                const busiestDayTotal = categories.reduce((sum, cat) => sum + (busiestDay[cat] || 0), 0);
+
+                // Find quietest day
+                const quietestDay = allDaysData.reduce((prev, curr) => {
+                  const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
+                  const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
+                  return currTotal < prevTotal ? curr : prev;
+                });
+                
+                const quietestDayTotal = categories.reduce((sum, cat) => sum + (quietestDay[cat] || 0), 0);
+
+                // Find most popular item on the CURRENTLY SELECTED day
+                const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
+                const topItemOnSelectedDay = selectedDayFullData ? 
+                  Object.entries(selectedDayFullData)
+                    .filter(([key]) => categories.includes(key))
+                    .sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+                  : null;
+
+                return (
+                  <>
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 border-2 border-green-200">
+                      <p className="text-sm text-gray-600 mb-1">🔥 Busiest Day</p>
+                      <p className="text-xl text-gray-900" style={{ fontWeight: '700' }}>
+                        {busiestDay.day}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">{busiestDayTotal.toLocaleString()} pcs avg</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border-2 border-orange-200">
+                      <p className="text-sm text-gray-600 mb-1">📉 Quietest Day</p>
+                      <p className="text-xl text-gray-900" style={{ fontWeight: '700' }}>
+                        {quietestDay.day}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border-2 border-purple-200">
+                      <p className="text-sm text-gray-600 mb-1">⭐ Top Seller Today</p>
+                      <p className="text-base text-gray-900" style={{ fontWeight: '600' }}>
+                        {topItemOnSelectedDay?.[0] || 'N/A'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {topItemOnSelectedDay ? `${(topItemOnSelectedDay[1] as number).toLocaleString()} pcs avg` : 'No data'}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Sales Records */}
       {salesRecords.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-lg p-12 text-center border border-gray-100">
@@ -666,6 +873,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           {salesRecords.map((record, idx) => {
             const totalPieces = getTotalPieces(record.data);
             const recordDate = new Date(record.date);
+            
+            // Resolve store name - fallback to context.stores if record.storeName is missing or "Unknown Store"
+            const displayStoreName = record.storeName && record.storeName !== 'Unknown Store'
+              ? record.storeName
+              : (context.stores?.find(s => s.id === record.storeId)?.name || record.storeName || 'Unknown Store');
             
             return (
               <div key={record.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
@@ -684,7 +896,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           })}
                         </h3>
                         <p className="text-sm text-purple-100">
-                          {record.storeName} • Total: {totalPieces.toLocaleString()} pieces
+                          {displayStoreName} • Total: {totalPieces.toLocaleString()} pieces
                         </p>
                       </div>
                     </div>

@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { DatePicker } from './DatePicker';
 
 type DataCaptureProps = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
+  selectedProductionHouseId?: string | null;
 };
 
 type DailyLog = {
@@ -17,6 +18,12 @@ type DailyLog = {
   salesLogged: boolean;
   salesLoggedAt: string | null;
   salesLoggedBy: string; // Name or email of who logged sales
+  productionLogged: boolean;
+  productionLoggedAt: string | null;
+  productionLoggedBy: string; // Name or email of who logged production
+  stockRequestLogged: boolean;
+  stockRequestLoggedAt: string | null;
+  stockRequestLoggedBy: string; // Name or email of who created stock request
   cashDiscrepancy: number;
   managerEmail: string;
   managerName: string;
@@ -33,7 +40,7 @@ type PeriodStats = {
   onTimeRate: number;
 };
 
-export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
+export function DataCapture({ context, selectedStoreId, selectedProductionHouseId }: DataCaptureProps) {
   const [dateRange, setDateRange] = useState<'day' | 'week' | 'month' | 'custom'>('week');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -46,7 +53,7 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
 
   useEffect(() => {
     generateDailyLogs();
-  }, [context.inventory, context.salesData, dateRange, customStartDate, customEndDate, effectiveStoreId]);
+  }, [context.inventory, context.salesData, context.productionData, context.stockRequests, dateRange, customStartDate, customEndDate, effectiveStoreId]);
 
   const getDateRangeDates = (): { startDate: Date; endDate: Date } => {
     const today = new Date();
@@ -105,6 +112,12 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
         salesLogged: false,
         salesLoggedAt: null,
         salesLoggedBy: '',
+        productionLogged: false,
+        productionLoggedAt: null,
+        productionLoggedBy: '',
+        stockRequestLogged: false,
+        stockRequestLoggedAt: null,
+        stockRequestLoggedBy: '',
         cashDiscrepancy: 0,
         managerEmail: '',
         managerName: '',
@@ -165,14 +178,17 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
           }
           
           if (timestamp) {
-            log.inventoryLoggedAt = new Date(parseInt(timestamp)).toISOString();
-            
-            // Check if logged late (after 11:59:59 PM of that day)
-            // Entry is ON TIME if logged on the same day before midnight
-            // Entry is LATE if logged after midnight of the target day
-            const entryDate = new Date(parseInt(timestamp));
-            const targetDate = new Date(date + 'T23:59:59');
-            log.lateEntry = entryDate > targetDate;
+            const timestampNum = parseInt(timestamp);
+            if (!isNaN(timestampNum) && timestampNum > 0) {
+              log.inventoryLoggedAt = new Date(timestampNum).toISOString();
+              
+              // Check if logged late (after 11:59:59 PM of that day)
+              // Entry is ON TIME if logged on the same day before midnight
+              // Entry is LATE if logged after midnight of the target day
+              const entryDate = new Date(timestampNum);
+              const targetDate = new Date(date + 'T23:59:59');
+              log.lateEntry = entryDate > targetDate;
+            }
           }
         }
       }
@@ -218,13 +234,103 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
         // Get sales logged timestamp from ID
         const timestamp = sale.id.split('-')[0];
         if (timestamp) {
-          log.salesLoggedAt = new Date(parseInt(timestamp)).toISOString();
-          
-          // Check if logged late
-          const entryDate = new Date(parseInt(timestamp));
-          const targetDate = new Date(sale.date + 'T23:59:59');
-          if (entryDate > targetDate) {
-            log.lateEntry = true;
+          const timestampNum = parseInt(timestamp);
+          if (!isNaN(timestampNum) && timestampNum > 0) {
+            log.salesLoggedAt = new Date(timestampNum).toISOString();
+            
+            // Check if logged late
+            const entryDate = new Date(timestampNum);
+            const targetDate = new Date(sale.date + 'T23:59:59');
+            if (entryDate > targetDate) {
+              log.lateEntry = true;
+            }
+          }
+        }
+      }
+    });
+
+    // Process production data
+    // Filter production by store FIRST
+    const filteredProductionData = effectiveStoreId
+      ? context.productionData.filter(prod => prod.storeId === effectiveStoreId)
+      : context.productionData;
+    
+    filteredProductionData.forEach(prod => {
+      if (dateMap.has(prod.date)) {
+        const log = dateMap.get(prod.date)!;
+        log.productionLogged = true;
+        
+        // Set who logged production
+        if (prod.createdByName) {
+          log.productionLoggedBy = prod.createdByName;
+        } else if (prod.createdByEmail) {
+          log.productionLoggedBy = prod.createdByEmail;
+        } else if (prod.createdBy) {
+          // Check if createdBy is a UUID (contains dashes) - if so, hide it
+          const isUUID = typeof prod.createdBy === 'string' && prod.createdBy.includes('-');
+          if (isUUID) {
+            // Don't show UUID, show 'Manager' instead
+            log.productionLoggedBy = 'Manager';
+          } else {
+            // It's an employee ID like BM001
+            log.productionLoggedBy = prod.createdBy;
+          }
+        } else {
+          log.productionLoggedBy = 'Unknown User';
+        }
+        
+        // Get production logged timestamp from ID
+        const timestamp = prod.id.split('-')[0];
+        if (timestamp) {
+          const timestampNum = parseInt(timestamp);
+          if (!isNaN(timestampNum) && timestampNum > 0) {
+            log.productionLoggedAt = new Date(timestampNum).toISOString();
+            
+            // Check if logged late
+            const entryDate = new Date(timestampNum);
+            const targetDate = new Date(prod.date + 'T23:59:59');
+            if (entryDate > targetDate) {
+              log.lateEntry = true;
+            }
+          }
+        }
+      }
+    });
+
+    // Process stock request data
+    // Filter stock requests by store FIRST
+    const filteredStockRequests = effectiveStoreId
+      ? context.stockRequests.filter(req => req.storeId === effectiveStoreId)
+      : context.stockRequests;
+    
+    filteredStockRequests.forEach(req => {
+      if (dateMap.has(req.requestDate)) {
+        const log = dateMap.get(req.requestDate)!;
+        log.stockRequestLogged = true;
+        
+        // Set who created stock request
+        if (req.requestedByName) {
+          log.stockRequestLoggedBy = req.requestedByName;
+        } else if (req.requestedBy) {
+          // It's an employee ID
+          log.stockRequestLoggedBy = req.requestedBy;
+        } else {
+          log.stockRequestLoggedBy = 'Unknown User';
+        }
+        
+        // Get stock request timestamp from ID
+        const timestamp = req.id.split('-')[0];
+        if (timestamp) {
+          const timestampNum = parseInt(timestamp);
+          if (!isNaN(timestampNum) && timestampNum > 0) {
+            log.stockRequestLoggedAt = new Date(timestampNum).toISOString();
+            
+            // Check if logged late
+            const entryDate = new Date(timestampNum);
+            const targetDate = new Date(req.requestDate + 'T23:59:59');
+            if (entryDate > targetDate) {
+              log.lateEntry = true;
+            }
           }
         }
       }
@@ -232,9 +338,9 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
 
     // Update status
     dateMap.forEach((log) => {
-      if (log.inventoryLogged && log.salesLogged) {
+      if (log.inventoryLogged && log.salesLogged && log.productionLogged && log.stockRequestLogged) {
         log.status = 'complete';
-      } else if (log.inventoryLogged || log.salesLogged) {
+      } else if (log.inventoryLogged || log.salesLogged || log.productionLogged || log.stockRequestLogged) {
         log.status = 'partial';
       } else {
         log.status = 'missing';
@@ -447,6 +553,12 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
                   Sales
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                  Production
+                </th>
+                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                  Stock Request
+                </th>
+                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
                   Cash Discrepancy
                 </th>
               </tr>
@@ -454,13 +566,13 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
             <tbody className="divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                     Loading data...
                   </td>
                 </tr>
               ) : dailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                     No data for selected period
                   </td>
                 </tr>
@@ -510,6 +622,32 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
+                      {log.productionLogged ? (
+                        <div className="text-sm">
+                          <p className="text-gray-900">✓ Logged</p>
+                          <p className="text-gray-500">{formatDateTime(log.productionLoggedAt)}</p>
+                          {log.productionLoggedBy && (
+                            <p className="text-xs text-gray-400">By: {log.productionLoggedBy}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">Not logged</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {log.stockRequestLogged ? (
+                        <div className="text-sm">
+                          <p className="text-gray-900">✓ Logged</p>
+                          <p className="text-gray-500">{formatDateTime(log.stockRequestLoggedAt)}</p>
+                          {log.stockRequestLoggedBy && (
+                            <p className="text-xs text-gray-400">By: {log.stockRequestLoggedBy}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">Not logged</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       {log.salesLogged ? (
                         <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}`}>
                           ₹{log.cashDiscrepancy.toFixed(2)}
@@ -532,11 +670,11 @@ export function DataCapture({ context, selectedStoreId }: DataCaptureProps) {
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-green-600" />
-            <span className="text-gray-600">Complete - Both inventory & sales logged</span>
+            <span className="text-gray-600">Complete - All data types logged (Inventory, Sales, Production, Stock Request)</span>
           </div>
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-yellow-600" />
-            <span className="text-gray-600">Partial - Only one type logged</span>
+            <span className="text-gray-600">Partial - At least one data type logged</span>
           </div>
           <div className="flex items-center gap-2">
             <XCircle className="w-4 h-4 text-red-600" />
