@@ -6,4 +6,6 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  // Ensure service worker is copied to build output
+  publicDir: 'public',
 });

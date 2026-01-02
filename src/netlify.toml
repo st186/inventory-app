@@ -2,6 +2,13 @@
   command = "npm run build"
   publish = "dist"
 
+# Service worker should not be redirected
+[[redirects]]
+  from = "/sw.js"
+  to = "/sw.js"
+  status = 200
+
+# SPA fallback - must come after specific routes
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -26,6 +33,7 @@
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
     Service-Worker-Allowed = "/"
+    Content-Type = "application/javascript; charset=utf-8"
 
 [[headers]]
   for = "/assets/*"
