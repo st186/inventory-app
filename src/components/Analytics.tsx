@@ -1894,7 +1894,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   className="px-4 py-2 bg-white border-2 border-orange-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
                   style={{ fontSize: '14px', fontWeight: '600' }}
                 >
-                  <option value="">All Production Houses</option>
+                  {!selectedProductionHouseId && <option value="">Select Production House</option>}
                   {context.productionHouses?.map((ph) => (
                     <option key={ph.id} value={ph.id}>
                       {ph.name} (ID: {ph.id})
@@ -4375,11 +4375,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                           : (context.user?.designation === 'production_incharge'
                               ? effectiveStoreId  // Production incharge in store mode uses their store ID
                               : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
+                        
                         if (filterById) {
+                          // Direct matches
                           const matchesStoreId = p.storeId === filterById;
                           const matchesProductionHouseId = p.productionHouseId === filterById;
                           const phId = p.productionHouseId || p.storeId;
-                          if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
+                          const matchesFallback = phId === filterById;
+                          
+                          // Also check if the production record's storeId is a store mapped to this production house
+                          const allStores = stores.length > 0 ? stores : (context.stores || []);
+                          const mappedStoreIds = allStores
+                            .filter(s => s.productionHouseId === filterById)
+                            .map(s => s.id);
+                          const matchesMappedStore = p.storeId && mappedStoreIds.includes(p.storeId);
+                          
+                          if (!(matchesStoreId || matchesProductionHouseId || matchesFallback || matchesMappedStore)) {
+                            return false;
+                          }
                         }
                         return p.date === dateStr && p.approvalStatus === 'approved';
                       });

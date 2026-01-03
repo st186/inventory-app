@@ -4243,21 +4243,15 @@ app.get('/make-server-c2dd9b9d/stores', async (c) => {
       return c.json({ stores: allStores });
     }
 
-    // Managers see only their store
+    // Managers (Operations Managers) see all stores (they need to see store-production house mappings for analytics)
     if (role === 'manager') {
-      const managerStores = allStores.filter((s: any) => s.managerId === userId);
-      return c.json({ stores: managerStores });
+      return c.json({ stores: allStores });
     }
 
-    // Employees with designation (store/production incharge) see their assigned store
+    // Employees with designation (store/production incharge) see all stores
+    // (Production incharges need to see stores mapped to their production house for calculating deliveries)
     if (role === 'employee' && employeeId) {
-      const employee = await kv.get(`unified-employee:${employeeId}`);
-      if (employee && employee.storeId) {
-        const store = await kv.get(`store:${employee.storeId}`);
-        if (store) {
-          return c.json({ stores: [store] });
-        }
-      }
+      return c.json({ stores: allStores });
     }
 
     return c.json({ stores: [] });

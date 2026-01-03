@@ -16,6 +16,9 @@ async function getSession() {
   return session;
 }
 
+// Global flag to prevent multiple logout redirects
+let isHandlingUnauthorized = false;
+
 async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit) {
   const response = await fetch(url, {
     ...options,
@@ -36,14 +39,25 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
     }
     console.error(`API Error [${url}]:`, errorMessage);
     
-    // If unauthorized, force logout
-    if (response.status === 401) {
+    // If unauthorized, force logout (but only once to prevent reload loops)
+    if (response.status === 401 && !isHandlingUnauthorized) {
+      isHandlingUnauthorized = true;
       console.error('Session expired or invalid. Please log in again.');
+      
       // Clear the session
       const supabase = createBrowserSupabase();
       await supabase.auth.signOut();
-      // Reload the page to show login screen
-      window.location.reload();
+      
+      // Use a flag to ensure we only reload once
+      if (!sessionStorage.getItem('logout_redirect_in_progress')) {
+        sessionStorage.setItem('logout_redirect_in_progress', 'true');
+        
+        // Small delay to allow other pending requests to fail gracefully
+        setTimeout(() => {
+          sessionStorage.removeItem('logout_redirect_in_progress');
+          window.location.reload();
+        }, 100);
+      }
     }
     
     throw new Error(errorMessage);

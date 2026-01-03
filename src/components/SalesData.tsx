@@ -17,7 +17,7 @@ interface CategoryData {
   'Chicken Cheese Momos': number;
   'Veg Momos': number;
   'Paneer Momos': number;
-  'Corn Cheese Momos': number;
+  'Cheese Corn Momos': number;
   'Chicken Kurkure Momos': number;
   'Veg Kurkure Momos': number;
 }
@@ -182,7 +182,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       return 'Paneer Momos';
     }
     if (nameLower.includes('corn') && nameLower.includes('cheese')) {
-      return 'Corn Cheese Momos';
+      return 'Cheese Corn Momos';
     }
     if (nameLower.includes('chicken') && nameLower.includes('cheese')) {
       return 'Chicken Cheese Momos';
@@ -206,7 +206,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       'Chicken Cheese Momos': 0,
       'Veg Momos': 0,
       'Paneer Momos': 0,
-      'Corn Cheese Momos': 0,
+      'Cheese Corn Momos': 0,
       'Chicken Kurkure Momos': 0,
       'Veg Kurkure Momos': 0
     };
@@ -310,7 +310,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       '#f97316', // orange - Chicken Cheese Momos
       '#22c55e', // green - Veg Momos
       '#3b82f6', // blue - Paneer Momos
-      '#eab308', // yellow - Corn Cheese Momos
+      '#eab308', // yellow - Cheese Corn Momos
       '#8b5cf6', // purple - Chicken Kurkure Momos
       '#06b6d4'  // cyan - Veg Kurkure Momos
     ];
@@ -489,7 +489,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     'Chicken Cheese Momos': 0,
                     'Veg Momos': 0,
                     'Paneer Momos': 0,
-                    'Corn Cheese Momos': 0,
+                    'Cheese Corn Momos': 0,
                     'Chicken Kurkure Momos': 0,
                     'Veg Kurkure Momos': 0
                   });
@@ -564,7 +564,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <Bar dataKey="Chicken Cheese Momos" fill="#f97316" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Veg Momos" fill="#22c55e" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Paneer Momos" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Corn Cheese Momos" fill="#eab308" radius={[8, 8, 0, 0]} />
+              <Bar dataKey="Cheese Corn Momos" fill="#eab308" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Chicken Kurkure Momos" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Veg Kurkure Momos" fill="#06b6d4" radius={[8, 8, 0, 0]} />
             </BarChart>
@@ -578,7 +578,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 'Chicken Cheese Momos': 0,
                 'Veg Momos': 0,
                 'Paneer Momos': 0,
-                'Corn Cheese Momos': 0,
+                'Cheese Corn Momos': 0,
                 'Chicken Kurkure Momos': 0,
                 'Veg Kurkure Momos': 0
               };
@@ -669,7 +669,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         };
 
         // Initialize category arrays for each day
-        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
+        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Cheese Corn Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
         Object.keys(dayOfWeekData).forEach(day => {
           categories.forEach(cat => {
             dayOfWeekData[day].counts[cat] = [];

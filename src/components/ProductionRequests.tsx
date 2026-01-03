@@ -542,7 +542,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       .reduce((acc, sale) => {
         // Dynamically accumulate sales for all finished products
         finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-          acc[camelKey] = (acc[camelKey] || 0) + (sale.data?.[legacySalesKey] || 0);
+          // Get value from the legacySalesKey
+          let salesValue = sale.data?.[legacySalesKey] || 0;
+          
+          // Backward compatibility: Check for old "Corn Cheese Momos" naming
+          if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) {
+            salesValue = sale.data?.['Corn Cheese Momos'] || 0;
+          }
+          
+          acc[camelKey] = (acc[camelKey] || 0) + salesValue;
         });
         return acc;
       }, {} as Record<string, number>);
@@ -1067,7 +1075,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           // Aggregate current month's sales dynamically
           const totalSales = storeSales.reduce((acc: any, sale: any) => {
             finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-              acc[camelKey] = (acc[camelKey] || 0) + (sale.data?.[legacySalesKey] || 0);
+              // Get value from the legacySalesKey
+              let salesValue = sale.data?.[legacySalesKey] || 0;
+              
+              // Backward compatibility: Check for old "Corn Cheese Momos" naming
+              if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) {
+                salesValue = sale.data?.['Corn Cheese Momos'] || 0;
+              }
+              
+              acc[camelKey] = (acc[camelKey] || 0) + salesValue;
             });
             return acc;
           }, {} as Record<string, number>);

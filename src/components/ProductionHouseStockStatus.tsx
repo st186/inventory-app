@@ -36,7 +36,6 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedProductionHouse, setSelectedProductionHouse] = useState<string | null>(null);
   const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
-  const [stores, setStores] = useState<api.Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [productionHouseOpeningBalance, setProductionHouseOpeningBalance] = useState<Record<string, Record<string, number>>>({});
 
@@ -52,7 +51,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     }
   };
 
-  // Load production requests and stores
+  // Load production requests
   useEffect(() => {
     const loadData = async () => {
       const token = await getFreshAccessToken();
@@ -63,14 +62,10 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       }
 
       try {
-        const [requestsData, storesData] = await Promise.all([
-          api.fetchProductionRequests(token),
-          api.getStores(),
-        ]);
+        const requestsData = await api.fetchProductionRequests(token);
         setProductionRequests(requestsData);
-        setStores(storesData);
       } catch (error) {
-        console.error('Error loading data:', error);
+        console.error('Error loading production requests:', error);
       } finally {
         setLoading(false);
       }
@@ -156,17 +151,12 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     const stocks: ProductionHouseStock[] = [];
 
     console.log('🏭 Production Houses:', productionHouses);
-    console.log('🏪 Stores:', stores);
     console.log('📦 Production Requests:', productionRequests);
     console.log('📅 Selected Date:', selectedDate);
 
     productionHouses.forEach(house => {
       console.log(`\n🏭 Processing house: ${house.name} (${house.id})`);
       
-      // Find stores mapped to this production house
-      const houseStores = stores.filter(s => s.productionHouseId === house.id);
-      console.log(`  🏪 Stores mapped to this house:`, houseStores.map(s => ({ id: s.id, name: s.name })));
-
       // Get all production data up to and including selected date for this house
       const allPreviousProduction = context.productionData.filter(
         prod => prod.productionHouseId === house.id && prod.date <= selectedDate
@@ -195,7 +185,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
           }
           
           // Find the store that made this request
-          const store = stores.find(s => s.id === req.storeId);
+          const store = context.stores.find(s => s.id === req.storeId);
           
           // Check if request is for a store mapped to this production house and delivered before or on selected date
           const isForThisHouse = store?.productionHouseId === house.id;
@@ -234,7 +224,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
           }
           
           // Find the store that made this request
-          const store = stores.find(s => s.id === req.storeId);
+          const store = context.stores.find(s => s.id === req.storeId);
           
           // Check if request is for a store mapped to this production house
           return store?.productionHouseId === house.id && deliveredDate === selectedDate;
@@ -450,7 +440,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
 
     console.log('🏁 Final stocks array:', stocks);
     return stocks;
-  }, [context.productionData, productionRequests, stores, productionHouses, selectedDate, productionHouseOpeningBalance]);
+  }, [context.productionData, context.stores, productionRequests, productionHouses, selectedDate, productionHouseOpeningBalance]);
 
   const filteredStocks = selectedProductionHouse
     ? productionHouseStocks.filter(s => s.productionHouseId === selectedProductionHouse)

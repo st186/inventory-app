@@ -369,15 +369,14 @@ export default function App() {
                 sessionStorage.setItem('db_cleaned', 'true'); // Mark as cleaned
                 const result = await api.cleanupDuplicates(accessToken);
                 console.log(`✅ Cleaned ${result.removed} duplicates successfully`);
-                // Silently refresh without alert
-                setTimeout(() => {
-                  window.location.reload();
-                }, 500);
+                // Don't reload - duplicates are already deduplicated in memory
+                // Reload would cause issues if session expires during cleanup
               }
             } catch (error) {
               // Silently fail if not authenticated or other errors
               console.log('Auto-cleanup skipped:', error instanceof Error ? error.message : 'Unknown error');
-              sessionStorage.removeItem('db_cleaned'); // Remove flag if cleanup failed
+              // Don't remove the flag - this prevents infinite retry loops
+              // The duplicates are already deduplicated in memory anyway
             }
           }, 1500); // Small delay to ensure UI is loaded
         }
@@ -512,6 +511,9 @@ export default function App() {
 
   // Check for existing session on mount using useEffect
   useEffect(() => {
+    // Clear any stale redirect flags from previous sessions
+    sessionStorage.removeItem('logout_redirect_in_progress');
+    
     const checkSession = async () => {
       try {
         const { data: { session } } = await supabaseClient.auth.getSession();
@@ -604,20 +606,10 @@ export default function App() {
           
           if (success) {
             console.log('🔔 Push notifications enabled successfully for user:', userId);
-          } else {
-            // Check if we're in a restricted environment (like Figma preview)
-            const isPreview = window.location.hostname.includes('figma.site') || 
-                            window.location.hostname.includes('figmaiframe') ||
-                            window !== window.top; // Check if in iframe
-            
-            if (isPreview) {
-              console.log('ℹ️ Push notifications unavailable in preview environment. Will work when deployed to production (Vercel, Netlify, etc.)');
-            } else {
-              console.log('⚠️ Push notifications not enabled (permission denied or browser restrictions)');
-            }
           }
+          // Note: Detailed status messages are now logged by initializePushNotifications
         } catch (error) {
-          console.log('⚠️ Push notifications initialization error:', error instanceof Error ? error.message : 'Unknown error');
+          console.log('ℹ️ Push notifications setup skipped:', error instanceof Error ? error.message : 'Unknown error');
         }
       };
       
