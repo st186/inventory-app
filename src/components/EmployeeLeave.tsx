@@ -6,6 +6,7 @@ interface LeaveApplication {
   id?: string;
   employeeId: string;
   leaveDate: string;
+  leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;
@@ -25,10 +26,12 @@ interface EmployeeLeaveProps {
 export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   const [leaves, setLeaves] = useState<LeaveApplication[]>([]);
   const [leaveBalance, setLeaveBalance] = useState(0);
+  const [projectedBalance, setProjectedBalance] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showApplyForm, setShowApplyForm] = useState(false);
   const [newLeave, setNewLeave] = useState({
     leaveDate: '',
+    leaveType: 'full' as 'full' | 'half', // NEW: Leave type
     reason: ''
   });
 
@@ -36,6 +39,11 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     loadLeaves();
     calculateLeaveBalance();
   }, []);
+
+  useEffect(() => {
+    // Calculate projected balance whenever leaves change
+    calculateProjectedBalance();
+  }, [leaves, leaveBalance]);
 
   const loadLeaves = async () => {
     try {
@@ -56,6 +64,18 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     } catch (error) {
       console.error('Error calculating leave balance:', error);
     }
+  };
+
+  const calculateProjectedBalance = () => {
+    // Calculate pending leave days
+    const pendingLeaves = leaves.filter(l => l.status === 'pending');
+    const pendingLeaveDays = pendingLeaves.reduce((total, leave) => {
+      const leaveType = leave.leaveType || 'full';
+      return total + (leaveType === 'half' ? 0.5 : 1);
+    }, 0);
+
+    // Projected balance = current balance - pending leaves
+    setProjectedBalance(Math.max(0, leaveBalance - pendingLeaveDays));
   };
 
   const applyLeave = async () => {
@@ -82,6 +102,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       const leaveData: LeaveApplication = {
         employeeId: user.employeeId,
         leaveDate: newLeave.leaveDate,
+        leaveType: newLeave.leaveType, // NEW: Leave type
         reason: newLeave.reason,
         status: 'pending',
         appliedAt: new Date().toISOString()
@@ -91,7 +112,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       await loadLeaves();
       await calculateLeaveBalance();
       
-      setNewLeave({ leaveDate: '', reason: '' });
+      setNewLeave({ leaveDate: '', leaveType: 'full' as 'full' | 'half', reason: '' });
       setShowApplyForm(false);
       alert('Leave application submitted successfully');
     } catch (error) {
@@ -144,10 +165,26 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
         {/* Leave Balance Card */}
         <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl shadow-lg p-6 mb-6 text-white">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg mb-2 opacity-90">Available Leave Balance</h2>
-              <div className="text-5xl mb-2">{leaveBalance}</div>
-              <p className="text-sm opacity-90">leaves remaining (3 leaves/month, accumulates monthly, resets yearly)</p>
+            <div className="flex-1">
+              <h2 className="text-lg mb-4 opacity-90">Leave Balance</h2>
+              
+              {/* Current Balance */}
+              <div className="mb-4">
+                <div className="text-sm opacity-75 mb-1">Current Balance</div>
+                <div className="text-5xl mb-1">{leaveBalance}</div>
+                <p className="text-xs opacity-75">approved leaves deducted</p>
+              </div>
+
+              {/* Projected Balance - Only show if there are pending leaves */}
+              {projectedBalance !== leaveBalance && (
+                <div className="pt-4 border-t border-white/20">
+                  <div className="text-sm opacity-75 mb-1">Projected Balance</div>
+                  <div className="text-3xl mb-1">{projectedBalance}</div>
+                  <p className="text-xs opacity-75">if all pending leaves are approved</p>
+                </div>
+              )}
+              
+              <p className="text-sm opacity-75 mt-4">3 leaves/month • accumulates monthly • resets yearly</p>
             </div>
             <div className="bg-white/20 rounded-full p-6">
               <Calendar className="w-16 h-16" />
@@ -181,6 +218,18 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                   min={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Leave Type</label>
+                <select
+                  value={newLeave.leaveType}
+                  onChange={(e) => setNewLeave({ ...newLeave, leaveType: e.target.value as 'full' | 'half' })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="full">Full Day</option>
+                  <option value="half">Half Day</option>
+                </select>
               </div>
               
               <div>
@@ -232,6 +281,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Date</th>
+                    <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Type</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Reason</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Applied On</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Status</th>
@@ -247,6 +297,15 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                           month: 'short', 
                           day: 'numeric' 
                         })}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          (leave.leaveType || 'full') === 'full' 
+                            ? 'bg-purple-100 text-purple-800' 
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-gray-700">{leave.reason}</td>
                       <td className="px-6 py-4 text-gray-600 text-sm">

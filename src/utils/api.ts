@@ -1257,6 +1257,7 @@ export interface LeaveApplication {
   id?: string;
   employeeId: string;
   leaveDate: string;
+  leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;

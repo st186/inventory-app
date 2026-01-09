@@ -257,6 +257,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Date</th>
+                    <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Type</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Reason</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Applied On</th>
                     <th className="px-6 py-3 text-left text-sm text-gray-700">Actions</th>
@@ -272,6 +273,15 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
                           day: 'numeric',
                           weekday: 'short'
                         })}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          (leave.leaveType || 'full') === 'full' 
+                            ? 'bg-purple-100 text-purple-800' 
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-gray-700">{leave.reason}</td>
                       <td className="px-6 py-4 text-gray-600 text-sm">

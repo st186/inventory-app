@@ -189,8 +189,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   }, [context.inventory, context.overheads, selectedDate]);
 
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number) => {
-    return prevCash + cashReceived - expenses - salary;
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number) => {
+    return prevCash + paytmAmount + cashReceived - expenses - salary;
   };
 
   // Calculate expected cash for current form data
@@ -198,8 +198,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const prevCash = parseFloat(formData.previousCashInHand) || 0;
     const cashReceived = parseFloat(formData.cashAmount) || 0;
     const salary = totalContractPayout; // Use total from contract workers
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary);
-  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses]);
+    const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount);
+  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -969,6 +970,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     <p className="text-2xl text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
                     <p className="text-xs text-gray-500 mt-1">
                       Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
+                      Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
                       Cash Received: ₹{cash.toFixed(2)} - 
                       Expenses: ₹{totalExpenses.toFixed(2)} - 
                       Contract Payouts: ₹{totalContractPayout.toFixed(2)}

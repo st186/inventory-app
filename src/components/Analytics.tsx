@@ -4362,6 +4362,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     console.log('🔍 SOP Compliance Filter - filterById:', filterById);
                     console.log('🔍 SOP Compliance Filter - user designation:', context.user?.designation);
                     console.log('🔍 SOP Compliance Filter - sopComplianceDate:', sopComplianceDate);
+                    console.log('🔍 SOP Compliance Filter - All production dates:', [...new Set(productionData.map(p => p.date))]);
+                    console.log('🔍 SOP Compliance Filter - Total production records:', productionData.length);
+                    console.log('🔍 SOP Compliance Filter - Approved production records:', productionData.filter(p => p.approvalStatus === 'approved').length);
                     
                     // Use the SOP compliance date selector
                     const datesToShow = [sopComplianceDate];
@@ -4376,25 +4379,45 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                               ? effectiveStoreId  // Production incharge in store mode uses their store ID
                               : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
                         
-                        if (filterById) {
-                          // Direct matches
-                          const matchesStoreId = p.storeId === filterById;
-                          const matchesProductionHouseId = p.productionHouseId === filterById;
-                          const phId = p.productionHouseId || p.storeId;
-                          const matchesFallback = phId === filterById;
-                          
-                          // Also check if the production record's storeId is a store mapped to this production house
-                          const allStores = stores.length > 0 ? stores : (context.stores || []);
-                          const mappedStoreIds = allStores
-                            .filter(s => s.productionHouseId === filterById)
-                            .map(s => s.id);
-                          const matchesMappedStore = p.storeId && mappedStoreIds.includes(p.storeId);
-                          
-                          if (!(matchesStoreId || matchesProductionHouseId || matchesFallback || matchesMappedStore)) {
-                            return false;
-                          }
+                        // Get mapped store IDs once outside the if block for logging
+                        const allStores = stores.length > 0 ? stores : (context.stores || []);
+                        const mappedStoreIds = allStores
+                          .filter(s => s.productionHouseId === filterById)
+                          .map(s => s.id);
+                        
+                        // Direct matches
+                        const matchesStoreId = p.storeId === filterById;
+                        const matchesProductionHouseId = p.productionHouseId === filterById;
+                        const phId = p.productionHouseId || p.storeId;
+                        const matchesFallback = phId === filterById;
+                        const matchesMappedStore = p.storeId && mappedStoreIds.includes(p.storeId);
+                        const matchesDate = p.date === dateStr;
+                        const isApproved = p.approvalStatus === 'approved';
+                        
+                        const passesFilter = (matchesStoreId || matchesProductionHouseId || matchesFallback || matchesMappedStore);
+                        const finalResult = passesFilter && matchesDate && isApproved;
+                        
+                        console.log('🔍 SOP Compliance - Checking production record:', {
+                          date: p.date,
+                          storeId: p.storeId,
+                          productionHouseId: p.productionHouseId,
+                          approvalStatus: p.approvalStatus,
+                          filterById,
+                          mappedStoreIds,
+                          matchesStoreId,
+                          matchesProductionHouseId,
+                          matchesFallback,
+                          matchesMappedStore,
+                          matchesDate,
+                          isApproved,
+                          passesFilter,
+                          finalResult
+                        });
+                        
+                        if (filterById && !passesFilter) {
+                          return false;
                         }
-                        return p.date === dateStr && p.approvalStatus === 'approved';
+                        return matchesDate && isApproved;
                       });
                       
                       console.log(`🔍 SOP Compliance - Date ${dateStr}: Found ${dayProduction.length} production records`);

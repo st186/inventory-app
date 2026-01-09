@@ -2282,6 +2282,7 @@ app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
 // ===== Attendance & Leave Management =====
 
 // Helper function to calculate leave balance
+// usedLeaves can be a decimal (e.g., 1.5 for one full day + one half day)
 function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number {
   const joining = new Date(joiningDate);
   const now = new Date();
@@ -2664,7 +2665,14 @@ app.get('/make-server-c2dd9b9d/leaves/:employeeId/balance', async (c) => {
     const allLeaves = await kv.getByPrefix(`leave:${employeeId}:`);
     const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved');
     
-    const balance = calculateLeaveBalance(joiningDate, approvedLeaves.length);
+    // Calculate total leave days used (full day = 1, half day = 0.5)
+    // Old leaves without leaveType default to 'full' for backward compatibility
+    const totalLeaveDaysUsed = approvedLeaves.reduce((total: number, leave: any) => {
+      const leaveType = leave.leaveType || 'full'; // Default to full day for old leaves
+      return total + (leaveType === 'half' ? 0.5 : 1);
+    }, 0);
+    
+    const balance = calculateLeaveBalance(joiningDate, totalLeaveDaysUsed);
     
     return c.json({ balance });
   } catch (error) {

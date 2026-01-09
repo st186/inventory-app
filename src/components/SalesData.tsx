@@ -233,8 +233,27 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       return;
     }
     
-    if (!selectedDate) {
-      toast.error('Please select a date');
+    // Try to extract date from filename
+    // Expected format: "Itemwise sales_StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx"
+    let extractedDate = selectedDate; // Default to manually selected date
+    
+    const datePattern = /_(\d{2})_(\d{2})_(\d{4})-\d{2}_\d{2}_\d{4}\./;
+    const match = file.name.match(datePattern);
+    
+    if (match) {
+      const [, day, month, year] = match;
+      // Convert DD_MM_YYYY to YYYY-MM-DD format
+      extractedDate = `${year}-${month}-${day}`;
+      console.log(`📅 Extracted date from filename: ${file.name} -> ${extractedDate}`);
+      
+      // Update the selected date in the UI to reflect the extracted date
+      setSelectedDate(extractedDate);
+    } else {
+      console.warn('⚠️ Could not extract date from filename, using manually selected date:', selectedDate);
+    }
+    
+    if (!extractedDate) {
+      toast.error('Please select a date or use a filename with date format: StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx');
       return;
     }
     
@@ -255,10 +274,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // Get store name - safely handle undefined stores array
       const storeName = context.stores?.find(s => s.id === effectiveStoreId)?.name || 'Unknown Store';
       
-      // Create sales record
+      // Create sales record with the extracted date
       const record: SalesRecord = {
         id: `SALES-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-        date: selectedDate,
+        date: extractedDate, // Use extracted date instead of selectedDate
         storeId: effectiveStoreId,
         storeName,
         data: categoryData,
@@ -269,7 +288,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // Save to backend
       await api.saveSalesData(record, context.user?.accessToken || '');
       
-      toast.success('✅ Sales data uploaded successfully!');
+      toast.success(`✅ Sales data uploaded for ${extractedDate}!`);
       
       // Reload data
       await loadSalesData();
