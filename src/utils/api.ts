@@ -155,6 +155,23 @@ export async function cleanupDuplicates(accessToken: string): Promise<{ removed:
   return data;
 }
 
+// Migrate sales discrepancy values (cluster head only)
+export async function migrateSalesDiscrepancy(accessToken: string): Promise<{ updated: number; total: number; message: string }> {
+  const data = await fetchWithAuth(`${API_BASE}/sales/migrate-discrepancy`, accessToken, {
+    method: 'POST',
+  });
+  return data;
+}
+
+// Migrate stock request IDs to include timestamps (cluster head only)
+export async function migrateStockRequestTimestamps(accessToken: string): Promise<{ updated: number; skipped: number; total: number; message: string }> {
+  const data = await fetchWithAuth(`${API_BASE}/migrate-stock-request-timestamps`, accessToken, {
+    method: 'POST',
+  });
+  return data;
+}
+
+
 // Fix orphaned data with null storeId
 export async function fixOrphanedStoreData(
   accessToken: string, 
@@ -1483,6 +1500,18 @@ export async function updateProductionRequestStatus(
     body: JSON.stringify({ status, updatedBy }),
   });
   return data.request;
+}
+
+export async function checkPendingProductionRequests(accessToken: string): Promise<{
+  checked: boolean;
+  oldPendingCount: number;
+  newPendingCount: number;
+  notificationsSent: number;
+}> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/check-pending`, accessToken, {
+    method: 'POST'
+  });
+  return data;
 }
 
 // Sales Data API functions

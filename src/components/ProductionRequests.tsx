@@ -207,6 +207,36 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     return () => clearInterval(interval);
   }, [isStoreIncharge, context.user, requests, lastReminderDate]);
 
+  // Periodic check for pending requests > 12 hours (only for authorized roles)
+  useEffect(() => {
+    // Only run for Cluster Heads, Production Incharge, and Operations Manager
+    if (!isClusterHead && !isProductionHead && !isOperationsHead) return;
+
+    const checkPendingRequests = async () => {
+      try {
+        const accessToken = await getFreshAccessToken();
+        if (!accessToken) return;
+
+        const result = await api.checkPendingProductionRequests(accessToken);
+        
+        if (result.notificationsSent > 0) {
+          console.log(`🚨 Sent ${result.notificationsSent} notifications for ${result.newPendingCount} delayed pending requests`);
+        }
+      } catch (error) {
+        // Silently fail - this is a background task
+        console.log('Background pending request check failed:', error);
+      }
+    };
+
+    // Check immediately on mount
+    checkPendingRequests();
+
+    // Then check every 30 minutes
+    const interval = setInterval(checkPendingRequests, 30 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [isClusterHead, isProductionHead, isOperationsHead]);
+
   const loadStockThresholds = async () => {
     if (!context.user) return;
     
@@ -1021,7 +1051,12 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           // Store Stock = Opening Balance + Current Month Received - Current Month Sold
           
           const effectiveStoreId = selectedStoreId || context.user?.storeId;
-          const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
+          
+          // Get current month in IST (UTC+5:30)
+          const now = new Date();
+          const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+          const istDate = new Date(now.getTime() + istOffset);
+          const currentMonth = istDate.toISOString().substring(0, 7); // "2026-01"
           
           // Get current month's delivered production requests for this store
           console.log('📦 Stock Status Calculation Debug:', {
@@ -1032,12 +1067,28 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           });
           
           const deliveredRequests = context.productionRequests?.filter(req => {
-            // Only count delivered requests
-            if (req.status !== 'delivered') return false;
+            // Count both delivered and pending requests (pending means delivery confirmation is pending, but stock was received)
+            if (req.status !== 'delivered' && req.status !== 'pending') return false;
             
             // Filter by current month
             const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
-            if (!deliveryDate || !deliveryDate.startsWith(currentMonth)) return false;
+            const matchesMonth = deliveryDate && deliveryDate.startsWith(currentMonth);
+            
+            // Debug log for chicken momo discrepancies
+            console.log('🔍 Delivered Request:', {
+              id: req.id.slice(0, 8),
+              status: req.status,
+              chicken: (req as any).chicken,
+              chickenMomo: (req as any).chickenMomo,
+              chickenMomos: (req as any).chickenMomos,
+              chickenKurkure: (req as any).chickenKurkure,
+              chickenKurkureMomo: (req as any).chickenKurkureMomo,
+              chickenKurkureMomos: (req as any).chickenKurkureMomos,
+              deliveryDate,
+              matchesMonth
+            });
+            
+            if (!matchesMonth) return false;
             
             if (!effectiveStoreId || effectiveStoreId === 'all') {
               // Show all stores
@@ -1058,6 +1109,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             });
             return acc;
           }, {} as Record<string, number>);
+          
+          console.log('📊 After aggregation - deliveredRequests count:', deliveredRequests.length);
+          console.log('📊 After aggregation - totalReceived:', totalReceived);
           
           // Get current month's sales data for this store
           const storeSales = salesData.filter((s: any) => {
@@ -1099,6 +1153,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           console.log('  storeOpeningBalance from state:', storeOpeningBalance);
           console.log('  openingBalance being used:', openingBalance);
           console.log('  totalReceived:', totalReceived);
+          console.log('  🐔 Chicken Momo (chicken) received:', totalReceived.chicken || 0);
+          console.log('  🐔 Chicken Kurkure (chickenKurkure) received:', totalReceived.chickenKurkure || 0);
           console.log('  totalSales:', totalSales);
           console.log('  finishedProducts count:', finishedProducts.length);
           

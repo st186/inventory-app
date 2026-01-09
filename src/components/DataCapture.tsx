@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText, Bug } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { DatePicker } from './DatePicker';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 type DataCaptureProps = {
   context: InventoryContextType;
@@ -47,6 +48,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [periodStats, setPeriodStats] = useState<PeriodStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   // Determine the effective store ID for filtering
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
@@ -204,7 +206,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       if (dateMap.has(sale.date)) {
         const log = dateMap.get(sale.date)!;
         log.salesLogged = true;
-        log.cashDiscrepancy = Math.abs(sale.cashOffset || 0);
+        // Use salesDiscrepancy (settled value) instead of cashOffset to prevent recalculation when inventory is added later
+        log.cashDiscrepancy = Math.abs(sale.salesDiscrepancy !== undefined ? sale.salesDiscrepancy : (sale.cashOffset || 0));
         
         // Set who logged sales
         if (sale.createdByName) {
@@ -303,6 +306,15 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       ? context.stockRequests.filter(req => req.storeId === effectiveStoreId)
       : context.stockRequests;
     
+    console.log('📦 DataCapture - Stock Requests Debug:', {
+      totalStockRequests: context.stockRequests.length,
+      filteredStockRequests: filteredStockRequests.length,
+      effectiveStoreId,
+      stockRequestDates: filteredStockRequests.map(r => r.requestDate),
+      stockRequestIds: filteredStockRequests.map(r => r.id),
+      sampleRequest: filteredStockRequests[0]
+    });
+    
     filteredStockRequests.forEach(req => {
       if (dateMap.has(req.requestDate)) {
         const log = dateMap.get(req.requestDate)!;
@@ -318,11 +330,12 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
           log.stockRequestLoggedBy = 'Unknown User';
         }
         
-        // Get stock request timestamp from ID
+        // Get stock request timestamp from ID (if ID has timestamp prefix)
         const timestamp = req.id.split('-')[0];
         if (timestamp) {
           const timestampNum = parseInt(timestamp);
-          if (!isNaN(timestampNum) && timestampNum > 0) {
+          // Check if it's a valid timestamp (13-digit Unix timestamp in milliseconds, > 1000000000000)
+          if (!isNaN(timestampNum) && timestampNum > 1000000000000) {
             log.stockRequestLoggedAt = new Date(timestampNum).toISOString();
             
             // Check if logged late
@@ -331,6 +344,9 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
             if (entryDate > targetDate) {
               log.lateEntry = true;
             }
+          } else {
+            // Fallback: Old stock requests without timestamp - use requestDate at noon
+            log.stockRequestLoggedAt = new Date(req.requestDate + 'T12:00:00').toISOString();
           }
         }
       }
@@ -417,6 +433,50 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
     }
   };
 
+  const checkDatabaseStockRequests = async () => {
+    try {
+      // Get access token from user session
+      const accessToken = context.user?.accessToken;
+      if (!accessToken) {
+        alert('Not authenticated. Please log in again.');
+        return;
+      }
+
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/debug/stock-keys`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      
+      // Check if response has error
+      if (data.error) {
+        console.error('🐛 Database Debug Error:', data.error);
+        alert(`Error: ${data.error}`);
+        return;
+      }
+      
+      // Check if response has expected structure
+      if (!data.stockRequests) {
+        console.error('🐛 Unexpected response structure:', data);
+        alert('Unexpected response structure. Check console for details.');
+        return;
+      }
+      
+      setDebugInfo(data);
+      console.log('🐛 Database Debug Info:', data);
+      alert(`Stock Requests in Database:\n\nCount: ${data.stockRequests.count}\nIDs: ${data.stockRequests.ids.join(', ') || 'None'}\n\nCheck console for more details.`);
+    } catch (error) {
+      console.error('Error checking database:', error);
+      alert('Error checking database. See console for details.');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -487,6 +547,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
             />
           </div>
         )}
+
+
       </div>
 
       {/* Period Statistics */}

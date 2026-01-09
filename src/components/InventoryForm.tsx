@@ -80,9 +80,12 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
   };
 
   // Merge base items with custom items for the selected category
+  // Remove duplicates by converting to Set and back to array
   const categoryItems = [
-    ...CATEGORY_ITEMS[formData.category],
-    ...(customItems[formData.category] || [])
+    ...new Set([
+      ...CATEGORY_ITEMS[formData.category],
+      ...(customItems[formData.category] || [])
+    ])
   ];
 
   return (

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { OverheadItem } from '../App';
+import { Employee } from '../utils/api';
 import { X } from 'lucide-react';
 
 type Props = {
@@ -7,36 +8,62 @@ type Props = {
   editingItem?: OverheadItem | null;
   onSubmit: (item: Omit<OverheadItem, 'id'>) => void | Promise<void>;
   onClose: () => void;
+  employees: Employee[];
 };
 
 const overheadCategories = [
-  { value: 'fuel', label: 'Fuel Cost' },
-  { value: 'travel', label: 'Travel Cost' },
-  { value: 'transportation', label: 'Transportation Cost' },
-  { value: 'marketing', label: 'Marketing Cost' },
-  { value: 'service_charge', label: 'Service Charge (Food Aggregators)' },
-  { value: 'repair', label: 'Repair Cost' },
-  { value: 'party', label: 'Party Cost' },
-  { value: 'lunch', label: 'Lunch Cost' },
-  { value: 'miscellaneous', label: 'Miscellaneous Cost' }
+  { value: 'fuel', label: '⛽ Fuel Cost' },
+  { value: 'travel', label: '🚗 Travel by Employee' },
+  { value: 'transportation', label: '🚛 Goods Transportation Cost' },
+  { value: 'marketing', label: '📢 Marketing Cost' },
+  { value: 'service_charge', label: '🍔 Service Charge (Food Aggregators)' },
+  { value: 'repair', label: '🔧 Repair Cost' },
+  { value: 'party', label: '🎉 Party Cost' },
+  { value: 'lunch', label: '🍽️ Lunch Cost' },
+  { value: 'emergency_online', label: '🛒 Emergency Online Order (Blinkit)' },
+  { value: 'personal_expense', label: '👤 Personal Expense By an Employee' },
+  { value: 'miscellaneous', label: '📝 Miscellaneous Cost' }
 ] as const;
 
-export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem }: Props) {
+export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees }: Props) {
   const [formData, setFormData] = useState({
     category: editingItem ? editingItem.category : 'fuel' as OverheadItem['category'],
     description: editingItem ? editingItem.description : '',
-    amount: editingItem ? editingItem.amount.toString() : ''
+    amount: editingItem ? editingItem.amount.toString() : '',
+    employeeId: editingItem?.employeeId || '',
+    employeeName: editingItem?.employeeName || ''
   });
+
+  // Update employee name when employee ID changes
+  useEffect(() => {
+    if (formData.category === 'personal_expense' && formData.employeeId) {
+      const selectedEmployee = employees.find(emp => emp.employeeId === formData.employeeId);
+      if (selectedEmployee) {
+        setFormData(prev => ({
+          ...prev,
+          employeeName: selectedEmployee.name
+        }));
+      }
+    }
+  }, [formData.employeeId, formData.category, employees]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    onSubmit({
+    const submissionData: Omit<OverheadItem, 'id'> = {
       date: selectedDate,
       category: formData.category,
       description: formData.description,
       amount: parseFloat(formData.amount)
-    });
+    };
+
+    // Add employee data only for personal_expense category
+    if (formData.category === 'personal_expense') {
+      submissionData.employeeId = formData.employeeId;
+      submissionData.employeeName = formData.employeeName;
+    }
+
+    onSubmit(submissionData);
   };
 
   return (
@@ -60,7 +87,10 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem }: P
               onChange={(e) =>
                 setFormData({
                   ...formData,
-                  category: e.target.value as OverheadItem['category']
+                  category: e.target.value as OverheadItem['category'],
+                  // Reset employee fields when category changes
+                  employeeId: '',
+                  employeeName: ''
                 })
               }
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -74,18 +104,69 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem }: P
             </select>
           </div>
 
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">Description</label>
-            <textarea
-              value={formData.description}
-              onChange={(e) =>
-                setFormData({ ...formData, description: e.target.value })
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              rows={3}
-              required
-            />
-          </div>
+          {formData.category === 'personal_expense' && (
+            <>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Employee ID</label>
+                <select
+                  value={formData.employeeId}
+                  onChange={(e) =>
+                    setFormData({ ...formData, employeeId: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                >
+                  <option value="">Select Employee</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.employeeId}>
+                      {emp.employeeId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {formData.employeeId && formData.employeeName && (
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Employee Name</label>
+                  <input
+                    type="text"
+                    value={formData.employeeName}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Expense Description</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) =>
+                    setFormData({ ...formData, description: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  rows={3}
+                  placeholder="What was the expense for?"
+                  required
+                />
+              </div>
+            </>
+          )}
+
+          {formData.category !== 'personal_expense' && (
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Description</label>
+              <textarea
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData({ ...formData, description: e.target.value })
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                rows={3}
+                required
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm text-gray-700 mb-1">Amount (₹)</label>

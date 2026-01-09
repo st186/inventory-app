@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
+import { Employee } from '../utils/api';
 import { InventoryForm } from './InventoryForm';
 import { OverheadForm } from './OverheadForm';
 import { FixedCostForm } from './FixedCostForm';
@@ -10,9 +11,10 @@ import { Plus } from 'lucide-react';
 type Props = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
+  employees: Employee[];
 };
 
-export function InventoryManagement({ context, selectedStoreId }: Props) {
+export function InventoryManagement({ context, selectedStoreId, employees }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
@@ -194,6 +196,7 @@ export function InventoryManagement({ context, selectedStoreId }: Props) {
         <OverheadForm
           selectedDate={selectedDate}
           editingItem={editingOverhead}
+          employees={employees}
           onSubmit={async (item) => {
             try {
               if (editingOverhead) {

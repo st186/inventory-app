@@ -74,13 +74,11 @@ export function InventoryView({ context, selectedStoreId }: Props) {
   }, {} as Record<string, OverheadItem[]>);
 
   const categoryLabels: Record<string, string> = {
-    fresh_produce: 'Fresh Produce',
-    spices_seasonings: 'Spices & Seasonings',
+    fresh_produce: 'Fresh Vegetables',
+    spices_seasonings: 'Grocery',
     dairy: 'Dairy Products',
-    meat: 'Meat Products',
+    meat: 'Meat',
     packaging: 'Packaging Materials',
-    gas_utilities: 'Gas & Utilities',
-    production: 'Production Items',
     staff_essentials: 'Staff Essentials',
     fuel: 'Fuel',
     travel: 'Travel',

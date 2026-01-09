@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings } from 'lucide-react';
+import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText } from 'lucide-react';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
@@ -196,6 +196,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     to: '2025-12-25'
   });
   const [todayLeaveCount, setTodayLeaveCount] = useState<number>(0);
+  const [todayLeaveDetails, setTodayLeaveDetails] = useState<any[]>([]);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [loadingLeaves, setLoadingLeaves] = useState(true);
   const [payoutsData, setPayoutsData] = useState<any[]>([]);
   const [employeesData, setEmployeesData] = useState<any[]>([]);
@@ -1017,7 +1019,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           return;
         }
         
-        const today = new Date().toISOString().split('T')[0];
+        // Get today's date in IST (UTC+5:30)
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+        const istDate = new Date(now.getTime() + istOffset);
+        const today = istDate.toISOString().split('T')[0];
         
         if (context.user.role === 'cluster_head') {
           // Cluster head: get all leaves
@@ -1026,10 +1032,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
           );
           
+          // Get all employees to enrich leave data
+          const employees = await api.getAllEmployees(accessToken);
+          const employeeMap = new Map(employees.map(emp => [emp.employeeId, emp]));
+          
           // Filter by store if selected (include null/undefined storeIds for backward compatibility)
           if (context.user.storeId) {
-            // Get employees for this store
-            const employees = await api.getAllEmployees(accessToken);
             const storeEmployeeIds = employees
               .filter(emp => 
                 emp.storeId === context.user.storeId || 
@@ -1041,26 +1049,57 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             const storeLeaves = todayApprovedLeaves.filter(
               leave => storeEmployeeIds.includes(leave.employeeId)
             );
+            
+            // Enrich leave data with employee info
+            const enrichedLeaves = storeLeaves.map(leave => ({
+              ...leave,
+              employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
+              storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
+              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+            }));
+            
             setTodayLeaveCount(storeLeaves.length);
+            setTodayLeaveDetails(enrichedLeaves);
           } else {
+            // Enrich all leaves with employee info
+            const enrichedLeaves = todayApprovedLeaves.map(leave => ({
+              ...leave,
+              employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
+              storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
+              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+            }));
+            
             setTodayLeaveCount(todayApprovedLeaves.length);
+            setTodayLeaveDetails(enrichedLeaves);
           }
         } else if (context.user.role === 'manager' && context.user.employeeId) {
           // Manager: get leaves for their employees
           const employees = await api.getEmployeesByManager(context.user.employeeId, accessToken);
-          let managerLeaveCount = 0;
+          const employeeMap = new Map(employees.map(emp => [emp.employeeId, emp]));
+          let managerLeaveDetails: any[] = [];
           
           for (const emp of employees) {
             const leaves = await api.getLeaves(emp.employeeId, accessToken);
             const todayLeaves = leaves.filter(
               (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
             );
-            managerLeaveCount += todayLeaves.length;
+            
+            // Enrich with employee info
+            const enrichedLeaves = todayLeaves.map(leave => ({
+              ...leave,
+              employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
+              storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
+              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+            }));
+            
+            managerLeaveDetails.push(...enrichedLeaves);
           }
           
-          setTodayLeaveCount(managerLeaveCount);
+          setTodayLeaveCount(managerLeaveDetails.length);
+          setTodayLeaveDetails(managerLeaveDetails);
         } else {
           setTodayLeaveCount(0);
+          setTodayLeaveDetails([]);
         }
       } catch (error) {
         console.error('Error loading today\'s leaves:', error);
@@ -1658,11 +1697,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   // Calculate total approved cash discrepancies (losses only - negative cashOffset)
   const calculateCashDiscrepancy = () => {
     // IMPORTANT: Use filteredSalesData which is already time+store filtered
-    // Sum up approved negative discrepancies (losses)
+    // Use salesDiscrepancy (settled value) instead of cashOffset to prevent recalculation when inventory is added later
     const totalLoss = filteredSalesData
       .filter(sale => sale.approvalRequired === false && sale.approvedBy) // Only approved
       .reduce((sum, sale) => {
-        const offset = sale.cashOffset || 0;
+        // Use salesDiscrepancy if available (locked at settlement), fallback to cashOffset for old data
+        const offset = sale.salesDiscrepancy !== undefined ? sale.salesDiscrepancy : (sale.cashOffset || 0);
         // Only count negative offsets as losses
         return sum + (offset < 0 ? Math.abs(offset) : 0);
       }, 0);
@@ -1691,9 +1731,85 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             <p className="text-sm sm:text-base text-gray-600">Track revenue, expenses, and profitability</p>
           </div>
           
-          {/* Cleanup Button for Cluster Heads */}
-          {isClusterHead && (
+          {/* Cleanup Button for Cluster Heads - Removed */}
+          {isClusterHead && false && (
             <div className="flex gap-2">
+              {/* Migration Button for Sales Discrepancy */}
+              <button
+                onClick={async () => {
+                  if (!confirm('🔄 This will update all sales records to lock their discrepancy values.\n\nThis prevents discrepancies from changing when inventory is added later.\n\nThis is a ONE-TIME operation. Continue?')) {
+                    return;
+                  }
+                  
+                  try {
+                    if (!context.user?.accessToken) {
+                      alert('Not authenticated');
+                      return;
+                    }
+                    
+                    // Call the migration API endpoint
+                    const result = await api.migrateSalesDiscrepancy(context.user.accessToken);
+                    
+                    if (result.updated === 0) {
+                      alert('✅ All sales records already have locked discrepancy values!');
+                      return;
+                    }
+                    
+
+
+                    
+                    alert(`✅ Migration Complete!\n\nUpdated ${result.updated} of ${result.total} sales records.\n\nPlease refresh the page.`);
+                    
+                    // Reload the page
+                    window.location.reload();
+                  } catch (error) {
+                    console.error('Migration error:', error);
+                    alert('Failed to migrate sales data. Please try again.');
+                  }
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm flex items-center gap-2 shadow-lg"
+                title="Lock sales discrepancy values (one-time migration)"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span className="hidden sm:inline">Fix Discrepancy</span>
+                <span className="sm:hidden">Fix</span>
+              </button>
+              
+              {/* Migration Button for Stock Request Timestamps */}
+              <button
+                onClick={async () => {
+                  if (!confirm('🔄 This will update all stock request IDs to include timestamps.\\n\\nThis enables proper tracking of when requests were created in the Data Capture view.\\n\\nThis is a ONE-TIME operation. Continue?')) {
+                    return;
+                  }
+                  
+                  try {
+                    if (!context.user?.accessToken) {
+                      alert('Not authenticated');
+                      return;
+                    }
+                    
+                    const result = await api.migrateStockRequestTimestamps(context.user.accessToken);
+                    
+                    if (result.updated === 0) {
+                      alert('✅ All stock requests already have timestamp IDs!');
+                      return;
+                    }
+                    
+                    alert(`✅ Migration Complete!\\n\\nUpdated ${result.updated} stock requests (${result.skipped} already had timestamps).\\n\\nPlease refresh the page.`);
+                    window.location.reload();
+                  } catch (error) {
+                    console.error('Migration error:', error);
+                    alert('Failed to migrate stock requests. Please try again.');
+                  }
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center gap-2 shadow-lg"
+                title="Add timestamps to stock request IDs (one-time migration)"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span className="hidden sm:inline">Fix Stock Requests</span>
+                <span className="sm:hidden">Fix SR</span>
+              </button>
+              
               <button
               onClick={async () => {
                 if (!confirm('⚠️ This will remove all duplicate entries from the database.\n\nDuplicates found:\n- Inventory items\n- Overhead items\n- Sales records\n\nContinue?')) {
@@ -1735,11 +1851,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
         {/* Leave Alert Bar */}
         {!loadingLeaves && (context.user?.role === 'cluster_head' || context.user?.role === 'manager') && (
-          <div className={`mb-4 sm:mb-6 rounded-lg shadow-sm border-2 p-4 transition-all ${
-            todayLeaveCount === 0
-              ? 'bg-green-50 border-green-200'
-              : 'bg-orange-50 border-orange-200'
-          }`}>
+          <div 
+            onClick={() => setShowLeaveModal(true)}
+            className={`mb-4 sm:mb-6 rounded-lg shadow-sm border-2 p-4 transition-all cursor-pointer hover:shadow-md ${
+              todayLeaveCount === 0
+                ? 'bg-green-50 border-green-200 hover:bg-green-100'
+                : 'bg-orange-50 border-orange-200 hover:bg-orange-100'
+            }`}
+          >
             <div className="flex items-center gap-3">
               {todayLeaveCount === 0 ? (
                 <>
@@ -1754,6 +1873,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       {context.user.storeId ? 'No employees on leave in this store' : 'No employees on leave across all stores'}
                     </p>
                   </div>
+                  <div className="text-green-600 text-sm">Click to view</div>
                 </>
               ) : (
                 <>
@@ -1768,6 +1888,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       {context.user.storeId ? 'In this store' : 'Across all stores'}
                     </p>
                   </div>
+                  <div className="text-orange-600 text-sm">Click to view details</div>
                 </>
               )}
             </div>
@@ -3417,7 +3538,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                                              0;
                 });
                 
-                console.log('💰 Stock Calculation with Carry-Forward:');
+                console.log('��� Stock Calculation with Carry-Forward:');
                 console.log('  previousMonthStock (raw):', previousMonthStock);
                 console.log('  Opening Balance (processed):', openingBalance);
                 console.log('  Current Month Production:', totalProduced);
@@ -4937,6 +5058,126 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               >
                 <Check className="w-5 h-5" />
                 Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Details Modal */}
+      {showLeaveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <UserX className="w-6 h-6" />
+                <h3 className="text-xl">Leave Details - Today</h3>
+              </div>
+              <button
+                onClick={() => setShowLeaveModal(false)}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-2 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
+              {todayLeaveCount === 0 ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Users className="w-8 h-8 text-green-600" />
+                  </div>
+                  <p className="text-lg text-gray-900 mb-2">Everyone is working today! 🎉</p>
+                  <p className="text-sm text-gray-600">
+                    {context.user?.storeId 
+                      ? 'No employees on leave in this store' 
+                      : 'No employees on leave across all stores'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <p className="text-gray-700">
+                      <span className="text-xl font-bold text-orange-600">{todayLeaveCount}</span> {todayLeaveCount === 1 ? 'employee' : 'employees'} on leave
+                    </p>
+                  </div>
+
+                  {/* Leave List */}
+                  <div className="space-y-3">
+                    {todayLeaveDetails.map((leave, index) => (
+                      <div 
+                        key={leave.id || index}
+                        className="bg-orange-50 border border-orange-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                                <Users className="w-5 h-5 text-orange-600" />
+                              </div>
+                              <div>
+                                <p className="text-gray-900 font-semibold">{leave.employeeName}</p>
+                                <p className="text-sm text-gray-600">Employee ID: {leave.employeeId}</p>
+                              </div>
+                            </div>
+
+                            <div className="ml-12 space-y-1">
+                              {leave.storeName && leave.storeName !== 'N/A' && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Package className="w-4 h-4 text-gray-500" />
+                                  <span className="text-gray-700">{leave.storeName}</span>
+                                  {leave.storeId && leave.storeId !== 'N/A' && (
+                                    <span className="text-gray-500">({leave.storeId})</span>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {leave.reason && (
+                                <div className="flex items-start gap-2 text-sm mt-2">
+                                  <FileText className="w-4 h-4 text-gray-500 mt-0.5" />
+                                  <div>
+                                    <p className="text-gray-600 font-medium">Reason:</p>
+                                    <p className="text-gray-700">{leave.reason}</p>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              <div className="flex items-center gap-2 text-sm mt-2">
+                                <Calendar className="w-4 h-4 text-gray-500" />
+                                <span className="text-gray-600">
+                                  Date: {new Date(leave.leaveDate).toLocaleDateString('en-US', { 
+                                    weekday: 'short', 
+                                    month: 'short', 
+                                    day: 'numeric', 
+                                    year: 'numeric' 
+                                  })}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="ml-4">
+                            <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                              Approved
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-gray-50 px-6 py-4 flex justify-end border-t border-gray-200">
+              <button
+                onClick={() => setShowLeaveModal(false)}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

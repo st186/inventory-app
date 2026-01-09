@@ -100,6 +100,10 @@ export function Notifications({ onNavigate }: NotificationsProps) {
         case 'stock_request_cancelled':
           onNavigate('stock-requests', notification.relatedDate || undefined, notification.relatedId || undefined);
           break;
+        // Delayed pending request notifications
+        case 'stock_request_delayed':
+          onNavigate('production-requests', notification.relatedDate || undefined, notification.relatedId || undefined);
+          break;
       }
     }
 

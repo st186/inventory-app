@@ -38,7 +38,7 @@ import * as pushNotifications from './utils/pushNotifications';
 export type InventoryItem = {
   id: string;
   date: string;
-  category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'gas_utilities' | 'production' | 'staff_essentials';
+  category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'staff_essentials';
   itemName: string;
   quantity: number;
   unit: string;
@@ -53,20 +53,29 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'miscellaneous';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous';
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
+  employeeId?: string; // For personal_expense category
+  employeeName?: string; // For personal_expense category
 };
 
 export type FixedCostItem = {
   id: string;
-  category: 'electricity' | 'rent';
+  category: 'electricity' | 'rent' | 'lpg_gas';
   amount: number;
   description: string;
   date: string;
   userId: string;
   storeId?: string;
+  // LPG Gas specific fields
+  units?: number;
+  unitPrice?: number;
+  // Payment method fields
+  paymentMethod?: 'cash' | 'online' | 'both';
+  cashAmount?: number; // Amount paid via cash (for 'both' option)
+  onlineAmount?: number; // Amount paid via online (for 'both' option)
 };
 
 export type SalesData = {
@@ -84,6 +93,7 @@ export type SalesData = {
   approvalStatus: 'pending' | 'approved';
   actualCashInHand: number;
   cashOffset: number;
+  salesDiscrepancy?: number; // Settled discrepancy at time of sales settlement (locked value)
   approvalRequired: boolean;
   approvedBy: string | null;
   approvedAt: string | null;
@@ -389,6 +399,7 @@ export default function App() {
       setCategorySalesData(categorySalesResponse.data || []); // NEW: Set category sales data
       setProductionData(uniqueProductionData);
       setProductionHouses(productionHousesData);
+      console.log('📦 Loaded Stock Requests from API:', stockRequestsData.length, stockRequestsData);
       setStockRequests(stockRequestsData);
       setProductionRequests(productionRequestsData);
       setInventoryItems(inventoryItemsData); // NEW: Set inventory items metadata
@@ -2127,7 +2138,7 @@ export default function App() {
         ) : activeView === 'inventory' ? (
           // Only Operations Manager can edit, others get read-only view
           user.role === 'manager' ? (
-            <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} />
+            <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} employees={employees} />
           ) : (
             <InventoryView context={contextValue} selectedStoreId={selectedStoreId} />
           )

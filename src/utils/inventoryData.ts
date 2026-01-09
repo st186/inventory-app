@@ -1,11 +1,9 @@
 export const INVENTORY_CATEGORIES = {
-  fresh_produce: '🥬 Fresh Produce',
-  spices_seasonings: '🌶️ Spices & Seasonings',
+  fresh_produce: '🥬 Fresh Vegetables',
+  spices_seasonings: '🌶️ Grocery',
   dairy: '🧈 Dairy Products',
-  meat: '🍖 Meat & Protein',
+  meat: '🍖 Meat',
   packaging: '📦 Packaging Materials',
-  gas_utilities: '⚡ Gas & Utilities',
-  production: '🔨 Production Ingredients',
   staff_essentials: '👔 Staff Essentials'
 } as const;
 
@@ -44,24 +42,25 @@ export const CATEGORY_ITEMS = {
   dairy: ['Butter', 'Cheese'],
   meat: ['Chicken'],
   packaging: ['Butter Paper', 'Carry Bag', 'Container', 'Tissue Paper'],
-  gas_utilities: ['LPG Gas'],
-  production: ['Dough', 'Batter', 'Stuffing'],
   staff_essentials: ['Labour', 'Cleaning', 'Water', 'Electricity']
 } as const;
 
 export const OVERHEAD_CATEGORIES = {
   fuel: '⛽ Fuel Cost',
-  travel: '🚗 Travel Cost',
-  transportation: '🚛 Transportation Cost',
+  travel: '🚗 Travel by Employee',
+  transportation: '🚛 Goods Transportation Cost',
   marketing: '📢 Marketing Cost',
   service_charge: '🍔 Service Charge (Food Aggregators)',
   repair: '🔧 Repair Cost',
   party: '🎉 Party Cost',
   lunch: '🍽️ Lunch Cost',
+  emergency_online: '🛒 Emergency Online Order (Blinkit)',
+  personal_expense: '👤 Personal Expense By an Employee',
   miscellaneous: '📝 Miscellaneous Cost'
 } as const;
 
 export const FIXED_COST_CATEGORIES: Record<string, string> = {
   electricity: '⚡ Electricity',
-  rent: '🏠 Rent'
+  rent: '🏠 Rent',
+  lpg_gas: '🔥 LPG Gas Cost (Cylinders)'
 };

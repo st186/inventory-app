@@ -188,9 +188,37 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     return inventoryCost + overheadCost;
   }, [context.inventory, context.overheads, selectedDate]);
 
+  // Calculate fixed costs paid via cash (to deduct from Expected Cash in Hand)
+  const fixedCostsCash = useMemo(() => {
+    return context.fixedCosts
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'cash') {
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.cashAmount) {
+          return sum + item.cashAmount;
+        }
+        return sum;
+      }, 0);
+  }, [context.fixedCosts, selectedDate]);
+
+  // Calculate fixed costs paid via online/Paytm (to deduct from Online Cash in Hand)
+  const fixedCostsOnline = useMemo(() => {
+    return context.fixedCosts
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'online') {
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
+          return sum + item.onlineAmount;
+        }
+        return sum;
+      }, 0);
+  }, [context.fixedCosts, selectedDate]);
+
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number) => {
-    return prevCash + paytmAmount + cashReceived - expenses - salary;
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number, fixedCostsCash: number) => {
+    return prevCash + paytmAmount + cashReceived - expenses - salary - fixedCostsCash;
   };
 
   // Calculate expected cash for current form data
@@ -199,8 +227,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const cashReceived = parseFloat(formData.cashAmount) || 0;
     const salary = totalContractPayout; // Use total from contract workers
     const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount);
-  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney]);
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount, fixedCostsCash);
+  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney, fixedCostsCash]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -223,8 +251,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       .filter(s => s.date <= selectedDate)
       .reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0);
     
-    return allPaytmReceived - allUsedOnlineMoney;
-  }, [context.salesData, selectedDate]);
+    // Subtract all fixed costs paid via online up to and including selected date
+    const allFixedCostsOnline = context.fixedCosts
+      .filter(item => item.date <= selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'online') {
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
+          return sum + item.onlineAmount;
+        }
+        return sum;
+      }, 0);
+    
+    return allPaytmReceived - allUsedOnlineMoney - allFixedCostsOnline;
+  }, [context.salesData, context.fixedCosts, selectedDate]);
 
   // Load existing data when date changes
   useEffect(() => {
@@ -287,6 +327,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       usedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
       actualCashInHand: actualCash,
       cashOffset: offset,
+      // CRITICAL: Preserve the original salesDiscrepancy if it exists (locked at first settlement), otherwise set to current offset
+      // This ensures that once a discrepancy is locked (either at initial settlement or after approval), it NEVER changes
+      salesDiscrepancy: salesForDate?.salesDiscrepancy !== undefined 
+        ? salesForDate.salesDiscrepancy 
+        : offset,
       approvalRequired: needsApproval,
       approvalStatus: needsManagerApproval ? 'pending' : 'approved', // Auto-approve for operations manager
       createdBy: context.user?.employeeId || context.user?.email || 'unknown',
@@ -973,6 +1018,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
                       Cash Received: ₹{cash.toFixed(2)} - 
                       Expenses: ₹{totalExpenses.toFixed(2)} - 
+                      Fixed Costs (Cash): ₹{fixedCostsCash.toFixed(2)} - 
                       Contract Payouts: ₹{totalContractPayout.toFixed(2)}
                     </p>
                     <details className="mt-2">
@@ -982,7 +1028,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
                         <p>Inventory Cost: ₹{context.inventory.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.totalCost, 0).toFixed(2)} ({context.inventory.filter(item => item.date === selectedDate).length} items)</p>
                         <p>Overhead Cost: ₹{context.overheads.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.overheads.filter(item => item.date === selectedDate).length} items)</p>
-                        <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
+                        <p>Fixed Costs (Cash): ₹{fixedCostsCash.toFixed(2)} ({context.fixedCosts.filter(item => item.date === selectedDate && (item.paymentMethod === 'cash' || item.paymentMethod === 'both')).length} items)</p>
+                        <p className="font-medium mt-1">Total: ₹{(totalExpenses + fixedCostsCash).toFixed(2)}</p>
                       </div>
                     </details>
                   </div>
@@ -1189,10 +1236,24 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 <span>- Total Used:</span>
                 <span>₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}</span>
               </div>
+              <div className="flex justify-between text-red-700">
+                <span>- Fixed Costs (Online):</span>
+                <span>₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                  if (item.paymentMethod === 'online') return sum + item.amount;
+                  if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                  return sum;
+                }, 0).toLocaleString()}</span>
+              </div>
               <div className="flex justify-between text-gray-700 pt-2 border-t border-gray-700/20">
                 <span>Used Today:</span>
                 <span>₹{(parseFloat(formData.usedOnlineMoney) || 0).toLocaleString()}</span>
               </div>
+              {fixedCostsOnline > 0 && (
+                <div className="flex justify-between text-gray-700">
+                  <span>Fixed Costs Today (Online):</span>
+                  <span>₹{fixedCostsOnline.toLocaleString()}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

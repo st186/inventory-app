@@ -474,7 +474,6 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
   }
 
   try {
-    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -482,7 +481,17 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const key = `inventory:${userId}:${itemId}`;
+    
+    // Find the inventory item by searching all inventory items with this ID
+    const allInventory = await kv.getByPrefix('inventory:');
+    const targetInventory = allInventory?.find((item: any) => item.id === itemId);
+    
+    if (!targetInventory) {
+      return c.json({ error: 'Inventory item not found' }, 404);
+    }
+    
+    // Construct the key using the original creator's userId
+    const key = `inventory:${targetInventory.userId}:${itemId}`;
     
     await kv.del(key);
     
@@ -591,7 +600,6 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
   }
 
   try {
-    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -599,7 +607,17 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const key = `overhead:${userId}:${itemId}`;
+    
+    // Find the overhead item by searching all overhead items with this ID
+    const allOverheads = await kv.getByPrefix('overhead:');
+    const targetOverhead = allOverheads?.find((item: any) => item.id === itemId);
+    
+    if (!targetOverhead) {
+      return c.json({ error: 'Overhead item not found' }, 404);
+    }
+    
+    // Construct the key using the original creator's userId
+    const key = `overhead:${targetOverhead.userId}:${itemId}`;
     
     await kv.del(key);
     
@@ -711,7 +729,6 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
   }
 
   try {
-    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -719,7 +736,17 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const key = `fixedcost:${userId}:${itemId}`;
+    
+    // Find the fixed cost item by searching all fixed cost items with this ID
+    const allFixedCosts = await kv.getByPrefix('fixedcost:');
+    const targetFixedCost = allFixedCosts?.find((item: any) => item.id === itemId);
+    
+    if (!targetFixedCost) {
+      return c.json({ error: 'Fixed cost item not found' }, 404);
+    }
+    
+    // Construct the key using the original creator's userId
+    const key = `fixedcost:${targetFixedCost.userId}:${itemId}`;
     
     await kv.del(key);
     
@@ -898,6 +925,51 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
   }
 });
 
+// Migrate sales discrepancy values (cluster head only)
+app.post('/make-server-c2dd9b9d/sales/migrate-discrepancy', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+
+    // Only cluster heads can run migration
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can run migration' }, 403);
+    }
+
+    // Get all sales data
+    const allSales = await kv.getByPrefix('sales:');
+    
+    let updated = 0;
+    const salesToUpdate = allSales.filter((sale: any) => sale.salesDiscrepancy === undefined);
+    
+    // Update each sale to set salesDiscrepancy = cashOffset
+    for (const sale of salesToUpdate) {
+      const key = `sales:${sale.userId}:${sale.id}`;
+      const updatedSale = {
+        ...sale,
+        salesDiscrepancy: sale.cashOffset || 0
+      };
+      await kv.set(key, updatedSale);
+      updated++;
+    }
+    
+    return c.json({ 
+      success: true, 
+      updated,
+      total: allSales.length,
+      message: `Updated ${updated} sales records with locked discrepancy values`
+    });
+  } catch (error) {
+    console.log('Error migrating sales discrepancy:', error);
+    return c.json({ error: 'Failed to migrate sales data' }, 500);
+  }
+});
+
+
 // Request approval for high discrepancy (manager)
 app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -1004,6 +1076,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
       ...existingSale,
       actualCashInHand: existingSale.requestedCashInHand,
       cashOffset: existingSale.requestedOffset,
+      salesDiscrepancy: existingSale.requestedOffset, // CRITICAL: Lock the discrepancy value at approval time
       approvalRequired: false,
       approvalStatus: 'approved', // Explicitly set approval status
       approvedBy: authResult.user.email,
@@ -4951,6 +5024,112 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
   }
 });
 
+// Check for pending production requests > 12 hours and send notifications
+app.post('/make-server-c2dd9b9d/production-requests/check-pending', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+
+  try {
+    const allRequests = await kv.getByPrefix('production_request:');
+    const now = new Date();
+    const twelveHoursAgo = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+    
+    console.log('🕐 Checking for pending requests > 12 hours. Current time:', now.toISOString());
+    
+    // Filter pending requests older than 12 hours
+    const oldPendingRequests = allRequests.filter((req: any) => {
+      if (req.status !== 'pending') return false;
+      
+      const requestDate = new Date(req.requestDate || req.createdAt);
+      const isPastThreshold = requestDate < twelveHoursAgo;
+      
+      if (isPastThreshold) {
+        console.log(`⏰ Found old pending request: ${req.id.slice(0, 8)}, created: ${requestDate.toISOString()}`);
+      }
+      
+      return isPastThreshold;
+    });
+    
+    if (oldPendingRequests.length === 0) {
+      console.log('✅ No pending requests > 12 hours');
+      return c.json({ 
+        checked: true, 
+        oldPendingCount: 0,
+        notificationsSent: 0
+      });
+    }
+    
+    console.log(`🚨 Found ${oldPendingRequests.length} pending requests > 12 hours`);
+    
+    // Get all notified request IDs to avoid duplicates
+    const notifiedRequests = await kv.getByPrefix('notified_pending_request:');
+    const notifiedRequestIds = new Set(notifiedRequests.map((n: any) => n.requestId));
+    
+    // Get recipients: Cluster Heads, Production Incharge, Operations Manager
+    const clusterHeads = await getAllClusterHeads();
+    const productionHeads = await getAllProductionHeads();
+    const operationsManagers = await getOperationsManagers();
+    
+    const recipients = [
+      ...clusterHeads,
+      ...productionHeads,
+      ...operationsManagers.filter(m => m.designation === 'operations_incharge')
+    ];
+    
+    console.log(`👥 Found ${recipients.length} recipients for notifications`);
+    
+    let notificationsSent = 0;
+    
+    for (const request of oldPendingRequests) {
+      // Skip if already notified
+      if (notifiedRequestIds.has(request.id)) {
+        console.log(`⏭️ Skipping already notified request: ${request.id.slice(0, 8)}`);
+        continue;
+      }
+      
+      const requestAge = Math.floor((now.getTime() - new Date(request.requestDate || request.createdAt).getTime()) / (1000 * 60 * 60));
+      
+      // Send notifications to all recipients
+      for (const recipient of recipients) {
+        if (recipient.authUserId) {
+          await createNotification(
+            recipient.authUserId,
+            'stock_request_delayed',
+            '⏰ Stock Request Delayed',
+            `Stock request from ${request.storeName || 'Unknown Store'} has been pending for ${requestAge}+ hours. Please take action.`,
+            request.id,
+            request.requestDate
+          );
+          notificationsSent++;
+        }
+      }
+      
+      // Mark this request as notified
+      await kv.set(`notified_pending_request:${request.id}`, {
+        requestId: request.id,
+        notifiedAt: now.toISOString(),
+        requestDate: request.requestDate || request.createdAt
+      });
+      
+      console.log(`📬 Sent ${recipients.filter(r => r.authUserId).length} notifications for request: ${request.id.slice(0, 8)}`);
+    }
+    
+    console.log(`✅ Check complete. Sent ${notificationsSent} notifications for ${oldPendingRequests.length - notifiedRequestIds.size} requests`);
+    
+    return c.json({ 
+      checked: true, 
+      oldPendingCount: oldPendingRequests.length,
+      newPendingCount: oldPendingRequests.length - notifiedRequestIds.size,
+      notificationsSent
+    });
+  } catch (error: any) {
+    console.error('Error checking pending requests:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // ============================================
 // SALES DATA ENDPOINTS (XLSX Upload)
 // ============================================
@@ -5599,7 +5778,9 @@ app.get('/make-server-c2dd9b9d/stock-requests', async (c) => {
 
   try {
     const requests = await kv.getByPrefix('stock_request_');
-    console.log('Retrieved stock requests:', requests.length);
+    console.log('📦 Server: Retrieved stock requests:', requests.length);
+    console.log('📦 Server: Sample stock request:', requests[0]);
+    console.log('📦 Server: All stock request IDs:', requests.map(r => r.id));
     return c.json({ stockRequests: requests });
   } catch (error: any) {
     console.error('Error fetching stock requests:', error);
@@ -5631,7 +5812,8 @@ app.post('/make-server-c2dd9b9d/stock-requests', async (c) => {
       return c.json({ error: 'Missing required fields' }, 400);
     }
 
-    const id = crypto.randomUUID();
+    // Generate ID with timestamp prefix for tracking when request was created (consistent with other data types)
+    const id = `${Date.now()}-${crypto.randomUUID()}`;
     const stockRequest = {
       id,
       storeId,
@@ -5875,6 +6057,112 @@ app.post('/make-server-c2dd9b9d/fix-stock-requests', async (c) => {
     });
   } catch (error: any) {
     console.error('Error fixing stock requests:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Add timestamps to old stock request IDs (cluster head only)
+app.post('/make-server-c2dd9b9d/migrate-stock-request-timestamps', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+
+  try {
+    const role = auth.user.user_metadata?.role;
+    
+    // Only cluster heads can run migration
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can run migration' }, 403);
+    }
+
+    console.log('🔧 Starting stock request timestamp migration...');
+    
+    // Get all stock requests
+    const allRequests = await kv.getByPrefix('stock_request_');
+    console.log(`Found ${allRequests.length} stock requests to check`);
+    
+    let updated = 0;
+    let skipped = 0;
+    
+    for (const request of allRequests) {
+      // Check if ID already has timestamp (contains 13-digit number at the start)
+      const firstPart = request.id.split('-')[0];
+      const isTimestamp = !isNaN(parseInt(firstPart)) && parseInt(firstPart) > 1000000000000;
+      
+      if (isTimestamp) {
+        // Already has timestamp, skip
+        skipped++;
+        continue;
+      }
+      
+      // Generate timestamp from requestDate (use noon on that date)
+      const requestDateObj = new Date(request.requestDate + 'T12:00:00');
+      const timestamp = requestDateObj.getTime();
+      
+      // Create new ID with timestamp prefix
+      const newId = `${timestamp}-${request.id}`;
+      
+      // Delete old key
+      await kv.del(`stock_request_${request.id}`);
+      
+      // Save with new key
+      const updatedRequest = {
+        ...request,
+        id: newId
+      };
+      await kv.set(`stock_request_${newId}`, updatedRequest);
+      
+      updated++;
+      console.log(`Migrated: ${request.id} -> ${newId}`);
+    }
+    
+    console.log(`✅ Migration complete: ${updated} updated, ${skipped} skipped`);
+    
+    return c.json({
+      success: true,
+      updated,
+      skipped,
+      total: allRequests.length,
+      message: `Updated ${updated} stock requests with timestamp IDs`
+    });
+  } catch (error: any) {
+    console.error('Error migrating stock request timestamps:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Debug endpoint: Check all stock-related keys in database (cluster head only)
+app.get('/make-server-c2dd9b9d/debug/stock-keys', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+
+  try {
+    const role = auth.user.user_metadata?.role;
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can access debug endpoints' }, 403);
+    }
+
+    // Get all stock requests
+    const stockRequests = await kv.getByPrefix('stock_request_');
+    
+    console.log('🔍 Debug: Stock-related keys:', {
+      stockRequestCount: stockRequests.length,
+      stockRequestIds: stockRequests.map(r => r.id),
+      sampleStockRequest: stockRequests[0]
+    });
+
+    return c.json({
+      stockRequests: {
+        count: stockRequests.length,
+        ids: stockRequests.map(r => r.id),
+        sample: stockRequests[0] || null
+      }
+    });
+  } catch (error: any) {
+    console.error('Error checking stock keys:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -6834,7 +7122,8 @@ app.post('/make-server-c2dd9b9d/cleanup-production-data', async (c) => {
         key.startsWith('notification:') ||        // Notifications
         key.startsWith('stock-request:') ||       // Stock requests
         key.startsWith('stock-recalibration:') || // Monthly stock recalibrations
-        key.startsWith('production-request:');    // Production requests
+        key.startsWith('production-request:') ||  // Production requests
+        key.startsWith('notified_pending_request:'); // Pending request notification tracking
       
       // MASTER DATA TO PRESERVE
       // These are configuration and employee records
