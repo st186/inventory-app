@@ -1,7 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, ProductionData } from '../App';
-import { Factory, ChefHat, Soup, Trash2, CheckCircle, AlertTriangle, CheckSquare } from 'lucide-react';
+import { Factory, ChefHat, Soup, Trash2, CheckCircle, AlertTriangle, CheckSquare, Eraser } from 'lucide-react';
 import { DateSelector } from './DateSelector';
+import * as api from '../utils/api';
+import { toast } from 'sonner@2.0.3';
+import { logger } from '../utils/logger';
 
 type Props = {
   context: InventoryContextType;
@@ -13,26 +16,29 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
     new Date().toISOString().split('T')[0]
   );
   const [activeTab, setActiveTab] = useState<'entry' | 'approvals'>('entry');
+  const [submitting, setSubmitting] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
 
   const isProductionIncharge = context.user?.designation === 'production_incharge';
   const isOperationsManager = context.user?.role === 'manager' && context.user?.designation !== 'store_incharge' && context.user?.designation !== 'production_incharge';
   const isClusterHead = context.user?.role === 'cluster_head';
   const canEdit = isProductionIncharge;
   const canApprove = isOperationsManager; // Only Operations Managers can approve (Cluster Heads can only view)
+  const canViewApprovals = isOperationsManager || isClusterHead; // Both can view approvals tab
 
   // Get production data for selected date (filtered by selected store, not user's store)
   const productionForDate = useMemo(() => {
     // Use selectedStoreId prop (from store selector) instead of user's storeId
     // This allows cluster heads to view data for any selected store
     const effectiveStoreId = selectedStoreId || context.user?.storeId;
-    console.log('🏪 ProductionManagement - effectiveStoreId:', effectiveStoreId);
-    console.log('🏪 ProductionManagement - selectedStoreId prop:', selectedStoreId);
-    console.log('🏪 ProductionManagement - user storeId:', context.user?.storeId);
-    console.log('🏪 ProductionManagement - all production storeIds:', context.productionData.map(p => ({ date: p.date, storeId: p.storeId })));
+    logger.debugProduction('ProductionManagement - effectiveStoreId:', effectiveStoreId);
+    logger.debugProduction('ProductionManagement - selectedStoreId prop:', selectedStoreId);
+    logger.debugProduction('ProductionManagement - user storeId:', context.user?.storeId);
     const filteredProduction = effectiveStoreId 
       ? context.productionData.filter(p => p.storeId === effectiveStoreId)
       : context.productionData;
-    console.log('🏪 ProductionManagement - filtered production count:', filteredProduction.length);
+    logger.debugProduction('ProductionManagement - filtered production count:', filteredProduction.length);
     return filteredProduction.find(p => p.date === selectedDate);
   }, [context.productionData, selectedDate, selectedStoreId, context.user?.storeId]);
 
@@ -102,6 +108,12 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Prevent duplicate submissions
+    if (submitting) {
+      logger.warn('Submission already in progress, ignoring duplicate request');
+      return;
+    }
+
     const productionData: Omit<ProductionData, 'id'> = {
       ...formData,
       date: selectedDate,
@@ -120,6 +132,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
     console.log('  - Full production data:', productionData);
 
     try {
+      setSubmitting(true);
       if (productionForDate) {
         await context.updateProductionData(productionForDate.id, productionData);
         alert('Production data updated successfully!');
@@ -130,12 +143,22 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
     } catch (error) {
       console.error('Error saving production data:', error);
       alert('Failed to save production data. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleApprove = async () => {
     if (!productionForDate) return;
+    
+    // Prevent duplicate approvals
+    if (approving) {
+      console.log('⚠️ Approval already in progress, ignoring duplicate request');
+      return;
+    }
+    
     try {
+      setApproving(true);
       await context.approveProductionData(productionForDate.id);
       
       // Update production house inventory after approval
@@ -189,22 +212,71 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
     } catch (error) {
       console.error('Error approving production:', error);
       alert('Failed to approve production data. Please try again.');
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleCleanupDuplicates = async () => {
+    if (!confirm('This will remove duplicate pending production entries, keeping only the original entry for each date. Continue?')) {
+      return;
+    }
+
+    setCleaning(true);
+    try {
+      const result = await api.cleanupDuplicateProduction();
+      
+      if (result.success) {
+        toast.success(result.message);
+        
+        // Show details if any duplicates were found
+        if (result.duplicatesFound > 0) {
+          console.log('🧹 Cleanup Details:', result.details);
+          
+          // Automatically reload the page to refresh data
+          toast.info('Refreshing data...', { duration: 2000 });
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+        } else {
+          toast.info('No duplicate entries found!');
+          setCleaning(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up duplicates:', error);
+      toast.error('Failed to clean up duplicates. Please try again.');
+      setCleaning(false);
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-3xl text-gray-900 flex items-center gap-3">
-          <Factory className="w-8 h-8 text-orange-600" />
-          Production Management
-        </h1>
-        <p className="text-gray-600 mt-2">Log daily production data for momos, sauces, and track wastage</p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl text-gray-900 flex items-center gap-3">
+            <Factory className="w-8 h-8 text-orange-600" />
+            Production Management
+          </h1>
+          <p className="text-gray-600 mt-2">Log daily production data for momos, sauces, and track wastage</p>
+        </div>
+        
+        {/* Cleanup button for Cluster Heads */}
+        {isClusterHead && activeTab === 'approvals' && (
+          <button
+            onClick={handleCleanupDuplicates}
+            disabled={cleaning}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg"
+          >
+            <Eraser className="w-4 h-4" />
+            {cleaning ? 'Cleaning...' : 'Clean Duplicates'}
+          </button>
+        )}
       </div>
 
       {/* Tab Navigation for Operations Managers/Cluster Heads */}
-      {canApprove && (
+      {canViewApprovals && (
         <div className="bg-white rounded-xl shadow-sm p-1 mb-6 flex gap-2">
           <button
             onClick={() => setActiveTab('entry')}
@@ -243,7 +315,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
       )}
 
       {/* Pending Approvals View */}
-      {activeTab === 'approvals' && canApprove && (
+      {activeTab === 'approvals' && canViewApprovals && (
         <div className="space-y-4">
           {(() => {
             const pendingProduction = context.productionData
@@ -440,10 +512,11 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
           </p>
           <button
             onClick={handleApprove}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+            disabled={approving}
+            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckSquare className="w-5 h-5" />
-            Approve Production Data
+            {approving ? 'Approving...' : 'Approve Production Data'}
           </button>
         </div>
       )}
@@ -1004,9 +1077,10 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
           <div className="flex justify-end">
             <button
               type="submit"
-              className="px-8 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all shadow-lg"
+              disabled={submitting}
+              className="px-8 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {productionForDate ? 'Update Production Data' : 'Save Production Data'}
+              {submitting ? 'Submitting...' : (productionForDate ? 'Update Production Data' : 'Save Production Data')}
             </button>
           </div>
         )}

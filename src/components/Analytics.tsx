@@ -12,6 +12,8 @@ import { DatePicker } from './DatePicker';
 import { RecalibrationReports } from './RecalibrationReports';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
 import { getSupabaseClient } from '../utils/supabase/client';
+import { logger } from '../utils/logger';
+import * as exportUtils from '../utils/export';
 
 interface AnalyticsProps {
   context: InventoryContextType;
@@ -138,6 +140,7 @@ type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
+  const isAudit = context.user?.role === 'audit';
   const isProductionIncharge = context.user?.designation === 'production_incharge';
   const isStoreIncharge = context.user?.designation === 'store_incharge';
   
@@ -149,9 +152,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   );
   
   // Local store selector for Store Analytics mode
-  // Use selectedStoreId from prop if available (for backwards compatibility), otherwise null for cluster heads/managers/production incharges
+  // Use selectedStoreId from prop if available (for backwards compatibility), otherwise null for cluster heads/managers/production incharges/audit users
   const [localSelectedStoreId, setLocalSelectedStoreId] = useState<string | null>(
-    selectedStoreId || (isClusterHead || isManager || isProductionIncharge ? null : context.user?.storeId) || null
+    selectedStoreId || (isClusterHead || isManager || isProductionIncharge || isAudit ? null : context.user?.storeId) || null
   );
   
   // For Store Analytics mode, use local store selector
@@ -161,8 +164,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     : null; // In Production mode, we don't filter by store
   
   // DEBUG: Log the effective store ID being used
-  console.log('🏪 Analytics effectiveStoreId:', effectiveStoreId);
-  console.log('🏪 Analytics mode:', analyticsMode);
+  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
+  logger.debugStore('Analytics mode:', analyticsMode);
   console.log('🏪 Local selected store ID:', localSelectedStoreId);
   console.log('🏪 All stores in context:', context.stores);
   console.log('🏪 Number of stores:', context.stores?.length);
@@ -174,7 +177,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   
   // Debug: Log activeView changes
   useEffect(() => {
-    console.log('📊 activeView changed to:', activeView);
+    logger.debugAnalytics('activeView changed to:', activeView);
   }, [activeView]);
   
   // When switching analytics mode, change the active view
@@ -405,10 +408,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     }
   }, [selectedProductionHouseId, analyticsMode, context.productionData, context.productionRequests]);
 
-  // Auto-select first production house for Cluster Heads and Managers in Production Analytics mode
+  // Auto-select first production house for Cluster Heads, Managers, and Audit Users in Production Analytics mode
   useEffect(() => {
     if (
-      (isClusterHead || isManager) && 
+      (isClusterHead || isManager || isAudit) && 
       analyticsMode === 'production' && 
       !selectedProductionHouseId && 
       context.productionHouses && 
@@ -730,32 +733,33 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     });
   }
 
-  // DEBUG: Log all production data to see what IDs are present
-  console.log('📊 Analytics - Production Data Debug:');
-  console.log('  - Total production records:', productionData.length);
-  console.log('  - Production data records:', productionData.map(p => ({
-    id: p.id,
-    date: p.date,
-    storeId: p.storeId,
-    productionHouseId: p.productionHouseId,
-    approvalStatus: p.approvalStatus,
-    chickenMomos: p.chickenMomos?.final || 0,
-    totalProduction: (p.chickenMomos?.final || 0) + (p.vegMomos?.final || 0) + (p.chickenCheeseMomos?.final || 0) + (p.cheeseCornMomos?.final || 0) + (p.paneerMomos?.final || 0) + (p.vegKurkureMomos?.final || 0) + (p.chickenKurkureMomos?.final || 0)
-  })));
-  console.log('  - Selected production house ID:', selectedProductionHouseId);
-  console.log('  - Analytics mode:', analyticsMode);
-  console.log('  - User storeId:', context.user?.storeId);
-  console.log('  - User designation:', context.user?.designation);
-  console.log('  - Is Production Incharge:', isProductionIncharge);
-  console.log('  - Available production houses:', context.productionHouses.map(h => ({ id: h.id, name: h.name })));
-  console.log('  - Available stores:', context.stores?.map(s => ({ id: s.id, name: s.name, productionHouseId: s.productionHouseId })));
-  console.log('  🚨 PRODUCTION INCHARGE SPECIFIC DEBUG:');
-  console.log('     - Is this user a production incharge?', isProductionIncharge);
-  console.log('     - User storeId (should be production house ID):', context.user?.storeId);
-  console.log('     - Does user storeId match any production house?', context.productionHouses.find(ph => ph.id === context.user?.storeId));
-  console.log('     - Production data storeIds:', [...new Set(productionData.map(p => p.storeId))]);
-  console.log('     - Production data productionHouseIds:', [...new Set(productionData.map(p => p.productionHouseId))]);
-  console.log('     - Stores that map to user production house:', context.stores?.filter(s => s.productionHouseId === context.user?.storeId).map(s => ({ id: s.id, name: s.name })));
+  // Production data debug logging
+  if (logger.isDebugEnabled()) {
+    logger.debugAnalytics('Production Data Debug:');
+    logger.debugAnalytics('  - Total production records:', productionData.length);
+    logger.debugAnalytics('  - Production data records:', productionData.map(p => ({
+      id: p.id,
+      date: p.date,
+      storeId: p.storeId,
+      productionHouseId: p.productionHouseId,
+      approvalStatus: p.approvalStatus,
+      chickenMomos: p.chickenMomos?.final || 0,
+      totalProduction: (p.chickenMomos?.final || 0) + (p.vegMomos?.final || 0) + (p.chickenCheeseMomos?.final || 0) + (p.cheeseCornMomos?.final || 0) + (p.paneerMomos?.final || 0) + (p.vegKurkureMomos?.final || 0) + (p.chickenKurkureMomos?.final || 0)
+    })));
+    logger.debugAnalytics('  - Selected production house ID:', selectedProductionHouseId);
+    logger.debugAnalytics('  - Analytics mode:', analyticsMode);
+    logger.debugAnalytics('  - User storeId:', context.user?.storeId);
+    logger.debugAnalytics('  - User designation:', context.user?.designation);
+    logger.debugAnalytics('  - Is Production Incharge:', isProductionIncharge);
+    logger.debugAnalytics('  - Available production houses:', context.productionHouses.map(h => ({ id: h.id, name: h.name })));
+    logger.debugAnalytics('  - Available stores:', context.stores?.map(s => ({ id: s.id, name: s.name, productionHouseId: s.productionHouseId })));
+    logger.debugAnalytics('  - Production Incharge Specific:');
+    logger.debugAnalytics('     - User storeId (should be production house ID):', context.user?.storeId);
+    logger.debugAnalytics('     - Does user storeId match any production house?', context.productionHouses.find(ph => ph.id === context.user?.storeId));
+    logger.debugAnalytics('     - Production data storeIds:', [...new Set(productionData.map(p => p.storeId))]);
+    logger.debugAnalytics('     - Production data productionHouseIds:', [...new Set(productionData.map(p => p.productionHouseId))]);
+    logger.debugAnalytics('     - Stores that map to user production house:', context.stores?.filter(s => s.productionHouseId === context.user?.storeId).map(s => ({ id: s.id, name: s.name })));
+  }
 
   // Helper function to filter data by time period
   const filterByTimeRange = (data: any[], dateField: string = 'date') => {
@@ -808,9 +812,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
   // Filter data by selected store (after time filtering)
   const filteredSalesData = useMemo(() => {
-    console.log('🔍 === SALES DATA FILTERING DEBUG ===');
-    console.log('Total sales records (time-filtered):', timeFilteredSalesData.length);
-    console.log('effectiveStoreId:', effectiveStoreId);
+    logger.debugSales('=== SALES DATA FILTERING ===');
+    logger.debugSales('Total sales records (time-filtered):', timeFilteredSalesData.length);
+    logger.debugSales('effectiveStoreId:', effectiveStoreId);
     console.log('User role:', context.user?.role);
     console.log('All sales storeIds:', timeFilteredSalesData.map(s => s.storeId));
     console.log('User storeId:', context.user?.storeId);
@@ -1235,7 +1239,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     };
   };
 
-  const metrics = calculateMetrics();
+  const metrics = useMemo(() => calculateMetrics(), [
+    filteredSalesData, 
+    filteredInventoryData, 
+    filteredOverheadData, 
+    filteredFixedCostsData, 
+    filteredPayoutsData,
+    timeFilter
+  ]);
 
   // Prepare chart data - group by month
   const prepareMonthlyData = () => {
@@ -1299,7 +1310,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     return Object.values(monthlyData);
   };
 
-  const monthlyChartData = prepareMonthlyData();
+  const monthlyChartData = useMemo(() => prepareMonthlyData(), [
+    filteredSalesData,
+    filteredInventoryData,
+    filteredOverheadData
+  ]);
 
   // Prepare sales chart data with online/offline breakdown based on time filter
   const prepareSalesChartData = () => {
@@ -1428,7 +1443,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     return chartData;
   };
 
-  const salesChartData = prepareSalesChartData();
+  const salesChartData = useMemo(() => prepareSalesChartData(), [
+    filteredSalesData,
+    timeFilter
+  ]);
 
   // Prepare profit chart data with revenue, expenses, profit based on time filter
   const prepareProfitChartData = () => {
@@ -1637,7 +1655,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     return chartData;
   };
 
-  const profitChartData = prepareProfitChartData();
+  const profitChartData = useMemo(() => prepareProfitChartData(), [
+    filteredSalesData,
+    filteredInventoryData,
+    filteredOverheadData,
+    timeFilter
+  ]);
 
   // Prepare expense breakdown by category
   const prepareExpenseBreakdown = () => {
@@ -1895,12 +1918,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           </div>
         )}
 
-        {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, and Store Incharges */}
-        {(isClusterHead || isManager || isProductionIncharge || isStoreIncharge) && (
+        {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, Store Incharges, and Audit Users */}
+        {(isClusterHead || isManager || isProductionIncharge || isStoreIncharge || isAudit) && (
         <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl shadow-lg mb-6 p-4 border border-purple-200">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-purple-900" style={{ fontSize: '16px', fontWeight: '700' }}>
-              {isStoreIncharge ? 'Store Analytics Dashboard' : 'Analytics Dashboard'}
+              {isStoreIncharge ? 'Store Analytics Dashboard' : isAudit ? 'Audit Analytics Dashboard' : 'Analytics Dashboard'}
             </h3>
             {/* Only show mode selector if not Store Incharge (they only see Store Analytics) */}
             {!isStoreIncharge && (
@@ -1945,7 +1968,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         {/* Local Store Selector - Only in Store Analytics Mode */}
         {analyticsMode === 'store' && (
           <>
-            {(isClusterHead || isManager || isProductionIncharge) ? (
+            {(isClusterHead || isManager || isProductionIncharge || isAudit) ? (
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
@@ -1995,7 +2018,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         {/* Production House Selector - Only in Production Analytics Mode */}
         {analyticsMode === 'production' && (
           <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl shadow-lg mb-6 p-4 border border-orange-200">
-            {(isClusterHead || isManager) ? (
+            {(isClusterHead || isManager || isAudit) ? (
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                   <h3 className="text-orange-900" style={{ fontSize: '16px', fontWeight: '700' }}>
@@ -2204,21 +2227,62 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <p className="text-xs sm:text-sm text-gray-600">Revenue, expenses, and profit breakdown</p>
                 </div>
 
-                {/* Time Filter */}
-                <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+                  {/* Time Filter */}
+                  <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
+                    {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                      <button
+                        key={filter}
+                        onClick={() => setTimeFilter(filter as TimeFilter)}
+                        className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
+                          timeFilter === filter
+                            ? 'bg-gray-900 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {/* Export Buttons */}
+                  <div className="flex gap-2">
                     <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter as TimeFilter)}
-                      className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        timeFilter === filter
-                          ? 'bg-gray-900 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
+                      onClick={() => {
+                        const storeName = context.stores?.find(s => s.id === selectedStoreId)?.name || 'All_Stores';
+                        exportUtils.exportAnalyticsReport({
+                          salesData: filteredSalesData,
+                          inventoryData: filteredInventoryData,
+                          overheadData: filteredOverheadData,
+                          metrics,
+                          storeName,
+                          dateRange: timeFilter === 'custom' ? dateRange : undefined
+                        });
+                        toast.success('Analytics report exported!');
+                      }}
+                      className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
                     >
-                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">Export</span>
+                      <span className="sm:hidden">JSON</span>
                     </button>
-                  ))}
+                    <button
+                      onClick={() => {
+                        const storeName = context.stores?.find(s => s.id === selectedStoreId)?.name || 'All_Stores';
+                        exportUtils.exportAllData({
+                          salesData: filteredSalesData,
+                          inventoryData: filteredInventoryData,
+                          overheadData: filteredOverheadData,
+                          storeName
+                        });
+                        toast.success('Data exported as CSV files!');
+                      }}
+                      className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
+                    >
+                      <FileText className="w-4 h-4" />
+                      <span className="hidden sm:inline">CSV</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3982,6 +4046,92 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </div>
               </div>
 
+              {/* Helper function for filtering production data by production house */}
+              {(() => {
+                const filterById = analyticsMode === 'production'
+                  ? selectedProductionHouseId
+                  : (context.user?.designation === 'production_incharge'
+                      ? effectiveStoreId
+                      : selectedProductionHouseId);
+                
+                // Get stores mapped to this production house
+                const mappedStoreIds = filterById 
+                  ? stores.filter(s => s.productionHouseId === filterById).map(s => s.id)
+                  : [];
+                
+                // Helper function to check if a production record matches the filter
+                const matchesProductionHouse = (p: any) => {
+                  if (!filterById) return true;
+                  const matchesStoreId = p.storeId === filterById;
+                  const matchesProductionHouseId = p.productionHouseId === filterById;
+                  const phId = p.productionHouseId || p.storeId;
+                  const matchesMappedStore = mappedStoreIds.includes(p.storeId) || mappedStoreIds.includes(p.productionHouseId);
+                  return matchesStoreId || matchesProductionHouseId || phId === filterById || matchesMappedStore;
+                };
+                
+                // Expose helper to parent scope for charts to use
+                window.wastageFilterHelper = { matchesProductionHouse, mappedStoreIds, filterById };
+                
+                const filteredProduction = productionData.filter(matchesProductionHouse);
+
+                const totalWastageAllTime = filteredProduction.reduce((sum, p) => {
+                  return sum + 
+                    (p.wastage?.dough || 0) + 
+                    (p.wastage?.stuffing || 0) + 
+                    (p.wastage?.batter || 0) + 
+                    (p.wastage?.coating || 0);
+                }, 0);
+
+                const recordsWithWastage = filteredProduction.filter(p => 
+                  (p.wastage?.dough || 0) > 0 || 
+                  (p.wastage?.stuffing || 0) > 0 || 
+                  (p.wastage?.batter || 0) > 0 || 
+                  (p.wastage?.coating || 0) > 0
+                );
+
+                console.log('🗑️ Wastage Analysis Debug:', {
+                  analyticsMode,
+                  selectedProductionHouseId,
+                  filterById,
+                  mappedStoreIds,
+                  totalProductionRecords: productionData.length,
+                  filteredProductionRecords: filteredProduction.length,
+                  recordsWithWastage: recordsWithWastage.length,
+                  totalWastageAllTime,
+                  sampleWastageData: filteredProduction.slice(0, 3).map(p => ({
+                    date: p.date,
+                    storeId: p.storeId,
+                    productionHouseId: p.productionHouseId,
+                    wastage: p.wastage
+                  }))
+                });
+
+                if (filteredProduction.length === 0) {
+                  return (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                      <p className="text-yellow-800 font-medium">⚠️ No production data found</p>
+                      <p className="text-sm text-yellow-700 mt-1">
+                        Please select a production house or ensure production data has been logged.
+                      </p>
+                    </div>
+                  );
+                }
+
+                if (recordsWithWastage.length === 0 && filteredProduction.length > 0) {
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                      <p className="text-blue-800 font-medium">ℹ️ No wastage data recorded</p>
+                      <p className="text-sm text-blue-700 mt-1">
+                        Found {filteredProduction.length} production record(s), but no wastage has been logged yet.
+                        Wastage values can be entered in the Production Management section.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
+
               {/* Wastage Bar Charts by Time Period */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                 {/* Daily Wastage */}
@@ -3995,20 +4145,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         date.setDate(date.getDate() - i);
                         const dateStr = date.toISOString().split('T')[0];
                         
-                        const dayProduction = productionData.filter(p => {
-                          const filterById = analyticsMode === 'production'
-                            ? selectedProductionHouseId
-                            : (context.user?.designation === 'production_incharge'
-                                ? effectiveStoreId
-                                : selectedProductionHouseId);
-                          if (filterById) {
-                            const matchesStoreId = p.storeId === filterById;
-                            const matchesProductionHouseId = p.productionHouseId === filterById;
-                            const phId = p.productionHouseId || p.storeId;
-                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
-                          }
-                          return p.date === dateStr;
-                        });
+                        const helper = (window as any).wastageFilterHelper;
+                        const dayProduction = productionData.filter(p => helper.matchesProductionHouse(p) && p.date === dateStr);
 
                         const totalWastage = dayProduction.reduce((sum, p) => {
                           return sum + 
@@ -4047,21 +4185,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         const weekEnd = new Date(weekStart);
                         weekEnd.setDate(weekEnd.getDate() + 6);
                         
-                        const weekProduction = productionData.filter(p => {
-                          const filterById = analyticsMode === 'production'
-                            ? selectedProductionHouseId
-                            : (context.user?.designation === 'production_incharge'
-                                ? effectiveStoreId
-                                : selectedProductionHouseId);
-                          if (filterById) {
-                            const matchesStoreId = p.storeId === filterById;
-                            const matchesProductionHouseId = p.productionHouseId === filterById;
-                            const phId = p.productionHouseId || p.storeId;
-                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
-                          }
-                          return p.date >= weekStart.toISOString().split('T')[0] && 
-                                 p.date <= weekEnd.toISOString().split('T')[0];
-                        });
+                        const helper = (window as any).wastageFilterHelper;
+                        const weekProduction = productionData.filter(p => 
+                          helper.matchesProductionHouse(p) && 
+                          p.date >= weekStart.toISOString().split('T')[0] && 
+                          p.date <= weekEnd.toISOString().split('T')[0]
+                        );
 
                         const totalWastage = weekProduction.reduce((sum, p) => {
                           return sum + 
@@ -4098,20 +4227,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         date.setMonth(date.getMonth() - i);
                         const monthStr = date.toISOString().substring(0, 7);
                         
-                        const monthProduction = productionData.filter(p => {
-                          const filterById = analyticsMode === 'production'
-                            ? selectedProductionHouseId
-                            : (context.user?.designation === 'production_incharge'
-                                ? effectiveStoreId
-                                : selectedProductionHouseId);
-                          if (filterById) {
-                            const matchesStoreId = p.storeId === filterById;
-                            const matchesProductionHouseId = p.productionHouseId === filterById;
-                            const phId = p.productionHouseId || p.storeId;
-                            if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
-                          }
-                          return p.date.startsWith(monthStr);
-                        });
+                        const helper = (window as any).wastageFilterHelper;
+                        const monthProduction = productionData.filter(p => 
+                          helper.matchesProductionHouse(p) && p.date.startsWith(monthStr)
+                        );
 
                         const totalWastage = monthProduction.reduce((sum, p) => {
                           return sum + 
@@ -4164,19 +4283,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <ResponsiveContainer width="100%" height={400}>
                   <BarChart data={(() => {
                     // Use consistent production house filtering logic
-                    const filterById = analyticsMode === 'production'
-                      ? selectedProductionHouseId  // In production mode, use production house selector
-                      : (context.user?.designation === 'production_incharge'
-                          ? effectiveStoreId  // Production incharge in store mode uses their store ID
-                          : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
+                    const helper = (window as any).wastageFilterHelper;
                     
                     const filteredProduction = productionData.filter(p => {
-                      if (filterById) {
-                        const matchesStoreId = p.storeId === filterById;
-                        const matchesProductionHouseId = p.productionHouseId === filterById;
-                        const phId = p.productionHouseId || p.storeId;
-                        if (!(matchesStoreId || matchesProductionHouseId || phId === filterById)) return false;
-                      }
+                      if (!helper.matchesProductionHouse(p)) return false;
                       if (wastageTimeFilter === 'custom') {
                         return p.date >= dateRange.from && p.date <= dateRange.to;
                       }

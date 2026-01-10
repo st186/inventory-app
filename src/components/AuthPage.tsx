@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { LogIn, UserPlus, Package } from 'lucide-react';
+import { LogIn, UserPlus, Package, Loader2 } from 'lucide-react';
 
 type Props = {
   onLogin: (email: string, password: string) => Promise<void>;
-  onSignup: (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee') => Promise<void>;
+  onSignup: (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee' | 'audit') => Promise<void>;
   error: string | null;
 };
 
@@ -13,13 +13,20 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
     email: '',
     password: '',
     name: '',
-    role: 'employee' as 'manager' | 'cluster_head' | 'employee',
+    role: 'employee' as 'manager' | 'cluster_head' | 'employee' | 'audit',
     employeeId: ''
   });
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate submissions
+    if (loading) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
     setLoading(true);
     
     try {
@@ -74,13 +81,14 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                 <label className="block text-sm text-gray-700 mb-1">Role</label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'cluster_head' | 'employee' })}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'cluster_head' | 'employee' | 'audit' })}
                   className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
                   required={isSignup}
                 >
                   <option value="employee">Employee (View your payouts)</option>
                   <option value="manager">Manager (Manage inventory)</option>
                   <option value="cluster_head">Cluster Head (View & approve)</option>
+                  <option value="audit">Audit (View reports)</option>
                 </select>
               </div>
 
@@ -139,7 +147,10 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
             className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base touch-manipulation"
           >
             {loading ? (
-              <span>Processing...</span>
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Processing...</span>
+              </>
             ) : (
               <>
                 {isSignup ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}

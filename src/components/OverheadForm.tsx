@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 
 type Props = {
   selectedDate: string;
@@ -34,6 +34,8 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     employeeName: editingItem?.employeeName || ''
   });
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   // Update employee name when employee ID changes
   useEffect(() => {
     if (formData.category === 'personal_expense' && formData.employeeId) {
@@ -47,8 +49,16 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     }
   }, [formData.employeeId, formData.category, employees]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate submissions
+    if (isSubmitting) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
+    setIsSubmitting(true);
     
     const submissionData: Omit<OverheadItem, 'id'> = {
       date: selectedDate,
@@ -63,7 +73,8 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
       submissionData.employeeName = formData.employeeName;
     }
 
-    onSubmit(submissionData);
+    await onSubmit(submissionData);
+    setIsSubmitting(false);
   };
 
   return (
@@ -187,14 +198,17 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
               type="button"
               onClick={onClose}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              disabled={isSubmitting}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+              className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              disabled={isSubmitting}
             >
-              Add Overhead
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isSubmitting ? 'Saving...' : editingItem ? 'Update Overhead' : 'Add Overhead'}
             </button>
           </div>
         </form>

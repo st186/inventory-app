@@ -25,6 +25,13 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate submissions
+    if (loading) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     setSuccess(null);

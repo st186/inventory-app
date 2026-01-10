@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { InventoryItem } from '../App';
 import { INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 import * as api from '../utils/api';
 
 type Props = {
@@ -23,6 +23,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
   const [loadingCustomItems, setLoadingCustomItems] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Load custom items on mount
   useEffect(() => {
@@ -52,6 +53,14 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Prevent duplicate submissions
+    if (isSubmitting) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
+    setIsSubmitting(true);
+    
     const quantity = parseFloat(formData.quantity);
     const totalCost = parseFloat(formData.totalCost);
     const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
@@ -77,6 +86,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
       costPerUnit,
       totalCost
     });
+    setIsSubmitting(false);
   };
 
   // Merge base items with custom items for the selected category
@@ -239,14 +249,17 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
               type="button"
               onClick={onClose}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              disabled={isSubmitting}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              disabled={isSubmitting}
             >
-              {editingItem ? 'Update' : 'Add'} Item
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isSubmitting ? 'Saving...' : editingItem ? 'Update Item' : 'Add Item'}
             </button>
           </div>
         </form>

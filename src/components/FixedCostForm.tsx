@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FixedCostItem } from '../App';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 import { FIXED_COST_CATEGORIES } from '../utils/inventoryData';
 
 type Props = {
@@ -21,6 +21,8 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
   });
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Calculate total amount for LPG
   const totalAmount = formData.category === 'lpg_gas' && formData.units && formData.unitPrice
@@ -82,7 +84,8 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
       baseData.onlineAmount = parseFloat(formData.onlineAmount);
     }
 
-    onSubmit(baseData);
+    setIsSubmitting(true);
+    onSubmit(baseData).finally(() => setIsSubmitting(false));
   };
 
   return (
@@ -311,14 +314,17 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
               type="button"
               onClick={onClose}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              disabled={isSubmitting}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              disabled={isSubmitting}
             >
-              {editingItem ? 'Update' : 'Add'} Fixed Cost
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isSubmitting ? 'Saving...' : editingItem ? 'Update Fixed Cost' : 'Add Fixed Cost'}
             </button>
           </div>
         </form>

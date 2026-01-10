@@ -65,8 +65,8 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
       return c.json({ error: 'Email, password, and role are required' }, 400);
     }
 
-    if (!['manager', 'cluster_head', 'employee'].includes(role)) {
-      return c.json({ error: 'Invalid role. Must be manager, cluster_head, or employee' }, 400);
+    if (!['manager', 'cluster_head', 'employee', 'audit'].includes(role)) {
+      return c.json({ error: 'Invalid role. Must be manager, cluster_head, employee, or audit' }, 400);
     }
 
     // For employees, employeeId is required
@@ -1753,7 +1753,7 @@ app.post('/make-server-c2dd9b9d/auth/fix-role', async (c) => {
       return c.json({ error: 'Email and role are required' }, 400);
     }
 
-    if (!['manager', 'cluster_head', 'employee'].includes(role)) {
+    if (!['manager', 'cluster_head', 'employee', 'audit'].includes(role)) {
       return c.json({ error: 'Invalid role' }, 400);
     }
 
@@ -1960,18 +1960,47 @@ app.put('/make-server-c2dd9b9d/employees/:id', async (c) => {
 // Delete employee (Archive with employment history)
 app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
   try {
-    const employeeId = c.req.param('id');
-    console.log('Archiving employee:', employeeId);
+    const idParam = c.req.param('id');
+    console.log('Archiving employee with ID:', idParam);
     
-    // Try both old and new key formats for backward compatibility
-    let key = `employee:${employeeId}`;
-    let existingEmployee = await kv.get(key);
+    let key: string;
+    let existingEmployee: any = null;
+    let employeeId: string;
     
-    // If not found with old format, try unified format
-    if (!existingEmployee) {
-      console.log('Employee not found with old format, trying unified format');
-      key = `unified-employee:${employeeId}`;
+    // Check if it's a UUID (database id) or custom employeeId
+    const isUUID = idParam.includes('-') && idParam.length > 20;
+    
+    if (isUUID) {
+      // It's a database UUID - need to search all employees to find the matching one
+      console.log('Searching by database UUID:', idParam);
+      const [oldEmployees, unifiedEmployees] = await Promise.all([
+        kv.getByPrefix('employee:'),
+        kv.getByPrefix('unified-employee:')
+      ]);
+      
+      const allEmployees = [...oldEmployees, ...unifiedEmployees];
+      existingEmployee = allEmployees.find((emp: any) => emp.id === idParam);
+      
+      if (existingEmployee) {
+        employeeId = existingEmployee.employeeId;
+        // Determine which key format was used
+        key = oldEmployees.find((emp: any) => emp.id === idParam) 
+          ? `employee:${employeeId}` 
+          : `unified-employee:${employeeId}`;
+        console.log('Found employee by UUID with key:', key);
+      }
+    } else {
+      // It's a custom employeeId - use the old logic
+      employeeId = idParam;
+      key = `employee:${employeeId}`;
       existingEmployee = await kv.get(key);
+      
+      // If not found with old format, try unified format
+      if (!existingEmployee) {
+        console.log('Employee not found with old format, trying unified format');
+        key = `unified-employee:${employeeId}`;
+        existingEmployee = await kv.get(key);
+      }
     }
     
     if (!existingEmployee) {
@@ -2122,6 +2151,87 @@ app.delete('/make-server-c2dd9b9d/payouts/:id', async (c) => {
   } catch (error) {
     console.log('Error deleting payout:', error);
     return c.json({ error: 'Failed to delete payout' }, 500);
+  }
+});
+
+// ============================================
+// Salary Advance Management Routes
+// ============================================
+
+// Get all salary advances
+app.get('/make-server-c2dd9b9d/salary-advances', async (c) => {
+  try {
+    const salaryAdvances = await kv.getByPrefix('salary_advance:');
+    return c.json({ success: true, salaryAdvances });
+  } catch (error) {
+    console.log('Error fetching salary advances:', error);
+    return c.json({ error: 'Failed to fetch salary advances' }, 500);
+  }
+});
+
+// Create salary advance
+app.post('/make-server-c2dd9b9d/salary-advances', async (c) => {
+  try {
+    const advance = await c.req.json();
+    console.log('Creating salary advance:', JSON.stringify(advance));
+    
+    const advanceId = `ADV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newAdvance = {
+      ...advance,
+      id: advanceId,
+      createdAt: new Date().toISOString(),
+    };
+    
+    const key = `salary_advance:${advanceId}`;
+    await kv.set(key, newAdvance);
+    console.log('Salary advance created successfully');
+    
+    return c.json({ success: true, salaryAdvance: newAdvance });
+  } catch (error) {
+    console.log('Error creating salary advance:', error);
+    return c.json({ error: 'Failed to create salary advance' }, 500);
+  }
+});
+
+// Update salary advance
+app.put('/make-server-c2dd9b9d/salary-advances/:id', async (c) => {
+  try {
+    const advanceId = c.req.param('id');
+    const updates = await c.req.json();
+    console.log('Updating salary advance:', advanceId, JSON.stringify(updates));
+    
+    const key = `salary_advance:${advanceId}`;
+    const existing = await kv.get(key);
+    
+    if (!existing) {
+      return c.json({ error: 'Salary advance not found' }, 404);
+    }
+    
+    const updatedAdvance = { ...existing, ...updates };
+    await kv.set(key, updatedAdvance);
+    console.log('Salary advance updated successfully');
+    
+    return c.json({ success: true, salaryAdvance: updatedAdvance });
+  } catch (error) {
+    console.log('Error updating salary advance:', error);
+    return c.json({ error: 'Failed to update salary advance' }, 500);
+  }
+});
+
+// Delete salary advance
+app.delete('/make-server-c2dd9b9d/salary-advances/:id', async (c) => {
+  try {
+    const advanceId = c.req.param('id');
+    console.log('Deleting salary advance:', advanceId);
+    
+    const key = `salary_advance:${advanceId}`;
+    await kv.del(key);
+    console.log('Salary advance deleted successfully');
+    
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting salary advance:', error);
+    return c.json({ error: 'Failed to delete salary advance' }, 500);
   }
 });
 
@@ -4326,6 +4436,11 @@ app.get('/make-server-c2dd9b9d/stores', async (c) => {
 
     // Managers (Operations Managers) see all stores (they need to see store-production house mappings for analytics)
     if (role === 'manager') {
+      return c.json({ stores: allStores });
+    }
+
+    // Audit users see all stores (read-only access to all data)
+    if (role === 'audit') {
       return c.json({ stores: allStores });
     }
 
@@ -7181,6 +7296,99 @@ app.post('/make-server-c2dd9b9d/cleanup-production-data', async (c) => {
   } catch (error) {
     console.error('❌ Error during production cleanup:', error);
     return c.json({ error: error.message }, 500);
+  }
+});
+
+// Clean up duplicate pending production entries
+app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    
+    // Only cluster heads can clean up duplicates
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can clean up duplicate entries' }, 403);
+    }
+
+    console.log('🧹 Starting duplicate production entry cleanup...');
+    
+    // Get all production entries
+    const allProduction = await kv.getByPrefix('production:');
+    console.log(`📦 Found ${allProduction.length} total production entries`);
+    
+    // Group by date and storeId to find duplicates
+    const groupedByDateStore = new Map<string, any[]>();
+    
+    for (const prod of allProduction) {
+      // Only look at pending entries
+      if (prod.approvalStatus === 'pending') {
+        const key = `${prod.date}:${prod.storeId || 'no-store'}`;
+        if (!groupedByDateStore.has(key)) {
+          groupedByDateStore.set(key, []);
+        }
+        groupedByDateStore.get(key)!.push(prod);
+      }
+    }
+    
+    const duplicatesFound: any[] = [];
+    const duplicatesToDelete: string[] = [];
+    let totalDeleted = 0;
+    
+    // For each group, keep the oldest entry and delete the rest
+    for (const [key, entries] of groupedByDateStore.entries()) {
+      if (entries.length > 1) {
+        console.log(`🔍 Found ${entries.length} duplicate pending entries for ${key}`);
+        
+        // Sort by creation time (if available) or by id to get consistent ordering
+        // Keep the first entry, delete the rest
+        entries.sort((a, b) => {
+          // If we have createdAt timestamps, use those
+          if (a.createdAt && b.createdAt) {
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          }
+          // Otherwise sort by id to maintain consistency
+          return a.id.localeCompare(b.id);
+        });
+        
+        const [keeper, ...duplicates] = entries;
+        
+        duplicatesFound.push({
+          date: keeper.date,
+          storeId: keeper.storeId,
+          keepingId: keeper.id,
+          deletingCount: duplicates.length,
+          deletingIds: duplicates.map(d => d.id)
+        });
+        
+        // Delete the duplicate entries
+        for (const dup of duplicates) {
+          const dupKey = `production:${dup.userId}:${dup.id}`;
+          await kv.del(dupKey);
+          duplicatesToDelete.push(dupKey);
+          totalDeleted++;
+          console.log(`  ❌ Deleted duplicate: ${dup.id}`);
+        }
+        
+        console.log(`  ✅ Kept original: ${keeper.id}`);
+      }
+    }
+    
+    console.log(`✅ Cleanup completed! Deleted ${totalDeleted} duplicate entries`);
+    
+    return c.json({
+      success: true,
+      message: `Successfully cleaned up ${totalDeleted} duplicate production entries`,
+      duplicatesFound: duplicatesFound.length,
+      totalDeleted,
+      details: duplicatesFound
+    });
+  } catch (error) {
+    console.error('❌ Error cleaning up duplicates:', error);
+    return c.json({ error: 'Failed to clean up duplicates', details: error.message }, 500);
   }
 });
 

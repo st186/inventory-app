@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText } from 'lucide-react';
+import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText, CreditCard, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
@@ -25,7 +25,7 @@ interface Payout {
 }
 
 interface PayrollManagementProps {
-  userRole: 'manager' | 'cluster_head';
+  userRole: 'manager' | 'cluster_head' | 'audit';
   selectedDate: string;
   userEmployeeId?: string | null;
   userName?: string;
@@ -274,12 +274,17 @@ const generatePayslip = (
 };
 
 export function PayrollManagement({ userRole, selectedDate, userEmployeeId, userName, selectedStoreId, isIncharge = false, inchargeDesignation = null }: PayrollManagementProps) {
-  const [activeTab, setActiveTab] = useState<'contract' | 'permanent' | 'my-payouts'>('contract');
+  const [activeTab, setActiveTab] = useState<'contract' | 'permanent' | 'my-payouts' | 'advances'>('contract');
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
+  const [salaryAdvances, setSalaryAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const isClusterHead = userRole === 'cluster_head';
+  
+  // Manager salary advance state
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState('');
   
   // Date range filter state
   const [viewMode, setViewMode] = useState<'current' | 'last' | 'custom'>('current');
@@ -417,19 +422,124 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const loadData = async () => {
     setLoading(true);
     try {
-      console.log('Loading employees and payouts from server...');
-      const [employeesData, payoutsData] = await Promise.all([
+      console.log('Loading employees, payouts, and salary advances from server...');
+      const [employeesData, payoutsData, advancesData] = await Promise.all([
         api.getEmployees(),
-        api.getPayouts()
+        api.getPayouts(),
+        api.getSalaryAdvances()
       ]);
       console.log('Loaded employees:', employeesData);
       console.log('Loaded payouts:', payoutsData);
+      console.log('Loaded salary advances:', advancesData);
       setEmployees(employeesData || []);
       setPayouts(payoutsData || []);
+      setSalaryAdvances(advancesData || []);
     } catch (error) {
       console.error('Error loading payroll data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApproveAdvance = async (advanceId: string) => {
+    try {
+      const advance = salaryAdvances.find(a => a.id === advanceId);
+      if (!advance) return;
+
+      const approvedBy = userName || userEmployeeId || 'Cluster Head';
+      const updatedAdvance = {
+        ...advance,
+        status: 'approved',
+        approvedBy,
+        approvedDate: new Date().toISOString()
+      };
+
+      await api.updateSalaryAdvance(advanceId, updatedAdvance);
+      alert('Salary advance approved successfully!');
+      loadData();
+    } catch (error) {
+      console.error('Error approving salary advance:', error);
+      alert('Failed to approve salary advance. Please try again.');
+    }
+  };
+
+  const handleRejectAdvance = async (advanceId: string) => {
+    const reason = prompt('Please provide a reason for rejection:');
+    if (!reason) return;
+
+    try {
+      const advance = salaryAdvances.find(a => a.id === advanceId);
+      if (!advance) return;
+
+      const updatedAdvance = {
+        ...advance,
+        status: 'rejected',
+        rejectionReason: reason,
+        approvedBy: userName || userEmployeeId || 'Cluster Head',
+        approvedDate: new Date().toISOString()
+      };
+
+      await api.updateSalaryAdvance(advanceId, updatedAdvance);
+      alert('Salary advance rejected.');
+      loadData();
+    } catch (error) {
+      console.error('Error rejecting salary advance:', error);
+      alert('Failed to reject salary advance. Please try again.');
+    }
+  };
+
+  const handleApplySalaryAdvance = async () => {
+    if (!advanceAmount || !userEmployeeId) return;
+
+    const amount = parseFloat(advanceAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    try {
+      const currentEmployee = employees.find(e => e.employeeId === userEmployeeId);
+      if (!currentEmployee) {
+        alert('Employee not found');
+        return;
+      }
+
+      if (currentEmployee.type !== 'fulltime') {
+        alert('Only permanent employees can apply for salary advance');
+        return;
+      }
+
+      // Check if there's already a pending or active advance
+      const hasActiveAdvance = salaryAdvances.some(adv =>
+        adv.employeeId === currentEmployee.id &&
+        (adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0))
+      );
+
+      if (hasActiveAdvance) {
+        alert('You already have an active or pending salary advance');
+        return;
+      }
+
+      const monthlyDeduction = amount / 4;
+      const newAdvance = {
+        employeeId: currentEmployee.id,
+        employeeName: currentEmployee.name,
+        employeeEmployeeId: currentEmployee.employeeId,
+        amount,
+        monthlyDeduction,
+        remainingAmount: amount,
+        status: 'pending',
+        requestDate: new Date().toISOString(),
+      };
+
+      await api.createSalaryAdvance(newAdvance);
+      alert('Salary advance request submitted successfully!');
+      setShowAdvanceModal(false);
+      setAdvanceAmount('');
+      loadData();
+    } catch (error) {
+      console.error('Error applying for salary advance:', error);
+      alert('Failed to submit salary advance request. Please try again.');
     }
   };
 
@@ -608,6 +718,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   // Check permissions for payout
   const canAddPayout = () => {
+    if (userRole === 'audit') return false; // Audit users cannot add payouts
     if (activeTab === 'contract' && userRole === 'manager') return true;
     if (activeTab === 'permanent' && userRole === 'cluster_head') return true;
     return false;
@@ -657,8 +768,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               >
                 Contract Employees
               </button>
-              {/* Only show Permanent Employees tab for Cluster Heads */}
-              {userRole === 'cluster_head' && (
+              {/* Only show Permanent Employees tab for Cluster Heads and Audit Users */}
+              {(userRole === 'cluster_head' || userRole === 'audit') && (
                 <button
                   onClick={() => setActiveTab('permanent')}
                   className={`py-4 border-b-2 transition-colors ${
@@ -668,6 +779,27 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   }`}
                 >
                   Permanent Employees
+                </button>
+              )}
+              {/* Only show Salary Advances tab for Cluster Heads and Audit Users */}
+              {(userRole === 'cluster_head' || userRole === 'audit') && (
+                <button
+                  onClick={() => setActiveTab('advances')}
+                  className={`py-4 border-b-2 transition-colors ${
+                    activeTab === 'advances'
+                      ? 'border-purple-500 text-purple-600'
+                      : 'border-transparent text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" />
+                    <span>Salary Advances</span>
+                    {salaryAdvances.filter(a => a.status === 'pending').length > 0 && (
+                      <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {salaryAdvances.filter(a => a.status === 'pending').length}
+                      </span>
+                    )}
+                  </div>
                 </button>
               )}
             </div>
@@ -810,25 +942,27 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                   <div className="text-xs text-gray-500">{emp.employeeId}</div>
                                 </div>
                               </div>
-                              <div className="flex gap-1">
-                                <button
-                                  onClick={() => {
-                                    setEditingEmployee(emp);
-                                    setShowEditEmployee(true);
-                                  }}
-                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                  title="Edit employee"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteEmployee(emp.id)}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-                                  title="Delete employee"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
+                              {userRole !== 'audit' && (
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => {
+                                      setEditingEmployee(emp);
+                                      setShowEditEmployee(true);
+                                    }}
+                                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                    title="Edit employee"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteEmployee(emp.id)}
+                                    className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                                    title="Delete employee"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
 
                             {emp.role && (
@@ -894,7 +1028,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             <th className="text-left py-3 px-4 text-sm text-gray-600">Employee ID</th>
                             <th className="text-left py-3 px-4 text-sm text-gray-600">Date</th>
                             <th className="text-right py-3 px-4 text-sm text-gray-600">Amount</th>
-                            <th className="text-right py-3 px-4 text-sm text-gray-600">Actions</th>
+                            {userRole !== 'audit' && (
+                              <th className="text-right py-3 px-4 text-sm text-gray-600">Actions</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -935,27 +1071,29 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                   <td className="py-4 px-4 text-right">
                                     <span className="text-gray-900">₹{payout.amount.toLocaleString()}</span>
                                   </td>
-                                  <td className="py-4 px-4 text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <button
-                                        onClick={() => {
-                                          setEditingPayout(payout);
-                                          setShowEditPayout(true);
-                                        }}
-                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                        title="Edit payout"
-                                      >
-                                        <Edit2 className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeletePayout(payout.id)}
-                                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                        title="Delete payout"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </div>
-                                  </td>
+                                  {userRole !== 'audit' && (
+                                    <td className="py-4 px-4 text-right">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <button
+                                          onClick={() => {
+                                            setEditingPayout(payout);
+                                            setShowEditPayout(true);
+                                          }}
+                                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                          title="Edit payout"
+                                        >
+                                          <Edit2 className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeletePayout(payout.id)}
+                                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                          title="Delete payout"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  )}
                                 </tr>
                               );
                             })}
@@ -976,6 +1114,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             // Get employee type
             const currentEmployee = employees.find(e => e.employeeId === userEmployeeId);
             const employeeType = currentEmployee?.type || 'fulltime';
+            
+            // Get salary advances for this manager
+            const myAdvances = salaryAdvances.filter(a => a.employeeId === currentEmployee?.id);
+            const hasActiveAdvance = myAdvances.some(adv => 
+              adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
+            );
             
             // Group payouts by month (last 12 months from current date)
             const now = new Date();
@@ -1022,12 +1166,122 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
             return (
               <div className="p-6">
-                <div className="mb-6">
-                  <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
-                  <p className="text-sm text-gray-600">
-                    View your salary records and download monthly payslips
-                  </p>
+                <div className="mb-6 flex items-start justify-between">
+                  <div>
+                    <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
+                    <p className="text-sm text-gray-600">
+                      View your salary records and download monthly payslips
+                    </p>
+                  </div>
+                  
+                  {/* Apply for Salary Advance Button - Only for permanent employees */}
+                  {employeeType === 'fulltime' && (
+                    <button
+                      onClick={() => setShowAdvanceModal(true)}
+                      disabled={hasActiveAdvance}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                        hasActiveAdvance
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 shadow-md'
+                      }`}
+                      title={hasActiveAdvance ? 'You already have an active salary advance' : 'Apply for salary advance'}
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      {hasActiveAdvance ? 'Advance Active' : 'Apply for Advance'}
+                    </button>
+                  )}
                 </div>
+                
+                {/* Salary Advances Status - Show if there are any advances */}
+                {myAdvances.length > 0 && (
+                  <div className="mb-6 space-y-3">
+                    {myAdvances.map((advance) => (
+                      <div
+                        key={advance.id}
+                        className={`border-2 rounded-lg p-4 ${
+                          advance.status === 'pending'
+                            ? 'border-yellow-300 bg-yellow-50'
+                            : advance.status === 'approved'
+                            ? 'border-green-300 bg-green-50'
+                            : 'border-red-300 bg-red-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              {advance.status === 'pending' && (
+                                <>
+                                  <Clock className="w-5 h-5 text-yellow-600" />
+                                  <span className="font-medium text-yellow-900">Advance Request Pending</span>
+                                </>
+                              )}
+                              {advance.status === 'approved' && (
+                                <>
+                                  <CheckCircle className="w-5 h-5 text-green-600" />
+                                  <span className="font-medium text-green-900">Advance Approved</span>
+                                </>
+                              )}
+                              {advance.status === 'rejected' && (
+                                <>
+                                  <XCircle className="w-5 h-5 text-red-600" />
+                                  <span className="font-medium text-red-900">Advance Rejected</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Amount</p>
+                                <p className="font-semibold text-gray-900">₹{advance.amount.toLocaleString()}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Monthly Deduction</p>
+                                <p className="font-semibold text-gray-900">₹{advance.monthlyDeduction.toLocaleString()}</p>
+                              </div>
+                              {advance.status === 'approved' && (
+                                <div>
+                                  <p className="text-xs text-gray-600 mb-1">Remaining</p>
+                                  <p className="font-semibold text-gray-900">₹{advance.remainingAmount.toLocaleString()}</p>
+                                </div>
+                              )}
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Request Date</p>
+                                <p className="text-sm text-gray-900">
+                                  {new Date(advance.requestDate).toLocaleDateString('en-IN', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric'
+                                  })}
+                                </p>
+                              </div>
+                            </div>
+                            {advance.status === 'approved' && (
+                              <div className="mt-3 pt-3 border-t border-gray-300">
+                                <p className="text-xs text-gray-600 mb-2">Deduction Period</p>
+                                <p className="text-sm text-gray-900">
+                                  {(() => {
+                                    const [startYear, startMonth] = advance.startMonth.split('-');
+                                    const [endYear, endMonth] = advance.endMonth.split('-');
+                                    const startDate = new Date(parseInt(startYear), parseInt(startMonth) - 1, 1);
+                                    const endDate = new Date(parseInt(endYear), parseInt(endMonth) - 1, 1);
+                                    const startFormatted = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                                    const endFormatted = endDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                                    return `${startFormatted} to ${endFormatted} (${advance.installments} months)`;
+                                  })()}
+                                </p>
+                              </div>
+                            )}
+                            {advance.status === 'rejected' && advance.rejectionReason && (
+                              <div className="mt-2 pt-2 border-t border-red-200">
+                                <p className="text-xs text-red-600 mb-1">Rejection Reason</p>
+                                <p className="text-sm text-red-900">{advance.rejectionReason}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Summary Card */}
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6 mb-6">
@@ -1397,8 +1651,372 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               </div>
             );
           })()}
+
+          {/* Salary Advances Tab - Only for Cluster Heads and Audit Users */}
+          {activeTab === 'advances' && (userRole === 'cluster_head' || userRole === 'audit') && (() => {
+            const pendingAdvances = salaryAdvances.filter(a => a.status === 'pending');
+            const approvedAdvances = salaryAdvances.filter(a => a.status === 'approved');
+            const rejectedAdvances = salaryAdvances.filter(a => a.status === 'rejected');
+
+            return (
+              <div className="p-6">
+                <div className="mb-6">
+                  <h2 className="text-xl text-gray-900 mb-1">Salary Advance Requests</h2>
+                  <p className="text-sm text-gray-600">
+                    Review and manage employee salary advance requests
+                  </p>
+                </div>
+
+                {/* Summary Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-yellow-700 mb-1">Pending Requests</p>
+                        <p className="text-2xl font-semibold text-yellow-900">{pendingAdvances.length}</p>
+                      </div>
+                      <Clock className="w-10 h-10 text-yellow-400" />
+                    </div>
+                  </div>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-green-700 mb-1">Approved</p>
+                        <p className="text-2xl font-semibold text-green-900">{approvedAdvances.length}</p>
+                      </div>
+                      <CheckCircle className="w-10 h-10 text-green-400" />
+                    </div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-red-700 mb-1">Rejected</p>
+                        <p className="text-2xl font-semibold text-red-900">{rejectedAdvances.length}</p>
+                      </div>
+                      <XCircle className="w-10 h-10 text-red-400" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pending Requests Section */}
+                {pendingAdvances.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-yellow-600" />
+                      Pending Requests
+                    </h3>
+                    <div className="space-y-4">
+                      {pendingAdvances.map((advance) => (
+                        <div 
+                          key={advance.id}
+                          className="border-2 border-yellow-300 bg-yellow-50 rounded-xl p-6"
+                        >
+                          <div className="flex items-start justify-between mb-4">
+                            <div>
+                              <h4 className="text-lg font-semibold text-gray-900 mb-1">
+                                {advance.employeeName}
+                              </h4>
+                              <p className="text-sm text-gray-600 mb-2">
+                                Employee ID: {advance.employeeEmployeeId}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Requested on {new Date(advance.requestDate).toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric'
+                                })}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm text-gray-600 mb-1">Advance Amount</p>
+                              <p className="text-3xl font-bold text-purple-600">
+                                ₹{advance.amount.toLocaleString('en-IN')}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Deduction Details */}
+                          <div className="bg-white border border-yellow-200 rounded-lg p-4 mb-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Monthly Deduction</p>
+                                <p className="text-lg font-semibold text-gray-900">
+                                  ₹{advance.monthlyDeduction.toLocaleString('en-IN')}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Installments</p>
+                                <p className="text-lg font-semibold text-gray-900">{advance.installments} months</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">Start Month</p>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {(() => {
+                                    const [year, month] = advance.startMonth.split('-');
+                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+                                    return date.toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      year: 'numeric'
+                                    });
+                                  })()}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-600 mb-1">End Month</p>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {(() => {
+                                    const [year, month] = advance.endMonth.split('-');
+                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+                                    return date.toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      year: 'numeric'
+                                    });
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons - Only for Cluster Heads */}
+                          {userRole === 'cluster_head' && (
+                            <div className="flex gap-3">
+                              <button
+                                onClick={() => handleApproveAdvance(advance.id)}
+                                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all shadow-md font-medium"
+                              >
+                                <CheckCircle className="w-5 h-5" />
+                                <span>Approve</span>
+                              </button>
+                              <button
+                                onClick={() => handleRejectAdvance(advance.id)}
+                                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-lg hover:from-red-700 hover:to-rose-700 transition-all shadow-md font-medium"
+                              >
+                                <XCircle className="w-5 h-5" />
+                                <span>Reject</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Approved Requests Section */}
+                {approvedAdvances.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                      Approved Advances
+                    </h3>
+                    <div className="space-y-4">
+                      {approvedAdvances.map((advance) => (
+                        <div 
+                          key={advance.id}
+                          className="border-2 border-green-300 bg-green-50 rounded-xl p-6"
+                        >
+                          <div className="flex items-start justify-between mb-4">
+                            <div>
+                              <h4 className="text-lg font-semibold text-gray-900 mb-1">
+                                {advance.employeeName}
+                              </h4>
+                              <p className="text-sm text-gray-600 mb-1">
+                                Employee ID: {advance.employeeEmployeeId}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Approved on {new Date(advance.approvedDate || '').toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric'
+                                })}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm text-gray-600 mb-1">Amount</p>
+                              <p className="text-2xl font-bold text-green-600">
+                                ₹{advance.amount.toLocaleString('en-IN')}
+                              </p>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Remaining: ₹{advance.remainingAmount.toLocaleString('en-IN')}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Deduction Progress */}
+                          <div className="bg-white border border-green-200 rounded-lg p-4">
+                            <p className="text-sm font-semibold text-gray-900 mb-3">Deduction Progress</p>
+                            <div className="space-y-2">
+                              {advance.deductions.map((deduction, idx) => (
+                                <div 
+                                  key={idx}
+                                  className={`flex items-center justify-between p-2 rounded-lg ${
+                                    deduction.deducted 
+                                      ? 'bg-green-100 border border-green-200' 
+                                      : 'bg-gray-50 border border-gray-200'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {deduction.deducted ? (
+                                      <CheckCircle className="w-4 h-4 text-green-600" />
+                                    ) : (
+                                      <Clock className="w-4 h-4 text-gray-400" />
+                                    )}
+                                    <span className="text-sm text-gray-900">
+                                      {new Date(deduction.month + '-01').toLocaleDateString('en-US', {
+                                        month: 'long',
+                                        year: 'numeric'
+                                      })}
+                                    </span>
+                                  </div>
+                                  <span className={`text-sm font-semibold ${
+                                    deduction.deducted ? 'text-green-700' : 'text-gray-700'
+                                  }`}>
+                                    ₹{deduction.amount.toLocaleString('en-IN')}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rejected Requests Section */}
+                {rejectedAdvances.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                      <XCircle className="w-5 h-5 text-red-600" />
+                      Rejected Requests
+                    </h3>
+                    <div className="space-y-4">
+                      {rejectedAdvances.map((advance) => (
+                        <div 
+                          key={advance.id}
+                          className="border-2 border-red-300 bg-red-50 rounded-xl p-6"
+                        >
+                          <div className="flex items-start justify-between mb-4">
+                            <div>
+                              <h4 className="text-lg font-semibold text-gray-900 mb-1">
+                                {advance.employeeName}
+                              </h4>
+                              <p className="text-sm text-gray-600 mb-1">
+                                Employee ID: {advance.employeeEmployeeId}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Rejected on {new Date(advance.approvedDate || '').toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric'
+                                })}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm text-gray-600 mb-1">Requested Amount</p>
+                              <p className="text-2xl font-bold text-red-600">
+                                ₹{advance.amount.toLocaleString('en-IN')}
+                              </p>
+                            </div>
+                          </div>
+
+                          {advance.rejectionReason && (
+                            <div className="bg-white border border-red-200 rounded-lg p-3">
+                              <p className="text-sm font-medium text-red-800 mb-1">Rejection Reason:</p>
+                              <p className="text-sm text-red-700">{advance.rejectionReason}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No Requests */}
+                {salaryAdvances.length === 0 && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-12 text-center">
+                    <CreditCard className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600 font-medium mb-2">No Salary Advance Requests</p>
+                    <p className="text-sm text-gray-500">
+                      Employees can apply for salary advances from their dashboard
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
+
+      {/* Salary Advance Modal for Managers */}
+      {showAdvanceModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl text-gray-900">Apply for Salary Advance</h2>
+              <button
+                onClick={() => setShowAdvanceModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-purple-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-purple-800 font-medium mb-1">Recovery Terms</p>
+                    <p className="text-sm text-purple-700">
+                      The advance will be automatically deducted from your salary over the next 4 months in equal installments.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Advance Amount *</label>
+                <input
+                  type="number"
+                  value={advanceAmount}
+                  onChange={(e) => setAdvanceAmount(e.target.value)}
+                  placeholder="Enter amount (e.g., 10000)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+
+              {advanceAmount && !isNaN(parseFloat(advanceAmount)) && parseFloat(advanceAmount) > 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-700 mb-2">Monthly Deduction Preview:</p>
+                  <p className="text-2xl font-bold text-purple-600">
+                    ₹{(parseFloat(advanceAmount) / 4).toLocaleString('en-IN')}/month
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">for 4 months</p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-200 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowAdvanceModal(false);
+                  setAdvanceAmount('');
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApplySalaryAdvance}
+                disabled={!advanceAmount || isNaN(parseFloat(advanceAmount)) || parseFloat(advanceAmount) <= 0}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Employee Modal */}
       {showEditEmployee && editingEmployee && (
@@ -1408,8 +2026,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <h2 className="text-xl text-gray-900">Edit Employee</h2>
               <button
                 onClick={() => setShowEditEmployee(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -1488,8 +2105,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <h2 className="text-xl text-gray-900">Add Payout</h2>
               <button
                 onClick={() => setShowPayoutModal(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -1562,8 +2178,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <h2 className="text-xl text-gray-900">Edit Payout</h2>
               <button
                 onClick={() => setShowEditPayout(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3 } from 'lucide-react';
+import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
@@ -34,6 +34,17 @@ interface SalesRecord {
 
 type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
+// Default pieces per plate for each momo type
+const DEFAULT_PIECES_PER_PLATE: Record<keyof CategoryData, number> = {
+  'Chicken Momos': 6,
+  'Chicken Cheese Momos': 6,
+  'Veg Momos': 6,
+  'Paneer Momos': 6,
+  'Cheese Corn Momos': 6,
+  'Chicken Kurkure Momos': 6,
+  'Veg Kurkure Momos': 6
+};
+
 export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,8 +56,29 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     to: new Date().toISOString().split('T')[0]
   });
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(new Date().getDay()); // 0-6 for Sun-Sat
+  const [showPlateConfig, setShowPlateConfig] = useState(false);
+  const [piecesPerPlate, setPiecesPerPlate] = useState<Record<keyof CategoryData, number>>(DEFAULT_PIECES_PER_PLATE);
   
   const effectiveStoreId = selectedStoreId || context.user?.storeId || null;
+
+  // Load plate configuration from localStorage on mount
+  useEffect(() => {
+    const savedConfig = localStorage.getItem('momoPlateConfig');
+    if (savedConfig) {
+      try {
+        setPiecesPerPlate(JSON.parse(savedConfig));
+      } catch (e) {
+        console.error('Failed to load plate config:', e);
+      }
+    }
+  }, []);
+
+  // Save plate configuration to localStorage whenever it changes
+  const updatePlateConfig = (category: keyof CategoryData, pieces: number) => {
+    const newConfig = { ...piecesPerPlate, [category]: pieces };
+    setPiecesPerPlate(newConfig);
+    localStorage.setItem('momoPlateConfig', JSON.stringify(newConfig));
+  };
 
   useEffect(() => {
     loadSalesData();
@@ -150,7 +182,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     }
     
     // Default Plate Size = 6 pieces
-    return qty * 6;
+    return qty * piecesPerPlate[itemName as keyof CategoryData];
   };
 
   // Logic for Categorization (translated from Python)
@@ -369,6 +401,14 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               max={new Date().toISOString().split('T')[0]}
             />
             
+            <button
+              onClick={() => setShowPlateConfig(!showPlateConfig)}
+              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="font-medium">Plate Config</span>
+            </button>
+            
             <label className={`px-6 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Upload className="w-4 h-4" />
               <span className="font-medium">{uploading ? 'Uploading...' : 'Upload XLSX'}</span>
@@ -398,6 +438,76 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           </div>
         </div>
       </div>
+
+      {/* Plate Configuration Modal */}
+      {showPlateConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
+                  <p className="text-sm text-blue-100">Set how many pieces are in each plate for each momo type</p>
+                </div>
+                <button
+                  onClick={() => setShowPlateConfig(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <AlertCircle className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {(Object.keys(piecesPerPlate) as Array<keyof CategoryData>).map((category, index) => (
+                <div key={category} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-4 h-4 rounded-full"
+                      style={{ backgroundColor: getChartColor(index) }}
+                    />
+                    <label className="text-gray-900 font-medium">{category}</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={piecesPerPlate[category]}
+                      onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
+                      className="w-20 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                    />
+                    <span className="text-gray-600 text-sm">pieces/plate</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="p-6 bg-blue-50 border-t-2 border-blue-200">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-blue-900">
+                  <p className="font-medium mb-1">How it works:</p>
+                  <p>
+                    This configuration determines how pieces are converted to plates in the display.
+                    For example, if Chicken Momos has 6 pieces/plate and you sold 262 pieces,
+                    it will show as <span className="font-mono bg-white px-2 py-1 rounded">262 pcs / 44 plates</span>.
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
+              <button
+                onClick={() => setShowPlateConfig(false)}
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sales Analytics Charts */}
       {salesRecords.length > 0 && (
@@ -936,6 +1046,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     {Object.entries(record.data).map(([category, count], index) => {
                       const percentage = totalPieces > 0 ? ((count / totalPieces) * 100).toFixed(1) : '0';
                       const color = getChartColor(index);
+                      const plates = Math.floor(count / piecesPerPlate[category as keyof CategoryData]);
                       
                       return (
                         <div 
@@ -953,7 +1064,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
                             {count.toLocaleString()}
                           </p>
-                          <p className="text-xs text-gray-500 mt-1">pieces</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <p className="text-xs text-gray-500">pieces</p>
+                            <span className="text-xs text-gray-400">•</span>
+                            <p className="text-xs text-gray-600 font-semibold">{plates} plates</p>
+                          </div>
                         </div>
                       );
                     })}

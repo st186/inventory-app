@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import * as api from '../utils/api';
-import { Package, TrendingDown, TrendingUp, AlertTriangle, ArrowRight, CheckCircle, Store, Factory, Info } from 'lucide-react';
+import { Package, TrendingDown, TrendingUp, AlertTriangle, ArrowRight, CheckCircle, Store, Factory, Info, Settings, X } from 'lucide-react';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -30,9 +30,41 @@ type StockStatus = {
   lastUpdated: string;
 };
 
+// Default pieces per plate configuration
+const DEFAULT_PIECES_PER_PLATE: Record<string, number> = {
+  chicken: 6,
+  chickenCheese: 6,
+  veg: 6,
+  cheeseCorn: 6,
+  paneer: 6,
+  vegKurkure: 6,
+  chickenKurkure: 6
+};
+
 export function StoreStockStatus({ context, stores, onNavigateToManageItems }: Props) {
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<'7days' | '30days' | 'all'>('30days');
+  const [showPlateConfig, setShowPlateConfig] = useState(false);
+  const [piecesPerPlate, setPiecesPerPlate] = useState<Record<string, number>>(DEFAULT_PIECES_PER_PLATE);
+
+  // Load plate configuration from localStorage on mount
+  useEffect(() => {
+    const savedConfig = localStorage.getItem('storeStockPlateConfig');
+    if (savedConfig) {
+      try {
+        setPiecesPerPlate(JSON.parse(savedConfig));
+      } catch (e) {
+        console.error('Failed to load plate config:', e);
+      }
+    }
+  }, []);
+
+  // Save plate configuration to localStorage
+  const updatePlateConfig = (product: string, pieces: number) => {
+    const newConfig = { ...piecesPerPlate, [product]: pieces };
+    setPiecesPerPlate(newConfig);
+    localStorage.setItem('storeStockPlateConfig', JSON.stringify(newConfig));
+  };
 
   // Calculate stock status for each store
   const storeStockStatuses = useMemo(() => {
@@ -182,6 +214,15 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
               <option key={store.id} value={store.id}>{store.name}</option>
             ))}
           </select>
+          {(context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
+            <button
+              onClick={() => setShowPlateConfig(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="text-sm font-semibold">Plate Config</span>
+            </button>
+          )}
           {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
             <button
               onClick={onNavigateToManageItems}
@@ -245,6 +286,70 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
         </Card>
       </div>
 
+      {/* Plate Configuration Modal */}
+      {showPlateConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
+                  <p className="text-sm text-blue-100">Set how many pieces are in each plate for stock display</p>
+                </div>
+                <button
+                  onClick={() => setShowPlateConfig(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {Object.entries(productLabels).map(([product, label]) => (
+                <div key={product} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
+                  <label className="text-gray-900 font-medium">{label}</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={piecesPerPlate[product]}
+                      onChange={(e) => updatePlateConfig(product, parseInt(e.target.value) || 6)}
+                      className="w-20 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                    />
+                    <span className="text-gray-600 text-sm">pieces/plate</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="p-6 bg-blue-50 border-t-2 border-blue-200">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-blue-900">
+                  <p className="font-medium mb-1">How it works:</p>
+                  <p>
+                    This configuration determines how pieces are converted to plates in the stock display.
+                    For example, if Chicken Momos has 6 pieces/plate and you have 170 pieces in stock,
+                    it will show as <span className="font-mono bg-white px-2 py-1 rounded">170 pcs / 28 plates</span>.
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
+              <button
+                onClick={() => setShowPlateConfig(false)}
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Store Stock Details */}
       <div className="grid grid-cols-1 gap-4">
         {filteredStatuses.map(storeStatus => (
@@ -276,6 +381,8 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                   if (quantity === 0) itemStatus = 'out';
                   else if (quantity < 50) itemStatus = 'critical';
                   else if (quantity < 100) itemStatus = 'low';
+                  
+                  const plates = Math.floor(quantity / piecesPerPlate[product]);
 
                   return (
                     <div 
@@ -288,7 +395,10 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                       }`}
                     >
                       <p className="text-xs text-muted-foreground mb-1">{productLabels[product]}</p>
-                      <p className="text-xl">{quantity}</p>
+                      <p className="text-xl font-semibold">{quantity}</p>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        <span className="font-medium">{plates} plates</span>
+                      </div>
                       <div className="flex items-center gap-1 mt-1">
                         <div className={`h-2 w-2 rounded-full ${getStatusColor(itemStatus)}`} />
                         <span className="text-xs capitalize">{itemStatus}</span>

@@ -311,6 +311,26 @@ export async function migrateProductionNotifications(): Promise<{ message: strin
   return data;
 }
 
+export async function cleanupDuplicateProduction(): Promise<{ 
+  success: boolean; 
+  message: string; 
+  duplicatesFound: number;
+  totalDeleted: number;
+  details: any[];
+}> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/production/cleanup-duplicates`, session.access_token, {
+    method: 'POST',
+  });
+  return data;
+}
+
 export async function clearAllData(): Promise<void> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1047,6 +1067,93 @@ export async function deletePayout(id: string): Promise<void> {
   }
   
   await fetchWithAuth(`${API_BASE}/payouts/${id}`, session.access_token, {
+    method: 'DELETE',
+  });
+}
+
+// ============================================
+// SALARY ADVANCE API
+// ============================================
+
+export interface SalaryAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeEmployeeId: string;
+  amount: number;
+  requestDate: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvedBy?: string;
+  approvedDate?: string;
+  rejectionReason?: string;
+  installments: number; // Always 4
+  monthlyDeduction: number; // amount / 4
+  remainingAmount: number;
+  startMonth: string; // YYYY-MM format
+  endMonth: string; // YYYY-MM format
+  deductions: SalaryAdvanceDeduction[];
+  createdAt: string;
+}
+
+export interface SalaryAdvanceDeduction {
+  month: string; // YYYY-MM format
+  amount: number;
+  deducted: boolean;
+  deductedDate?: string;
+  payoutId?: string;
+}
+
+export async function getSalaryAdvances(): Promise<SalaryAdvance[]> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/salary-advances`, session.access_token);
+  return data.salaryAdvances || [];
+}
+
+export async function createSalaryAdvance(advance: Omit<SalaryAdvance, 'id' | 'createdAt'>): Promise<SalaryAdvance> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/salary-advances`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify(advance),
+  });
+  return data.salaryAdvance;
+}
+
+export async function updateSalaryAdvance(id: string, updates: Partial<SalaryAdvance>): Promise<SalaryAdvance> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const data = await fetchWithAuth(`${API_BASE}/salary-advances/${id}`, session.access_token, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+  return data.salaryAdvance;
+}
+
+export async function deleteSalaryAdvance(id: string): Promise<void> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  
+  await fetchWithAuth(`${API_BASE}/salary-advances/${id}`, session.access_token, {
     method: 'DELETE',
   });
 }

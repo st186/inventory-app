@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Wallet, Calendar, TrendingUp, DollarSign, FileText, Download, User, Phone, Mail, Briefcase, MapPin } from 'lucide-react';
+import { Wallet, Calendar, TrendingUp, DollarSign, FileText, Download, User, Phone, Mail, Briefcase, MapPin, CreditCard, AlertCircle, CheckCircle, Clock, XCircle } from 'lucide-react';
 import * as api from '../utils/api';
 
 interface EmployeeDashboardProps {
@@ -245,13 +245,16 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
   const [employee, setEmployee] = useState<any>(null);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'payouts' | 'manager'>('payouts');
+  const [activeTab, setActiveTab] = useState<'payouts' | 'manager' | 'advance'>('payouts');
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [managerDetails, setManagerDetails] = useState<any>(null);
   const [seniorManagerDetails, setSeniorManagerDetails] = useState<any>(null);
+  const [salaryAdvances, setSalaryAdvances] = useState<api.SalaryAdvance[]>([]);
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState('');
 
   useEffect(() => {
     loadEmployeeData();
@@ -273,6 +276,13 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         );
         setPayouts(employeePayouts);
 
+        // Load salary advances for this employee
+        const allAdvances = await api.getSalaryAdvances();
+        const employeeAdvances = allAdvances.filter(
+          (advance: api.SalaryAdvance) => advance.employeeId === currentEmployee.id
+        );
+        setSalaryAdvances(employeeAdvances);
+
         // Load manager details if employee has an incharge
         if (currentEmployee.inchargeId) {
           const manager = employees.find((emp: any) => emp.id === currentEmployee.inchargeId);
@@ -293,6 +303,81 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
       console.error('Error loading employee data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApplySalaryAdvance = async () => {
+    try {
+      const amount = parseFloat(advanceAmount);
+      
+      if (!amount || amount <= 0) {
+        alert('Please enter a valid amount');
+        return;
+      }
+
+      if (!employee.monthlySalary) {
+        alert('Your salary information is not available. Please contact HR.');
+        return;
+      }
+
+      if (amount > employee.monthlySalary) {
+        alert('Advance amount cannot exceed your monthly salary');
+        return;
+      }
+
+      // Check if there's already a pending or active advance
+      const activeAdvance = salaryAdvances.find(
+        adv => adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
+      );
+
+      if (activeAdvance) {
+        alert('You already have an active or pending salary advance. Please wait for it to be processed or completed.');
+        return;
+      }
+
+      // Calculate deduction schedule
+      const monthlyDeduction = amount / 4;
+      const now = new Date();
+      const startMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      
+      const deductions: api.SalaryAdvanceDeduction[] = [];
+      for (let i = 0; i < 4; i++) {
+        const deductionDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const monthStr = `${deductionDate.getFullYear()}-${String(deductionDate.getMonth() + 1).padStart(2, '0')}`;
+        deductions.push({
+          month: monthStr,
+          amount: monthlyDeduction,
+          deducted: false
+        });
+      }
+
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 3, 1);
+      const endMonth = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}`;
+
+      const newAdvance: Omit<api.SalaryAdvance, 'id' | 'createdAt'> = {
+        employeeId: employee.id,
+        employeeName: employee.name,
+        employeeEmployeeId: employee.employeeId,
+        amount,
+        requestDate: new Date().toISOString(),
+        status: 'pending',
+        installments: 4,
+        monthlyDeduction,
+        remainingAmount: amount,
+        startMonth,
+        endMonth,
+        deductions
+      };
+
+      await api.createSalaryAdvance(newAdvance);
+      
+      alert('Salary advance request submitted successfully! Your request will be reviewed by the Cluster Head.');
+      setShowAdvanceModal(false);
+      setAdvanceAmount('');
+      loadEmployeeData();
+    } catch (error) {
+      console.error('Error applying for salary advance:', error);
+      alert('Failed to submit salary advance request. Please try again.');
     }
   };
 
@@ -495,6 +580,19 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 </div>
               </button>
               <button
+                onClick={() => setActiveTab('advance')}
+                className={`px-6 py-2 rounded-lg transition-colors ${
+                  activeTab === 'advance'
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CreditCard className="w-4 h-4" />
+                  <span>Salary Advance</span>
+                </div>
+              </button>
+              <button
                 onClick={() => setActiveTab('manager')}
                 className={`px-6 py-2 rounded-lg transition-colors ${
                   activeTab === 'manager'
@@ -692,6 +790,204 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
               </div>
             )}
 
+            {/* Salary Advance Tab */}
+            {activeTab === 'advance' && (
+              <div className="space-y-6">
+                {/* Apply for Advance Button */}
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-lg text-gray-900 font-semibold">Salary Advance</h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Apply for salary advance with automatic 4-month recovery
+                    </p>
+                  </div>
+                  {employee.type === 'fulltime' && (
+                    <button
+                      onClick={() => setShowAdvanceModal(true)}
+                      disabled={salaryAdvances.some(adv => 
+                        adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
+                      )}
+                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CreditCard className="w-5 h-5" />
+                      <span>Apply for Advance</span>
+                    </button>
+                  )}
+                </div>
+
+                {employee.type !== 'fulltime' && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
+                      <div>
+                        <p className="text-yellow-800 font-medium">Not Available</p>
+                        <p className="text-sm text-yellow-700 mt-1">
+                          Salary advance is only available for permanent employees
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Salary Advances List */}
+                {salaryAdvances.length > 0 ? (
+                  <div className="space-y-4">
+                    {salaryAdvances.map((advance) => (
+                      <div 
+                        key={advance.id}
+                        className={`border-2 rounded-xl p-6 ${
+                          advance.status === 'pending' ? 'border-yellow-300 bg-yellow-50' :
+                          advance.status === 'approved' ? 'border-green-300 bg-green-50' :
+                          'border-red-300 bg-red-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <h4 className="text-lg font-semibold text-gray-900">
+                                ₹{advance.amount.toLocaleString('en-IN')} Advance
+                              </h4>
+                              {advance.status === 'pending' && (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">
+                                  <Clock className="w-3 h-3" />
+                                  Pending Approval
+                                </span>
+                              )}
+                              {advance.status === 'approved' && (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                                  <CheckCircle className="w-3 h-3" />
+                                  Approved
+                                </span>
+                              )}
+                              {advance.status === 'rejected' && (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+                                  <XCircle className="w-3 h-3" />
+                                  Rejected
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-600">
+                              Applied on {new Date(advance.requestDate).toLocaleDateString('en-IN', {
+                                day: 'numeric',
+                                month: 'short',
+                                year: 'numeric'
+                              })}
+                            </p>
+                          </div>
+                        </div>
+
+                        {advance.status === 'rejected' && advance.rejectionReason && (
+                          <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-4">
+                            <p className="text-sm font-medium text-red-800 mb-1">Rejection Reason:</p>
+                            <p className="text-sm text-red-700">{advance.rejectionReason}</p>
+                          </div>
+                        )}
+
+                        {advance.status === 'approved' && (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="bg-white rounded-lg p-3">
+                                <p className="text-xs text-gray-600 mb-1">Monthly Deduction</p>
+                                <p className="text-lg font-semibold text-gray-900">
+                                  ₹{advance.monthlyDeduction.toLocaleString('en-IN')}
+                                </p>
+                              </div>
+                              <div className="bg-white rounded-lg p-3">
+                                <p className="text-xs text-gray-600 mb-1">Remaining Balance</p>
+                                <p className="text-lg font-semibold text-orange-600">
+                                  ₹{advance.remainingAmount.toLocaleString('en-IN')}
+                                </p>
+                              </div>
+                              <div className="bg-white rounded-lg p-3">
+                                <p className="text-xs text-gray-600 mb-1">Start Month</p>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {(() => {
+                                    const [year, month] = advance.startMonth.split('-');
+                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+                                    return date.toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      year: 'numeric'
+                                    });
+                                  })()}
+                                </p>
+                              </div>
+                              <div className="bg-white rounded-lg p-3">
+                                <p className="text-xs text-gray-600 mb-1">End Month</p>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {(() => {
+                                    const [year, month] = advance.endMonth.split('-');
+                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+                                    return date.toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      year: 'numeric'
+                                    });
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Deduction Schedule */}
+                            <div className="bg-white rounded-lg p-4">
+                              <h5 className="text-sm font-semibold text-gray-900 mb-3">Deduction Schedule</h5>
+                              <div className="space-y-2">
+                                {advance.deductions.map((deduction, idx) => (
+                                  <div 
+                                    key={idx}
+                                    className={`flex items-center justify-between p-3 rounded-lg ${
+                                      deduction.deducted 
+                                        ? 'bg-green-50 border border-green-200' 
+                                        : 'bg-gray-50 border border-gray-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3">
+                                      {deduction.deducted ? (
+                                        <CheckCircle className="w-5 h-5 text-green-600" />
+                                      ) : (
+                                        <Clock className="w-5 h-5 text-gray-400" />
+                                      )}
+                                      <div>
+                                        <p className="text-sm font-medium text-gray-900">
+                                          {new Date(deduction.month + '-01').toLocaleDateString('en-US', {
+                                            month: 'long',
+                                            year: 'numeric'
+                                          })}
+                                        </p>
+                                        {deduction.deducted && deduction.deductedDate && (
+                                          <p className="text-xs text-gray-600">
+                                            Deducted on {new Date(deduction.deductedDate).toLocaleDateString('en-IN')}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <p className={`text-sm font-semibold ${
+                                      deduction.deducted ? 'text-green-700' : 'text-gray-700'
+                                    }`}>
+                                      ₹{deduction.amount.toLocaleString('en-IN')}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
+                    <CreditCard className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-600 font-medium mb-1">No Salary Advances Yet</p>
+                    <p className="text-sm text-gray-500">
+                      {employee.type === 'fulltime' 
+                        ? 'Click "Apply for Advance" to request a salary advance'
+                        : 'Salary advance is only available for permanent employees'
+                      }
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* My Manager Details Tab */}
             {activeTab === 'manager' && (
               <div>
@@ -876,6 +1172,120 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                   <li>• For any discrepancies, please contact your manager</li>
                   <li>• Payment history is available for the last 12 months</li>
                 </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Salary Advance Application Modal */}
+        {showAdvanceModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">Apply for Salary Advance</h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Amount will be deducted over 4 months
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowAdvanceModal(false);
+                    setAdvanceAmount('');
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                {/* Monthly Salary Info */}
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <p className="text-sm text-purple-700 mb-1">Your Monthly Salary</p>
+                  <p className="text-2xl font-semibold text-purple-900">
+                    ₹{employee.monthlySalary?.toLocaleString('en-IN') || 'N/A'}
+                  </p>
+                </div>
+
+                {/* Advance Amount Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Advance Amount (₹)
+                  </label>
+                  <input
+                    type="number"
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                    placeholder="Enter amount"
+                    max={employee.monthlySalary || 0}
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Maximum: ₹{employee.monthlySalary?.toLocaleString('en-IN')}
+                  </p>
+                </div>
+
+                {/* Deduction Preview */}
+                {advanceAmount && parseFloat(advanceAmount) > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm font-medium text-blue-900 mb-2">Deduction Schedule:</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-blue-800">Monthly Deduction:</span>
+                        <span className="font-semibold text-blue-900">
+                          ₹{(parseFloat(advanceAmount) / 4).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-blue-800">Duration:</span>
+                        <span className="font-semibold text-blue-900">4 Months</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-blue-800">Total Amount:</span>
+                        <span className="font-semibold text-blue-900">
+                          ₹{parseFloat(advanceAmount).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Important Note */}
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm text-yellow-800">
+                      <p className="font-medium mb-1">Important:</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        <li>Your request will be sent to Cluster Head for approval</li>
+                        <li>The amount will be deducted equally over 4 months</li>
+                        <li>Deductions will start from your next salary payment</li>
+                        <li>You cannot apply for another advance until this one is recovered</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowAdvanceModal(false);
+                    setAdvanceAmount('');
+                  }}
+                  className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApplySalaryAdvance}
+                  disabled={!advanceAmount || parseFloat(advanceAmount) <= 0 || parseFloat(advanceAmount) > (employee.monthlySalary || 0)}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                >
+                  Submit Request
+                </button>
               </div>
             </div>
           </div>

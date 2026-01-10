@@ -7,6 +7,7 @@ import { PayrollManagement } from './components/PayrollManagement';
 import { Analytics } from './components/Analytics';
 import { ExportData } from './components/ExportData';
 import { EmployeeDashboard } from './components/EmployeeDashboard';
+import { AuditDashboard } from './components/AuditDashboard';
 import { AuthPage } from './components/AuthPage';
 import { EmployeeTimesheet } from './components/EmployeeTimesheet';
 import { EmployeeLeave } from './components/EmployeeLeave';
@@ -28,7 +29,6 @@ import { StockRequestManagement } from './components/StockRequestManagement';
 import { AdvancedInventoryManagement } from './components/AdvancedInventoryManagement';
 import { InventoryItemsManagement } from './components/InventoryItemsManagement';
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
-import { DebugPanel } from './components/DebugPanel';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
@@ -560,8 +560,8 @@ export default function App() {
           // Load data for the user
           await loadData(session.access_token);
           
-          // Load stores and employees for managers (cluster heads and operations managers need this for production house filtering)
-          if (userData.role === 'cluster_head' || userData.role === 'manager') {
+          // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
+          if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
             await loadStores();
             await loadEmployees();
             if (userData.role === 'cluster_head') {
@@ -673,8 +673,8 @@ export default function App() {
         // Load data for the user
         await loadData(data.session.access_token);
         
-        // Load stores and employees for managers (cluster heads and operations managers need this for production house filtering)
-        if (userData.role === 'cluster_head' || userData.role === 'manager') {
+        // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
+        if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
           await loadStores();
           await loadEmployees();
         }
@@ -685,7 +685,7 @@ export default function App() {
     }
   };
 
-  const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee') => {
+  const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee' | 'audit') => {
     setAuthError(null);
     try {
       // Use server-side signup which auto-confirms email
@@ -702,7 +702,7 @@ export default function App() {
             password,
             name,
             role,
-            employeeId: role === 'cluster_head' ? 'BM001' : null
+            employeeId: role === 'cluster_head' ? 'BM001' : role === 'audit' ? 'AUDIT001' : null
           })
         }
       );
@@ -719,10 +719,10 @@ export default function App() {
         return;
       }
 
-      // Create unified employee record for cluster head
-      if (role === 'cluster_head') {
+      // Create unified employee record for cluster head or audit
+      if (role === 'cluster_head' || role === 'audit') {
         try {
-          const employeeId = 'BM001';
+          const employeeId = role === 'cluster_head' ? 'BM001' : 'AUDIT001';
           await fetch(
             `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/unified-employees`,
             {
@@ -735,7 +735,7 @@ export default function App() {
                 employeeId: employeeId,
                 name: name,
                 email: email,
-                role: 'cluster_head',
+                role: role,
                 employmentType: 'fulltime',
                 joiningDate: new Date().toISOString().split('T')[0],
                 createdBy: 'system',
@@ -1192,6 +1192,7 @@ export default function App() {
   // Cluster heads should only see the dashboard
   const isClusterHead = user.role === 'cluster_head';
   const isEmployee = user.role === 'employee';
+  const isAudit = user.role === 'audit';
   const isStoreIncharge = user.role === 'employee' && user.designation === 'store_incharge';
   // Production incharge can be either employee OR manager with production_incharge designation
   const isProductionIncharge = user.designation === 'production_incharge';
@@ -1216,6 +1217,29 @@ export default function App() {
   });
   
   console.log('📍 Current activeView:', activeView);
+
+  // If audit user, show audit dashboard
+  if (isAudit) {
+    return (
+      <AuditDashboard
+        user={user}
+        inventory={inventory}
+        overheads={overheads}
+        fixedCosts={fixedCosts}
+        salesData={salesData}
+        categorySalesData={categorySalesData}
+        productionData={productionData}
+        productionHouses={productionHouses}
+        stockRequests={stockRequests}
+        productionRequests={productionRequests}
+        employees={employees}
+        stores={stores}
+        inventoryItems={inventoryItems}
+        onLogout={handleLogout}
+        onDataUpdate={loadData}
+      />
+    );
+  }
 
   // If employee, show only employee dashboard
   if (isEmployee) {
@@ -2199,9 +2223,6 @@ export default function App() {
           <ClusterDashboard context={contextValue} />
         )}
       </main>
-
-      {/* Debug Panel - Remove this after debugging */}
-      <DebugPanel user={user} productionData={productionData} />
     </div>
     </>
   );

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
@@ -66,6 +66,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     const saved = localStorage.getItem('momosPerPlate');
     return saved ? parseInt(saved, 10) : 6; // Default 6 momos per plate
   });
+  const [showPlateConfigModal, setShowPlateConfigModal] = useState(false);
 
   // Kitchen Utilities list with specific units
   const kitchenUtilityItems = [
@@ -602,6 +603,12 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Prevent duplicate submissions
+    if (submitting) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
     console.log('🚀 handleSubmitRequest called');
     console.log('  User info:', {
       hasAccessToken: !!context.user?.accessToken,
@@ -1031,6 +1038,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                     <Settings className="w-4 h-4" />
                     <span className="text-sm font-semibold">Alert Settings</span>
                   </button>
+                  {(isOperationsHead || isClusterHead) && (
+                    <button
+                      onClick={() => setShowPlateConfigModal(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span className="text-sm font-semibold">Plate Config</span>
+                    </button>
+                  )}
                   {onNavigateToManageItems && (isOperationsHead || isClusterHead) && (
                     <button
                       onClick={onNavigateToManageItems}
@@ -2100,6 +2116,68 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             setShowThresholdSettings(false);
           }}
         />
+      )}
+
+      {/* Plate Configuration Modal */}
+      {showPlateConfigModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
+                  <p className="text-sm text-blue-100">Set how many momos are in each plate</p>
+                </div>
+                <button
+                  onClick={() => setShowPlateConfigModal(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Explanation */}
+            <div className="p-6 bg-blue-50 border-b-2 border-blue-200">
+              <h3 className="text-gray-900 font-semibold mb-2">How it works:</h3>
+              <p className="text-sm text-gray-700">
+                Stock will be displayed as both pieces and plates. For example, if you have 170 momos and each plate contains 6 momos, 
+                it will show as <span className="font-mono bg-white px-2 py-1 rounded">170 pcs / 28 plates</span>.
+              </p>
+            </div>
+
+            {/* Input */}
+            <div className="p-6">
+              <label className="text-gray-900 font-semibold mb-3 block">
+                Momos Per Plate
+              </label>
+              <div className="bg-gradient-to-r from-blue-50 to-blue-100 border-2 border-blue-300 rounded-xl p-4">
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={momosPerPlate}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value) || 6;
+                    setMomosPerPlate(value);
+                    localStorage.setItem('momosPerPlate', value.toString());
+                  }}
+                  className="w-full px-4 py-3 border-2 border-blue-400 rounded-lg focus:border-blue-600 focus:outline-none text-center text-2xl font-bold text-blue-900"
+                />
+                <p className="text-center text-sm text-blue-700 mt-2">pieces per plate</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
+              <button
+                onClick={() => setShowPlateConfigModal(false)}
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

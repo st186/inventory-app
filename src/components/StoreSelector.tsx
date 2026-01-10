@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Store, MapPin, ChevronDown } from 'lucide-react';
 import * as api from '../utils/api';
 
@@ -8,7 +9,7 @@ type StoreSelectorProps = {
   showAllStores?: boolean;
 };
 
-export function StoreSelector({ stores, selectedStoreId, onStoreChange, showAllStores = true }: StoreSelectorProps) {
+export const StoreSelector = memo(function StoreSelector({ stores, selectedStoreId, onStoreChange, showAllStores = true }: StoreSelectorProps) {
   const selectedStore = stores.find(s => s.id === selectedStoreId);
   const isAllStores = !selectedStoreId;
 
@@ -115,4 +116,4 @@ export function StoreSelector({ stores, selectedStoreId, onStoreChange, showAllS
       )}
     </div>
   );
-}
+});

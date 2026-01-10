@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, memo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 type Props = {
@@ -6,7 +6,7 @@ type Props = {
   onDateChange: (date: string) => void;
 };
 
-export function DateSelector({ selectedDate, onDateChange }: Props) {
+export const DateSelector = memo(function DateSelector({ selectedDate, onDateChange }: Props) {
   const [dateRangeOffset, setDateRangeOffset] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -195,4 +195,4 @@ export function DateSelector({ selectedDate, onDateChange }: Props) {
       </div>
     </div>
   );
-}
+});

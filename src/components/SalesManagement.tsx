@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
-import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus } from 'lucide-react';
+import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2 } from 'lucide-react';
 import * as api from '../utils/api';
 
 type Props = {
@@ -27,6 +27,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
@@ -307,6 +308,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate submissions
+    if (isSubmitting) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+    
+    setIsSubmitting(true);
 
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
     const offset = actualCash - expectedCashInHand;
@@ -407,6 +416,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     } catch (error) {
       console.error('Error saving sales data:', error);
       alert('Failed to save sales data. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1112,10 +1123,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               <div className="space-y-3">
                 <button
                   type="submit"
-                  disabled={paymentMismatch}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={paymentMismatch || isSubmitting}
+                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
-                  {isEditing ? 'Update Sales Data' : 'Save Sales Data'}
+                  {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
+                  {isSubmitting ? 'Saving...' : isEditing ? 'Update Sales Data' : 'Save Sales Data'}
                 </button>
                 
                 {/* Request Approval Button - Only show when editing with high discrepancy */}
