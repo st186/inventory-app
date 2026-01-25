@@ -13,7 +13,19 @@ type RecalibrationReportsProps = {
 };
 
 export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibration, locationType }: RecalibrationReportsProps) {
-  const [view, setView] = useState<'pending' | 'history' | 'wastage'>('pending');
+  // Determine effective location ID for queries
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const isManager = context.user?.role === 'manager';
+  const isProductionIncharge = context.user?.designation === 'production_incharge';
+  const isStoreIncharge = context.user?.designation === 'store_incharge';
+  
+  // IMPORTANT: Only Operations Managers and Cluster Heads can approve recalibrations
+  // Store Incharges and Production Incharges can only submit, not approve
+  const canApproveRecalibrations = (isClusterHead || isManager) && !isProductionIncharge && !isStoreIncharge;
+  
+  // IMPORTANT: Store/Production Incharges should default to 'history' view since they can't see pending approvals
+  const defaultView = canApproveRecalibrations ? 'pending' : 'history';
+  const [view, setView] = useState<'pending' | 'history' | 'wastage'>(defaultView as 'pending' | 'history' | 'wastage');
   const [pendingRecalibrations, setPendingRecalibrations] = useState<any[]>([]);
   const [historyRecalibrations, setHistoryRecalibrations] = useState<any[]>([]);
   const [wastageReport, setWastageReport] = useState<any>(null);
@@ -22,11 +34,6 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
   const [selectedRecalibration, setSelectedRecalibration] = useState<any>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
-  // Determine effective location ID for queries
-  const isClusterHead = context.user?.role === 'cluster_head';
-  const isManager = context.user?.role === 'manager';
-  const isProductionIncharge = context.user?.designation === 'production_incharge';
-  
   // CRITICAL FIX: For Production Analytics, Cluster Heads should ALWAYS see all production houses
   // regardless of which specific production house is selected from the dropdown
   // This is because production house selection in Production Analytics is just for filtering
@@ -47,14 +54,17 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
   console.log('  - Production Houses:', context.productionHouses?.map(ph => ({ id: ph.id, name: ph.name })));
 
   useEffect(() => {
-    if (view === 'pending' && (isClusterHead || isManager)) {
+    // CRITICAL FIX: Production Incharge should NOT see pending approvals
+    // Only Cluster Heads and Operations Managers can approve
+    if (view === 'pending' && canApproveRecalibrations) {
       fetchPendingRecalibrations();
     } else if (view === 'history') {
       fetchHistoryRecalibrations();
     } else if (view === 'wastage') {
       fetchWastageReport();
     }
-  }, [view, selectedMonth, effectiveStoreId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedMonth, effectiveStoreId, isClusterHead, isManager, isProductionIncharge, isStoreIncharge]);
 
   async function fetchPendingRecalibrations() {
     try {
@@ -199,7 +209,8 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
       {/* View Toggle */}
       <div className="flex gap-2 bg-white rounded-lg p-2 shadow-sm">
-        {(isClusterHead || isManager) && (
+        {/* Only show Pending Approval tab to Cluster Heads and Operations Managers, NOT Production Incharge */}
+        {canApproveRecalibrations && (
           <button
             onClick={() => setView('pending')}
             className={`flex-1 px-4 py-2 rounded-lg transition-all ${

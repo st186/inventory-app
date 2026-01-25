@@ -17,7 +17,7 @@ interface CategoryData {
   'Chicken Cheese Momos': number;
   'Veg Momos': number;
   'Paneer Momos': number;
-  'Cheese Corn Momos': number;
+  'Corn Cheese Momos': number;
   'Chicken Kurkure Momos': number;
   'Veg Kurkure Momos': number;
 }
@@ -40,7 +40,7 @@ const DEFAULT_PIECES_PER_PLATE: Record<keyof CategoryData, number> = {
   'Chicken Cheese Momos': 6,
   'Veg Momos': 6,
   'Paneer Momos': 6,
-  'Cheese Corn Momos': 6,
+  'Corn Cheese Momos': 6,
   'Chicken Kurkure Momos': 6,
   'Veg Kurkure Momos': 6
 };
@@ -137,118 +137,125 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     });
   };
 
-  // Logic for Piece Counting (translated from Python)
-  const getPieceCount = (item: any): number => {
-    const itemName = String(item['Item'] || '');
-    const qty = Number(item['Total Quantity'] || item['Total Qua'] || 0); // Handle both column names
-    
-    // Rule: Exclude Mania Combos completely
-    if (itemName.toLowerCase().includes('mania') && itemName.toLowerCase().includes('combo')) {
-      return 0;
-    }
-    
-    if (!qty || qty === 0) {
-      return 0;
-    }
-    
-    const nameLower = itemName.toLowerCase();
-    
-    // Rule: Burger Logic
-    if (nameLower.includes('burger')) {
-      const momosPerBurger = 2;
-      let burgersPerPlate = 1;
-      
-      // Check if name says "2 pcs" (implying 2 burgers per plate)
-      const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
-      if (pcsMatch) {
-        burgersPerPlate = parseInt(pcsMatch[1]);
-      }
-      
-      return qty * burgersPerPlate * momosPerBurger;
-    }
-    
-    // Rule: Standard Logic - Check for explicit piece count
-    const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
-    if (pcsMatch) {
-      let count = parseInt(pcsMatch[1]);
-      
-      // Check for pack multiplier
-      const packMatch = itemName.match(/pack of\s*(\d+)/i);
-      if (packMatch) {
-        count *= parseInt(packMatch[1]);
-      }
-      
-      return qty * count;
-    }
-    
-    // Default Plate Size = 6 pieces
-    return qty * piecesPerPlate[itemName as keyof CategoryData];
-  };
-
-  // Logic for Categorization (translated from Python)
-  const getCategory = (itemName: string): string => {
-    if (typeof itemName !== 'string') {
-      return 'Other';
-    }
-    
-    const nameLower = itemName.toLowerCase();
-    
-    // Filter out Beverages/Non-Momos
-    if (['drink', 'cola', 'campa', 'water', 'beverage'].some(x => nameLower.includes(x))) {
-      return 'Other';
-    }
-    
-    // Priority: Kurkure (Separate Category)
-    if (nameLower.includes('kurkure')) {
-      if (nameLower.includes('chicken')) {
-        return 'Chicken Kurkure Momos';
-      }
-      if (nameLower.includes('veg')) {
-        return 'Veg Kurkure Momos';
-      }
-      return 'Other Kurkure Momos';
-    }
-    
-    // Specific Fillings
-    if (nameLower.includes('paneer')) {
-      return 'Paneer Momos';
-    }
-    if (nameLower.includes('corn') && nameLower.includes('cheese')) {
-      return 'Cheese Corn Momos';
-    }
-    if (nameLower.includes('chicken') && nameLower.includes('cheese')) {
-      return 'Chicken Cheese Momos';
-    }
-    
-    // General Fillings
-    if (nameLower.includes('chicken')) {
-      return 'Chicken Momos';
-    }
-    if (nameLower.includes('veg')) {
-      return 'Veg Momos';
-    }
-    
-    return 'Other';
-  };
-
-  // Process item data
+  // Process item data with NEW V2 logic
   const processItemData = (jsonData: any[]): CategoryData => {
     const result: CategoryData = {
       'Chicken Momos': 0,
       'Chicken Cheese Momos': 0,
       'Veg Momos': 0,
       'Paneer Momos': 0,
-      'Cheese Corn Momos': 0,
+      'Corn Cheese Momos': 0,
       'Chicken Kurkure Momos': 0,
       'Veg Kurkure Momos': 0
     };
     
     jsonData.forEach(item => {
-      const pieces = getPieceCount(item);
-      const category = getCategory(item['Item'] || '');
+      const itemName = String(item['Item'] || '');
+      const qty = Number(item['Total Quantity'] || item['Total Qua'] || 0);
       
+      // Skip invalid or empty rows
+      if (!qty || qty === 0 || !itemName) {
+        return;
+      }
+      
+      const nameLower = itemName.toLowerCase();
+      
+      // -------------------------------------------------
+      // RULE 1: Mania Combos (Exclude)
+      // -------------------------------------------------
+      if (nameLower.includes('mania') && nameLower.includes('combo')) {
+        return;
+      }
+      
+      // -------------------------------------------------
+      // RULE 2: Platters (Split Logic)
+      // -------------------------------------------------
+      if (nameLower.includes('platter')) {
+        if (nameLower.includes('non veg')) {
+          // 6 Chicken + 6 Chicken Cheese
+          result['Chicken Momos'] += (6 * qty);
+          result['Chicken Cheese Momos'] += (6 * qty);
+        } else if (nameLower.includes('veg')) {
+          // 4 Paneer + 4 Veg + 4 Corn Cheese
+          result['Paneer Momos'] += (4 * qty);
+          result['Veg Momos'] += (4 * qty);
+          result['Corn Cheese Momos'] += (4 * qty);
+        }
+        return; // Done processing this row
+      }
+      
+      // -------------------------------------------------
+      // RULE 3: Determine Piece Count for Standard Items
+      // -------------------------------------------------
+      let piecesPerUnit = 6; // Default plate size
+      
+      if (nameLower.includes('burger')) {
+        // Base: 1 burger = 2 momos
+        const momosPerBurger = 2;
+        let burgersPerPlate = 1;
+        
+        // Check for multi-burger plates (e.g., "2 pcs")
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        if (pcsMatch) {
+          burgersPerPlate = parseInt(pcsMatch[1]);
+        }
+        
+        piecesPerUnit = burgersPerPlate * momosPerBurger;
+      } else {
+        // Standard items: check for explicit counts like "8 pcs"
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        if (pcsMatch) {
+          let count = parseInt(pcsMatch[1]);
+          
+          // Check for "pack of" multiplier
+          const packMatch = itemName.match(/pack of\s*(\d+)/i);
+          if (packMatch) {
+            count *= parseInt(packMatch[1]);
+          }
+          
+          piecesPerUnit = count;
+        }
+      }
+      
+      const totalPieces = qty * piecesPerUnit;
+      
+      // -------------------------------------------------
+      // RULE 4: Categorize Standard Items
+      // -------------------------------------------------
+      // Filter out beverages/extras
+      if (['drink', 'cola', 'campa', 'water', 'beverage', 'soup'].some(x => nameLower.includes(x))) {
+        return;
+      }
+      
+      // Identify Category
+      let category: keyof CategoryData | 'Other' = 'Other';
+      
+      // Priority: Kurkure
+      if (nameLower.includes('kurkure')) {
+        if (nameLower.includes('chicken')) {
+          category = 'Chicken Kurkure Momos';
+        } else if (nameLower.includes('veg')) {
+          category = 'Veg Kurkure Momos';
+        }
+      }
+      // Specific Fillings
+      else if (nameLower.includes('paneer')) {
+        category = 'Paneer Momos';
+      } else if (nameLower.includes('corn') && nameLower.includes('cheese')) {
+        category = 'Corn Cheese Momos';
+      } else if (nameLower.includes('chicken') && nameLower.includes('cheese')) {
+        category = 'Chicken Cheese Momos';
+      }
+      // General Fillings
+      else if (nameLower.includes('chicken')) {
+        category = 'Chicken Momos';
+      } else if (nameLower.includes('veg')) {
+        category = 'Veg Momos';
+      }
+      
+      // Add to total if it matches a tracked category
       if (category in result) {
-        result[category as keyof CategoryData] += pieces;
+        result[category as keyof CategoryData] += totalPieces;
       }
     });
     
@@ -361,7 +368,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       '#f97316', // orange - Chicken Cheese Momos
       '#22c55e', // green - Veg Momos
       '#3b82f6', // blue - Paneer Momos
-      '#eab308', // yellow - Cheese Corn Momos
+      '#eab308', // yellow - Corn Cheese Momos
       '#8b5cf6', // purple - Chicken Kurkure Momos
       '#06b6d4'  // cyan - Veg Kurkure Momos
     ];
@@ -618,7 +625,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     'Chicken Cheese Momos': 0,
                     'Veg Momos': 0,
                     'Paneer Momos': 0,
-                    'Cheese Corn Momos': 0,
+                    'Corn Cheese Momos': 0,
                     'Chicken Kurkure Momos': 0,
                     'Veg Kurkure Momos': 0
                   });
@@ -693,7 +700,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <Bar dataKey="Chicken Cheese Momos" fill="#f97316" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Veg Momos" fill="#22c55e" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Paneer Momos" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Cheese Corn Momos" fill="#eab308" radius={[8, 8, 0, 0]} />
+              <Bar dataKey="Corn Cheese Momos" fill="#eab308" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Chicken Kurkure Momos" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
               <Bar dataKey="Veg Kurkure Momos" fill="#06b6d4" radius={[8, 8, 0, 0]} />
             </BarChart>
@@ -707,7 +714,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 'Chicken Cheese Momos': 0,
                 'Veg Momos': 0,
                 'Paneer Momos': 0,
-                'Cheese Corn Momos': 0,
+                'Corn Cheese Momos': 0,
                 'Chicken Kurkure Momos': 0,
                 'Veg Kurkure Momos': 0
               };
@@ -798,7 +805,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         };
 
         // Initialize category arrays for each day
-        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Cheese Corn Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
+        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
         Object.keys(dayOfWeekData).forEach(day => {
           categories.forEach(cat => {
             dayOfWeekData[day].counts[cat] = [];
@@ -1044,9 +1051,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 <div className="p-6">
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {Object.entries(record.data).map(([category, count], index) => {
-                      const percentage = totalPieces > 0 ? ((count / totalPieces) * 100).toFixed(1) : '0';
+                      const safeCount = count || 0;
+                      const percentage = totalPieces > 0 ? ((safeCount / totalPieces) * 100).toFixed(1) : '0';
                       const color = getChartColor(index);
-                      const plates = Math.floor(count / piecesPerPlate[category as keyof CategoryData]);
+                      const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
+                      const plates = Math.floor(safeCount / piecesPerPlateValue);
                       
                       return (
                         <div 
@@ -1062,7 +1071,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           </div>
                           <h4 className="text-sm text-gray-600 mb-1">{category}</h4>
                           <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
-                            {count.toLocaleString()}
+                            {safeCount.toLocaleString()}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
                             <p className="text-xs text-gray-500">pieces</p>

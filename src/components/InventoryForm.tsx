@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { InventoryItem } from '../App';
 import { INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Search } from 'lucide-react';
 import * as api from '../utils/api';
 
 type Props = {
@@ -9,9 +9,10 @@ type Props = {
   editingItem?: InventoryItem | null;
   onSubmit: (item: Omit<InventoryItem, 'id'>) => void | Promise<void>;
   onClose: () => void;
+  onSuccess?: () => void; // NEW: Optional callback after successful submission
 };
 
-export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: Props) {
+export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, onSuccess }: Props) {
   const [formData, setFormData] = useState({
     category: (editingItem?.category || 'fresh_produce') as InventoryItem['category'],
     itemName: editingItem?.itemName || '',
@@ -24,6 +25,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
   const [loadingCustomItems, setLoadingCustomItems] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(''); // NEW: Search state
 
   // Load custom items on mount
   useEffect(() => {
@@ -48,6 +50,18 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
     } finally {
       setLoadingCustomItems(false);
     }
+  };
+
+  // Reset form to initial state (for adding multiple items)
+  const resetForm = () => {
+    setFormData({
+      category: 'fresh_produce',
+      itemName: '',
+      customItem: false,
+      quantity: '',
+      unit: 'kg',
+      totalCost: ''
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -77,7 +91,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
       }
     }
     
-    onSubmit({
+    await onSubmit({
       date: selectedDate,
       category: formData.category,
       itemName: formData.itemName,
@@ -86,17 +100,34 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
       costPerUnit,
       totalCost
     });
+    
     setIsSubmitting(false);
+    
+    // Only reset form if this is a new item (not editing)
+    if (!editingItem) {
+      resetForm();
+    }
+    
+    if (onSuccess) {
+      onSuccess();
+    }
   };
 
   // Merge base items with custom items for the selected category
-  // Remove duplicates by converting to Set and back to array
-  const categoryItems = [
+  // Remove duplicates by converting to Set and back to array, then sort alphabetically
+  const allCategoryItems = [
     ...new Set([
       ...CATEGORY_ITEMS[formData.category],
       ...(customItems[formData.category] || [])
     ])
-  ];
+  ].sort((a, b) => a.localeCompare(b)); // Sort alphabetically
+
+  // Filter items based on search query
+  const filteredCategoryItems = searchQuery.trim()
+    ? allCategoryItems.filter(item => 
+        item.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : allCategoryItems;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -116,14 +147,15 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
             <label className="block text-sm text-gray-700 mb-1">Category</label>
             <select
               value={formData.category}
-              onChange={(e) =>
+              onChange={(e) => {
                 setFormData({
                   ...formData,
                   category: e.target.value as InventoryItem['category'],
                   itemName: '',
                   customItem: false
-                })
-              }
+                });
+                setSearchQuery(''); // Clear search when category changes
+              }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             >
@@ -139,26 +171,51 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
             <label className="block text-sm text-gray-700 mb-1">Item Name</label>
             {!formData.customItem ? (
               <div className="space-y-2">
+                {/* Search Input */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search items..."
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                {/* Dropdown */}
                 <select
                   value={formData.itemName}
                   onChange={(e) => {
                     if (e.target.value === '__custom__') {
                       setFormData({ ...formData, customItem: true, itemName: '' });
+                      setSearchQuery(''); // Clear search when switching to custom
                     } else {
                       setFormData({ ...formData, itemName: e.target.value });
                     }
                   }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                   required
+                  size={Math.min(filteredCategoryItems.length + 2, 8)} // Show multiple items at once
                 >
                   <option value="">Select an item</option>
-                  {categoryItems.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
+                  {filteredCategoryItems.length === 0 && searchQuery ? (
+                    <option value="" disabled>No items found</option>
+                  ) : (
+                    filteredCategoryItems.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))
+                  )}
                   <option value="__custom__">+ Add Custom Item</option>
                 </select>
+                
+                {searchQuery && (
+                  <p className="text-xs text-gray-500">
+                    Showing {filteredCategoryItems.length} of {allCategoryItems.length} items
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
@@ -174,9 +231,10 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose }: 
                 />
                 <button
                   type="button"
-                  onClick={() =>
-                    setFormData({ ...formData, customItem: false, itemName: '' })
-                  }
+                  onClick={() => {
+                    setFormData({ ...formData, customItem: false, itemName: '' });
+                    setSearchQuery(''); // Clear search when going back
+                  }}
                   className="text-sm text-blue-600 hover:text-blue-700"
                 >
                   ← Back to list

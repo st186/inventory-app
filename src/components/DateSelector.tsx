@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, memo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { getTodayIST } from '../utils/timezone';
 
 type Props = {
   selectedDate: string;
@@ -23,7 +24,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
 
   // Generate 7-day date selector based on current offset
   const dateOptions = useMemo(() => {
-    const today = new Date();
+    const today = getTodayIST();
     const baseDate = new Date(today);
     baseDate.setDate(baseDate.getDate() + (dateRangeOffset * 7));
     
@@ -40,7 +41,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
   useEffect(() => {
     if (!dateOptions.includes(selectedDate)) {
       const selected = new Date(selectedDate);
-      const today = new Date();
+      const today = new Date(getTodayIST());
       const diffDays = Math.floor((selected.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
       const newOffset = Math.floor(diffDays / 7);
       setDateRangeOffset(newOffset);
@@ -49,7 +50,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
 
   const jumpToToday = () => {
     setDateRangeOffset(0);
-    onDateChange(new Date().toISOString().split('T')[0]);
+    onDateChange(getTodayIST());
   };
 
   // Mobile view with native date picker + navigation
@@ -104,7 +105,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
           <div className="flex gap-2 pb-2 min-w-max">
             {dateOptions.map((date) => {
               const dateObj = new Date(date);
-              const isToday = date === new Date().toISOString().split('T')[0];
+              const isToday = date === getTodayIST();
               const isSelected = date === selectedDate;
               
               return (
@@ -160,7 +161,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
         <div className="grid grid-cols-7 gap-2 flex-1">
           {dateOptions.map((date) => {
             const dateObj = new Date(date);
-            const isToday = date === new Date().toISOString().split('T')[0];
+            const isToday = date === getTodayIST();
             const isSelected = date === selectedDate;
             
             return (

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
-import { Package, Receipt, Wallet, Edit2, Trash2 } from 'lucide-react';
+import { Package, Receipt, Wallet, Edit2, Trash2, Loader2 } from 'lucide-react';
 
 type Props = {
   inventory: InventoryItem[];
@@ -29,6 +29,7 @@ export function InventoryList({
   isManager = true
 }: Props) {
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead' | 'fixedcost', id: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Group inventory by category
   const groupedInventory = inventory.reduce((acc, item) => {
@@ -40,6 +41,7 @@ export function InventoryList({
   }, {} as Record<string, InventoryItem[]>);
 
   const handleDelete = (type: 'inventory' | 'overhead' | 'fixedcost', id: string) => {
+    setIsDeleting(true);
     if (type === 'inventory') {
       onDeleteInventory(id);
     } else if (type === 'overhead') {
@@ -48,6 +50,7 @@ export function InventoryList({
       onDeleteFixedCost(id);
     }
     setDeleteConfirm(null);
+    setIsDeleting(false);
   };
 
   return (
@@ -266,15 +269,18 @@ export function InventoryList({
             <div className="flex gap-3">
               <button
                 onClick={() => setDeleteConfirm(null)}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDelete(deleteConfirm.type, deleteConfirm.id)}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Delete
+                {isDeleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isDeleting ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

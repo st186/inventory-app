@@ -1,3 +1,4 @@
+// Bhandar-IMS - Fixed recalibration date comparison logic
 import { useState, useEffect } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
 import { InventoryView } from './components/InventoryView';
@@ -53,12 +54,16 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments';
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
   employeeId?: string; // For personal_expense category
   employeeName?: string; // For personal_expense category
+  // Payment method fields
+  paymentMethod?: 'cash' | 'online' | 'both';
+  cashAmount?: number; // Amount paid via cash (for 'both' option)
+  onlineAmount?: number; // Amount paid via online (for 'both' option)
 };
 
 export type FixedCostItem = {
@@ -309,6 +314,7 @@ export default function App() {
     setIsLoadingData(true);
     setDataError(null);
     try {
+      console.log('🔍 Starting loadData - fetching stock requests...');
       const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
@@ -321,6 +327,10 @@ export default function App() {
         api.fetchProductionRequests(accessToken),
         api.fetchInventoryItems() // NEW: Dynamic inventory items metadata
       ]);
+      
+      console.log('🔍 Stock Requests API Response:', stockRequestsData);
+      console.log('🔍 Stock Requests count:', stockRequestsData?.length || 0);
+      console.log('🔍 Sample stock request:', stockRequestsData?.[0]);
       
       // Debug logging to check for duplicates
       console.log('📦 Loaded Inventory Items:', inventoryData.length);
@@ -1083,10 +1093,13 @@ export default function App() {
   const createStockRequest = async (request: Omit<api.StockRequest, 'id' | 'fulfilledQuantities' | 'status' | 'fulfilledBy' | 'fulfilledByName' | 'fulfillmentDate' | 'notes'>) => {
     if (!user) return;
     try {
+      console.log('📦 Creating stock request:', request);
       const newRequest = await api.createStockRequest(user.accessToken, request);
+      console.log('✅ Stock request created successfully:', newRequest);
       setStockRequests([...stockRequests, newRequest]);
+      console.log('📦 Updated stock requests count:', stockRequests.length + 1);
     } catch (error) {
-      console.error('Error creating stock request:', error);
+      console.error('❌ Error creating stock request:', error);
       throw error;
     }
   };
@@ -2115,8 +2128,8 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Store Selector for Cluster Heads - Hidden on Analytics tab */}
-      {isClusterHead && stores.length > 0 && activeView !== 'analytics' && (
+      {/* Store Selector for Cluster Heads */}
+      {isClusterHead && stores.length > 0 && (
         <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 border-b border-purple-100 px-4 py-6">
           <div className="max-w-7xl mx-auto">
             <StoreSelector

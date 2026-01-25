@@ -56,6 +56,8 @@ export const OVERHEAD_CATEGORIES = {
   lunch: '🍽️ Lunch Cost',
   emergency_online: '🛒 Emergency Online Order (Blinkit)',
   personal_expense: '👤 Personal Expense By an Employee',
+  utensils: '🍴 Utensils',
+  equipments: '🔨 Equipments',
   miscellaneous: '📝 Miscellaneous Cost'
 } as const;
 

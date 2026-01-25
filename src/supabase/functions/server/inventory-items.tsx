@@ -3,6 +3,41 @@ import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
+// Retry wrapper for KV operations to handle connection resets
+async function retryKvOperation<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries = 3
+): Promise<T> {
+  const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000);
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      const isConnectionError = 
+        error?.message?.includes('connection reset') || 
+        error?.message?.includes('connection error') ||
+        error?.message?.includes('ECONNRESET') ||
+        error?.message?.includes('ETIMEDOUT') ||
+        error?.message?.includes('client error');
+      
+      if (isConnectionError && attempt < maxRetries) {
+        const delay = retryDelay(attempt);
+        console.log(`⚠️ Connection error in ${operationName}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // If we've exhausted retries or it's a different error, throw it
+      console.error(`❌ Error in ${operationName} after ${attempt + 1} attempts:`, error);
+      throw error;
+    }
+  }
+  
+  throw new Error(`Failed to execute ${operationName} after ${maxRetries} retries`);
+}
+
 export interface InventoryItem {
   id: string; // Format: "item_<timestamp>_<random>"
   name: string;
@@ -33,7 +68,10 @@ app.get('/make-server-c2dd9b9d/inventory-items', async (c) => {
     // Get all items with error handling
     let items: InventoryItem[] = [];
     try {
-      items = await kv.getByPrefix<InventoryItem>('inventory_item_');
+      items = await retryKvOperation(
+        () => kv.getByPrefix<InventoryItem>('inventory_item_'),
+        'getByPrefix'
+      );
       console.log(`📊 Raw items fetched: ${items.length}`);
     } catch (kvError) {
       console.error('❌ KV Store error:', kvError);
@@ -85,7 +123,10 @@ app.get('/make-server-c2dd9b9d/inventory-items', async (c) => {
 app.get('/make-server-c2dd9b9d/inventory-items/:id', async (c) => {
   try {
     const id = c.req.param('id');
-    const item = await kv.get<InventoryItem>(`inventory_item_${id}`);
+    const item = await retryKvOperation(
+      () => kv.get<InventoryItem>(`inventory_item_${id}`),
+      'get inventory item'
+    );
 
     if (!item) {
       return c.json({ error: 'Item not found' }, 404);
@@ -133,7 +174,10 @@ app.post('/make-server-c2dd9b9d/inventory-items', async (c) => {
     // Check for duplicate name in same context
     let existingItems: InventoryItem[] = [];
     try {
-      existingItems = await kv.getByPrefix<InventoryItem>('inventory_item_');
+      existingItems = await retryKvOperation(
+        () => kv.getByPrefix<InventoryItem>('inventory_item_'),
+        'check duplicate items'
+      );
     } catch (kvError) {
       console.log('⚠️ No existing items found (probably first item), skipping duplicate check');
       existingItems = [];
@@ -166,7 +210,10 @@ app.post('/make-server-c2dd9b9d/inventory-items', async (c) => {
       isActive: true,
     };
 
-    await kv.set(`inventory_item_${itemId}`, newItem);
+    await retryKvOperation(
+      () => kv.set(`inventory_item_${itemId}`, newItem),
+      'create inventory item'
+    );
 
     console.log('✅ Inventory item created:', itemId);
 
@@ -188,7 +235,10 @@ app.put('/make-server-c2dd9b9d/inventory-items/:id', async (c) => {
 
     console.log('📦 Updating inventory item:', id, updates);
 
-    const existingItem = await kv.get<InventoryItem>(`inventory_item_${id}`);
+    const existingItem = await retryKvOperation(
+      () => kv.get<InventoryItem>(`inventory_item_${id}`),
+      'get inventory item for update'
+    );
     
     if (!existingItem) {
       return c.json({ error: 'Item not found' }, 404);
@@ -202,7 +252,10 @@ app.put('/make-server-c2dd9b9d/inventory-items/:id', async (c) => {
       createdBy: existingItem.createdBy, // Prevent createdBy from being changed
     };
 
-    await kv.set(`inventory_item_${id}`, updatedItem);
+    await retryKvOperation(
+      () => kv.set(`inventory_item_${id}`, updatedItem),
+      'update inventory item'
+    );
 
     console.log('✅ Inventory item updated:', id);
 
@@ -223,7 +276,10 @@ app.delete('/make-server-c2dd9b9d/inventory-items/:id', async (c) => {
 
     console.log('📦 Deleting inventory item:', id);
 
-    const existingItem = await kv.get<InventoryItem>(`inventory_item_${id}`);
+    const existingItem = await retryKvOperation(
+      () => kv.get<InventoryItem>(`inventory_item_${id}`),
+      'get inventory item for delete'
+    );
     
     if (!existingItem) {
       return c.json({ error: 'Item not found' }, 404);
@@ -235,7 +291,10 @@ app.delete('/make-server-c2dd9b9d/inventory-items/:id', async (c) => {
       isActive: false,
     };
 
-    await kv.set(`inventory_item_${id}`, updatedItem);
+    await retryKvOperation(
+      () => kv.set(`inventory_item_${id}`, updatedItem),
+      'delete inventory item'
+    );
 
     console.log('✅ Inventory item deleted (soft):', id);
 
@@ -273,7 +332,10 @@ app.post('/make-server-c2dd9b9d/inventory-items/initialize-defaults', async (c) 
         createdAt: new Date().toISOString(),
       };
       
-      await kv.set(`inventory_item_${itemId}`, newItem);
+      await retryKvOperation(
+        () => kv.set(`inventory_item_${itemId}`, newItem),
+        'initialize inventory item'
+      );
       createdItems.push(newItem);
     }
 

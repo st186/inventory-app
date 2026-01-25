@@ -7,6 +7,8 @@ import { FixedCostForm } from './FixedCostForm';
 import { InventoryList } from './InventoryList';
 import { DateSelector } from './DateSelector';
 import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { getTodayIST, formatDateIST } from '../utils/timezone';
 
 type Props = {
   context: InventoryContextType;
@@ -16,7 +18,7 @@ type Props = {
 
 export function InventoryManagement({ context, selectedStoreId, employees }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    getTodayIST()
   );
   const [showInventoryForm, setShowInventoryForm] = useState(false);
   const [showOverheadForm, setShowOverheadForm] = useState(false);
@@ -32,13 +34,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    return formatDateIST(dateStr);
   };
 
   // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
@@ -176,13 +172,16 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
             try {
               if (editingInventory) {
                 await context.updateInventoryItem(editingInventory.id, item);
+                setShowInventoryForm(false);
+                setEditingInventory(null);
+                toast.success('Inventory item updated successfully!');
               } else {
                 await context.addInventoryItem(item);
+                // Don't close form for new items - let user add more
+                toast.success('Inventory item added! You can add another item.');
               }
-              setShowInventoryForm(false);
-              setEditingInventory(null);
             } catch (error) {
-              alert('Failed to save inventory item. Please try again.');
+              toast.error('Failed to save inventory item. Please try again.');
             }
           }}
           onClose={() => {
@@ -206,6 +205,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
               }
               setShowOverheadForm(false);
               setEditingOverhead(null);
+              toast.success('Overhead cost saved successfully!');
             } catch (error) {
               alert('Failed to save overhead cost. Please try again.');
             }
@@ -230,6 +230,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
               }
               setShowFixedCostForm(false);
               setEditingFixedCost(null);
+              toast.success('Fixed cost saved successfully!');
             } catch (error) {
               alert('Failed to save fixed cost. Please try again.');
             }

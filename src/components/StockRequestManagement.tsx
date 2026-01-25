@@ -64,7 +64,7 @@ export function StockRequestManagement({ context, stores }: Props) {
     }
 
     try {
-      await context.createStockRequest({
+      const requestData = {
         storeId: userStore.id,
         storeName: userStore.name,
         productionHouseId: productionHouse.id,
@@ -73,8 +73,16 @@ export function StockRequestManagement({ context, stores }: Props) {
         requestedByName: context.user?.name || '',
         requestDate: new Date().toISOString().split('T')[0],
         requestedQuantities: requestForm,
-      });
+      };
+      
+      console.log('🔵 FRONTEND: About to create stock request with data:', requestData);
+      console.log('🔵 User employeeId:', context.user?.employeeId);
+      console.log('🔵 User name:', context.user?.name);
+      console.log('🔵 Has access token:', !!context.user?.accessToken);
+      
+      await context.createStockRequest(requestData);
 
+      console.log('✅ FRONTEND: Stock request created successfully!');
       alert('Stock request created successfully!');
       setShowCreateForm(false);
       setRequestForm({
@@ -87,7 +95,8 @@ export function StockRequestManagement({ context, stores }: Props) {
         chickenKurkure: 0,
       });
     } catch (error) {
-      console.error('Error creating stock request:', error);
+      console.error('❌ FRONTEND: Error creating stock request:', error);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       alert('Failed to create stock request. Please try again.');
     }
   };

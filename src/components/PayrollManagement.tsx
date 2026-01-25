@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText, CreditCard, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText, CreditCard, CheckCircle, XCircle, Clock, AlertCircle, Minus } from 'lucide-react';
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
@@ -22,6 +22,17 @@ interface Payout {
   amount: number;
   date: string;
   createdAt: string;
+}
+
+interface OverheadItem {
+  id: string;
+  date: string;
+  category: string;
+  description: string;
+  amount: number;
+  storeId?: string;
+  employeeId?: string;
+  employeeName?: string;
 }
 
 interface PayrollManagementProps {
@@ -278,6 +289,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [salaryAdvances, setSalaryAdvances] = useState<any[]>([]);
+  const [overheads, setOverheads] = useState<OverheadItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const isClusterHead = userRole === 'cluster_head';
@@ -422,18 +434,21 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const loadData = async () => {
     setLoading(true);
     try {
-      console.log('Loading employees, payouts, and salary advances from server...');
-      const [employeesData, payoutsData, advancesData] = await Promise.all([
+      console.log('Loading employees, payouts, salary advances, and overheads from server...');
+      const [employeesData, payoutsData, advancesData, overheadsData] = await Promise.all([
         api.getEmployees(),
         api.getPayouts(),
-        api.getSalaryAdvances()
+        api.getSalaryAdvances(),
+        api.getOverheads()
       ]);
       console.log('Loaded employees:', employeesData);
       console.log('Loaded payouts:', payoutsData);
       console.log('Loaded salary advances:', advancesData);
+      console.log('Loaded overheads:', overheadsData);
       setEmployees(employeesData || []);
       setPayouts(payoutsData || []);
       setSalaryAdvances(advancesData || []);
+      setOverheads(overheadsData || []);
     } catch (error) {
       console.error('Error loading payroll data:', error);
     } finally {
@@ -691,6 +706,25 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     });
 
     return { totalPayout, employeePayouts };
+  };
+
+  // Calculate personal expense deductions for an employee in the current date range
+  const calculatePersonalExpenses = (employeeInternalId: string): number => {
+    let dateFiltered;
+    if (viewMode === 'current') {
+      dateFiltered = overheads.filter(o => o.date >= currentMonth.start && o.date <= currentMonth.end);
+    } else if (viewMode === 'last') {
+      dateFiltered = overheads.filter(o => o.date >= lastMonth.start && o.date <= lastMonth.end);
+    } else {
+      if (!customStartDate || !customEndDate) return 0;
+      dateFiltered = overheads.filter(o => o.date >= customStartDate && o.date <= customEndDate);
+    }
+
+    const personalExpenses = dateFiltered.filter(
+      o => o.category === 'personal_expense' && o.employeeId === employeeInternalId
+    );
+
+    return personalExpenses.reduce((sum, o) => sum + o.amount, 0);
   };
 
   const getInitials = (name: string) => {
@@ -1163,6 +1197,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             // Filtered payouts for the summary card (respects date filter)
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
             const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
+            const myPersonalExpenses = currentEmployee ? calculatePersonalExpenses(currentEmployee.id) : 0;
+            const myNetAmount = totalPayout - myPersonalExpenses;
 
             return (
               <div className="p-6">
@@ -1285,21 +1321,44 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
                 {/* Summary Card */}
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6 mb-6">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">Total Received</p>
-                      <p className="text-sm text-gray-500">
-                        {viewMode === 'current' 
-                          ? `for ${currentMonth.monthName}`
-                          : viewMode === 'last'
-                          ? `for ${lastMonth.monthName}`
-                          : `from ${customStartDate} to ${customEndDate}`
-                        }
-                      </p>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm text-gray-600 mb-1">Period</p>
+                        <p className="text-sm text-gray-700 font-medium">
+                          {viewMode === 'current' 
+                            ? currentMonth.monthName
+                            : viewMode === 'last'
+                            ? lastMonth.monthName
+                            : `${customStartDate} to ${customEndDate}`
+                          }
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-600 mb-1">{myPayouts.length} payment{myPayouts.length !== 1 ? 's' : ''}</p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-3xl text-green-600">₹{totalPayout.toLocaleString()}</p>
-                      <p className="text-sm text-gray-600 mt-1">{myPayouts.length} payment{myPayouts.length !== 1 ? 's' : ''}</p>
+                    
+                    <div className="pt-4 border-t border-green-200 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <p className="text-sm text-gray-600">Gross Pay</p>
+                        <p className="text-2xl text-green-600">₹{totalPayout.toLocaleString()}</p>
+                      </div>
+                      
+                      {myPersonalExpenses > 0 && (
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <Minus className="w-4 h-4 text-red-600" />
+                            <p className="text-sm text-gray-600">Personal Expenses</p>
+                          </div>
+                          <p className="text-xl text-red-600">₹{myPersonalExpenses.toLocaleString()}</p>
+                        </div>
+                      )}
+                      
+                      <div className="flex justify-between items-center pt-3 border-t border-green-300">
+                        <p className="text-base font-semibold text-gray-900">Net Amount</p>
+                        <p className="text-3xl font-bold text-green-700">₹{myNetAmount.toLocaleString()}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1457,6 +1516,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             <th className="text-right py-3 px-4 text-sm text-gray-600">
                               Total Paid ({viewMode === 'current' ? 'This Month' : viewMode === 'last' ? 'Last Month' : 'Period'})
                             </th>
+                            <th className="text-right py-3 px-4 text-sm text-gray-600">
+                              Personal Expenses ({viewMode === 'current' ? 'This Month' : viewMode === 'last' ? 'Last Month' : 'Period'})
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm text-gray-600">
+                              Net Amount
+                            </th>
                             {userRole === 'cluster_head' && (
                               <th className="text-right py-3 px-4 text-sm text-gray-600">Actions</th>
                             )}
@@ -1466,6 +1531,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           {permanentEmployees.map((emp, index) => {
                             const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
                             const totalPaid = empPayouts.reduce((sum, p) => sum + p.amount, 0);
+                            const personalExpenses = calculatePersonalExpenses(emp.id);
+                            const netAmount = totalPaid - personalExpenses;
                             const lastPayout = empPayouts.length > 0 
                               ? empPayouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
                               : null;
@@ -1510,7 +1577,17 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                   )}
                                 </td>
                                 <td className="py-4 px-4 text-right">
-                                  <span className="text-gray-900">₹{totalPaid.toLocaleString()}</span>
+                                  <span className="text-green-600">₹{totalPaid.toLocaleString()}</span>
+                                </td>
+                                <td className="py-4 px-4 text-right">
+                                  {personalExpenses > 0 ? (
+                                    <span className="text-red-600">- ₹{personalExpenses.toLocaleString()}</span>
+                                  ) : (
+                                    <span className="text-gray-400">₹0</span>
+                                  )}
+                                </td>
+                                <td className="py-4 px-4 text-right">
+                                  <span className="text-gray-900 font-semibold">₹{netAmount.toLocaleString()}</span>
                                 </td>
                                 {userRole === 'cluster_head' && (
                                   <td className="py-4 px-4 text-right">

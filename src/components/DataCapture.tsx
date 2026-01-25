@@ -3,6 +3,7 @@ import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, Trend
 import { InventoryContextType } from '../App';
 import { DatePicker } from './DatePicker';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { formatDateTimeIST, formatDateIST } from '../utils/timezone';
 
 type DataCaptureProps = {
   context: InventoryContextType;
@@ -252,53 +253,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       }
     });
 
-    // Process production data
-    // Filter production by store FIRST
-    const filteredProductionData = effectiveStoreId
-      ? context.productionData.filter(prod => prod.storeId === effectiveStoreId)
-      : context.productionData;
-    
-    filteredProductionData.forEach(prod => {
-      if (dateMap.has(prod.date)) {
-        const log = dateMap.get(prod.date)!;
-        log.productionLogged = true;
-        
-        // Set who logged production
-        if (prod.createdByName) {
-          log.productionLoggedBy = prod.createdByName;
-        } else if (prod.createdByEmail) {
-          log.productionLoggedBy = prod.createdByEmail;
-        } else if (prod.createdBy) {
-          // Check if createdBy is a UUID (contains dashes) - if so, hide it
-          const isUUID = typeof prod.createdBy === 'string' && prod.createdBy.includes('-');
-          if (isUUID) {
-            // Don't show UUID, show 'Manager' instead
-            log.productionLoggedBy = 'Manager';
-          } else {
-            // It's an employee ID like BM001
-            log.productionLoggedBy = prod.createdBy;
-          }
-        } else {
-          log.productionLoggedBy = 'Unknown User';
-        }
-        
-        // Get production logged timestamp from ID
-        const timestamp = prod.id.split('-')[0];
-        if (timestamp) {
-          const timestampNum = parseInt(timestamp);
-          if (!isNaN(timestampNum) && timestampNum > 0) {
-            log.productionLoggedAt = new Date(timestampNum).toISOString();
-            
-            // Check if logged late
-            const entryDate = new Date(timestampNum);
-            const targetDate = new Date(prod.date + 'T23:59:59');
-            if (entryDate > targetDate) {
-              log.lateEntry = true;
-            }
-          }
-        }
-      }
-    });
+    // REMOVED: Production data tracking - no longer needed in Data Capture Monitor
+    // Users should only see Stock Request tracking here
 
     // Process stock request data
     // Filter stock requests by store FIRST
@@ -311,8 +267,11 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       filteredStockRequests: filteredStockRequests.length,
       effectiveStoreId,
       stockRequestDates: filteredStockRequests.map(r => r.requestDate),
+      dateMapKeys: Array.from(dateMap.keys()),
       stockRequestIds: filteredStockRequests.map(r => r.id),
-      sampleRequest: filteredStockRequests[0]
+      sampleRequest: filteredStockRequests[0],
+      dateRangeStart: Array.from(dateMap.keys()).sort()[0],
+      dateRangeEnd: Array.from(dateMap.keys()).sort().reverse()[0]
     });
     
     filteredStockRequests.forEach(req => {
@@ -352,11 +311,17 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       }
     });
 
-    // Update status
+    // Update status based on ONLY inventory, sales, and stock requests (no production)
     dateMap.forEach((log) => {
-      if (log.inventoryLogged && log.salesLogged && log.productionLogged && log.stockRequestLogged) {
+      const hasInventory = log.inventoryLogged;
+      const hasSales = log.salesLogged;
+      
+      // Complete = Both Inventory AND Sales logged
+      // Partial = At least one logged
+      // Missing = None logged
+      if (hasInventory && hasSales) {
         log.status = 'complete';
-      } else if (log.inventoryLogged || log.salesLogged || log.productionLogged || log.stockRequestLogged) {
+      } else if (hasInventory || hasSales) {
         log.status = 'partial';
       } else {
         log.status = 'missing';
@@ -396,15 +361,11 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
   const formatDateTime = (isoString: string | null) => {
     if (!isoString) return '-';
-    const date = new Date(isoString);
-    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-    return `${dateStr}, ${timeStr}`;
+    return formatDateTimeIST(isoString);
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatDateIST(dateStr);
   };
 
   const getStatusColor = (status: string) => {
@@ -615,12 +576,6 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                   Sales
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Production
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Stock Request
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
                   Cash Discrepancy
                 </th>
               </tr>
@@ -628,13 +583,13 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
             <tbody className="divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
                     Loading data...
                   </td>
                 </tr>
               ) : dailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
                     No data for selected period
                   </td>
                 </tr>
@@ -684,32 +639,6 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {log.productionLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.productionLoggedAt)}</p>
-                          {log.productionLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.productionLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.stockRequestLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.stockRequestLoggedAt)}</p>
-                          {log.stockRequestLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.stockRequestLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
                       {log.salesLogged ? (
                         <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}`}>
                           ₹{log.cashDiscrepancy.toFixed(2)}
@@ -732,7 +661,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-green-600" />
-            <span className="text-gray-600">Complete - All data types logged (Inventory, Sales, Production, Stock Request)</span>
+            <span className="text-gray-600">Complete - Both Inventory AND Sales logged</span>
           </div>
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-yellow-600" />
@@ -744,7 +673,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
           </div>
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-orange-500" />
-            <span className="text-gray-600">Orange icon = Late entry (after midnight)</span>
+            <span className="text-gray-600">Orange icon = Late entry (logged after midnight)</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES } from '../utils/inventoryData';
+import { formatDateIST } from '../utils/timezone';
 import {
   BarChart,
   Bar,
@@ -47,10 +48,7 @@ export function ClusterDashboard({ context }: Props) {
 
     return Array.from(dateMap.entries())
       .map(([date, values]) => ({
-        date: new Date(date).toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric'
-        }),
+        date: formatDateIST(date),
         fullDate: date,
         inventory: values.inventory,
         overhead: values.overhead,

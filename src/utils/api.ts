@@ -120,6 +120,14 @@ export async function deleteOverhead(accessToken: string, id: string): Promise<v
   });
 }
 
+// Get overheads (wrapper for fetchOverheads)
+export async function getOverheads(): Promise<OverheadItem[]> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not authenticated');
+  return fetchOverheads(session.access_token);
+}
+
 export async function fetchFixedCosts(accessToken: string): Promise<FixedCostItem[]> {
   const data = await fetchWithAuth(`${API_BASE}/fixed-costs`, accessToken);
   return data.fixedCosts || [];

@@ -3,6 +3,7 @@ import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
 import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2 } from 'lucide-react';
 import * as api from '../utils/api';
+import { getTodayIST, formatDateIST } from '../utils/timezone';
 
 type Props = {
   context: InventoryContextType;
@@ -11,7 +12,7 @@ type Props = {
 
 export function SalesManagement({ context, selectedStoreId }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    getTodayIST()
   );
 
   const [formData, setFormData] = useState({
@@ -32,7 +33,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
   const isStoreIncharge = context.user?.designation === 'store_incharge';
-  const isOperationsManager = isManager && !isStoreIncharge; // Operations manager (not store incharge)
+  const isProductionIncharge = context.user?.designation === 'production_incharge';
+  const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge; // Operations manager (not store/production incharge)
   const canEditSales = isStoreIncharge; // Only store incharge can enter/edit sales
   const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
   
@@ -217,9 +219,38 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       }, 0);
   }, [context.fixedCosts, selectedDate]);
 
+  // Calculate overhead costs paid via cash (to deduct from Expected Cash in Hand)
+  const overheadCostsCash = useMemo(() => {
+    return context.overheads
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+          // Default to cash if no payment method specified (backward compatibility)
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.cashAmount) {
+          return sum + item.cashAmount;
+        }
+        return sum;
+      }, 0);
+  }, [context.overheads, selectedDate]);
+
+  // Calculate overhead costs paid via online/Paytm (to deduct from Online Cash in Hand)
+  const overheadCostsOnline = useMemo(() => {
+    return context.overheads
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'online') {
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
+          return sum + item.onlineAmount;
+        }
+        return sum;
+      }, 0);
+  }, [context.overheads, selectedDate]);
+
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number, fixedCostsCash: number) => {
-    return prevCash + paytmAmount + cashReceived - expenses - salary - fixedCostsCash;
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number, fixedCostsCash: number, overheadCostsCash: number) => {
+    return prevCash + paytmAmount + cashReceived - expenses - salary - fixedCostsCash - overheadCostsCash;
   };
 
   // Calculate expected cash for current form data
@@ -228,8 +259,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const cashReceived = parseFloat(formData.cashAmount) || 0;
     const salary = totalContractPayout; // Use total from contract workers
     const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount, fixedCostsCash);
-  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney, fixedCostsCash]);
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount, fixedCostsCash, overheadCostsCash);
+  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney, fixedCostsCash, overheadCostsCash]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -264,8 +295,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         return sum;
       }, 0);
     
-    return allPaytmReceived - allUsedOnlineMoney - allFixedCostsOnline;
-  }, [context.salesData, context.fixedCosts, selectedDate]);
+    // Subtract all overhead costs paid via online up to and including selected date
+    const allOverheadCostsOnline = context.overheads
+      .filter(item => item.date <= selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'online') {
+          return sum + item.amount;
+        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
+          return sum + item.onlineAmount;
+        }
+        return sum;
+      }, 0);
+    
+    return allPaytmReceived - allUsedOnlineMoney - allFixedCostsOnline - allOverheadCostsOnline;
+  }, [context.salesData, context.fixedCosts, context.overheads, selectedDate]);
 
   // Load existing data when date changes
   useEffect(() => {
@@ -520,12 +563,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     <div key={sale.id} className="bg-white rounded-lg p-4 border border-orange-300">
                       <div className="mb-3">
                         <p className="text-gray-900 font-medium">
-                          {new Date(sale.date).toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
-                          })}
+                          {formatDateIST(sale.date)}
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
                           Expected Cash: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)}
@@ -576,12 +614,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     <div key={sale.id} className="bg-white rounded-lg p-4 flex items-center justify-between border border-yellow-300">
                       <div>
                         <p className="text-gray-900">
-                          {new Date(sale.date).toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
-                          })}
+                          {formatDateIST(sale.date)}
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
                           Cash Discrepancy: <span className={sale.cashOffset > 0 ? 'text-green-600' : 'text-red-600'}>
@@ -644,12 +677,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     <div key={sale.id} className="bg-white rounded-lg p-4 border border-green-300">
                       <div className="mb-3">
                         <p className="text-gray-900 font-medium">
-                          {new Date(sale.date).toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
-                          })}
+                          {formatDateIST(sale.date)}
                         </p>
                         <p className="text-sm text-gray-600 mt-1">
                           Submitted by: {sale.createdBy}
@@ -674,7 +702,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       </div>
                       <button
                         onClick={async () => {
-                          if (!confirm(`Approve sales data for ${new Date(sale.date).toLocaleDateString()}?`)) return;
+                          if (!confirm(`Approve sales data for ${formatDateIST(sale.date)}?`)) return;
                           try {
                             await context.approveSalesData(sale.id);
                             alert('Sales data approved successfully!');
@@ -714,12 +742,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             <h2 className="text-gray-900">Sales Pending Approval</h2>
           </div>
           <p className="text-gray-700">
-            Your sales entry for {new Date(salesForDate.date).toLocaleDateString('en-US', { 
-              weekday: 'long', 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric' 
-            })} is awaiting approval from the Operations Manager.
+            Your sales entry for {formatDateIST(salesForDate.date)} is awaiting approval from the Operations Manager.
           </p>
         </div>
       )}
@@ -732,12 +755,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             <h2 className="text-gray-900">Sales Approved</h2>
           </div>
           <p className="text-gray-700">
-            ✓ Your sales entry for {new Date(salesForDate.date).toLocaleDateString('en-US', { 
-              weekday: 'long', 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric' 
-            })} has been approved by {salesForDate.approvedBy}.
+            ✓ Your sales entry for {formatDateIST(salesForDate.date)} has been approved by {salesForDate.approvedBy}.
           </p>
         </div>
       )}
@@ -1256,6 +1274,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   return sum;
                 }, 0).toLocaleString()}</span>
               </div>
+              <div className="flex justify-between text-red-700">
+                <span>- Overhead Costs (Online):</span>
+                <span>₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                  if (item.paymentMethod === 'online') return sum + item.amount;
+                  if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                  return sum;
+                }, 0).toLocaleString()}</span>
+              </div>
               <div className="flex justify-between text-gray-700 pt-2 border-t border-gray-700/20">
                 <span>Used Today:</span>
                 <span>₹{(parseFloat(formData.usedOnlineMoney) || 0).toLocaleString()}</span>
@@ -1264,6 +1290,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 <div className="flex justify-between text-gray-700">
                   <span>Fixed Costs Today (Online):</span>
                   <span>₹{fixedCostsOnline.toLocaleString()}</span>
+                </div>
+              )}
+              {overheadCostsOnline > 0 && (
+                <div className="flex justify-between text-gray-700">
+                  <span>Overhead Costs Today (Online):</span>
+                  <span>₹{overheadCostsOnline.toLocaleString()}</span>
                 </div>
               )}
             </div>

@@ -5,11 +5,47 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 
+// ============================================
+// IST TIMEZONE UTILITIES (GMT+5:30)
+// ============================================
+const IST_OFFSET_HOURS = 5;
+const IST_OFFSET_MINUTES = 30;
+const IST_OFFSET_MS = (IST_OFFSET_HOURS * 60 + IST_OFFSET_MINUTES) * 60 * 1000;
+
+function getNowIST(): string {
+  const now = new Date();
+  const istTime = new Date(now.getTime() + IST_OFFSET_MS);
+  return istTime.toISOString();
+}
+
+function getTodayIST(): string {
+  return getNowIST().substring(0, 10);
+}
+
+function getDayOfMonthIST(timestamp?: string): number {
+  const date = timestamp ? timestamp : getNowIST();
+  return parseInt(date.substring(8, 10), 10);
+}
+
+function formatDateTimeIST(timestamp: string): string {
+  const date = new Date(timestamp);
+  const day = date.getUTCDate();
+  const month = date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  const year = date.getUTCFullYear();
+  let hours = date.getUTCHours();
+  const minutes = date.getUTCMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const minutesStr = minutes.toString().padStart(2, '0');
+  return `${day} ${month} ${year}, ${hours}:${minutesStr} ${ampm} IST`;
+}
+
 const app = new Hono();
 
 // Server version for debugging
-console.log('=== Bhandar-IMS Server v1.3 - Dynamic Inventory Items ===');
-console.log('Timestamp:', new Date().toISOString());
+console.log('=== Bhandar-IMS Server v1.4 - IST Timezone Support (GMT+5:30) ===');
+console.log('Server UTC Time:', new Date().toISOString());
+console.log('Server IST Time:', getNowIST());
 
 app.use('*', cors());
 app.use('*', logger(console.log));
@@ -19,36 +55,103 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-// Middleware to verify user authentication
-async function verifyUser(authHeader: string | null) {
+// Generic retry wrapper for database operations
+async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries = 3
+): Promise<T> {
+  const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000);
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      const isConnectionError = 
+        error?.message?.includes('connection reset') || 
+        error?.message?.includes('connection error') ||
+        error?.message?.includes('ECONNRESET') ||
+        error?.message?.includes('ETIMEDOUT') ||
+        error?.message?.includes('client error');
+      
+      if (isConnectionError && attempt < maxRetries) {
+        const delay = retryDelay(attempt);
+        console.log(`⚠️ Connection error in ${operationName}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // If we've exhausted retries or it's a different error, throw it
+      console.error(`❌ Error in ${operationName} after ${attempt + 1} attempts:`, error);
+      throw error;
+    }
+  }
+  
+  throw new Error(`Failed to execute ${operationName} after ${maxRetries} retries`);
+}
+
+// KV operation wrappers with retry logic
+const kvWithRetry = {
+  get: <T = any>(key: string) => retryWithBackoff<T>(() => kv.get(key), `kv.get(${key})`),
+  set: (key: string, value: any) => retryWithBackoff(() => kv.set(key, value), `kv.set(${key})`),
+  del: (key: string) => retryWithBackoff(() => kv.del(key), `kv.del(${key})`),
+  getByPrefix: <T = any>(prefix: string) => retryWithBackoff<T[]>(() => kv.getByPrefix(prefix), `kv.getByPrefix(${prefix})`),
+  mget: <T = any>(keys: string[]) => retryWithBackoff<T[]>(() => kv.mget(keys), `kv.mget`),
+  mset: (keys: string[], values: any[]) => retryWithBackoff(() => kv.mset(keys, values), `kv.mset`),
+  mdel: (keys: string[]) => retryWithBackoff(() => kv.mdel(keys), `kv.mdel`)
+};
+
+// Middleware to verify user authentication with retry logic
+async function verifyUser(authHeader: string | null, retryCount = 0): Promise<any> {
   if (!authHeader) {
     return { error: 'Unauthorized', status: 401 };
   }
   
   const accessToken = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+  const maxRetries = 3;
+  const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000); // Exponential backoff, max 5s
   
-  if (error || !user?.id) {
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    
+    if (error || !user?.id) {
+      return { error: 'Unauthorized', status: 401 };
+    }
+    
+    // Fetch the latest user data from Supabase to ensure we have current role
+    try {
+      const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
+      if (!userError && userData?.user) {
+        // Merge the fresh metadata into the user object
+        return { 
+          user: {
+            ...user,
+            user_metadata: userData.user.user_metadata
+          }
+        };
+      }
+    } catch (e) {
+      console.log('Error fetching fresh user data:', e);
+    }
+    
+    return { user };
+  } catch (error: any) {
+    // Check if it's a connection error that we should retry
+    const isConnectionError = error?.message?.includes('connection reset') || 
+                              error?.message?.includes('connection error') ||
+                              error?.message?.includes('ECONNRESET');
+    
+    if (isConnectionError && retryCount < maxRetries) {
+      const delay = retryDelay(retryCount);
+      console.log(`⚠️ Connection error in verifyUser, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return verifyUser(authHeader, retryCount + 1);
+    }
+    
+    // If we've exhausted retries or it's a different error, log and return unauthorized
+    console.error('❌ Error in verifyUser after retries:', error);
     return { error: 'Unauthorized', status: 401 };
   }
-  
-  // Fetch the latest user data from Supabase to ensure we have current role
-  try {
-    const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
-    if (!userError && userData?.user) {
-      // Merge the fresh metadata into the user object
-      return { 
-        user: {
-          ...user,
-          user_metadata: userData.user.user_metadata
-        }
-      };
-    }
-  } catch (e) {
-    console.log('Error fetching fresh user data:', e);
-  }
-  
-  return { user };
 }
 
 // Signup route
@@ -180,7 +283,7 @@ app.post('/make-server-c2dd9b9d/auth/setup-test-cluster-head', async (c) => {
         createdBy: 'system',
         status: 'active',
         authUserId: userData.user.id,
-        createdAt: new Date().toISOString()
+        createdAt: getNowIST()
       };
       
       await kv.set(`unified-employee:${employeeId}`, employee);
@@ -1080,7 +1183,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
       approvalRequired: false,
       approvalStatus: 'approved', // Explicitly set approval status
       approvedBy: authResult.user.email,
-      approvedAt: new Date().toISOString(),
+      approvedAt: getNowIST(),
       approvalRequested: false,
       requestedCashInHand: null,
       requestedOffset: null
@@ -1204,7 +1307,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
       approvalRequired: false,
       approvalStatus: 'approved', // Explicitly set approval status
       approvedBy: authResult.user.email,
-      approvedAt: new Date().toISOString()
+      approvedAt: getNowIST()
     };
 
     await kv.set(key, approvedItem);
@@ -1349,7 +1452,7 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
       ...existingProduction,
       approvalStatus: 'approved',
       approvedBy: approverName,
-      approvedAt: new Date().toISOString()
+      approvedAt: getNowIST()
     };
 
     await kv.set(key, approvedItem);
@@ -1466,6 +1569,8 @@ app.post('/make-server-c2dd9b9d/cleanup-duplicates', async (c) => {
       return c.json({ error: 'Only cluster heads can cleanup duplicates' }, 403);
     }
 
+    console.log('🧹 Starting cleanup-duplicates operation...');
+    
     let removedCount = 0;
     const details: any = {
       inventory: { before: 0, after: 0, removed: 0 },
@@ -1473,86 +1578,97 @@ app.post('/make-server-c2dd9b9d/cleanup-duplicates', async (c) => {
       sales: { before: 0, after: 0, removed: 0 }
     };
 
-    // Cleanup Inventory
-    const allInventory = await kv.getByPrefix('inventory:');
-    details.inventory.before = allInventory.length;
-    
-    const uniqueInventory = new Map();
-    for (const item of allInventory) {
-      if (!uniqueInventory.has(item.id)) {
-        uniqueInventory.set(item.id, item);
+    // Helper function to cleanup a specific prefix with batching
+    async function cleanupPrefix(prefix: string, category: string) {
+      console.log(`Processing ${category}...`);
+      
+      // Fetch with retry logic
+      const allItems = await retryWithBackoff(
+        () => kv.getByPrefix(prefix),
+        `getByPrefix(${prefix})`
+      );
+      
+      if (!allItems || allItems.length === 0) {
+        console.log(`No ${category} items found`);
+        return;
       }
+      
+      details[category].before = allItems.length;
+      console.log(`Found ${allItems.length} ${category} items`);
+      
+      // Find unique items by ID
+      const uniqueItems = new Map();
+      for (const item of allItems) {
+        if (item.id && !uniqueItems.has(item.id)) {
+          uniqueItems.set(item.id, item);
+        }
+      }
+      
+      const duplicatesCount = allItems.length - uniqueItems.size;
+      
+      if (duplicatesCount === 0) {
+        console.log(`No duplicates found in ${category}`);
+        details[category].after = allItems.length;
+        details[category].removed = 0;
+        return;
+      }
+      
+      console.log(`Found ${duplicatesCount} duplicates in ${category}, processing...`);
+      
+      // Process deletions in batches to avoid memory issues
+      const BATCH_SIZE = 50;
+      const keysToDelete: string[] = [];
+      
+      for (const item of allItems) {
+        if (item.userId && item.id) {
+          keysToDelete.push(`${prefix}${item.userId}:${item.id}`);
+        }
+      }
+      
+      // Delete in batches
+      for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
+        const batch = keysToDelete.slice(i, i + BATCH_SIZE);
+        await retryWithBackoff(
+          () => kvWithRetry.mdel(batch),
+          `mdel batch ${i / BATCH_SIZE + 1}`
+        );
+        console.log(`Deleted batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(keysToDelete.length / BATCH_SIZE)}`);
+      }
+      
+      // Re-save unique items in batches
+      const uniqueItemsArray = Array.from(uniqueItems.values());
+      const keysToSet: string[] = [];
+      const valuesToSet: any[] = [];
+      
+      for (const item of uniqueItemsArray) {
+        if (item.userId && item.id) {
+          keysToSet.push(`${prefix}${item.userId}:${item.id}`);
+          valuesToSet.push(item);
+        }
+      }
+      
+      // Set in batches
+      for (let i = 0; i < keysToSet.length; i += BATCH_SIZE) {
+        const keyBatch = keysToSet.slice(i, i + BATCH_SIZE);
+        const valueBatch = valuesToSet.slice(i, i + BATCH_SIZE);
+        await retryWithBackoff(
+          () => kvWithRetry.mset(keyBatch, valueBatch),
+          `mset batch ${i / BATCH_SIZE + 1}`
+        );
+        console.log(`Saved batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(keysToSet.length / BATCH_SIZE)}`);
+      }
+      
+      details[category].after = uniqueItems.size;
+      details[category].removed = duplicatesCount;
+      removedCount += duplicatesCount;
+      
+      console.log(`✓ ${category}: removed ${duplicatesCount} duplicates`);
     }
-    
-    // Delete all inventory items
-    for (const item of allInventory) {
-      const key = `inventory:${item.userId}:${item.id}`;
-      await kv.del(key);
-    }
-    
-    // Re-save only unique items
-    for (const [id, item] of uniqueInventory.entries()) {
-      const key = `inventory:${item.userId}:${item.id}`;
-      await kv.set(key, item);
-    }
-    
-    details.inventory.after = uniqueInventory.size;
-    details.inventory.removed = allInventory.length - uniqueInventory.size;
-    removedCount += details.inventory.removed;
 
-    // Cleanup Overheads
-    const allOverheads = await kv.getByPrefix('overhead:');
-    details.overheads.before = allOverheads.length;
-    
-    const uniqueOverheads = new Map();
-    for (const item of allOverheads) {
-      if (!uniqueOverheads.has(item.id)) {
-        uniqueOverheads.set(item.id, item);
-      }
-    }
-    
-    // Delete all overhead items
-    for (const item of allOverheads) {
-      const key = `overhead:${item.userId}:${item.id}`;
-      await kv.del(key);
-    }
-    
-    // Re-save only unique items
-    for (const [id, item] of uniqueOverheads.entries()) {
-      const key = `overhead:${item.userId}:${item.id}`;
-      await kv.set(key, item);
-    }
-    
-    details.overheads.after = uniqueOverheads.size;
-    details.overheads.removed = allOverheads.length - uniqueOverheads.size;
-    removedCount += details.overheads.removed;
-
-    // Cleanup Sales
-    const allSales = await kv.getByPrefix('sales:');
-    details.sales.before = allSales.length;
-    
-    const uniqueSales = new Map();
-    for (const item of allSales) {
-      if (!uniqueSales.has(item.id)) {
-        uniqueSales.set(item.id, item);
-      }
-    }
-    
-    // Delete all sales items
-    for (const item of allSales) {
-      const key = `sales:${item.userId}:${item.id}`;
-      await kv.del(key);
-    }
-    
-    // Re-save only unique items
-    for (const [id, item] of uniqueSales.entries()) {
-      const key = `sales:${item.userId}:${item.id}`;
-      await kv.set(key, item);
-    }
-    
-    details.sales.after = uniqueSales.size;
-    details.sales.removed = allSales.length - uniqueSales.size;
-    removedCount += details.sales.removed;
+    // Process each category sequentially to avoid overwhelming the system
+    await cleanupPrefix('inventory:', 'inventory');
+    await cleanupPrefix('overhead:', 'overheads');
+    await cleanupPrefix('sales:', 'sales');
 
     console.log('🧹 Cleanup completed:', details);
     
@@ -1562,8 +1678,11 @@ app.post('/make-server-c2dd9b9d/cleanup-duplicates', async (c) => {
       details 
     });
   } catch (error) {
-    console.log('Error cleaning up duplicates:', error);
-    return c.json({ error: 'Failed to cleanup duplicates' }, 500);
+    console.error('❌ Error cleaning up duplicates:', error);
+    return c.json({ 
+      error: 'Failed to cleanup duplicates', 
+      details: error instanceof Error ? error.message : String(error)
+    }, 500);
   }
 });
 
@@ -2179,7 +2298,7 @@ app.post('/make-server-c2dd9b9d/salary-advances', async (c) => {
     const newAdvance = {
       ...advance,
       id: advanceId,
-      createdAt: new Date().toISOString(),
+      createdAt: getNowIST(),
     };
     
     const key = `salary_advance:${advanceId}`;
@@ -2314,7 +2433,7 @@ app.post('/make-server-c2dd9b9d/setup-cluster-head', async (c) => {
       joiningDate: new Date().toISOString().split('T')[0],
       status: 'active',
       createdBy: 'system',
-      createdAt: new Date().toISOString()
+      createdAt: getNowIST()
     };
 
     const employeeKey = `unified_employee:${employeeId}`;
@@ -2546,9 +2665,9 @@ app.post('/make-server-c2dd9b9d/attendance/employees', async (c) => {
       managerId,
       aadharFront,
       aadharBack,
-      joiningDate: joiningDate || new Date().toISOString().split('T')[0],
+      joiningDate: joiningDate || getTodayIST(),
       authUserId: authData.user.id,
-      createdAt: new Date().toISOString()
+      createdAt: getNowIST()
     };
     
     await kv.set(`attendance-employee:${employeeId}`, employee);
@@ -2612,9 +2731,9 @@ app.post('/make-server-c2dd9b9d/attendance/managers', async (c) => {
       email,
       clusterHeadId,
       storeId: storeId || null,
-      joiningDate: new Date().toISOString().split('T')[0],
+      joiningDate: getTodayIST(),
       authUserId: authData.user.id,
-      createdAt: new Date().toISOString()
+      createdAt: getNowIST()
     };
     
     await kv.set(`attendance-manager:${employeeId}`, manager);
@@ -2743,7 +2862,7 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/approve', async (c) => {
       ...timesheet,
       status: 'approved',
       approvedBy: managerId,
-      approvedAt: new Date().toISOString()
+      approvedAt: getNowIST()
     };
     await kv.set(key, approvedTimesheet);
     
@@ -2926,7 +3045,7 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/approve', async (c) => {
       ...leave,
       status: 'approved',
       approvedBy: managerName,
-      approvedAt: new Date().toISOString()
+      approvedAt: getNowIST()
     };
     await kv.set(key, approvedLeave);
     
@@ -4721,10 +4840,34 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
 
   try {
     const userId = authResult.user.id;
-    const allNotifications = await kv.getByPrefix(`notification:${userId}:`);
+    
+    // Optimize: Use direct database query with sorting and limit with retry logic
+    // This avoids loading all notifications into memory
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    );
+    
+    // Query with prefix pattern, order by key (which includes timestamp), and limit results
+    const { data, error } = await retryWithBackoff(
+      async () => {
+        const result = await supabase
+          .from('kv_store_c2dd9b9d')
+          .select('value')
+          .like('key', `notification:${userId}:%`)
+          .order('key', { ascending: false })
+          .limit(100); // Limit to most recent 100 notifications
+        
+        if (result.error) throw new Error(result.error.message);
+        return result;
+      },
+      'fetch notifications'
+    );
+    
+    const notifications = data?.map((d) => d.value) ?? [];
     
     // Sort by createdAt descending (newest first)
-    const sortedNotifications = allNotifications.sort((a: any, b: any) => 
+    const sortedNotifications = notifications.sort((a: any, b: any) => 
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     
@@ -4747,8 +4890,8 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
     const notificationId = c.req.param('id');
     const key = `notification:${userId}:${notificationId}`;
     
-    const allNotifications = await kv.getByPrefix(`notification:${userId}:`);
-    const notification = allNotifications.find((n: any) => n.id === notificationId);
+    // Optimize: Directly get the specific notification instead of fetching all
+    const notification = await kvWithRetry.get(key);
     
     if (!notification) {
       return c.json({ error: 'Notification not found' }, 404);
@@ -4759,7 +4902,7 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
       read: true
     };
     
-    await kv.set(key, updatedNotification);
+    await kvWithRetry.set(key, updatedNotification);
     
     return c.json({ success: true, notification: updatedNotification });
   } catch (error) {
@@ -4777,20 +4920,103 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
 
   try {
     const userId = authResult.user.id;
-    const allNotifications = await kv.getByPrefix(`notification:${userId}:`);
     
-    // Update all to read
-    for (const notification of allNotifications) {
-      if (!notification.read) {
-        const key = `notification:${userId}:${notification.id}`;
-        await kv.set(key, { ...notification, read: true });
-      }
+    // Optimize: Use direct database query with limit to avoid memory issues
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    );
+    
+    // Fetch only unread notifications (limit 100 for safety) with retry logic
+    const { data, error } = await retryWithBackoff(
+      async () => {
+        const result = await supabase
+          .from('kv_store_c2dd9b9d')
+          .select('key, value')
+          .like('key', `notification:${userId}:%`)
+          .limit(100);
+        
+        if (result.error) throw new Error(result.error.message);
+        return result;
+      },
+      'fetch notifications for read-all'
+    );
+    
+    // Filter unread notifications and prepare batch update
+    const unreadNotifications = (data || []).filter((d) => !d.value.read);
+    
+    if (unreadNotifications.length === 0) {
+      return c.json({ success: true, updated: 0 });
     }
     
-    return c.json({ success: true });
+    // Batch update using mset (more efficient than individual sets) with retry logic
+    const keys = unreadNotifications.map(n => n.key);
+    const values = unreadNotifications.map(n => ({ ...n.value, read: true }));
+    
+    await kvWithRetry.mset(keys, values);
+    
+    return c.json({ success: true, updated: unreadNotifications.length });
   } catch (error) {
     console.log('Error marking all notifications as read:', error);
     return c.json({ error: 'Failed to mark all notifications as read' }, 500);
+  }
+});
+
+// Delete old notifications (cleanup endpoint)
+app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const userId = authResult.user.id;
+    
+    // Delete notifications older than 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    );
+    
+    // Fetch all user notifications with retry logic
+    const { data, error } = await retryWithBackoff(
+      async () => {
+        const result = await supabase
+          .from('kv_store_c2dd9b9d')
+          .select('key, value')
+          .like('key', `notification:${userId}:%`);
+        
+        if (result.error) throw new Error(result.error.message);
+        return result;
+      },
+      'fetch notifications for cleanup'
+    );
+    
+    // Filter notifications older than 30 days
+    const oldNotifications = (data || []).filter((d) => {
+      const createdAt = new Date(d.value.createdAt);
+      return createdAt < thirtyDaysAgo;
+    });
+    
+    if (oldNotifications.length === 0) {
+      return c.json({ success: true, deleted: 0, message: 'No old notifications to delete' });
+    }
+    
+    // Delete old notifications in batch with retry logic
+    const keysToDelete = oldNotifications.map(n => n.key);
+    await kvWithRetry.mdel(keysToDelete);
+    
+    return c.json({ 
+      success: true, 
+      deleted: oldNotifications.length,
+      message: `Deleted ${oldNotifications.length} notifications older than 30 days`
+    });
+  } catch (error) {
+    console.log('Error cleaning up old notifications:', error);
+    return c.json({ error: 'Failed to cleanup notifications' }, 500);
   }
 });
 
@@ -5892,10 +6118,24 @@ app.get('/make-server-c2dd9b9d/stock-requests', async (c) => {
   }
 
   try {
+    console.log('🔍 SERVER: Fetching stock requests with prefix stock_request_');
     const requests = await kv.getByPrefix('stock_request_');
     console.log('📦 Server: Retrieved stock requests:', requests.length);
     console.log('📦 Server: Sample stock request:', requests[0]);
-    console.log('📦 Server: All stock request IDs:', requests.map(r => r.id));
+    console.log('📦 Server: All stock request IDs:', requests.map(r => r?.id || 'NO_ID'));
+    
+    // Also let's check all keys in the database to debug
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+    );
+    const { data: allKeys, error: keysError } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key')
+      .like('key', 'stock_%');
+    console.log('📊 SERVER: All stock-related keys in database:', allKeys?.map(k => k.key) || []);
+    console.log('📊 SERVER: Total stock-related keys:', allKeys?.length || 0);
+    
     return c.json({ stockRequests: requests });
   } catch (error: any) {
     console.error('Error fetching stock requests:', error);
@@ -6301,7 +6541,17 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
 
     // Create a unique ID for this recalibration record
     const recalibrationId = `recal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const currentDate = new Date().toISOString();
+    
+    // Use IST timestamp for all recalibration operations
+    const currentTimestamp = getNowIST();
+    
+    // NEW: Determine if this is an opening balance (1st of month) or current stock (other days)
+    const dayOfMonth = getDayOfMonthIST(currentTimestamp);
+    const isOpeningBalance = dayOfMonth === 1;
+    const recalibrationType = isOpeningBalance ? 'opening_balance' : 'current_stock';
+    
+    console.log(`📅 Recalibration IST timestamp: ${currentTimestamp}`);
+    console.log(`📅 Recalibration type: ${recalibrationType} (Day of month: ${dayOfMonth})`);
 
     // Store the recalibration record
     const recalibrationRecord = {
@@ -6309,7 +6559,9 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
       locationId,
       locationType,
       locationName,
-      date: currentDate,
+      date: currentTimestamp, // Store full ISO timestamp
+      type: recalibrationType, // NEW: 'opening_balance' or 'current_stock'
+      isOpeningBalance, // NEW: true if done on 1st, false otherwise
       status: 'pending', // Default status is pending approval
       performedBy: auth.user.id,
       performedByName: auth.user.user_metadata?.name || auth.user.email,
@@ -6326,10 +6578,12 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
 
     await kv.set(`recalibration_${recalibrationId}`, recalibrationRecord);
 
-    // Update inventory quantities based on actual count
+    // IMPORTANT: For finished products (momos), we do NOT update the inventory quantity
+    // because stock is calculated dynamically from production/deliveries/sales.
+    // Only update inventory for NON-finished products (raw materials, etc.)
     let updatedCount = 0;
     for (const item of items) {
-      if (item.difference !== 0) {
+      if (item.difference !== 0 && item.category !== 'finished_product') {
         try {
           const inventoryItem = await kv.get(`inventory_${item.itemId}`);
           if (inventoryItem) {
@@ -6341,14 +6595,57 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
             };
             await kv.set(`inventory_${item.itemId}`, updatedItem);
             updatedCount++;
+            console.log(`  ✅ Updated inventory ${item.itemId} to ${item.actualQuantity}`);
           }
         } catch (err) {
           console.error(`Error updating inventory item ${item.itemId}:`, err);
         }
+      } else if (item.category === 'finished_product') {
+        console.log(`  ⏭️ Skipping finished product ${item.itemId} - stock is calculated dynamically`);
       }
     }
 
-    console.log(`✅ Recalibration complete: ${updatedCount} items updated`);
+    console.log(`✅ Recalibration complete: ${updatedCount} non-finished-product items updated`);
+
+    // NEW: Send notifications to Cluster Heads and Operations Managers
+    try {
+      const performedByName = auth.user.user_metadata?.name || auth.user.email;
+      const recalDate = new Date(currentDate).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+      
+      // Get all cluster heads
+      const clusterHeads = await getAllClusterHeads();
+      
+      // Get all operations managers (excluding store/production incharges)
+      const operationsManagers = await getOperationsManagers();
+      
+      // Combine all recipients
+      const allRecipients = [...clusterHeads, ...operationsManagers];
+      
+      console.log(`📢 Sending recalibration notifications to ${allRecipients.length} users (${clusterHeads.length} cluster heads, ${operationsManagers.length} operations managers)`);
+      
+      // Create notifications for all cluster heads and operations managers
+      for (const recipient of allRecipients) {
+        if (recipient.authUserId) {
+          await createNotification(
+            recipient.authUserId,
+            'stock_recalibration',
+            'Stock Recalibration Performed',
+            `${performedByName} performed a stock recalibration for ${locationName} on ${recalDate}. ${recalibrationRecord.itemsWithDifference} items had differences, with ${recalibrationRecord.totalWastage.toFixed(2)} units of wastage.`,
+            recalibrationId,
+            currentDate.substring(0, 10) // Date in YYYY-MM-DD format
+          );
+        }
+      }
+      
+      console.log(`✅ Notifications sent successfully`);
+    } catch (notificationError) {
+      console.error('Error sending recalibration notifications:', notificationError);
+      // Don't fail the recalibration if notifications fail
+    }
 
     return c.json({
       success: true,
@@ -6443,24 +6740,48 @@ app.get('/make-server-c2dd9b9d/stock-recalibration/history/:locationId', async (
       }
     } else {
       // Standard query for a specific location
-      // IMPORTANT FIX: Only filter by locationId AND locationType
-      // DO NOT mix production house and store recalibrations
+      // CRITICAL FIX: For production houses, we need to handle BOTH the UUID AND mapped store IDs
+      // Because a production house might have been created from a store that was converted,
+      // and old recalibrations might be saved with the original store ID
       
       console.log(`📋 Recalibration History Query:
         - Querying locationId: ${locationId}
         - Filtering by locationType: ${locationType || 'ALL'}`);
       
-      // Only return recalibrations for THIS specific location
+      // If this is a production_house query, we need to find all stores mapped to this production house
+      // and include recalibrations from those store IDs as well
+      let validLocationIds = [locationId];
+      
+      if (locationType === 'production_house') {
+        // Get all stores to find which ones map to this production house
+        const allStores = await kv.getByPrefix('store_');
+        const mappedStores = allStores.filter((store: any) => 
+          store.productionHouseId === locationId
+        );
+        
+        // Add the mapped store IDs to our search
+        const mappedStoreIds = mappedStores.map((s: any) => s.id);
+        validLocationIds = [locationId, ...mappedStoreIds];
+        
+        console.log(`📋 Production House Query - Including IDs:`, validLocationIds);
+        console.log(`   - Production House UUID: ${locationId}`);
+        console.log(`   - Mapped Store IDs: ${mappedStoreIds.join(', ') || 'none'}`);
+      }
+      
+      // Only return recalibrations for THIS specific location OR its mapped stores
       // If locationType is specified, ONLY return that type
       locationRecalibrations = allRecalibrations
         .filter((r: any) => {
-          const matchesLocation = r.locationId === locationId;
+          const matchesLocation = validLocationIds.includes(r.locationId);
           const matchesType = !locationType || r.locationType === locationType;
           return matchesLocation && matchesType;
         })
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
       console.log(`📋 Found ${locationRecalibrations.length} recalibration records`);
+      if (locationRecalibrations.length > 0) {
+        console.log(`📋 Sample locationIds from results:`, locationRecalibrations.slice(0, 3).map((r: any) => r.locationId));
+      }
     }
 
     return c.json({ 
@@ -6523,7 +6844,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/approve', async (c) => {
       status: 'approved',
       approvedBy: auth.user.id,
       approvedByName: auth.user.user_metadata?.name || auth.user.email,
-      approvedAt: new Date().toISOString()
+      approvedAt: getNowIST()
     };
 
     await kv.set(`recalibration_${recalibrationId}`, updatedRecalibration);
@@ -6633,18 +6954,34 @@ app.get('/make-server-c2dd9b9d/stock-recalibration/wastage-report', async (c) =>
         filteredRecalibrations = [];
       }
     } else {
-      // Standard query - ONLY filter by locationId and locationType
-      // DO NOT mix production house and store recalibrations
+      // Standard query - CRITICAL FIX: For production houses, handle BOTH UUID AND mapped store IDs
       
       console.log(`📊 Wastage Report Query:
         - Month: ${month}
         - Querying locationId: ${locationId}
         - Filtering by locationType: ${locationType || 'ALL'}`);
       
+      // If this is a production_house query, we need to find all stores mapped to this production house
+      let validLocationIds = locationId ? [locationId] : null;
+      
+      if (locationId && locationType === 'production_house') {
+        // Get all stores to find which ones map to this production house
+        const allStores = await kv.getByPrefix('store_');
+        const mappedStores = allStores.filter((store: any) => 
+          store.productionHouseId === locationId
+        );
+        
+        // Add the mapped store IDs to our search
+        const mappedStoreIds = mappedStores.map((s: any) => s.id);
+        validLocationIds = [locationId, ...mappedStoreIds];
+        
+        console.log(`📊 Production House Wastage Query - Including IDs:`, validLocationIds);
+      }
+      
       filteredRecalibrations = allRecalibrations.filter((r: any) => {
         const recalMonth = r.date.substring(0, 7); // "2026-01"
         if (recalMonth !== month) return false;
-        if (locationId && r.locationId !== locationId) return false;
+        if (validLocationIds && !validLocationIds.includes(r.locationId)) return false;
         if (locationType && r.locationType !== locationType) return false;
         return true;
       });
@@ -6731,7 +7068,20 @@ app.get('/make-server-c2dd9b9d/stock-thresholds/:storeId', async (c) => {
     return c.json({ thresholds });
   } catch (error: any) {
     console.error('Error fetching stock thresholds:', error);
-    return c.json({ error: error.message }, 500);
+    console.error('Stack trace:', error.stack);
+    // Return default thresholds on error instead of failing
+    console.log('Returning default thresholds due to database error');
+    return c.json({
+      thresholds: {
+        chicken: { high: 1200, medium: 600, low: 300 },
+        chickenCheese: { high: 600, medium: 300, low: 150 },
+        veg: { high: 600, medium: 300, low: 150 },
+        cheeseCorn: { high: 600, medium: 300, low: 150 },
+        paneer: { high: 600, medium: 300, low: 150 },
+        vegKurkure: { high: 600, medium: 300, low: 150 },
+        chickenKurkure: { high: 600, medium: 300, low: 150 },
+      }
+    });
   }
 });
 
@@ -7316,8 +7666,12 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
 
     console.log('🧹 Starting duplicate production entry cleanup...');
     
-    // Get all production entries
-    const allProduction = await kv.getByPrefix('production:');
+    // Get all production entries with retry logic
+    const allProduction = await retryWithBackoff(
+      () => kv.getByPrefix('production:'),
+      'getByPrefix(production:)'
+    );
+    
     console.log(`📦 Found ${allProduction.length} total production entries`);
     
     // Group by date and storeId to find duplicates
@@ -7335,8 +7689,7 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
     }
     
     const duplicatesFound: any[] = [];
-    const duplicatesToDelete: string[] = [];
-    let totalDeleted = 0;
+    const keysToDelete: string[] = [];
     
     // For each group, keep the oldest entry and delete the rest
     for (const [key, entries] of groupedByDateStore.entries()) {
@@ -7364,17 +7717,29 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
           deletingIds: duplicates.map(d => d.id)
         });
         
-        // Delete the duplicate entries
+        // Collect keys to delete
         for (const dup of duplicates) {
           const dupKey = `production:${dup.userId}:${dup.id}`;
-          await kv.del(dupKey);
-          duplicatesToDelete.push(dupKey);
-          totalDeleted++;
-          console.log(`  ❌ Deleted duplicate: ${dup.id}`);
+          keysToDelete.push(dupKey);
+          console.log(`  📌 Marked for deletion: ${dup.id}`);
         }
         
-        console.log(`  ✅ Kept original: ${keeper.id}`);
+        console.log(`  ✅ Will keep original: ${keeper.id}`);
       }
+    }
+    
+    // Delete in batches to avoid memory issues
+    const BATCH_SIZE = 50;
+    let totalDeleted = 0;
+    
+    for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
+      const batch = keysToDelete.slice(i, i + BATCH_SIZE);
+      await retryWithBackoff(
+        () => kvWithRetry.mdel(batch),
+        `mdel production batch ${i / BATCH_SIZE + 1}`
+      );
+      totalDeleted += batch.length;
+      console.log(`Deleted batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(keysToDelete.length / BATCH_SIZE)}`);
     }
     
     console.log(`✅ Cleanup completed! Deleted ${totalDeleted} duplicate entries`);
@@ -7388,7 +7753,10 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
     });
   } catch (error) {
     console.error('❌ Error cleaning up duplicates:', error);
-    return c.json({ error: 'Failed to clean up duplicates', details: error.message }, 500);
+    return c.json({ 
+      error: 'Failed to clean up duplicates', 
+      details: error instanceof Error ? error.message : String(error)
+    }, 500);
   }
 });
 

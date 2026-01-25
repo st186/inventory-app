@@ -57,6 +57,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Store opening balance state
   const [storeOpeningBalance, setStoreOpeningBalance] = useState<any>(null);
   
+  // Most recent recalibration state (for mid-month recalibrations)
+  const [mostRecentRecalibration, setMostRecentRecalibration] = useState<any>(null);
+  
   // Stock alert thresholds state - DYNAMIC
   const [showThresholdSettings, setShowThresholdSettings] = useState(false);
   const [stockThresholds, setStockThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({});
@@ -338,10 +341,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     
     if (!context.user?.accessToken) return;
     
+    console.log('🏪 ============================================');
     console.log('🏪 loadStoreOpeningBalance called');
+    console.log('  selectedStoreId:', selectedStoreId);
+    console.log('  context.user.storeId:', context.user?.storeId);
     console.log('  effectiveStoreId:', effectiveStoreId);
     console.log('  isAllStores:', isAllStores);
+    console.log('  context.stores count:', context.stores?.length || 0);
     console.log('  Current salesData length:', salesData.length);
+    console.log('🏪 ============================================');
     
     try {
       const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
@@ -351,12 +359,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         console.log('  📊 Calculating aggregate opening balance for all stores');
         
         const allStores = context.stores || [];
+        console.log('  📋 All stores to aggregate:', allStores.map(s => ({ id: s.id, name: s.name })));
         let aggregatedBalance: Record<string, number> = {};
         finishedProducts.forEach(({ camelKey }) => {
           aggregatedBalance[camelKey] = 0;
         });
         
         for (const store of allStores) {
+          console.log(`  🏪 Processing store: ${store.name} (${store.id})`);
           // Try to get recalibration for each store
           const recalResponse = await api.getLastRecalibration(
             context.user.accessToken,
@@ -366,9 +376,11 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           
           if (recalResponse?.record) {
             const recalDate = recalResponse.record.date.substring(0, 7);
+            console.log(`    ✅ Found recalibration for ${store.name}, date: ${recalDate}`);
             
             if (recalDate === currentMonth) {
               // Use current month recalibration
+              console.log(`    📅 Using current month recalibration for ${store.name}`);
               recalResponse.record.items.forEach((item: any) => {
                 // Map itemId to camelKey - itemId can be either UUID or snake_case name
                 const inventoryItem = context.inventoryItems?.find(invItem => 
@@ -376,26 +388,32 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 );
                 if (inventoryItem) {
                   const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                  console.log(`      Adding ${item.actualQuantity} ${camelKey} from ${store.name}`);
                   aggregatedBalance[camelKey as keyof typeof aggregatedBalance] += item.actualQuantity;
                 }
               });
             } else {
               // Calculate from previous month for this store
+              console.log(`    📅 Calculating from previous month for ${store.name}`);
               const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
+              console.log(`      Previous month balance for ${store.name}:`, balance);
               Object.keys(balance).forEach(key => {
                 aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
               });
             }
           } else {
             // No recalibration - calculate from previous month
+            console.log(`    ⚠️ No recalibration for ${store.name}, calculating from previous month`);
             const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
+            console.log(`      Previous month balance for ${store.name}:`, balance);
             Object.keys(balance).forEach(key => {
               aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
             });
           }
+          console.log(`    Running total after ${store.name}:`, aggregatedBalance);
         }
         
-        console.log('  ✅ Aggregated opening balance for all stores:', aggregatedBalance);
+        console.log('  ✅ FINAL Aggregated opening balance for all stores:', aggregatedBalance);
         setStoreOpeningBalance(aggregatedBalance);
         return;
       }
@@ -408,53 +426,109 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         return;
       }
       
-      const recalResponse = await api.getLastRecalibration(
-        context.user.accessToken,
-        effectiveStoreId,
-        'store'
-      );
+      // CRITICAL FIX: We need to find the opening balance recalibration (isOpeningBalance: true)
+      // from the current month, not just the most recent recalibration
+      // The most recent one could be a mid-month audit (isOpeningBalance: false)
       
-      console.log('🔄 Recalibration Check:');
-      console.log('  Recalibration response:', recalResponse);
-      
-      if (recalResponse?.record) {
-        const recalDate = recalResponse.record.date.substring(0, 7);
+      try {
+        // Fetch ALL recalibrations for this store to find the opening balance one
+        const recalHistory = await api.getRecalibrationHistory(
+          context.user.accessToken,
+          effectiveStoreId,
+          'store'
+        );
         
-        console.log('  Recalibration date:', recalResponse.record.date);
-        console.log('  Recalibration month:', recalDate);
-        console.log('  Recalibration locationType:', recalResponse.record.locationType);
-        console.log('  Recalibration locationName:', recalResponse.record.locationName);
-        console.log('  Current month:', currentMonth);
+        console.log('🔄 Recalibration Check:');
+        console.log('  Total recalibrations found:', recalHistory?.history?.length || 0);
         
-        if (recalDate === currentMonth) {
-          // Recalibration from current month - use it as opening balance
-          const balance: any = {};
-          console.log('  📝 Processing recalibration items:', recalResponse.record.items.length);
-          console.log('  📝 Available inventory items:', context.inventoryItems?.length || 0);
-          
-          recalResponse.record.items.forEach((item: any) => {
-            console.log('    Processing item:', { itemId: item.itemId, actualQuantity: item.actualQuantity });
-            // Map itemId to camelKey - itemId can be either UUID or snake_case name
-            const inventoryItem = context.inventoryItems?.find(invItem => 
-              invItem.id === item.itemId || invItem.name === item.itemId
-            );
-            console.log('    Found inventory item:', inventoryItem ? { name: inventoryItem.name, displayName: inventoryItem.displayName } : 'NOT FOUND');
-            if (inventoryItem) {
-              const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-              balance[camelKey] = item.actualQuantity;
-              console.log('    Mapped to camelKey:', camelKey, '=', item.actualQuantity);
-            } else {
-              console.log('    ⚠️ Could not find inventory item for itemId:', item.itemId);
-            }
+        if (recalHistory?.history && recalHistory.history.length > 0) {
+          // Find the opening balance recalibration from the current month (isOpeningBalance: true)
+          const openingBalanceRecal = recalHistory.history.find((r: any) => {
+            const recalMonth = r.date.substring(0, 7);
+            return recalMonth === currentMonth && r.isOpeningBalance === true;
           });
-          console.log('  ✅ Using current month recalibration as opening balance:', balance);
-          setStoreOpeningBalance(balance);
-          return;
+          
+          // ALSO find the MOST RECENT recalibration (could be mid-month audit)
+          const currentMonthRecals = recalHistory.history.filter((r: any) => {
+            const recalMonth = r.date.substring(0, 7);
+            return recalMonth === currentMonth;
+          }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          
+          const mostRecentRecal = currentMonthRecals[0]; // Most recent one
+          
+          // If no opening balance found, try to find ANY recalibration from current month without the flag
+          // (for backward compatibility with old records)
+          const anyCurrentMonthRecal = !openingBalanceRecal ? recalHistory.history.find((r: any) => {
+            const recalMonth = r.date.substring(0, 7);
+            return recalMonth === currentMonth && r.isOpeningBalance === undefined;
+          }) : null;
+          
+          const recalToUse = openingBalanceRecal || anyCurrentMonthRecal;
+          
+          if (recalToUse) {
+            console.log('  ✅ Found opening balance recalibration:');
+            console.log('  Recalibration date:', recalToUse.date);
+            console.log('  Recalibration month:', recalToUse.date.substring(0, 7));
+            console.log('  Recalibration locationType:', recalToUse.locationType);
+            console.log('  Recalibration locationName:', recalToUse.locationName);
+            console.log('  Recalibration isOpeningBalance:', recalToUse.isOpeningBalance);
+            console.log('  Current month:', currentMonth);
+            
+            // Use this recalibration as opening balance
+            const balance: any = {};
+            console.log('  📝 Processing recalibration items:', recalToUse.items.length);
+            console.log('  📝 Available inventory items:', context.inventoryItems?.length || 0);
+            
+            recalToUse.items.forEach((item: any) => {
+              // Map itemId to camelKey - itemId can be either UUID or snake_case name
+              const inventoryItem = context.inventoryItems?.find(invItem => 
+                invItem.id === item.itemId || invItem.name === item.itemId
+              );
+              if (inventoryItem) {
+                const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                balance[camelKey] = item.actualQuantity;
+              }
+            });
+            console.log('  ✅ Using opening balance from recalibration:', balance);
+            setStoreOpeningBalance(balance);
+            
+            // ALSO store the most recent recalibration (for stock calculation)
+            if (mostRecentRecal && mostRecentRecal.date !== recalToUse.date) {
+              console.log('  🔄 Found MORE RECENT recalibration (mid-month):');
+              console.log('    Date:', mostRecentRecal.date);
+              console.log('    isOpeningBalance:', mostRecentRecal.isOpeningBalance);
+              
+              // Convert to stock object
+              const mostRecentStock: any = {};
+              mostRecentRecal.items.forEach((item: any) => {
+                const inventoryItem = context.inventoryItems?.find(invItem => 
+                  invItem.id === item.itemId || invItem.name === item.itemId
+                );
+                if (inventoryItem) {
+                  const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+                  mostRecentStock[camelKey] = item.actualQuantity;
+                }
+              });
+              setMostRecentRecalibration({
+                date: mostRecentRecal.date,
+                stock: mostRecentStock
+              });
+              console.log('    Stock:', mostRecentStock);
+            } else {
+              // No more recent recalibration
+              setMostRecentRecalibration(null);
+            }
+            
+            return;
+          } else {
+            console.log('  ⚠️ No opening balance recalibration found for current month, calculating from previous month');
+          }
         } else {
-          console.log('  ❌ Recalibration is from', recalDate, '- calculating from previous month instead');
+          console.log('  ❌ No recalibration records found');
         }
-      } else {
-        console.log('  ❌ No recalibration record found');
+      } catch (recalError) {
+        console.error('⚠️ Error fetching recalibration history (will calculate from previous month):', recalError);
+        // Continue to calculate from previous month
       }
       
       // No current month recalibration - calculate from previous month
@@ -989,20 +1063,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             </p>
           </div>
           {isStoreIncharge && (() => {
-            const today = new Date();
-            const dayOfMonth = today.getDate();
-            const isRecalibrationPeriod = dayOfMonth >= 1 && dayOfMonth <= 5;
-            
+            // CHANGED: Recalibration now enabled for entire month for Store Incharges
+            // Notifications will be sent to Operations Managers and Cluster Heads
             return (
               <button
                 onClick={() => setShowStoreRecalibration(true)}
-                disabled={!isRecalibrationPeriod}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
-                  isRecalibrationPeriod
-                    ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white hover:from-teal-700 hover:to-emerald-700 shadow-lg'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-                title={!isRecalibrationPeriod ? 'Recalibration only available from 1st to 5th of each month' : 'Recalibrate store stock'}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap bg-gradient-to-r from-teal-600 to-emerald-600 text-white hover:from-teal-700 hover:to-emerald-700 shadow-lg"
+                title="Recalibrate store stock (Operations Managers and Cluster Heads will be notified)"
               >
                 <CheckCircle className="w-5 h-5" />
                 Recalibrate Stock
@@ -1174,11 +1241,95 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           console.log('  totalSales:', totalSales);
           console.log('  finishedProducts count:', finishedProducts.length);
           
-          // Calculate store stock = Opening Balance + Received - Sold (dynamically)
+          // CRITICAL FIX: Don't show stock status until opening balance is loaded
+          // If storeOpeningBalance is null, it means it's still loading
+          if (storeOpeningBalance === null) {
+            console.log('  ⚠️ Opening balance not loaded yet, showing loading state');
+            return (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl p-6 mt-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Calendar className="w-5 h-5 text-green-700" />
+                  <p className="text-sm font-semibold text-green-900">
+                    Store Stock Status (Current Month)
+                  </p>
+                </div>
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+                  <p className="ml-3 text-sm text-green-700">Loading opening balance...</p>
+                </div>
+              </div>
+            );
+          }
+          
+          // Calculate store stock
+          // NEW LOGIC: If there's a more recent recalibration (mid-month), use it as baseline
+          // Stock = Most Recent Recalibration + (Received AFTER it) - (Sold AFTER it)
+          // Otherwise: Stock = Opening Balance + Total Received - Total Sold
+          
           const storeStock: Record<string, number> = {};
-          finishedProducts.forEach(({ camelKey }) => {
-            storeStock[camelKey] = (openingBalance[camelKey] || 0) + (totalReceived[camelKey] || 0) - (totalSales[camelKey] || 0);
-          });
+          
+          if (mostRecentRecalibration) {
+            console.log('  🔄 Using MOST RECENT recalibration as baseline:');
+            console.log('    Recalibration date:', mostRecentRecalibration.date);
+            console.log('    Recalibration stock:', mostRecentRecalibration.stock);
+            
+            // Calculate received and sold AFTER the most recent recalibration
+            const recalDate = mostRecentRecalibration.date;
+            // Extract just the date portion (YYYY-MM-DD) for comparison
+            const recalDateOnly = recalDate.substring(0, 10);
+            
+            const receivedAfterRecal: Record<string, number> = {};
+            const soldAfterRecal: Record<string, number> = {};
+            
+            // Filter received requests to only count those AFTER recalibration
+            deliveredRequests.forEach(req => {
+              const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
+              // Compare only the date portion (YYYY-MM-DD)
+              const deliveryDateOnly = deliveryDate ? deliveryDate.substring(0, 10) : '';
+              if (deliveryDateOnly && deliveryDateOnly > recalDateOnly) {
+                finishedProducts.forEach(({ camelKey }) => {
+                  const value = (req as any)[camelKey] || 0;
+                  receivedAfterRecal[camelKey] = (receivedAfterRecal[camelKey] || 0) + value;
+                });
+              }
+            });
+            
+            // Filter sales to only count those AFTER recalibration date
+            // For same-day sales, include them (use >=) because sales don't have timestamps
+            storeSales.forEach((sale: any) => {
+              const saleDate = sale.date;
+              // Compare only the date portion
+              const saleDateOnly = saleDate ? saleDate.substring(0, 10) : '';
+              if (saleDateOnly && saleDateOnly >= recalDateOnly) {
+                finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
+                  let salesValue = sale.data?.[legacySalesKey] || 0;
+                  if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) {
+                    salesValue = sale.data?.['Corn Cheese Momos'] || 0;
+                  }
+                  soldAfterRecal[camelKey] = (soldAfterRecal[camelKey] || 0) + salesValue;
+                });
+              }
+            });
+            
+            console.log('    Received AFTER recalibration:', receivedAfterRecal);
+            console.log('    Sold AFTER recalibration:', soldAfterRecal);
+            
+            // Calculate stock based on most recent recalibration
+            finishedProducts.forEach(({ camelKey }) => {
+              const recalStock = mostRecentRecalibration.stock[camelKey] || 0;
+              const receivedAfter = receivedAfterRecal[camelKey] || 0;
+              const soldAfter = soldAfterRecal[camelKey] || 0;
+              storeStock[camelKey] = recalStock + receivedAfter - soldAfter;
+              
+              console.log(`    ${camelKey}: ${recalStock} (recal) + ${receivedAfter} (received) - ${soldAfter} (sold) = ${storeStock[camelKey]}`);
+            });
+          } else {
+            // No mid-month recalibration - use opening balance
+            console.log('  📊 Using opening balance (no mid-month recalibration)');
+            finishedProducts.forEach(({ camelKey }) => {
+              storeStock[camelKey] = (openingBalance[camelKey] || 0) + (totalReceived[camelKey] || 0) - (totalSales[camelKey] || 0);
+            });
+          }
           
           console.log('  storeStock calculated:', storeStock);
           

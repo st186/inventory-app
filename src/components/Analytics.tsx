@@ -3,6 +3,7 @@ import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSig
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
+import { formatDateTimeIST, formatDateIST, getTodayIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
 import { DataCapture } from './DataCapture';
 import { ProductionRequests } from './ProductionRequests';
@@ -262,13 +263,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       .filter((date, index, self) => self.indexOf(date) === index)
       .sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
     
-    // Return the most recent date, or yesterday if no data
+    // Return the most recent date, or today (IST) if no data
     if (dates.length > 0) {
       return dates[0];
     } else {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toISOString().split('T')[0];
+      return getTodayIST();
     }
   });
   
@@ -284,15 +283,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     if (dates.length > 0) {
       return dates[0];
     } else {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toISOString().split('T')[0];
+      return getTodayIST();
     }
   });
   
   // Production date range selector
   type DateRangeType = 'today' | 'week' | 'month' | 'year' | 'custom';
-  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('monthly');
+  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('month');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   
@@ -385,9 +382,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     if (filteredDates.length > 0) {
       setSelectedProductionDate(filteredDates[0]); // Set to most recent
     } else {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      setSelectedProductionDate(yesterday.toISOString().split('T')[0]);
+      setSelectedProductionDate(getTodayIST());
     }
   }, [selectedProductionHouseId, productionData]);
 
@@ -462,7 +457,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       
       let recalResponse = await api.fetchLatestRecalibration(
         context.user?.accessToken || '', 
-        productionHouseUUID
+        productionHouseUUID,
+        'production_house' // IMPORTANT: Specify location type to fetch production house recalibration
       );
       
       // If no recalibration found with UUID, try to find it using the store ID
@@ -480,7 +476,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             console.log('   Trying to fetch recalibration with store ID:', mappedStore.id);
             const storeRecalResponse = await api.fetchLatestRecalibration(
               context.user?.accessToken || '', 
-              mappedStore.id
+              mappedStore.id,
+              'production_house' // Also specify production_house for fallback
             );
             
             if (storeRecalResponse?.record) {
@@ -496,42 +493,73 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       
       // Check if recalibration exists and is from current month
       let openingBalance: any = null;
+      let midMonthRecalibration: any = null; // NEW: Track if we have mid-month recalibration
       
       if (recalResponse?.record) {
         const recalDate = recalResponse.record.date.substring(0, 7); // "2026-01"
+        const recalDay = parseInt(recalResponse.record.date.substring(8, 10)); // Day of month
         
         console.log('📅 Recalibration date comparison:', {
           recalDate,
+          recalDay,
           currentMonth,
+          isFirstOfMonth: recalDay === 1,
           match: recalDate === currentMonth
         });
         
         if (recalDate === currentMonth) {
-          // Recalibration exists for current month - use it as opening balance
-          console.log('✅ Using current month recalibration as opening balance');
-          console.log('   Recalibration items:', recalResponse.record.items);
-          openingBalance = {};
-          recalResponse.record.items.forEach((item: any) => {
-            // Map itemId to stock key
-            // itemId can be either UUID or snake_case name like "chicken_momo"
-            const inventoryItem = context.inventoryItems?.find(invItem => 
-              invItem.id === item.itemId || invItem.name === item.itemId
-            );
+          if (recalDay === 1) {
+            // CASE 1: Recalibration on 1st of month - RESET EVERYTHING
+            // Use recalibration as opening balance (production and deliveries start fresh)
+            console.log('✅ Recalibration on 1st of month - using as opening balance (RESET)');
+            console.log('   Recalibration items:', recalResponse.record.items);
+            openingBalance = {};
+            recalResponse.record.items.forEach((item: any) => {
+              const inventoryItem = context.inventoryItems?.find(invItem => 
+                invItem.id === item.itemId || invItem.name === item.itemId
+              );
+              
+              if (inventoryItem) {
+                const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+                const stockKey = camelName.replace(/Momo(s)?$/i, '');
+                openingBalance[stockKey] = item.actualQuantity;
+                console.log(`  📦 Opening balance (1st of month): ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
+              } else {
+                // Fallback: use itemId as-is
+                openingBalance[item.itemId] = item.actualQuantity;
+                console.log(`  ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
+              }
+            });
+            console.log('   Parsed opening balance:', openingBalance);
+          } else {
+            // CASE 2: Mid-month recalibration - DON'T change opening balance
+            // Opening balance should be calculated from previous month
+            // Only the final stock should reflect recalibration actual quantities
+            console.log('⚠️ Mid-month recalibration detected - keeping opening balance from previous month');
+            console.log(`   Recalibration date: ${recalResponse.record.date} (day ${recalDay})`);
             
-            if (inventoryItem) {
-              // Convert snake_case to camelCase, then remove _momo suffix
-              // e.g., "chicken_momo" -> "chickenMomo" -> "chicken"
-              const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-              const stockKey = camelName.replace(/Momo(s)?$/i, '');
-              openingBalance[stockKey] = item.actualQuantity;
-              console.log(`  📦 Opening balance mapping: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
-            } else {
-              // Fallback: use itemId as-is
-              openingBalance[item.itemId] = item.actualQuantity;
-              console.log(`  ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
-            }
-          });
-          console.log('   Parsed opening balance:', openingBalance);
+            // Calculate opening balance from previous month as usual
+            openingBalance = calculatePreviousMonthClosingStock(productionHouseUUID);
+            
+            // Store mid-month recalibration data separately
+            midMonthRecalibration = {};
+            recalResponse.record.items.forEach((item: any) => {
+              const inventoryItem = context.inventoryItems?.find(invItem => 
+                invItem.id === item.itemId || invItem.name === item.itemId
+              );
+              
+              if (inventoryItem) {
+                const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+                const stockKey = camelName.replace(/Momo(s)?$/i, '');
+                midMonthRecalibration[stockKey] = item.actualQuantity;
+                console.log(`  📦 Mid-month stock override: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
+              } else {
+                midMonthRecalibration[item.itemId] = item.actualQuantity;
+              }
+            });
+            console.log('   Mid-month recalibration stock:', midMonthRecalibration);
+            console.log('   Opening balance (from previous month):', openingBalance);
+          }
         } else {
           // Recalibration is from a previous month - calculate from that point
           console.log('📅 Recalibration from previous month, calculating forward...');
@@ -545,6 +573,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       
       setLatestRecalibration(recalResponse?.record || null);
       setPreviousMonthStock(openingBalance);
+      
+      // NEW: Store mid-month recalibration separately if it exists
+      if (midMonthRecalibration) {
+        // We'll use this to override the final stock calculation
+        (window as any).__midMonthRecalibration = midMonthRecalibration;
+        console.log('💾 Stored mid-month recalibration for stock override:', midMonthRecalibration);
+      } else {
+        delete (window as any).__midMonthRecalibration;
+      }
       
       console.log('💰 Opening Balance Calculated:', openingBalance);
     } catch (error) {
@@ -1024,10 +1061,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         }
         
         // Get today's date in IST (UTC+5:30)
-        const now = new Date();
-        const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-        const istDate = new Date(now.getTime() + istOffset);
-        const today = istDate.toISOString().split('T')[0];
+        const today = getTodayIST();
         
         if (context.user.role === 'cluster_head') {
           // Cluster head: get all leaves
@@ -3042,12 +3076,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-sm text-blue-900 font-semibold">
                     {(() => {
                       const { startDate, endDate } = getDateRangeBounds();
-                      const start = new Date(startDate).toLocaleDateString('en-US', { 
-                        month: 'short', day: 'numeric', year: 'numeric' 
-                      });
-                      const end = new Date(endDate).toLocaleDateString('en-US', { 
-                        month: 'short', day: 'numeric', year: 'numeric' 
-                      });
+                      const start = formatDateIST(startDate);
+                      const end = formatDateIST(endDate);
                       return startDate === endDate ? start : `${start} - ${end}`;
                     })()}
                   </div>
@@ -3083,12 +3113,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     
                     return filteredDates.map(date => (
                       <option key={date} value={date}>
-                        {new Date(date).toLocaleDateString('en-US', { 
-                          weekday: 'short', 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric' 
-                        })}
+                        {formatDateIST(date)}
                       </option>
                     ));
                   })()}
@@ -3270,7 +3295,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     </p>
                   </div>
                   
-                  {/* Recalibrate Stock Button and Alert Settings - For Operations Managers and Production Incharge in Production Analytics Mode */}
+                  {/* Alert Settings and Plate Settings - For Operations Managers and Production Incharge in Production Analytics Mode */}
                   {analyticsMode === 'production' && (isManager || isProductionIncharge) && (
                     <div className="flex gap-2 items-start">
                       {/* Stock Alert Settings Button */}
@@ -3299,26 +3324,29 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         Plate Settings
                       </button>
                       
-                      <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => setShowRecalibration(true)}
-                          className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
-                          title="Recalibrate production house stock (available on 1st of each month)"
-                        >
-                          <Calendar className="w-5 h-5" />
-                          Recalibrate Stock
-                        </button>
-                        {latestRecalibration && (
-                          <p className="text-xs text-gray-500 text-center">
-                            Last recalibrated: {new Date(latestRecalibration.date).toLocaleDateString()}
-                          </p>
-                        )}
-                        {previousMonthStock && !latestRecalibration && (
-                          <p className="text-xs text-blue-600 text-center">
-                            ℹ️ Using auto carry-forward from previous month
-                          </p>
-                        )}
-                      </div>
+                      {/* Recalibrate Stock Button - ONLY for Production Incharge */}
+                      {isProductionIncharge && (
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => setShowRecalibration(true)}
+                            className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
+                            title="Recalibrate production house stock (available on 1st of each month)"
+                          >
+                            <Calendar className="w-5 h-5" />
+                            Recalibrate Stock
+                          </button>
+                          {latestRecalibration && latestRecalibration.date && (
+                            <p className="text-xs text-gray-500 text-center">
+                              Last recalibrated: {formatDateIST(latestRecalibration.date)} IST
+                            </p>
+                          )}
+                          {previousMonthStock && !latestRecalibration && (
+                            <p className="text-xs text-blue-600 text-center">
+                              ℹ️ Using auto carry-forward from previous month
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {(isManager || isClusterHead) && onNavigateToManageItems && (
                         <button
                           onClick={() => {
@@ -3459,25 +3487,37 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   totalProduced[stockKey] = 0;
                 });
                 
-                // Aggregate production data
-                monthlyFilteredProduction.forEach(p => {
-                  finishedProductsForCalc.forEach(item => {
-                    const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
-                    // Support multiple field formats for backwards compatibility
-                    let fieldValue = 0;
-                    const fieldWithMomos = (p as any)[stockKey + 'Momos'];
-                    const fieldWithoutMomos = (p as any)[stockKey];
-                    
-                    if (fieldWithMomos) {
-                      // If it's an object with .final, extract that; otherwise use the value directly
-                      fieldValue = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
-                    } else if (fieldWithoutMomos) {
-                      fieldValue = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
-                    }
-                    
-                    totalProduced[stockKey] = (totalProduced[stockKey] || 0) + fieldValue;
+                // Aggregate production data - ONLY APPROVED PRODUCTION
+                monthlyFilteredProduction
+                  .filter(p => p.approvalStatus === 'approved') // CRITICAL: Only count approved production
+                  .forEach(p => {
+                    finishedProductsForCalc.forEach(item => {
+                      const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
+                      
+                      // CRITICAL FIX: Production data is stored in p.data object
+                      // Read from p.data[item.name] (e.g., p.data.chicken_momo)
+                      const dataValue = (p.data as any)?.[item.name];
+                      
+                      // If not found in data object, fallback to old format for backwards compatibility
+                      let fieldValue = 0;
+                      if (dataValue !== undefined && dataValue !== null) {
+                        // Production data found in p.data
+                        fieldValue = typeof dataValue === 'object' ? (dataValue.final || dataValue.quantity || 0) : dataValue;
+                      } else {
+                        // Fallback: try old format (p.chickenMomos or p.chicken)
+                        const fieldWithMomos = (p as any)[stockKey + 'Momos'];
+                        const fieldWithoutMomos = (p as any)[stockKey];
+                        
+                        if (fieldWithMomos) {
+                          fieldValue = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
+                        } else if (fieldWithoutMomos) {
+                          fieldValue = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
+                        }
+                      }
+                      
+                      totalProduced[stockKey] = (totalProduced[stockKey] || 0) + fieldValue;
+                    });
                   });
-                });
 
                 // Calculate total fulfilled stock requests (sent to stores)
                 // Use ProductionRequests (which have 'delivered' status), not StockRequests
@@ -3605,20 +3645,143 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 console.log('��� Stock Calculation with Carry-Forward:');
                 console.log('  previousMonthStock (raw):', previousMonthStock);
                 console.log('  Opening Balance (processed):', openingBalance);
-                console.log('  Current Month Production:', totalProduced);
+                console.log('  Current Month Production (APPROVED ONLY):', totalProduced);
                 console.log('  Current Month Deliveries:', totalSentToStores);
+                console.log('  📊 Production Records Debug:');
+                console.log('    Total monthly production records:', monthlyFilteredProduction.length);
+                console.log('    Approved monthly production records:', monthlyFilteredProduction.filter(p => p.approvalStatus === 'approved').length);
+                console.log('    Sample production records:', monthlyFilteredProduction.slice(0, 3).map(p => ({
+                  id: p.id.slice(0, 8),
+                  date: p.date,
+                  approvalStatus: p.approvalStatus,
+                  hasData: !!p.data,
+                  dataKeys: p.data ? Object.keys(p.data) : [],
+                  sampleValue: p.data ? p.data[Object.keys(p.data)[0]] : null
+                })));
+                
+                // NEW: Check if we have mid-month recalibration data
+                const midMonthRecalData = (window as any).__midMonthRecalibration;
+                const midMonthRecalDate = latestRecalibration?.date;
+                const isMidMonthRecal = midMonthRecalData && midMonthRecalDate;
+                
+                if (isMidMonthRecal) {
+                  console.log('  🔄 Mid-Month Recalibration Detected:');
+                  console.log('    Recalibration date:', midMonthRecalDate);
+                  console.log('    Recalibration stock:', midMonthRecalData);
+                }
                 
                 // Calculate production house stock dynamically
                 const productionHouseStock: Record<string, number> = {};
-                finishedProductsForCalc.forEach(item => {
-                  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
-                  productionHouseStock[stockKey] = 
-                    (openingBalance[stockKey] || 0) + 
-                    (totalProduced[stockKey] || 0) - 
-                    (totalSentToStores[stockKey] || 0);
-                });
+                
+                if (isMidMonthRecal) {
+                  // PROPER mid-month recalibration logic:
+                  // Stock = Most Recent Recalibration + Production AFTER - Deliveries AFTER
+                  const recalTimestamp = midMonthRecalDate!; // Use full ISO timestamp
+                  console.log('    Recalibration date (date only):', recalTimestamp.substring(0, 10));
+                  
+                  // Calculate production AFTER recalibration
+                  const productionAfterRecal: Record<string, number> = {};
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name);
+                    productionAfterRecal[stockKey] = 0;
+                  });
+                  
+                  filteredProduction
+                    .filter(prod => prod.approvalStatus === 'approved') // CRITICAL: Only count approved production
+                    .forEach(prod => {
+                      const recalDateOnly = recalTimestamp.substring(0, 10); // "2026-01-14"
+                      const isAfterRecalDate = prod.date > recalDateOnly; // Exclude production from same day
+                      
+                      console.log('  📊 Checking production after recalibration:', {
+                        id: prod.id.slice(0, 8),
+                        date: prod.date,
+                        recalDateOnly: recalDateOnly,
+                        isAfter: isAfterRecalDate,
+                        hasData: !!prod.data,
+                        dataKeys: prod.data ? Object.keys(prod.data) : [],
+                        approvalStatus: prod.approvalStatus
+                      });
+                      
+                      // Only include production from AFTER the recalibration date (not same day)
+                      // Since production records only have dates, we can't tell if same-day production
+                      // happened before or after the recalibration, so we exclude it
+                      if (isAfterRecalDate) {
+                        finishedProductsForCalc.forEach(item => {
+                          const stockKey = getStockKey(item.name);
+                          
+                          // CRITICAL FIX: Use same logic as totalProduced - check both p.data and old format
+                          const dataValue = (prod.data as any)?.[item.name];
+                          let value = 0;
+                          
+                          if (dataValue !== undefined && dataValue !== null) {
+                            // Production data found in p.data
+                            value = typeof dataValue === 'object' ? (dataValue.final || dataValue.quantity || 0) : dataValue;
+                          } else {
+                            // Fallback: try old format (prod.chickenMomos or prod.chicken)
+                            const fieldWithMomos = (prod as any)[stockKey + 'Momos'];
+                            const fieldWithoutMomos = (prod as any)[stockKey];
+                            
+                            if (fieldWithMomos) {
+                              value = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
+                            } else if (fieldWithoutMomos) {
+                              value = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
+                            }
+                          }
+                          
+                          if (value > 0) {
+                            console.log(`    ✅ Adding production after recalibration: ${item.name} (${stockKey}) = ${value}`);
+                          }
+                          productionAfterRecal[stockKey] = (productionAfterRecal[stockKey] || 0) + value;
+                        });
+                      }
+                    });
+                  
+                  // Calculate deliveries AFTER recalibration
+                  const deliveriesAfterRecal: Record<string, number> = {};
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name);
+                    deliveriesAfterRecal[stockKey] = 0;
+                  });
+                  
+                  fulfilledRequests.forEach(req => {
+                    const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
+                    // Compare full timestamps, not just dates
+                    if (deliveryDate && deliveryDate > recalTimestamp) {
+                      finishedProductsForCalc.forEach(item => {
+                        const stockKey = getStockKey(item.name);
+                        const requestedQty = (req as any)[stockKey + 'Momos'] || (req as any)[stockKey] || 0;
+                        deliveriesAfterRecal[stockKey] = (deliveriesAfterRecal[stockKey] || 0) + requestedQty;
+                      });
+                    }
+                  });
+                  
+                  console.log('    Production AFTER recalibration:', productionAfterRecal);
+                  console.log('    Deliveries AFTER recalibration:', deliveriesAfterRecal);
+                  
+                  // Calculate final stock: Recal + Production After - Deliveries After
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name);
+                    const recalStock = midMonthRecalData[stockKey] || 0;
+                    const prodAfter = productionAfterRecal[stockKey] || 0;
+                    const delAfter = deliveriesAfterRecal[stockKey] || 0;
+                    productionHouseStock[stockKey] = recalStock + prodAfter - delAfter;
+                    console.log(`    ${stockKey}: ${recalStock} (recal) + ${prodAfter} (prod after) - ${delAfter} (del after) = ${productionHouseStock[stockKey]}`);
+                  });
+                } else {
+                  // Normal calculation: Opening Balance + Production - Deliveries
+                  finishedProductsForCalc.forEach(item => {
+                    const stockKey = getStockKey(item.name);
+                    productionHouseStock[stockKey] = 
+                      (openingBalance[stockKey] || 0) + 
+                      (totalProduced[stockKey] || 0) - 
+                      (totalSentToStores[stockKey] || 0);
+                  });
+                }
                 
                 console.log('  Final Stock:', productionHouseStock);
+                
+                // Store calculated stock globally for the recalibration modal
+                (window as any).__currentProductionHouseStock = productionHouseStock;
 
                 // Get all finished product inventory items for this production house or global
                 const finishedProducts = context.inventoryItems?.filter(item => 
@@ -3703,8 +3866,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                               Stock calculation: <span className="font-mono">Opening Balance + This Month's Production - Deliveries</span>
                             </p>
                             <p className="text-xs text-blue-600 mt-1">
-                              {latestRecalibration 
-                                ? `Opening balance from recalibration on ${new Date(latestRecalibration.date).toLocaleDateString()}`
+                              {latestRecalibration && latestRecalibration.date
+                                ? `Opening balance from recalibration on ${formatDateIST(latestRecalibration.date)} (IST)`
                                 : 'Opening balance auto-calculated from previous month\'s closing stock'
                               }
                             </p>
@@ -4717,7 +4880,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       return (
                         <div className="text-center py-12 text-gray-500">
                           <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                          <p>No approved production data found for {new Date(sopComplianceDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                          <p>No approved production data found for {formatDateIST(sopComplianceDate)}</p>
                           <p className="text-sm mt-1">Production entries must be approved to appear here</p>
                         </div>
                       );
@@ -4725,7 +4888,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                     return last5Days.map(({ date, usage }) => (
                       <div key={date} className="border border-gray-200 rounded-lg p-4">
-                        <h4 className="text-gray-900 mb-4">{new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</h4>
+                        <h4 className="text-gray-900 mb-4">{formatDateIST(date)}</h4>
                         
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                           {Object.entries(usage).map(([momoType, data]: [string, any]) => {
@@ -4879,6 +5042,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         <MonthlyStockRecalibration
           context={context}
           selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : effectiveStoreId}
+          currentCalculatedStock={analyticsMode === 'production' ? (window as any).__currentProductionHouseStock : undefined}
           onClose={() => {
             setShowRecalibration(false);
             // Refresh opening balance data after recalibration
@@ -4893,6 +5057,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 fetchRecalibrationAndCalculateOpeningBalance();
               }, 1500);
             }
+          }}
+          onSaveSuccess={() => {
+            console.log('✅ Recalibration saved successfully - triggering immediate refresh!');
+            // Clear cached data
+            setPreviousMonthStock(null);
+            setLatestRecalibration(null);
+            (window as any).__currentProductionHouseStock = null;
+            // Force immediate refetch
+            setTimeout(() => {
+              fetchRecalibrationAndCalculateOpeningBalance();
+            }, 500);
           }}
           isProductionHouse={analyticsMode === 'production'}
         />
@@ -5257,12 +5432,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                               <div className="flex items-center gap-2 text-sm mt-2">
                                 <Calendar className="w-4 h-4 text-gray-500" />
                                 <span className="text-gray-600">
-                                  Date: {new Date(leave.leaveDate).toLocaleDateString('en-US', { 
-                                    weekday: 'short', 
-                                    month: 'short', 
-                                    day: 'numeric', 
-                                    year: 'numeric' 
-                                  })}
+                                  Date: {formatDateIST(leave.leaveDate)}
                                 </span>
                               </div>
                             </div>
