@@ -9,11 +9,28 @@ function createBrowserSupabase() {
   return getSupabaseClient();
 }
 
-// Helper to get current session
+// Helper to get current session with automatic token refresh
 async function getSession() {
   const supabase = createBrowserSupabase();
-  const { data: { session } } = await supabase.auth.getSession();
-  return session;
+  
+  // First check if there's an existing session
+  const { data: { session: existingSession } } = await supabase.auth.getSession();
+  
+  if (!existingSession) {
+    // No session at all
+    return null;
+  }
+  
+  // Try to refresh the session to get a fresh token
+  const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+  
+  if (refreshError || !refreshedSession) {
+    console.warn('Token refresh failed, using existing session:', refreshError?.message || 'No session returned');
+    // Fall back to existing session
+    return existingSession;
+  }
+  
+  return refreshedSession;
 }
 
 // Global flag to prevent multiple logout redirects

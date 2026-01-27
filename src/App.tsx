@@ -30,11 +30,13 @@ import { StockRequestManagement } from './components/StockRequestManagement';
 import { AdvancedInventoryManagement } from './components/AdvancedInventoryManagement';
 import { InventoryItemsManagement } from './components/InventoryItemsManagement';
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity } from 'lucide-react';
+import { FixLegacyInventory } from './components/FixLegacyInventory';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
+import * as dataCache from './utils/dataCache';
 
 export type InventoryItem = {
   id: string;
@@ -309,12 +311,53 @@ export default function App() {
     }
   };
 
-  // Load inventory and overhead data
-  const loadData = async (accessToken: string) => {
+  // Load inventory and overhead data with aggressive caching
+  const loadData = async (accessToken: string, forceRefresh = false) => {
+    // Try to load from cache first for instant display
+    const cacheKeys = [
+      'inventory',
+      'overheads',
+      'fixedCosts',
+      'salesData',
+      'categorySales',
+      'productionData',
+      'productionHouses',
+      'stockRequests',
+      'productionRequests',
+      'inventoryItems'
+    ];
+
+    // Load cached data immediately if available
+    if (!forceRefresh) {
+      const cachedData = dataCache.batchGetCache(cacheKeys);
+      
+      if (cachedData.get('inventory')) {
+        console.log('⚡ Loading from cache - instant display!');
+        setInventory(cachedData.get('inventory') as InventoryItem[] || []);
+        setOverheads(cachedData.get('overheads') as OverheadItem[] || []);
+        setFixedCosts(cachedData.get('fixedCosts') as FixedCostItem[] || []);
+        setSalesData(cachedData.get('salesData') as SalesData[] || []);
+        setCategorySalesData((cachedData.get('categorySales') as any)?.data || []);
+        setProductionData(cachedData.get('productionData') as ProductionData[] || []);
+        setProductionHouses(cachedData.get('productionHouses') as api.ProductionHouse[] || []);
+        setStockRequests(cachedData.get('stockRequests') as api.StockRequest[] || []);
+        setProductionRequests(cachedData.get('productionRequests') as api.ProductionRequest[] || []);
+        setInventoryItems(cachedData.get('inventoryItems') as api.DynamicInventoryItem[] || []);
+        
+        // Check if cache is fresh
+        const isFresh = cacheKeys.every(key => dataCache.isCacheFresh(key));
+        if (isFresh) {
+          console.log('✅ Cache is fresh - skipping API calls');
+          return; // Cache is fresh, no need to fetch
+        }
+        console.log('⚡ Cache loaded, refreshing in background...');
+      }
+    }
+
     setIsLoadingData(true);
     setDataError(null);
     try {
-      console.log('🔍 Starting loadData - fetching stock requests...');
+      console.log('🔍 Starting loadData - fetching from API...');
       const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
@@ -413,6 +456,21 @@ export default function App() {
       setStockRequests(stockRequestsData);
       setProductionRequests(productionRequestsData);
       setInventoryItems(inventoryItemsData); // NEW: Set inventory items metadata
+      
+      // Cache all data for instant future loads
+      const cacheMap = new Map<string, any>();
+      cacheMap.set('inventory', uniqueInventory);
+      cacheMap.set('overheads', uniqueOverheads);
+      cacheMap.set('fixedCosts', uniqueFixedCosts);
+      cacheMap.set('salesData', uniqueSalesData);
+      cacheMap.set('categorySales', categorySalesResponse);
+      cacheMap.set('productionData', uniqueProductionData);
+      cacheMap.set('productionHouses', productionHousesData);
+      cacheMap.set('stockRequests', stockRequestsData);
+      cacheMap.set('productionRequests', productionRequestsData);
+      cacheMap.set('inventoryItems', inventoryItemsData);
+      dataCache.batchSetCache(cacheMap);
+      console.log('💾 Data cached for instant future loads');
     } catch (error) {
       // Silently handle authentication errors (user not logged in yet)
       if (error instanceof Error && 
@@ -535,49 +593,36 @@ export default function App() {
     // Clear any stale redirect flags from previous sessions
     sessionStorage.removeItem('logout_redirect_in_progress');
     
+    // Clean up old cache entries on app initialization
+    dataCache.clearOldCaches();
+    
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabaseClient.auth.getSession();
-        if (session?.user) {
-          let storeId = null;
-          let designation = session.user.user_metadata?.designation || null;
-          
-          // For employees, fetch full employee record to get storeId
-          if (session.user.user_metadata?.employeeId) {
-            try {
-              const employees = await api.getEmployees();
-              const employeeRecord = employees.find(emp => emp.employeeId === session.user.user_metadata?.employeeId);
-              if (employeeRecord) {
-                storeId = employeeRecord.storeId || null;
-                designation = employeeRecord.designation || designation;
-              }
-            } catch (error) {
-              console.error('Error fetching employee storeId on session check:', error);
-            }
+        // First check if there's an existing session
+        const { data: { session: existingSession } } = await supabaseClient.auth.getSession();
+        
+        if (!existingSession) {
+          // No session at all, user needs to log in
+          setIsCheckingAuth(false);
+          return;
+        }
+        
+        // Try to refresh to get a fresh token
+        const { data: { session: refreshedSession }, error: refreshError } = await supabaseClient.auth.refreshSession();
+        
+        if (refreshError || !refreshedSession) {
+          console.warn('Session refresh failed:', refreshError?.message || 'No session returned');
+          // If refresh fails but we have an existing session, try to use it
+          if (existingSession?.user) {
+            await processSession(existingSession);
+          } else {
+            // Session is invalid, clear it
+            await supabaseClient.auth.signOut();
+            setIsCheckingAuth(false);
           }
-          
-          const userData = {
-            email: session.user.email || '',
-            name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-            role: session.user.user_metadata?.role || 'manager',
-            employeeId: session.user.user_metadata?.employeeId || null,
-            accessToken: session.access_token,
-            storeId,
-            designation
-          };
-          setUser(userData);
-          
-          // Load data for the user
-          await loadData(session.access_token);
-          
-          // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
-          if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
-            await loadStores();
-            await loadEmployees();
-            if (userData.role === 'cluster_head') {
-              await loadClusterData(session.access_token);
-            }
-          }
+        } else {
+          // Successfully refreshed
+          await processSession(refreshedSession);
         }
       } catch (error) {
         console.log('Session check error:', error);
@@ -585,6 +630,49 @@ export default function App() {
         setIsCheckingAuth(false);
       }
     };
+    
+    const processSession = async (session: any) => {
+      let storeId = null;
+      let designation = session.user.user_metadata?.designation || null;
+      
+      // For employees, fetch full employee record to get storeId
+      if (session.user.user_metadata?.employeeId) {
+        try {
+          const employees = await api.getEmployees();
+          const employeeRecord = employees.find(emp => emp.employeeId === session.user.user_metadata?.employeeId);
+          if (employeeRecord) {
+            storeId = employeeRecord.storeId || null;
+            designation = employeeRecord.designation || designation;
+          }
+        } catch (error) {
+          console.error('Error fetching employee storeId on session check:', error);
+        }
+      }
+      
+      const userData = {
+        email: session.user.email || '',
+        name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+        role: session.user.user_metadata?.role || 'manager',
+        employeeId: session.user.user_metadata?.employeeId || null,
+        accessToken: session.access_token,
+        storeId,
+        designation
+      };
+      setUser(userData);
+      
+      // Load data for the user
+      await loadData(session.access_token);
+      
+      // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
+      if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
+        await loadStores();
+        await loadEmployees();
+        if (userData.role === 'cluster_head') {
+          await loadClusterData(session.access_token);
+        }
+      }
+    };
+    
     checkSession();
   }, []); // Empty dependency array - only run once on mount
 
@@ -775,6 +863,13 @@ export default function App() {
     setFixedCosts([]);
     setSalesData([]);
     setActiveView('sales');
+    dataCache.invalidateAllCaches(); // Clear all caches on logout
+  };
+
+  const handleRefreshData = async () => {
+    if (!user) return;
+    console.log('🔄 Manual refresh triggered');
+    await loadData(user.accessToken, true); // Force refresh bypasses cache
   };
 
   const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
@@ -787,6 +882,7 @@ export default function App() {
       };
       const newItem = await api.addInventory(user.accessToken, itemWithStore);
       setInventory([...inventory, newItem]);
+      dataCache.invalidateCache('inventory'); // Invalidate cache on data change
     } catch (error) {
       console.error('Error adding inventory item:', error);
       throw error;
@@ -803,6 +899,7 @@ export default function App() {
       };
       const newItem = await api.addOverhead(user.accessToken, itemWithStore);
       setOverheads([...overheads, newItem]);
+      dataCache.invalidateCache('overheads');
     } catch (error) {
       console.error('Error adding overhead item:', error);
       throw error;
@@ -819,6 +916,7 @@ export default function App() {
       };
       const newItem = await api.addFixedCost(user.accessToken, itemWithStore);
       setFixedCosts([...fixedCosts, newItem]);
+      dataCache.invalidateCache('fixedCosts');
     } catch (error) {
       console.error('Error adding fixed cost item:', error);
       throw error;
@@ -835,6 +933,7 @@ export default function App() {
       };
       const updatedItem = await api.updateInventory(user.accessToken, id, itemWithStore);
       setInventory(inventory.map(inv => inv.id === id ? updatedItem : inv));
+      dataCache.invalidateCache('inventory');
     } catch (error) {
       console.error('Error updating inventory item:', error);
       throw error;
@@ -851,6 +950,7 @@ export default function App() {
       };
       const updatedItem = await api.updateOverhead(user.accessToken, id, itemWithStore);
       setOverheads(overheads.map(ovh => ovh.id === id ? updatedItem : ovh));
+      dataCache.invalidateCache('overheads');
     } catch (error) {
       console.error('Error updating overhead item:', error);
       throw error;
@@ -867,6 +967,7 @@ export default function App() {
       };
       const updatedItem = await api.updateFixedCost(user.accessToken, id, itemWithStore);
       setFixedCosts(fixedCosts.map(fc => fc.id === id ? updatedItem : fc));
+      dataCache.invalidateCache('fixedCosts');
     } catch (error) {
       console.error('Error updating fixed cost item:', error);
       throw error;
@@ -878,6 +979,7 @@ export default function App() {
     try {
       await api.deleteInventory(user.accessToken, id);
       setInventory(inventory.filter(inv => inv.id !== id));
+      dataCache.invalidateCache('inventory');
     } catch (error) {
       console.error('Error deleting inventory item:', error);
       throw error;
@@ -889,6 +991,7 @@ export default function App() {
     try {
       await api.deleteOverhead(user.accessToken, id);
       setOverheads(overheads.filter(ovh => ovh.id !== id));
+      dataCache.invalidateCache('overheads');
     } catch (error) {
       console.error('Error deleting overhead item:', error);
       throw error;
@@ -900,6 +1003,7 @@ export default function App() {
     try {
       await api.deleteFixedCost(user.accessToken, id);
       setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
+      dataCache.invalidateCache('fixedCosts');
     } catch (error) {
       console.error('Error deleting fixed cost item:', error);
       throw error;
@@ -919,6 +1023,8 @@ export default function App() {
       };
       const newItem = await api.addSalesData(user.accessToken, itemWithStore);
       setSalesData([...salesData, newItem]);
+      dataCache.invalidateCache('salesData');
+      dataCache.invalidateCache('categorySales');
     } catch (error) {
       console.error('Error adding sales data:', error);
       throw error;
@@ -935,6 +1041,8 @@ export default function App() {
       };
       const updatedItem = await api.updateSalesData(user.accessToken, id, itemWithStore);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+      dataCache.invalidateCache('salesData');
+      dataCache.invalidateCache('categorySales');
     } catch (error) {
       console.error('Error updating sales data:', error);
       throw error;
@@ -946,6 +1054,7 @@ export default function App() {
     try {
       const updatedItem = await api.approveSalesData(user.accessToken, id);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+      dataCache.invalidateCache('salesData');
     } catch (error) {
       console.error('Error approving sales data:', error);
       throw error;
@@ -957,6 +1066,7 @@ export default function App() {
     try {
       const updatedItem = await api.requestSalesApproval(user.accessToken, id, requestedCashInHand, requestedOffset);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+      dataCache.invalidateCache('salesData');
     } catch (error) {
       console.error('Error requesting sales approval:', error);
       throw error;
@@ -968,6 +1078,7 @@ export default function App() {
     try {
       const updatedItem = await api.approveDiscrepancy(user.accessToken, id);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+      dataCache.invalidateCache('salesData');
     } catch (error) {
       console.error('Error approving discrepancy:', error);
       throw error;
@@ -979,6 +1090,7 @@ export default function App() {
     try {
       const updatedItem = await api.rejectDiscrepancy(user.accessToken, id, reason);
       setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+      dataCache.invalidateCache('salesData');
     } catch (error) {
       console.error('Error rejecting discrepancy:', error);
       throw error;
@@ -994,6 +1106,7 @@ export default function App() {
       };
       const newItem = await api.addProductionData(itemWithStore);
       setProductionData([...productionData, newItem]);
+      dataCache.invalidateCache('productionData');
     } catch (error) {
       console.error('Error adding production data:', error);
       throw error;
@@ -1009,6 +1122,7 @@ export default function App() {
       };
       const updatedItem = await api.updateProductionData(id, itemWithStore);
       setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+      dataCache.invalidateCache('productionData');
     } catch (error) {
       console.error('Error updating production data:', error);
       throw error;
@@ -1020,6 +1134,7 @@ export default function App() {
     try {
       const updatedItem = await api.approveProductionData(id);
       setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+      dataCache.invalidateCache('productionData');
     } catch (error) {
       console.error('Error approving production data:', error);
       throw error;
@@ -1037,6 +1152,7 @@ export default function App() {
       setOverheads([]);
       setFixedCosts([]);
       setSalesData([]);
+      dataCache.invalidateAllCaches(); // Clear all caches when clearing all data
       alert('All data has been cleared successfully.');
     } catch (error) {
       console.error('Error clearing data:', error);
@@ -1050,6 +1166,7 @@ export default function App() {
     try {
       const newHouse = await api.createProductionHouse(user.accessToken, house);
       setProductionHouses([...productionHouses, newHouse]);
+      dataCache.invalidateCache('productionHouses');
     } catch (error) {
       console.error('Error creating production house:', error);
       throw error;
@@ -1061,6 +1178,7 @@ export default function App() {
     try {
       const updated = await api.updateProductionHouse(user.accessToken, id, updates);
       setProductionHouses(productionHouses.map(h => h.id === id ? updated : h));
+      dataCache.invalidateCache('productionHouses');
     } catch (error) {
       console.error('Error updating production house:', error);
       throw error;
@@ -1083,6 +1201,7 @@ export default function App() {
     try {
       await api.deleteProductionHouse(user.accessToken, id);
       setProductionHouses(productionHouses.filter(h => h.id !== id));
+      dataCache.invalidateCache('productionHouses');
     } catch (error) {
       console.error('Error deleting production house:', error);
       throw error;
@@ -1098,6 +1217,7 @@ export default function App() {
       console.log('✅ Stock request created successfully:', newRequest);
       setStockRequests([...stockRequests, newRequest]);
       console.log('📦 Updated stock requests count:', stockRequests.length + 1);
+      dataCache.invalidateCache('stockRequests');
     } catch (error) {
       console.error('❌ Error creating stock request:', error);
       throw error;
@@ -1112,6 +1232,8 @@ export default function App() {
       // Reload production houses to get updated inventory
       const houses = await api.getProductionHouses(user.accessToken);
       setProductionHouses(houses);
+      dataCache.invalidateCache('stockRequests');
+      dataCache.invalidateCache('productionHouses');
     } catch (error) {
       console.error('Error fulfilling stock request:', error);
       throw error;
@@ -1123,6 +1245,7 @@ export default function App() {
     try {
       const updated = await api.cancelStockRequest(user.accessToken, id);
       setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
+      dataCache.invalidateCache('stockRequests');
     } catch (error) {
       console.error('Error cancelling stock request:', error);
       throw error;
@@ -1440,6 +1563,15 @@ export default function App() {
                   }} />
                 )}
                 <button
+                  onClick={handleRefreshData}
+                  disabled={isLoadingData}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-500/90 text-white rounded-xl hover:bg-green-600 transition-all backdrop-blur-sm border-2 border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh data"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingData ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+                <button
                   onClick={handleLogout}
                   className="flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white rounded-xl hover:bg-red-600 transition-all backdrop-blur-sm border-2 border-white/30"
                 >
@@ -1609,6 +1741,17 @@ export default function App() {
                     <span>Export</span>
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    handleRefreshData();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  disabled={isLoadingData}
+                  className="w-full flex items-center gap-3 px-4 py-3 bg-green-500/90 text-white rounded-lg hover:bg-green-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-5 h-5 ${isLoadingData ? 'animate-spin' : ''}`} />
+                  <span>Refresh Data</span>
+                </button>
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center gap-3 px-4 py-3 bg-red-500/90 text-white rounded-lg hover:bg-red-600 transition-all"
@@ -1911,6 +2054,15 @@ export default function App() {
                 </>
               )}
               <button
+                onClick={handleRefreshData}
+                disabled={isLoadingData}
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-green-500 transition-all duration-300 transform hover:scale-105 border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh data"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingData ? 'animate-spin' : ''}`} />
+                <span className="hidden xl:inline">Refresh</span>
+              </button>
+              <button
                 onClick={handleLogout}
                 className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-red-500 transition-all duration-300 transform hover:scale-105 border border-white/20"
               >
@@ -2117,6 +2269,17 @@ export default function App() {
                 </>
               )}
               <button
+                onClick={() => {
+                  handleRefreshData();
+                  setIsMobileMenuOpen(false);
+                }}
+                disabled={isLoadingData}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-5 h-5 ${isLoadingData ? 'animate-spin' : ''}`} />
+                <span>Refresh Data</span>
+              </button>
+              <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
               >
@@ -2237,6 +2400,11 @@ export default function App() {
         )}
       </main>
     </div>
+
+    {/* Fix Legacy Inventory - Shows when there are items missing storeId */}
+    {user && activeView === 'inventory' && (
+      <FixLegacyInventory context={contextValue} />
+    )}
     </>
   );
 }

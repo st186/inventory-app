@@ -35,7 +35,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const isStoreIncharge = context.user?.designation === 'store_incharge';
   const isProductionIncharge = context.user?.designation === 'production_incharge';
   const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge; // Operations manager (not store/production incharge)
-  const canEditSales = isStoreIncharge; // Only store incharge can enter/edit sales
+  const canEditSales = isOperationsManager; // Only operations manager can enter/edit sales
   const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
   
   // Contract worker payout state
@@ -184,12 +184,18 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       .filter(item => item.date === selectedDate)
       .reduce((sum, item) => sum + item.totalCost, 0);
     
-    const overheadCost = context.overheads
+    // Include ALL overhead costs (both cash and online/paytm)
+    const allOverheadCosts = context.overheads
       .filter(item => item.date === selectedDate)
       .reduce((sum, item) => sum + item.amount, 0);
     
-    return inventoryCost + overheadCost;
-  }, [context.inventory, context.overheads, selectedDate]);
+    // Include ALL fixed costs (both cash and online/paytm)
+    const allFixedCosts = context.fixedCosts
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => sum + item.amount, 0);
+    
+    return inventoryCost + allOverheadCosts + allFixedCosts;
+  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate]);
 
   // Calculate fixed costs paid via cash (to deduct from Expected Cash in Hand)
   const fixedCostsCash = useMemo(() => {
@@ -249,8 +255,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   }, [context.overheads, selectedDate]);
 
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number, fixedCostsCash: number, overheadCostsCash: number) => {
-    return prevCash + paytmAmount + cashReceived - expenses - salary - fixedCostsCash - overheadCostsCash;
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number) => {
+    // Fixed costs and overhead costs are already included in expenses, so don't subtract them separately
+    return prevCash + paytmAmount + cashReceived - expenses - salary;
   };
 
   // Calculate expected cash for current form data
@@ -259,8 +266,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const cashReceived = parseFloat(formData.cashAmount) || 0;
     const salary = totalContractPayout; // Use total from contract workers
     const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount, fixedCostsCash, overheadCostsCash);
-  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney, fixedCostsCash, overheadCostsCash]);
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount);
+  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -363,9 +370,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
     const offset = actualCash - expectedCashInHand;
 
-    // Store incharge entries always need approval from operations manager
-    // Operations manager/cluster head can directly approve their own entries
-    const needsManagerApproval = isStoreIncharge;
+    // Operations manager entries need approval from cluster head if there's high discrepancy
+    // Cluster head can directly approve their own entries
+    const needsManagerApproval = isOperationsManager;
     
     // Don't block saving if discrepancy is high - allow requesting approval
     const salesData: Omit<SalesData, 'id'> = {
@@ -662,7 +669,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       {/* Pending Approvals for Operations Manager */}
       {isOperationsManager && (
         <div className="mt-6 space-y-4">
-          {/* Sales Approval Requests from Store Incharge */}
+          {/* Sales Pending Approval */}
           {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length > 0 && (
             <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
               <div className="flex items-center gap-2 mb-4">
@@ -734,21 +741,21 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         </div>
       )}
 
-      {/* Store Incharge - Show if sales is pending approval */}
-      {isStoreIncharge && salesForDate && salesForDate.approvalStatus === 'pending' && (
+      {/* Operations Manager - Show if sales is pending approval */}
+      {isOperationsManager && salesForDate && salesForDate.approvalStatus === 'pending' && (
         <div className="mt-6 bg-[#FFF9E6] border-2 border-[#FFD54F] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="w-6 h-6 text-orange-600" />
             <h2 className="text-gray-900">Sales Pending Approval</h2>
           </div>
           <p className="text-gray-700">
-            Your sales entry for {formatDateIST(salesForDate.date)} is awaiting approval from the Operations Manager.
+            Your sales entry for {formatDateIST(salesForDate.date)} is awaiting approval from the Cluster Head.
           </p>
         </div>
       )}
 
-      {/* Store Incharge - Show if sales is approved */}
-      {isStoreIncharge && salesForDate && salesForDate.approvalStatus === 'approved' && (
+      {/* Operations Manager - Show if sales is approved */}
+      {isOperationsManager && salesForDate && salesForDate.approvalStatus === 'approved' && (
         <div className="mt-6 bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle className="w-6 h-6 text-green-600" />
@@ -1047,7 +1054,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
                       Cash Received: ₹{cash.toFixed(2)} - 
                       Expenses: ₹{totalExpenses.toFixed(2)} - 
-                      Fixed Costs (Cash): ₹{fixedCostsCash.toFixed(2)} - 
                       Contract Payouts: ₹{totalContractPayout.toFixed(2)}
                     </p>
                     <details className="mt-2">
@@ -1057,8 +1063,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
                         <p>Inventory Cost: ₹{context.inventory.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.totalCost, 0).toFixed(2)} ({context.inventory.filter(item => item.date === selectedDate).length} items)</p>
                         <p>Overhead Cost: ₹{context.overheads.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.overheads.filter(item => item.date === selectedDate).length} items)</p>
-                        <p>Fixed Costs (Cash): ₹{fixedCostsCash.toFixed(2)} ({context.fixedCosts.filter(item => item.date === selectedDate && (item.paymentMethod === 'cash' || item.paymentMethod === 'both')).length} items)</p>
-                        <p className="font-medium mt-1">Total: ₹{(totalExpenses + fixedCostsCash).toFixed(2)}</p>
+                        <p>Fixed Costs: ₹{context.fixedCosts.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.fixedCosts.filter(item => item.date === selectedDate).length} items)</p>
+                        <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
                       </div>
                     </details>
                   </div>
@@ -1225,8 +1231,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   <p className="text-3xl">₹{expectedCashInHand.toFixed(2)}</p>
                   <p className="text-xs text-gray-600 mt-1">
                     ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
+                    ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
                     ₹{cash.toFixed(2)} - 
                     ₹{totalExpenses.toFixed(2)} - 
+                    ₹{fixedCostsCash.toFixed(2)} - 
+                    ₹{overheadCostsCash.toFixed(2)} - 
                     ₹{totalContractPayout.toFixed(2)}
                   </p>
                 </div>

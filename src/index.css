@@ -366,6 +366,9 @@
     letter-spacing: inherit;
     color: inherit;
     opacity: 1;
+    --lightningcss-light: initial;
+    --lightningcss-dark: ;
+    color-scheme: light;
     background-color: #0000;
     border-radius: 0;
   }
@@ -377,6 +380,9 @@
     letter-spacing: inherit;
     color: inherit;
     opacity: 1;
+    --lightningcss-light: initial;
+    --lightningcss-dark: ;
+    color-scheme: light;
     background-color: #0000;
     border-radius: 0;
   }
@@ -628,6 +634,10 @@
 
   .top-8 {
     top: calc(var(--spacing) * 8);
+  }
+
+  .top-20 {
+    top: calc(var(--spacing) * 20);
   }
 
   .right-0 {
@@ -1745,6 +1755,16 @@
 
   .bg-green-500 {
     background-color: var(--color-green-500);
+  }
+
+  .bg-green-500\/90 {
+    background-color: color-mix(in srgb, oklch(.723 .219 149.579) 90%, transparent);
+  }
+
+  @supports (color: color-mix(in lab, red, red)) {
+    .bg-green-500\/90 {
+      background-color: color-mix(in oklab, var(--color-green-500) 90%, transparent);
+    }
   }
 
   .bg-green-600 {
@@ -3137,6 +3157,10 @@
     }
   }
 
+  .text-yellow-100 {
+    color: var(--color-yellow-100);
+  }
+
   .text-yellow-400 {
     color: var(--color-yellow-400);
   }
@@ -3660,6 +3684,18 @@
   }
 
   @media (hover: hover) {
+    .hover\:bg-green-200:hover {
+      background-color: var(--color-green-200);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-green-500:hover {
+      background-color: var(--color-green-500);
+    }
+  }
+
+  @media (hover: hover) {
     .hover\:bg-green-600:hover {
       background-color: var(--color-green-600);
     }
@@ -3800,6 +3836,12 @@
       .hover\:bg-white\/30:hover {
         background-color: color-mix(in oklab, var(--color-white) 30%, transparent);
       }
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-yellow-50:hover {
+      background-color: var(--color-yellow-50);
     }
   }
 
@@ -3989,6 +4031,12 @@
   @media (hover: hover) {
     .hover\:text-red-700:hover {
       color: var(--color-red-700);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:text-white:hover {
+      color: var(--color-white);
     }
   }
 

@@ -915,18 +915,20 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       }, 403);
     }
 
-    // Allow managers and store incharge to add sales data
+    // Only allow operations managers to add sales data
     const isManager = role === 'manager';
-    const isStoreIncharge = role === 'employee' && designation === 'store_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge;
     
-    if (!isManager && !isStoreIncharge) {
+    if (!isOperationsManager) {
       console.log('ERROR: User is not authorized. Current role:', role, 'Designation:', designation);
       return c.json({ 
-        error: `Only managers and store incharge can add sales data. Your current role: ${role}`,
+        error: `Only operations managers can add sales data. Your current role: ${role}`,
         debug: {
           currentRole: role,
           currentDesignation: designation,
-          requiredRole: 'manager or store_incharge'
+          requiredRole: 'operations manager (manager without store/production designation)'
         }
       }, 403);
     }
@@ -991,12 +993,14 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
 
-    // Allow managers and store incharge to update sales data
+    // Only allow operations managers to update sales data
     const isManager = role === 'manager';
-    const isStoreIncharge = role === 'employee' && designation === 'store_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge;
     
-    if (!isManager && !isStoreIncharge) {
-      return c.json({ error: 'Only managers and store incharge can update sales data' }, 403);
+    if (!isOperationsManager) {
+      return c.json({ error: 'Only operations managers can update sales data' }, 403);
     }
 
     const itemId = c.req.param('id');
