@@ -53,6 +53,32 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
     onDateChange(getTodayIST());
   };
 
+  // Navigate to previous week and select middle date
+  const handlePrevWeek = () => {
+    const newOffset = dateRangeOffset - 1;
+    setDateRangeOffset(newOffset);
+    
+    // Calculate the middle date of the new week range
+    const today = getTodayIST();
+    const baseDate = new Date(today);
+    baseDate.setDate(baseDate.getDate() + (newOffset * 7));
+    const newSelectedDate = baseDate.toISOString().split('T')[0];
+    onDateChange(newSelectedDate);
+  };
+
+  // Navigate to next week and select middle date
+  const handleNextWeek = () => {
+    const newOffset = dateRangeOffset + 1;
+    setDateRangeOffset(newOffset);
+    
+    // Calculate the middle date of the new week range
+    const today = getTodayIST();
+    const baseDate = new Date(today);
+    baseDate.setDate(baseDate.getDate() + (newOffset * 7));
+    const newSelectedDate = baseDate.toISOString().split('T')[0];
+    onDateChange(newSelectedDate);
+  };
+
   // Mobile view with native date picker + navigation
   if (isMobile) {
     return (
@@ -84,7 +110,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
         <div className="flex items-center gap-2 mb-4">
           <button
             type="button"
-            onClick={() => setDateRangeOffset(dateRangeOffset - 1)}
+            onClick={handlePrevWeek}
             className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 text-sm"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -92,7 +118,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
           </button>
           <button
             type="button"
-            onClick={() => setDateRangeOffset(dateRangeOffset + 1)}
+            onClick={handleNextWeek}
             className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 text-sm"
           >
             <span>Next Week</span>
@@ -151,7 +177,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={() => setDateRangeOffset(dateRangeOffset - 1)}
+          onClick={handlePrevWeek}
           className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
           title="Previous Week"
         >
@@ -186,7 +212,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
         </div>
         <button
           type="button"
-          onClick={() => setDateRangeOffset(dateRangeOffset + 1)}
+          onClick={handleNextWeek}
           className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
           title="Next Week"
         >

@@ -31,6 +31,7 @@ import { AdvancedInventoryManagement } from './components/AdvancedInventoryManag
 import { InventoryItemsManagement } from './components/InventoryItemsManagement';
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
+import { FixMissingItemNames } from './components/FixMissingItemNames';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
@@ -2404,6 +2405,11 @@ export default function App() {
     {/* Fix Legacy Inventory - Shows when there are items missing storeId */}
     {user && activeView === 'inventory' && (
       <FixLegacyInventory context={contextValue} />
+    )}
+    
+    {/* Fix Missing Item Names - Shows when there are items with no name */}
+    {user && activeView === 'inventory' && (
+      <FixMissingItemNames context={contextValue} />
     )}
     </>
   );

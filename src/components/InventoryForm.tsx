@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { InventoryItem } from '../App';
 import { INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
-import { X, Loader2, Search } from 'lucide-react';
+import { X, Loader2, Search, ChevronDown } from 'lucide-react';
 import * as api from '../utils/api';
 
 type Props = {
@@ -26,11 +26,30 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   const [loadingCustomItems, setLoadingCustomItems] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState(''); // NEW: Search state
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false); // Track dropdown state
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Load custom items on mount
   useEffect(() => {
     loadCustomItems();
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isDropdownOpen]);
 
   const loadCustomItems = async () => {
     try {
@@ -55,13 +74,14 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   // Reset form to initial state (for adding multiple items)
   const resetForm = () => {
     setFormData({
-      category: 'fresh_produce',
+      category: formData.category, // Persist the category selection
       itemName: '',
       customItem: false,
       quantity: '',
       unit: 'kg',
       totalCost: ''
     });
+    setSearchQuery(''); // Clear search query
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -170,52 +190,82 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
           <div>
             <label className="block text-sm text-gray-700 mb-1">Item Name</label>
             {!formData.customItem ? (
-              <div className="space-y-2">
-                {/* Search Input */}
+              <div className="relative space-y-2">
+                {/* Search Input with Selected Item Display */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search items..."
-                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setIsDropdownOpen(true); // Open dropdown when typing
+                    }}
+                    onFocus={() => setIsDropdownOpen(true)}
+                    placeholder={formData.itemName || "Search items..."}
+                    className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  {formData.itemName && !searchQuery && (
+                    <div className="absolute inset-y-0 left-10 right-10 flex items-center pointer-events-none">
+                      <span className="text-gray-900">{formData.itemName}</span>
+                    </div>
+                  )}
+                  <ChevronDown 
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 cursor-pointer"
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                   />
                 </div>
                 
-                {/* Dropdown */}
-                <select
-                  value={formData.itemName}
-                  onChange={(e) => {
-                    if (e.target.value === '__custom__') {
-                      setFormData({ ...formData, customItem: true, itemName: '' });
-                      setSearchQuery(''); // Clear search when switching to custom
-                    } else {
-                      setFormData({ ...formData, itemName: e.target.value });
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  required
-                  size={Math.min(filteredCategoryItems.length + 2, 8)} // Show multiple items at once
-                >
-                  <option value="">Select an item</option>
-                  {filteredCategoryItems.length === 0 && searchQuery ? (
-                    <option value="" disabled>No items found</option>
-                  ) : (
-                    filteredCategoryItems.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))
-                  )}
-                  <option value="__custom__">+ Add Custom Item</option>
-                </select>
+                {/* Dropdown List - Only show when open */}
+                {isDropdownOpen && (
+                  <div
+                    ref={dropdownRef}
+                    className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto"
+                  >
+                    {filteredCategoryItems.length === 0 && searchQuery ? (
+                      <div className="px-3 py-2 text-gray-500 text-sm">No items found</div>
+                    ) : (
+                      filteredCategoryItems.map((item) => (
+                        <div
+                          key={item}
+                          onClick={() => {
+                            setFormData({ ...formData, itemName: item });
+                            setSearchQuery('');
+                            setIsDropdownOpen(false);
+                          }}
+                          className={`px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors ${
+                            formData.itemName === item ? 'bg-blue-100 font-medium' : ''
+                          }`}
+                        >
+                          {item}
+                        </div>
+                      ))
+                    )}
+                    <div
+                      onClick={() => {
+                        setFormData({ ...formData, customItem: true, itemName: '' });
+                        setSearchQuery('');
+                        setIsDropdownOpen(false);
+                      }}
+                      className="px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors border-t border-gray-200 text-blue-600 font-medium"
+                    >
+                      + Add Custom Item
+                    </div>
+                  </div>
+                )}
                 
-                {searchQuery && (
+                {searchQuery && !isDropdownOpen && (
                   <p className="text-xs text-gray-500">
                     Showing {filteredCategoryItems.length} of {allCategoryItems.length} items
                   </p>
                 )}
+                
+                {/* Hidden input for form validation */}
+                <input
+                  type="hidden"
+                  value={formData.itemName}
+                  required
+                />
               </div>
             ) : (
               <div className="space-y-2">

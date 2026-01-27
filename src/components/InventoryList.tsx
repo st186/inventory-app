@@ -148,6 +148,30 @@ export function InventoryList({
                         </p>
                       )}
                       <p className="text-sm text-gray-500">{item.description}</p>
+                      {item.paymentMethod && (
+                        <div className="flex items-center gap-2 mt-2">
+                          {item.paymentMethod === 'cash' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+                              💵 Paid via Cash
+                            </span>
+                          )}
+                          {item.paymentMethod === 'online' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
+                              📱 Paid via Paytm
+                            </span>
+                          )}
+                          {item.paymentMethod === 'both' && (
+                            <div className="flex flex-wrap gap-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+                                💵 Cash: ₹{item.cashAmount?.toLocaleString()}
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
+                                📱 Paytm: ₹{item.onlineAmount?.toLocaleString()}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-orange-600">₹{item.amount.toLocaleString()}</span>

@@ -162,12 +162,14 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                     <tbody className="bg-white divide-y divide-gray-200">
                       {items.map((item) => (
                         <tr key={item.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.itemName}</td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                            {item.itemName || <span className="text-red-600 italic">⚠️ Missing Name</span>}
+                          </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
                             {item.quantity} {item.unit}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                            ₹{item.costPerUnit.toLocaleString()}
+                            ₹{item.costPerUnit.toFixed(2)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-gray-900">
                             ₹{item.totalCost.toLocaleString()}
