@@ -110,13 +110,32 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
       submissionData.employeeName = formData.employeeName;
     }
 
-    // Add payment split amounts if payment method is 'both'
+    // Calculate payment method amounts
+    let paymentData: Partial<OverheadItem> = {
+      paymentMethod: formData.paymentMethod
+    };
+    
     if (formData.paymentMethod === 'both') {
-      submissionData.cashAmount = parseFloat(formData.cashAmount);
-      submissionData.onlineAmount = parseFloat(formData.onlineAmount);
+      paymentData.cashAmount = parseFloat(formData.cashAmount);
+      paymentData.onlineAmount = parseFloat(formData.onlineAmount);
+    } else if (formData.paymentMethod === 'online') {
+      // For online payment, set onlineAmount to total amount
+      paymentData.onlineAmount = parseFloat(formData.amount);
+      paymentData.cashAmount = 0;
+    } else if (formData.paymentMethod === 'cash') {
+      // For cash payment, set cashAmount to total amount
+      paymentData.cashAmount = parseFloat(formData.amount);
+      paymentData.onlineAmount = 0;
     }
 
-    await onSubmit(submissionData);
+    const finalSubmission = {
+      ...submissionData,
+      ...paymentData
+    };
+
+    console.log('💳 Overhead payment data being sent:', paymentData);
+
+    await onSubmit(finalSubmission);
     setIsSubmitting(false);
   };
 

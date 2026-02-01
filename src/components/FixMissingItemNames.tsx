@@ -22,7 +22,11 @@ export function FixMissingItemNames({ context }: Props) {
   }
 
   const handleFix = async () => {
-    if (!confirm(`⚠️ Found ${itemsWithMissingNames.length} inventory items with missing names.\\n\\nThese items cannot be properly displayed or tracked.\\n\\n❌ These items will be DELETED because they have no name to identify them.\\n\\nContinue?`)) {
+    const itemsList = itemsWithMissingNames
+      .map((item, idx) => `${idx + 1}. Category: ${item.category}, Date: ${item.date}, Cost: ₹${item.totalCost?.toFixed(2) || '0.00'}`)
+      .join('\n');
+    
+    if (!confirm(`⚠️ Found ${itemsWithMissingNames.length} inventory items with missing names:\n\n${itemsList}\n\nThese items cannot be properly displayed or tracked.\n\n❌ These items will be DELETED because they have no name to identify them.\n\nContinue?`)) {
       return;
     }
 

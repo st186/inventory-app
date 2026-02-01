@@ -78,11 +78,25 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
       baseData.unitPrice = parseFloat(formData.unitPrice);
     }
 
-    // Add payment split amounts if payment method is 'both'
+    // Calculate payment method amounts
     if (formData.paymentMethod === 'both') {
       baseData.cashAmount = parseFloat(formData.cashAmount);
       baseData.onlineAmount = parseFloat(formData.onlineAmount);
+    } else if (formData.paymentMethod === 'online') {
+      // For online payment, set onlineAmount to total amount
+      baseData.onlineAmount = calculatedAmount;
+      baseData.cashAmount = 0;
+    } else if (formData.paymentMethod === 'cash') {
+      // For cash payment, set cashAmount to total amount
+      baseData.cashAmount = calculatedAmount;
+      baseData.onlineAmount = 0;
     }
+
+    console.log('💳 Fixed cost payment data being sent:', {
+      paymentMethod: baseData.paymentMethod,
+      cashAmount: baseData.cashAmount,
+      onlineAmount: baseData.onlineAmount
+    });
 
     setIsSubmitting(true);
     onSubmit(baseData).finally(() => setIsSubmitting(false));

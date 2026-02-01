@@ -577,6 +577,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
   }
 
   try {
+    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -586,17 +587,20 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the inventory item by searching all inventory items with this ID
-    const allInventory = await kv.getByPrefix('inventory:');
+    const allInventory = await kvWithRetry.getByPrefix('inventory:');
     const targetInventory = allInventory?.find((item: any) => item.id === itemId);
     
     if (!targetInventory) {
-      return c.json({ error: 'Inventory item not found' }, 404);
+      console.log(`⚠️ Inventory item not found: ${itemId}. It may have been already deleted.`);
+      // Return success even if not found - idempotent delete
+      return c.json({ success: true, message: 'Item already deleted or does not exist' });
     }
     
     // Construct the key using the original creator's userId
     const key = `inventory:${targetInventory.userId}:${itemId}`;
+    console.log(`🗑️ Deleting inventory item: ${key}`);
     
-    await kv.del(key);
+    await kvWithRetry.del(key);
     
     return c.json({ success: true });
   } catch (error) {
@@ -703,6 +707,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
   }
 
   try {
+    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -712,17 +717,20 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the overhead item by searching all overhead items with this ID
-    const allOverheads = await kv.getByPrefix('overhead:');
+    const allOverheads = await kvWithRetry.getByPrefix('overhead:');
     const targetOverhead = allOverheads?.find((item: any) => item.id === itemId);
     
     if (!targetOverhead) {
-      return c.json({ error: 'Overhead item not found' }, 404);
+      console.log(`⚠️ Overhead item not found: ${itemId}. It may have been already deleted.`);
+      // Return success even if not found - idempotent delete
+      return c.json({ success: true, message: 'Item already deleted or does not exist' });
     }
     
     // Construct the key using the original creator's userId
     const key = `overhead:${targetOverhead.userId}:${itemId}`;
+    console.log(`🗑️ Deleting overhead item: ${key}`);
     
-    await kv.del(key);
+    await kvWithRetry.del(key);
     
     return c.json({ success: true });
   } catch (error) {
@@ -832,6 +840,7 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
   }
 
   try {
+    const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
     if (role !== 'manager') {
@@ -841,17 +850,20 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the fixed cost item by searching all fixed cost items with this ID
-    const allFixedCosts = await kv.getByPrefix('fixedcost:');
+    const allFixedCosts = await kvWithRetry.getByPrefix('fixedcost:');
     const targetFixedCost = allFixedCosts?.find((item: any) => item.id === itemId);
     
     if (!targetFixedCost) {
-      return c.json({ error: 'Fixed cost item not found' }, 404);
+      console.log(`⚠️ Fixed cost item not found: ${itemId}. It may have been already deleted.`);
+      // Return success even if not found - idempotent delete
+      return c.json({ success: true, message: 'Item already deleted or does not exist' });
     }
     
     // Construct the key using the original creator's userId
     const key = `fixedcost:${targetFixedCost.userId}:${itemId}`;
+    console.log(`🗑️ Deleting fixed cost item: ${key}`);
     
-    await kv.del(key);
+    await kvWithRetry.del(key);
     
     return c.json({ success: true });
   } catch (error) {
@@ -2627,8 +2639,9 @@ function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number 
   // Total credited leaves = 3 leaves per month (within current year, carries forward monthly, resets yearly)
   const totalCredited = monthsToCount * 3;
   
-  // Available balance (unused leaves carry forward within the year, but reset on Jan 1st)
-  return Math.max(0, totalCredited - usedLeaves);
+  // Available balance (can be negative if advance leaves are taken)
+  // Negative balance will be carried forward and deducted from next month's allocation
+  return totalCredited - usedLeaves;
 }
 
 // Create employee account (by manager)
@@ -5205,6 +5218,7 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
         updates.shippedAt = now;
         break;
       case 'delivered':
+      case 'partially-delivered':
         updates.deliveredAt = now;
         updates.deliveredBy = updatedBy;
         
@@ -5232,12 +5246,17 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
                 displayName: item.displayName
               }));
             
-            // Add requested quantities to store inventory
+            // Add SHIPPED quantities (not requested) to store inventory
             finishedProducts.forEach(({ camelKey, key }: any) => {
-              const requestedQty = existingRequest[camelKey] || existingRequest[camelKey + 's'] || 0;
-              if (requestedQty > 0) {
-                currentInventory[camelKey] = (currentInventory[camelKey] || 0) + requestedQty;
-                console.log(`  ✅ Added ${requestedQty} ${camelKey} to store inventory`);
+              // Use shippedQuantities if available, otherwise fall back to requested
+              const shippedQty = existingRequest.shippedQuantities?.[camelKey] 
+                ?? existingRequest[camelKey] 
+                ?? existingRequest[camelKey + 's'] 
+                ?? 0;
+              
+              if (shippedQty > 0) {
+                currentInventory[camelKey] = (currentInventory[camelKey] || 0) + shippedQty;
+                console.log(`  ✅ Added ${shippedQty} ${camelKey} to store inventory (shipped qty)`);
               }
             });
             
@@ -5261,12 +5280,17 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
               if (productionHouse) {
                 const phInventory = productionHouse.inventory || {};
                 
-                // Deduct requested quantities from production house inventory
+                // Deduct SHIPPED quantities (not requested) from production house inventory
                 finishedProducts.forEach(({ camelKey }: any) => {
-                  const requestedQty = existingRequest[camelKey] || existingRequest[camelKey + 's'] || 0;
-                  if (requestedQty > 0) {
-                    phInventory[camelKey] = (phInventory[camelKey] || 0) - requestedQty;
-                    console.log(`  ⬇️ Deducted ${requestedQty} ${camelKey} from production house inventory`);
+                  // Use shippedQuantities if available, otherwise fall back to requested
+                  const shippedQty = existingRequest.shippedQuantities?.[camelKey]
+                    ?? existingRequest[camelKey] 
+                    ?? existingRequest[camelKey + 's'] 
+                    ?? 0;
+                  
+                  if (shippedQty > 0) {
+                    phInventory[camelKey] = (phInventory[camelKey] || 0) - shippedQty;
+                    console.log(`  ⬇️ Deducted ${shippedQty} ${camelKey} from production house inventory (shipped qty)`);
                   }
                 });
                 
@@ -5343,9 +5367,17 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
         notificationTitle = 'Production Shipped';
         notificationMessage = `Production request from ${storeName} for ${requestDate} has been shipped and is on the way`;
         break;
+      case 'partially-shipped':
+        notificationTitle = 'Production Partially Shipped';
+        notificationMessage = `Production request from ${storeName} for ${requestDate} has been partially shipped. Check details for shipped quantities.`;
+        break;
       case 'delivered':
         notificationTitle = 'Production Delivered';
         notificationMessage = `Production request from ${storeName} for ${requestDate} has been successfully delivered`;
+        break;
+      case 'partially-delivered':
+        notificationTitle = 'Production Partially Delivered';
+        notificationMessage = `Production request from ${storeName} for ${requestDate} has been partially delivered`;
         break;
     }
     
@@ -5365,6 +5397,119 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     return c.json({ request: updatedRequest });
   } catch (error: any) {
     console.error('Error updating production request status:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Ship production request with quantities
+app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+
+  try {
+    const id = c.req.param('id');
+    const { shippedQuantities, shippingNotes, shippedBy } = await c.req.json();
+    
+    const existingRequest = await kv.get(`production_request_${id}`);
+    if (!existingRequest) {
+      return c.json({ error: 'Production request not found' }, 404);
+    }
+    
+    const now = new Date().toISOString();
+    
+    // Determine if this is a partial shipment
+    let isPartialShipment = false;
+    
+    // Check momos
+    const momoFields = [
+      'chickenMomos', 'chickenCheeseMomos', 'vegMomos', 
+      'cheeseCornMomos', 'paneerMomos', 'vegKurkureMomos', 'chickenKurkureMomos'
+    ];
+    for (const field of momoFields) {
+      const requested = existingRequest[field] || 0;
+      const shipped = shippedQuantities[field] || 0;
+      if (requested > 0 && shipped < requested) {
+        isPartialShipment = true;
+        break;
+      }
+    }
+    
+    // Check kitchen utilities
+    if (existingRequest.kitchenUtilities && !isPartialShipment) {
+      for (const [name, data] of Object.entries(existingRequest.kitchenUtilities as Record<string, any>)) {
+        const requested = data.quantity || 0;
+        const shipped = shippedQuantities[`kitchenUtility_${name}`] || 0;
+        if (requested > 0 && shipped < requested) {
+          isPartialShipment = true;
+          break;
+        }
+      }
+    }
+    
+    // Check utilities
+    if (existingRequest.utilities && !isPartialShipment) {
+      for (const [name, requested] of Object.entries(existingRequest.utilities as Record<string, number>)) {
+        const shipped = shippedQuantities[`utility_${name}`] || 0;
+        if (requested > 0 && shipped < requested) {
+          isPartialShipment = true;
+          break;
+        }
+      }
+    }
+    
+    const updates: any = {
+      status: isPartialShipment ? 'partially-shipped' : 'shipped',
+      shippedAt: now,
+      shippedQuantities,
+      shippingNotes,
+      updatedAt: now,
+    };
+    
+    const updatedRequest = {
+      ...existingRequest,
+      ...updates,
+    };
+    
+    await kv.set(`production_request_${id}`, updatedRequest);
+    
+    const storeName = updatedRequest.storeName || 'Store';
+    const requestDate = new Date(updatedRequest.requestDate).toLocaleDateString();
+    
+    // Notify stakeholders
+    const storeIncharge = await getStoreIncharge(updatedRequest.storeId);
+    const operationsManagers = await getOperationsManagers(updatedRequest.storeId);
+    const clusterHeads = await getAllClusterHeads();
+    
+    const stakeholders = [];
+    if (storeIncharge?.authUserId) stakeholders.push({ ...storeIncharge, role: 'Store In-Charge' });
+    operationsManagers.forEach(om => {
+      if (om.authUserId) stakeholders.push({ ...om, role: 'Operations Manager' });
+    });
+    clusterHeads.forEach(ch => {
+      if (ch.authUserId) stakeholders.push({ ...ch, role: 'Cluster Head' });
+    });
+    
+    const notificationTitle = isPartialShipment ? 'Production Partially Shipped' : 'Production Shipped';
+    const notificationMessage = isPartialShipment 
+      ? `Production request from ${storeName} for ${requestDate} has been partially shipped. Check details for shipped quantities.`
+      : `Production request from ${storeName} for ${requestDate} has been shipped and is on the way`;
+    
+    for (const stakeholder of stakeholders) {
+      await createNotification(
+        stakeholder.authUserId,
+        `production_request_${updates.status}`,
+        notificationTitle,
+        notificationMessage,
+        id,
+        updatedRequest.requestDate
+      );
+    }
+    
+    return c.json({ request: updatedRequest });
+  } catch (error: any) {
+    console.error('Error shipping production request:', error);
     return c.json({ error: error.message }, 500);
   }
 });

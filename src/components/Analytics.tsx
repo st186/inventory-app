@@ -815,19 +815,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           return itemDateOnly >= tenDaysAgo && itemDateOnly <= today;
           
         case 'weekly':
-          const weekAgo = new Date(today);
-          weekAgo.setDate(weekAgo.getDate() - 7);
-          return itemDateOnly >= weekAgo && itemDateOnly <= today;
+          // Show last 10 weeks (70 days) to support weekly trend charts
+          const tenWeeksAgo = new Date(today);
+          tenWeeksAgo.setDate(tenWeeksAgo.getDate() - 70);
+          return itemDateOnly >= tenWeeksAgo && itemDateOnly <= today;
           
         case 'monthly':
-          const monthAgo = new Date(today);
-          monthAgo.setMonth(monthAgo.getMonth() - 1);
-          return itemDateOnly >= monthAgo && itemDateOnly <= today;
+          // Show last 10 months to support monthly trend charts
+          const tenMonthsAgo = new Date(today);
+          tenMonthsAgo.setMonth(tenMonthsAgo.getMonth() - 10);
+          return itemDateOnly >= tenMonthsAgo && itemDateOnly <= today;
           
         case 'yearly':
-          const yearAgo = new Date(today);
-          yearAgo.setFullYear(yearAgo.getFullYear() - 1);
-          return itemDateOnly >= yearAgo && itemDateOnly <= today;
+          // Show last 5 years to support yearly trend charts
+          const fiveYearsAgo = new Date(today);
+          fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+          return itemDateOnly >= fiveYearsAgo && itemDateOnly <= today;
           
         case 'custom':
           const fromDate = new Date(dateRange.from);
@@ -1163,9 +1166,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   const getPeriodLabel = () => {
     switch (timeFilter) {
       case 'daily': return 'Last 10 days';
-      case 'weekly': return 'Last 7 days';
-      case 'monthly': return 'Last 30 days';
-      case 'yearly': return 'Last 365 days';
+      case 'weekly': return 'Last 10 weeks';
+      case 'monthly': return 'Last 10 months';
+      case 'yearly': return 'Last 5 years';
       case 'custom': return `${dateRange.from} to ${dateRange.to}`;
       default: return 'Current period';
     }
@@ -1198,6 +1201,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     
     // Calculate overhead expenses
     const overheadExpenses = filteredOverheadData.reduce((sum, item) => sum + (item.amount || 0), 0);
+    
+    // Calculate commission expenses (treated as overhead expense)
+    // Commission is for monthly online food aggregator fees (Swiggy + Zomato)
+    const commissionExpenses = filteredOverheadData
+      .filter(item => item.category === 'commission')
+      .reduce((sum, item) => sum + (item.amount || 0), 0);
+    
+    console.log('Total commission (as expense):', commissionExpenses);
 
     // Calculate fixed costs
     const electricityExpenses = filteredFixedCostsData
@@ -1248,6 +1259,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     const fixedCostsTotal = electricityExpenses + rentExpenses + salaryExpenses;
 
     const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal;
+    
+    // Net profit calculation (commission is already included in overheadExpenses)
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
 
@@ -1259,6 +1272,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       totalRevenue,
       onlineRevenue,
       offlineRevenue,
+      commissionExpenses,
       totalExpenses: totalCosts,
       inventoryExpenses,
       overheadExpenses,
@@ -1366,13 +1380,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
         const onlineRevenue = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
         const offlineRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        const total = onlineRevenue + offlineRevenue;
         
-        chartData.push({
-          period: dayLabel,
-          online: onlineRevenue,
-          offline: offlineRevenue,
-          total: onlineRevenue + offlineRevenue
-        });
+        // Only include periods with sales data
+        if (total > 0) {
+          chartData.push({
+            period: dayLabel,
+            online: onlineRevenue,
+            offline: offlineRevenue,
+            total: total
+          });
+        }
       }
     } else if (timeFilter === 'weekly') {
       // Show last 10 weeks
@@ -1393,13 +1411,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         
         const onlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
         const offlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        const total = onlineRevenue + offlineRevenue;
         
-        chartData.push({
-          period: weekLabel,
-          online: onlineRevenue,
-          offline: offlineRevenue,
-          total: onlineRevenue + offlineRevenue
-        });
+        // Only include periods with sales data
+        if (total > 0) {
+          chartData.push({
+            period: weekLabel,
+            online: onlineRevenue,
+            offline: offlineRevenue,
+            total: total
+          });
+        }
       }
     } else if (timeFilter === 'monthly') {
       // Show last 10 months
@@ -1418,13 +1440,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         
         const onlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
         const offlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        const total = onlineRevenue + offlineRevenue;
         
-        chartData.push({
-          period: monthLabel,
-          online: onlineRevenue,
-          offline: offlineRevenue,
-          total: onlineRevenue + offlineRevenue
-        });
+        // Only include periods with sales data
+        if (total > 0) {
+          chartData.push({
+            period: monthLabel,
+            online: onlineRevenue,
+            offline: offlineRevenue,
+            total: total
+          });
+        }
       }
     } else if (timeFilter === 'yearly') {
       // Show last 5 years
@@ -1438,13 +1464,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         
         const onlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
         const offlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+        const total = onlineRevenue + offlineRevenue;
         
-        chartData.push({
-          period: year.toString(),
-          online: onlineRevenue,
-          offline: offlineRevenue,
-          total: onlineRevenue + offlineRevenue
-        });
+        // Only include periods with sales data
+        if (total > 0) {
+          chartData.push({
+            period: year.toString(),
+            online: onlineRevenue,
+            offline: offlineRevenue,
+            total: total
+          });
+        }
       }
     } else if (timeFilter === 'custom') {
       // For custom range, group by month
@@ -1497,7 +1527,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         
         // Get sales for this day (use filtered data to respect store selection)
         const daySales = (filteredSalesData || []).filter(sale => sale.date === dateStr);
-        const revenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const grossRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const commission = daySales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
+        const revenue = grossRevenue - commission;
         
         // Get expenses for this day (inventory + overhead + contract workers)
         const dayInventory = (filteredInventoryData || []).filter(item => item.date === dateStr);
@@ -1531,7 +1563,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           const saleDate = new Date(sale.date);
           return saleDate >= weekStart && saleDate <= weekEnd;
         });
-        const revenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const grossRevenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const commission = weekSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
+        const revenue = grossRevenue - commission;
         
         // Get expenses for this week (use filtered data to respect store selection)
         const weekInventory = (filteredInventoryData || []).filter(item => {
@@ -1568,7 +1602,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           const saleDate = new Date(sale.date);
           return saleDate.getMonth() === monthNum && saleDate.getFullYear() === yearNum;
         });
-        const revenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const grossRevenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const commission = monthSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
+        const revenue = grossRevenue - commission;
         
         // Get expenses for this month (use filtered data to respect store selection)
         const monthInventory = (filteredInventoryData || []).filter(item => {
@@ -1629,7 +1665,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           const saleDate = new Date(sale.date);
           return saleDate.getFullYear() === year;
         });
-        const revenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const grossRevenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
+        const commission = yearSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
+        const revenue = grossRevenue - commission;
         
         // Get expenses for this year (use filtered data to respect store selection)
         const yearInventory = (filteredInventoryData || []).filter(item => {
@@ -2346,7 +2384,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               )}
 
               {/* Metrics Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <div className="bg-blue-100 rounded-lg p-3 sm:p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Revenue</div>
                   <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalRevenue.toLocaleString()}</div>
@@ -2359,13 +2397,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
                 </div>
 
+                <div className="bg-orange-100 rounded-lg p-3 sm:p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Aggregator Commission</div>
+                  <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.commissionExpenses.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">
+                    {metrics.onlineRevenue > 0 ? `${((metrics.commissionExpenses / metrics.onlineRevenue) * 100).toFixed(1)}% of online` : 'No data'}
+                  </div>
+                </div>
+
                 <div className="bg-green-100 rounded-lg p-3 sm:p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Net Profit</div>
                   <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{realizedProfit.toLocaleString()}</div>
                   {metrics.totalRevenue > 0 ? (
                     <div className="flex items-center gap-1 text-xs text-gray-600">
                       <TrendingUp className="w-3 h-3" />
-                      Comparison available after multiple periods
+                      Includes commission
                     </div>
                   ) : (
                     <div className="text-xs text-gray-600">No data yet</div>

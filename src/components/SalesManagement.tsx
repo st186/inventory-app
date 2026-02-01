@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
+import { MonthlyCommissionEntry } from './MonthlyCommissionEntry';
 import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2 } from 'lucide-react';
 import * as api from '../utils/api';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
@@ -29,6 +30,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [confirmationChecked, setConfirmationChecked] = useState(false);
+  const [pendingSubmitEvent, setPendingSubmitEvent] = useState<React.FormEvent | null>(null);
+  const [showPaytmBreakdown, setShowPaytmBreakdown] = useState(false);
   
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
@@ -47,6 +52,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   useEffect(() => {
     loadContractWorkers();
   }, []);
+
+  // Handle ESC key to close confirmation dialog
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showConfirmDialog) {
+        handleCancelDialog();
+      }
+    };
+
+    if (showConfirmDialog) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [showConfirmDialog]);
 
   const loadContractWorkers = async () => {
     setLoadingEmployees(true);
@@ -286,13 +305,108 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       .reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
     
     // Subtract all used online money up to and including selected date
+    // This already includes inventory, overhead, and fixed costs paid online
     const allUsedOnlineMoney = context.salesData
       .filter(s => s.date <= selectedDate)
       .reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0);
     
-    // Subtract all fixed costs paid via online up to and including selected date
-    const allFixedCostsOnline = context.fixedCosts
+    return allPaytmReceived - allUsedOnlineMoney;
+  }, [context.salesData, selectedDate]);
+
+  // Calculate daily breakdown for Paytm
+  const paytmDailyBreakdown = useMemo(() => {
+    // Get all unique dates from sales data, fixed costs, overheads, and inventory up to selected date
+    const allDates = new Set<string>();
+    
+    context.salesData
+      .filter(s => s.date <= selectedDate)
+      .forEach(s => allDates.add(s.date));
+    
+    context.fixedCosts
       .filter(item => item.date <= selectedDate)
+      .forEach(item => allDates.add(item.date));
+    
+    context.overheads
+      .filter(item => item.date <= selectedDate)
+      .forEach(item => allDates.add(item.date));
+    
+    context.inventory
+      .filter(item => item.date <= selectedDate)
+      .forEach(item => allDates.add(item.date));
+    
+    // Sort dates chronologically
+    const sortedDates = Array.from(allDates).sort();
+    
+    // Calculate running balance for each day
+    let runningBalance = 0;
+    
+    return sortedDates.map(date => {
+      const salesForDay = context.salesData.find(s => s.date === date);
+      const paytmReceived = salesForDay?.paytmAmount ?? 0;
+      const usedOnlineMoney = salesForDay?.usedOnlineMoney ?? 0;
+      
+      const fixedCostsForDay = context.fixedCosts
+        .filter(item => item.date === date)
+        .reduce((sum, item) => {
+          if (item.paymentMethod === 'online') return sum + item.amount;
+          if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+          return sum;
+        }, 0);
+      
+      const overheadCostsForDay = context.overheads
+        .filter(item => item.date === date)
+        .reduce((sum, item) => {
+          if (item.paymentMethod === 'online') return sum + item.amount;
+          if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+          return sum;
+        }, 0);
+      
+      // Calculate inventory costs for display
+      const inventoryForDay = context.inventory
+        .filter(item => item.date === date)
+        .reduce((sum, item) => {
+          if (item.paymentMethod === 'online') return sum + item.totalCost;
+          if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+          return sum;
+        }, 0);
+      
+      // Net change uses ONLY the "Used" field from sales data (not double counting)
+      const netChange = paytmReceived - usedOnlineMoney;
+      runningBalance += netChange;
+      
+      return {
+        date,
+        paytmReceived,
+        usedOnlineMoney,
+        inventoryCosts: inventoryForDay,
+        fixedCosts: fixedCostsForDay,
+        overheadCosts: overheadCostsForDay,
+        netChange,
+        runningBalance
+      };
+    });
+  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, selectedDate]);
+
+  // Calculate total inventory purchases paid via online for the selected date
+  const inventoryOnlineTotal = useMemo(() => {
+    const total = context.inventory
+      .filter(item => item.date === selectedDate)
+      .reduce((sum, item) => {
+        if (item.paymentMethod === 'online') {
+          return sum + item.totalCost;
+        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
+          return sum + item.onlineAmount;
+        }
+        return sum;
+      }, 0);
+    console.log(`💰 Inventory Online Total for ${selectedDate}:`, total, 'items:', context.inventory.filter(item => item.date === selectedDate).map(i => ({name: i.itemName, payment: i.paymentMethod, total: i.totalCost})));
+    return total;
+  }, [context.inventory, selectedDate]);
+
+  // Calculate total overhead costs paid via online for the selected date
+  const overheadOnlineTotal = useMemo(() => {
+    const total = context.overheads
+      .filter(item => item.date === selectedDate)
       .reduce((sum, item) => {
         if (item.paymentMethod === 'online') {
           return sum + item.amount;
@@ -301,10 +415,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-    
-    // Subtract all overhead costs paid via online up to and including selected date
-    const allOverheadCostsOnline = context.overheads
-      .filter(item => item.date <= selectedDate)
+    console.log(`💰 Overhead Online Total for ${selectedDate}:`, total, 'items:', context.overheads.filter(item => item.date === selectedDate).map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})));
+    return total;
+  }, [context.overheads, selectedDate]);
+
+  // Calculate total fixed costs paid via online for the selected date
+  const fixedCostOnlineTotal = useMemo(() => {
+    const total = context.fixedCosts
+      .filter(item => item.date === selectedDate)
       .reduce((sum, item) => {
         if (item.paymentMethod === 'online') {
           return sum + item.amount;
@@ -313,9 +431,21 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-    
-    return allPaytmReceived - allUsedOnlineMoney - allFixedCostsOnline - allOverheadCostsOnline;
-  }, [context.salesData, context.fixedCosts, context.overheads, selectedDate]);
+    console.log(`💰 Fixed Cost Online Total for ${selectedDate}:`, total, 'items:', context.fixedCosts.filter(item => item.date === selectedDate).map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})));
+    return total;
+  }, [context.fixedCosts, selectedDate]);
+
+  // Calculate total online expenses (all three categories)
+  const totalOnlineExpenses = useMemo(() => {
+    const total = inventoryOnlineTotal + overheadOnlineTotal + fixedCostOnlineTotal;
+    console.log(`💳 TOTAL Online Expenses for ${selectedDate}:`, {
+      inventory: inventoryOnlineTotal,
+      overhead: overheadOnlineTotal,
+      fixedCost: fixedCostOnlineTotal,
+      total: total
+    });
+    return total;
+  }, [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, selectedDate]);
 
   // Load existing data when date changes
   useEffect(() => {
@@ -348,13 +478,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         onlineSales: '',
         employeeSalary: '0',
         previousCashInHand: prevCash.toString(),
-        usedOnlineMoney: '0',
+        usedOnlineMoney: totalOnlineExpenses.toString(), // Auto-populate from inventory + overhead + fixed costs
         actualCashInHand: ''
       });
       setIsEditing(false);
       setEditingId(null);
     }
-  }, [selectedDate, salesForDate, previousDateSales]);
+  }, [selectedDate, salesForDate, previousDateSales, totalOnlineExpenses]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -365,6 +495,25 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       return;
     }
     
+    // Show confirmation dialog before proceeding
+    setPendingSubmitEvent(e);
+    setShowConfirmDialog(true);
+    setConfirmationChecked(false);
+  };
+
+  const handleCancelDialog = () => {
+    setShowConfirmDialog(false);
+    setConfirmationChecked(false);
+    setPendingSubmitEvent(null);
+  };
+
+  const handleConfirmSubmit = async () => {
+    if (!confirmationChecked) {
+      alert('⚠️ Please confirm that you take responsibility for this sales data.');
+      return;
+    }
+    
+    setShowConfirmDialog(false);
     setIsSubmitting(true);
 
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
@@ -381,6 +530,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       paytmAmount: parseFloat(formData.paytmAmount) || 0,
       cashAmount: parseFloat(formData.cashAmount) || 0,
       onlineSales: parseFloat(formData.onlineSales) || 0,
+      onlineSalesCommission: 0, // Commission now handled separately
       employeeSalary: totalContractPayout, // Store total contract payout
       previousCashInHand: parseFloat(formData.previousCashInHand) || 0,
       usedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
@@ -767,6 +917,28 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         </div>
       )}
 
+      {/* Monthly Commission Entry - Only show on 1st of month */}
+      {(() => {
+        const dateObj = new Date(selectedDate);
+        const dayOfMonth = dateObj.getDate();
+        return dayOfMonth === 1 && context.user?.accessToken && (
+          <MonthlyCommissionEntry
+            selectedDate={selectedDate}
+            accessToken={context.user.accessToken}
+            userEmail={context.user.email}
+            userName={context.user.name}
+            storeId={selectedStoreId || context.user.storeId}
+            onCommissionSaved={async () => {
+              // Reload overhead data after commission is saved
+              if (context.user?.accessToken) {
+                const overheads = await api.fetchOverheads(context.user.accessToken);
+                // You'd need to update context here, but for now just show success
+              }
+            }}
+          />
+        );
+      })()}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
         {/* Sales Entry Form */}
         <div className="bg-white rounded-xl shadow-lg p-6">
@@ -868,7 +1040,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               </h3>
               
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Amount Used from Paytm ()</label>
+                <label className="block text-sm text-gray-700 mb-1">
+                  Amount Used from Paytm (₹)
+                  {totalOnlineExpenses > 0 && (
+                    <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                      Auto: ₹{inventoryOnlineTotal.toFixed(2)}(Inv) + ₹{overheadOnlineTotal.toFixed(2)}(OH) + ₹{fixedCostOnlineTotal.toFixed(2)}(FC)
+                    </span>
+                  )}
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -877,7 +1056,22 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                   disabled={!canEditSales}
                 />
-                <p className="text-xs text-gray-500 mt-1">Enter amount if Paytm balance was used for expenses</p>
+                {totalOnlineExpenses > 0 ? (
+                  <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
+                    <p className="text-xs text-blue-900 font-semibold mb-1">💡 Auto-calculated from:</p>
+                    <ul className="text-xs text-blue-800 space-y-0.5 ml-4">
+                      {inventoryOnlineTotal > 0 && <li>• Inventory: ₹{inventoryOnlineTotal.toFixed(2)}</li>}
+                      {overheadOnlineTotal > 0 && <li>• Overhead Costs: ₹{overheadOnlineTotal.toFixed(2)}</li>}
+                      {fixedCostOnlineTotal > 0 && <li>• Fixed Costs: ₹{fixedCostOnlineTotal.toFixed(2)}</li>}
+                      <li className="font-semibold">Total: ₹{totalOnlineExpenses.toFixed(2)}</li>
+                    </ul>
+                    <p className="text-xs text-blue-700 mt-1 italic">
+                      This field is editable if you need to adjust for other expenses.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">Enter amount if Paytm balance was used for expenses</p>
+                )}
               </div>
             </div>
 
@@ -1308,9 +1502,302 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 </div>
               )}
             </div>
+            
+            {/* View Detailed Breakdown Button */}
+            <button
+              onClick={() => setShowPaytmBreakdown(true)}
+              className="mt-4 w-full px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+            >
+              <TrendingUp className="w-4 h-4" />
+              View Daily Breakdown
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Paytm Daily Breakdown Modal */}
+      {showPaytmBreakdown && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => setShowPaytmBreakdown(false)}
+        >
+          <div 
+            className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <Smartphone className="w-6 h-6" />
+                    Online Cash in Hand - Daily Breakdown
+                  </h2>
+                  <p className="text-purple-100 mt-1">
+                    How we reached ₹{calculatePaytmBalance.toLocaleString()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowPaytmBreakdown(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              {/* Summary */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                <div className="bg-green-50 rounded-lg p-4 border-2 border-green-200">
+                  <p className="text-xs text-green-700 mb-1">Total Received</p>
+                  <p className="text-xl font-bold text-green-800">
+                    ₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-4 border-2 border-red-200">
+                  <p className="text-xs text-red-700 mb-1">Total Used</p>
+                  <p className="text-xl font-bold text-red-800">
+                    ₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-teal-50 rounded-lg p-4 border-2 border-teal-200">
+                  <p className="text-xs text-teal-700 mb-1">Inventory</p>
+                  <p className="text-xl font-bold text-teal-800">
+                    ₹{context.inventory.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                      if (item.paymentMethod === 'online') return sum + item.totalCost;
+                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                      return sum;
+                    }, 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-4 border-2 border-orange-200">
+                  <p className="text-xs text-orange-700 mb-1">Fixed Costs</p>
+                  <p className="text-xl font-bold text-orange-800">
+                    ₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                      if (item.paymentMethod === 'online') return sum + item.amount;
+                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                      return sum;
+                    }, 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-4 border-2 border-purple-200">
+                  <p className="text-xs text-purple-700 mb-1">Overhead Costs</p>
+                  <p className="text-xl font-bold text-purple-800">
+                    ₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                      if (item.paymentMethod === 'online') return sum + item.amount;
+                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                      return sum;
+                    }, 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Daily Breakdown Table */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-purple-600" />
+                  Day-by-Day Transactions
+                </h3>
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b-2 border-gray-300">
+                        <th className="text-left p-3 font-semibold text-gray-700">Date</th>
+                        <th className="text-right p-3 font-semibold text-green-700">Received</th>
+                        <th className="text-right p-3 font-semibold text-red-700">Used</th>
+                        <th className="text-right p-3 font-semibold text-teal-700">Inventory</th>
+                        <th className="text-right p-3 font-semibold text-orange-700">Fixed Costs</th>
+                        <th className="text-right p-3 font-semibold text-purple-700">Overheads</th>
+                        <th className="text-right p-3 font-semibold text-gray-700">Net Change</th>
+                        <th className="text-right p-3 font-semibold text-blue-700">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paytmDailyBreakdown.map((day, index) => (
+                        <tr 
+                          key={day.date} 
+                          className={`border-b border-gray-200 hover:bg-white transition-colors ${day.date === selectedDate ? 'bg-blue-50 font-semibold' : ''}`}
+                        >
+                          <td className="p-3 text-gray-900">
+                            {formatDateIST(day.date)}
+                            {day.date === selectedDate && (
+                              <span className="ml-2 text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">Today</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right text-green-700">
+                            {day.paytmReceived > 0 ? `+₹${day.paytmReceived.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="p-3 text-right text-red-700">
+                            {day.usedOnlineMoney > 0 ? `-₹${day.usedOnlineMoney.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="p-3 text-right text-teal-700">
+                            {day.inventoryCosts > 0 ? `-₹${day.inventoryCosts.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="p-3 text-right text-orange-700">
+                            {day.fixedCosts > 0 ? `-₹${day.fixedCosts.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="p-3 text-right text-purple-700">
+                            {day.overheadCosts > 0 ? `-₹${day.overheadCosts.toLocaleString()}` : '-'}
+                          </td>
+                          <td className={`p-3 text-right font-semibold ${day.netChange >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {day.netChange >= 0 ? '+' : ''}₹{day.netChange.toLocaleString()}
+                          </td>
+                          <td className={`p-3 text-right font-bold ${day.runningBalance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                            ₹{day.runningBalance.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-300 bg-gray-100">
+                        <td className="p-3 font-bold text-gray-900">TOTAL / FINAL</td>
+                        <td className="p-3 text-right font-bold text-green-700">
+                          +₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-bold text-red-700">
+                          -₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-bold text-teal-700">
+                          -₹{context.inventory.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                            if (item.paymentMethod === 'online') return sum + item.totalCost;
+                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                            return sum;
+                          }, 0).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-bold text-orange-700">
+                          -₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                            if (item.paymentMethod === 'online') return sum + item.amount;
+                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                            return sum;
+                          }, 0).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-bold text-purple-700">
+                          -₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
+                            if (item.paymentMethod === 'online') return sum + item.amount;
+                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+                            return sum;
+                          }, 0).toLocaleString()}
+                        </td>
+                        <td className="p-3"></td>
+                        <td className={`p-3 text-right font-bold text-lg ${calculatePaytmBalance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                          ₹{calculatePaytmBalance.toLocaleString()}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Explanation */}
+                <div className="mt-6 bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    How is this calculated?
+                  </h4>
+                  <div className="text-sm text-blue-800 space-y-2">
+                    <p>
+                      <strong>Online Cash in Hand</strong> = Total Paytm Received - Used Online Money
+                    </p>
+                    <p className="mt-2">
+                      <strong>"Used"</strong> column is the total money spent from Paytm (can include inventory, fixed costs, overheads, and other expenses).
+                    </p>
+                    <p className="mt-2">
+                      <strong>Inventory, Fixed Costs, Overheads</strong> columns show individual expense categories for reference (already included in "Used").
+                    </p>
+                    <p className="mt-2">
+                      <strong>Running Balance</strong> accumulates day by day, showing how much online cash you had at the end of each day.
+                    </p>
+                    <ul className="list-disc list-inside mt-2 space-y-1 ml-2">
+                      <li><span className="text-green-700 font-semibold">Green (+)</span> = Money received via Paytm</li>
+                      <li><span className="text-red-700 font-semibold">Red (-)</span> = Total money used from Paytm (as entered in Sales form)</li>
+                      <li><span className="text-teal-700 font-semibold">Teal (-)</span> = Inventory purchases paid online (part of Used)</li>
+                      <li><span className="text-orange-700 font-semibold">Orange (-)</span> = Fixed costs paid online (part of Used)</li>
+                      <li><span className="text-purple-700 font-semibold">Purple (-)</span> = Overhead costs paid online (part of Used)</li>
+                    </ul>
+                    <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded p-2">
+                      <p className="text-xs text-yellow-900">
+                        <strong>💡 Note:</strong> "Used Online Money" is auto-populated with Inventory + Fixed Costs + Overheads paid online, but can be manually edited if needed for other expenses.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-100 border-t flex justify-end">
+              <button
+                onClick={() => setShowPaytmBreakdown(false)}
+                className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={handleCancelDialog}
+        >
+          <div 
+            className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-white" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900">Confirm Sales Data Submission</h3>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-700 mb-4">
+                You are about to {isEditing ? 'update' : 'submit'} sales data for <span className="font-semibold">{formatDateIST(selectedDate)}</span>.
+              </p>
+              <p className="text-gray-700 mb-4">
+                Please review all the information carefully before proceeding.
+              </p>
+              
+              <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 mb-4">
+                <p className="text-sm text-gray-800 font-medium">
+                  ⚠️ This sales data will be used for financial reporting and reconciliation. Inaccurate data may lead to discrepancies.
+                </p>
+              </div>
+
+              <label className="flex items-start gap-3 cursor-pointer p-3 bg-gray-50 rounded-lg border-2 border-gray-200 hover:border-blue-400 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={confirmationChecked}
+                  onChange={(e) => setConfirmationChecked(e.target.checked)}
+                  className="mt-1 w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-800 font-medium">
+                  I confirm that I have reviewed all the sales data and I take full responsibility for the accuracy of this information.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelDialog}
+                className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmSubmit}
+                disabled={!confirmationChecked}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white font-medium rounded-lg hover:from-green-600 hover:to-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-400"
+              >
+                {isEditing ? 'Update Sales Data' : 'Save Sales Data'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

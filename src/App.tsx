@@ -32,7 +32,9 @@ import { InventoryItemsManagement } from './components/InventoryItemsManagement'
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
 import { FixMissingItemNames } from './components/FixMissingItemNames';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw } from 'lucide-react';
+import { FixFloatingPointPrecision } from './components/FixFloatingPointPrecision';
+import { BackupRestore } from './components/BackupRestore';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -52,6 +54,10 @@ export type InventoryItem = {
   createdBy?: string; // User ID who created this entry
   createdByName?: string; // User name who created this entry
   createdByEmail?: string; // User email who created this entry
+  // Payment method fields
+  paymentMethod?: 'cash' | 'online' | 'both';
+  cashAmount?: number; // Amount paid via cash (for 'both' option)
+  onlineAmount?: number; // Amount paid via online (for 'both' option)
 };
 
 export type OverheadItem = {
@@ -93,6 +99,7 @@ export type SalesData = {
   paytmAmount: number;
   cashAmount: number;
   onlineSales: number;
+  onlineSalesCommission?: number; // Commission charged by Swiggy/Zomato (reduces net profit)
   employeeSalary: number;
   storeId?: string; // Optional storeId for multi-store filtering
   createdBy: string;
@@ -114,6 +121,18 @@ export type SalesData = {
   rejectionReason: string | null;
   previousCashInHand?: number;
   usedOnlineMoney?: number;
+};
+
+export type MonthlyCommission = {
+  id: string;
+  month: string; // Format: "YYYY-MM" (e.g., "2025-01")
+  commissionAmount: number; // Total commission for online food aggregators (Swiggy + Zomato)
+  storeId?: string; // Optional storeId for multi-store filtering
+  createdBy: string;
+  createdByName?: string;
+  createdByEmail?: string;
+  createdAt: string;
+  notes?: string; // Optional notes about the commission
 };
 
 export type ProductionData = {
@@ -192,6 +211,7 @@ export type InventoryContextType = {
   fixedCosts: FixedCostItem[];
   salesData: SalesData[];
   categorySalesData: api.SalesDataRecord[]; // NEW: Detailed momo sales by type
+  monthlyCommissions: MonthlyCommission[];
   productionData: ProductionData[];
   productionHouses: api.ProductionHouse[];
   stockRequests: api.StockRequest[];
@@ -216,6 +236,9 @@ export type InventoryContextType = {
   requestSalesApproval: (id: string, requestedCashInHand: number, requestedOffset: number) => Promise<void>;
   approveDiscrepancy: (id: string) => Promise<void>;
   rejectDiscrepancy: (id: string, reason: string) => Promise<void>;
+  addMonthlyCommission: (item: Omit<MonthlyCommission, 'id'>) => Promise<void>;
+  updateMonthlyCommission: (id: string, item: Omit<MonthlyCommission, 'id'>) => Promise<void>;
+  deleteMonthlyCommission: (id: string) => Promise<void>;
   addProductionData: (item: Omit<ProductionData, 'id'>) => Promise<void>;
   updateProductionData: (id: string, item: Omit<ProductionData, 'id'>) => Promise<void>;
   approveProductionData: (id: string) => Promise<void>;
@@ -233,7 +256,7 @@ export type InventoryContextType = {
 
 export default function App() {
   // All useState hooks must be at the top, before any conditional returns
-  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items'>('analytics');
+  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup'>('analytics');
   const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -243,6 +266,7 @@ export default function App() {
   const [fixedCosts, setFixedCosts] = useState<FixedCostItem[]>([]);
   const [salesData, setSalesData] = useState<SalesData[]>([]);
   const [categorySalesData, setCategorySalesData] = useState<api.SalesDataRecord[]>([]); // NEW: Detailed momo sales
+  const [monthlyCommissions, setMonthlyCommissions] = useState<MonthlyCommission[]>([]);
   const [productionData, setProductionData] = useState<ProductionData[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
@@ -881,7 +905,9 @@ export default function App() {
         ...item,
         storeId: user.storeId || item.storeId
       };
+      console.log('📤 Sending inventory item to backend:', itemWithStore);
       const newItem = await api.addInventory(user.accessToken, itemWithStore);
+      console.log('✅ Received inventory item from backend:', newItem);
       setInventory([...inventory, newItem]);
       dataCache.invalidateCache('inventory'); // Invalidate cache on data change
     } catch (error) {
@@ -981,9 +1007,17 @@ export default function App() {
       await api.deleteInventory(user.accessToken, id);
       setInventory(inventory.filter(inv => inv.id !== id));
       dataCache.invalidateCache('inventory');
-    } catch (error) {
-      console.error('Error deleting inventory item:', error);
-      throw error;
+      console.log('✅ Inventory item deleted successfully');
+    } catch (error: any) {
+      // If item not found, it was already deleted - update UI anyway
+      if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
+        console.log('⚠️ Item was already deleted, updating UI');
+        setInventory(inventory.filter(inv => inv.id !== id));
+        dataCache.invalidateCache('inventory');
+      } else {
+        console.error('Error deleting inventory item:', error);
+        throw error;
+      }
     }
   };
 
@@ -993,9 +1027,17 @@ export default function App() {
       await api.deleteOverhead(user.accessToken, id);
       setOverheads(overheads.filter(ovh => ovh.id !== id));
       dataCache.invalidateCache('overheads');
-    } catch (error) {
-      console.error('Error deleting overhead item:', error);
-      throw error;
+      console.log('✅ Overhead item deleted successfully');
+    } catch (error: any) {
+      // If item not found, it was already deleted - update UI anyway
+      if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
+        console.log('⚠️ Item was already deleted, updating UI');
+        setOverheads(overheads.filter(ovh => ovh.id !== id));
+        dataCache.invalidateCache('overheads');
+      } else {
+        console.error('Error deleting overhead item:', error);
+        throw error;
+      }
     }
   };
 
@@ -1005,9 +1047,17 @@ export default function App() {
       await api.deleteFixedCost(user.accessToken, id);
       setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
       dataCache.invalidateCache('fixedCosts');
-    } catch (error) {
-      console.error('Error deleting fixed cost item:', error);
-      throw error;
+      console.log('✅ Fixed cost item deleted successfully');
+    } catch (error: any) {
+      // If item not found, it was already deleted - update UI anyway
+      if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
+        console.log('⚠️ Item was already deleted, updating UI');
+        setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
+        dataCache.invalidateCache('fixedCosts');
+      } else {
+        console.error('Error deleting fixed cost item:', error);
+        throw error;
+      }
     }
   };
 
@@ -1981,6 +2031,17 @@ export default function App() {
                     <Download className="w-4 h-4" />
                     <span className="hidden xl:inline">Export</span>
                   </button>
+                  <button
+                    onClick={() => setActiveView('backup')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'backup'
+                        ? 'bg-white text-blue-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                    }`}
+                  >
+                    <Database className="w-4 h-4" />
+                    <span className="hidden xl:inline">Backup</span>
+                  </button>
                 </>
               ) : (
                 <>
@@ -2051,6 +2112,17 @@ export default function App() {
                   >
                     <Download className="w-4 h-4" />
                     <span className="hidden xl:inline">Export</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('backup')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                      activeView === 'backup'
+                        ? 'bg-white text-blue-600 shadow-lg font-semibold'
+                        : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
+                    }`}
+                  >
+                    <Database className="w-4 h-4" />
+                    <span className="hidden xl:inline">Backup</span>
                   </button>
                 </>
               )}
@@ -2178,6 +2250,20 @@ export default function App() {
                     <Download className="w-5 h-5" />
                     <span>Export</span>
                   </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('backup');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'backup'
+                        ? 'bg-[#B4D7FF] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#E6F2FF]'
+                    }`}
+                  >
+                    <Database className="w-5 h-5" />
+                    <span>Backup</span>
+                  </button>
                 </>
               ) : (
                 <>
@@ -2266,6 +2352,20 @@ export default function App() {
                   >
                     <Download className="w-5 h-5" />
                     <span>Export</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveView('backup');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      activeView === 'backup'
+                        ? 'bg-[#B4D7FF] text-gray-800'
+                        : 'bg-gray-50 text-gray-700 hover:bg-[#E6F2FF]'
+                    }`}
+                  >
+                    <Database className="w-5 h-5" />
+                    <span>Backup</span>
                   </button>
                 </>
               )}
@@ -2359,6 +2459,8 @@ export default function App() {
             selectedStoreId={selectedStoreId}
             currentUserId={user.email}
           />
+        ) : activeView === 'backup' ? (
+          <BackupRestore context={contextValue} />
         ) : activeView === 'employees' ? (
           <EmployeeManagement 
             user={{
@@ -2410,6 +2512,11 @@ export default function App() {
     {/* Fix Missing Item Names - Shows when there are items with no name */}
     {user && activeView === 'inventory' && (
       <FixMissingItemNames context={contextValue} />
+    )}
+    
+    {/* Fix Floating Point Precision - Shows when there are items with long decimals */}
+    {user && activeView === 'inventory' && (
+      <FixFloatingPointPrecision context={contextValue} />
     )}
     </>
   );

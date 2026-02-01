@@ -64,6 +64,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [showThresholdSettings, setShowThresholdSettings] = useState(false);
   const [stockThresholds, setStockThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({});
 
+  // Shipping dialog state
+  const [showShippingDialog, setShowShippingDialog] = useState(false);
+  const [shippingRequest, setShippingRequest] = useState<api.ProductionRequest | null>(null);
+  const [shippedQuantities, setShippedQuantities] = useState<Record<string, number>>({});
+  const [shippingNotes, setShippingNotes] = useState<Record<string, string>>({});
+  const [shippingResponsibility, setShippingResponsibility] = useState(false);
+
   // Plate Conversion Settings - Shared with Production Analytics
   const [momosPerPlate, setMomosPerPlate] = useState<number>(() => {
     const saved = localStorage.getItem('momosPerPlate');
@@ -77,6 +84,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     { name: 'Peri-Peri Masala', unit: 'pkt' },
     { name: 'Black Salt', unit: 'pkt' },
     { name: 'Butter', unit: 'pkt' },
+    { name: 'Burger', unit: 'pkt' },
     { name: 'Oil', unit: 'litre' },
     { name: 'Capsicum', unit: 'pieces' },
     { name: 'Onion', unit: 'piece' },
@@ -794,6 +802,101 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     }
   };
 
+  const openShippingDialog = (request: api.ProductionRequest) => {
+    setShippingRequest(request);
+    
+    // Initialize shipped quantities with requested quantities
+    const initialQuantities: Record<string, number> = {};
+    
+    // Add momos
+    const momoFields = [
+      'chickenMomos', 'chickenCheeseMomos', 'vegMomos', 
+      'cheeseCornMomos', 'paneerMomos', 'vegKurkureMomos', 'chickenKurkureMomos'
+    ];
+    momoFields.forEach(field => {
+      const qty = (request as any)[field];
+      if (qty > 0) {
+        initialQuantities[field] = qty;
+      }
+    });
+    
+    // Add kitchen utilities
+    if (request.kitchenUtilities) {
+      Object.entries(request.kitchenUtilities).forEach(([name, data]) => {
+        initialQuantities[`kitchenUtility_${name}`] = data.quantity;
+      });
+    }
+    
+    // Add utilities
+    if (request.utilities) {
+      Object.entries(request.utilities).forEach(([name, qty]) => {
+        initialQuantities[`utility_${name}`] = qty;
+      });
+    }
+    
+    setShippedQuantities(initialQuantities);
+    setShippingNotes({});
+    setShippingResponsibility(false);
+    setShowShippingDialog(true);
+  };
+
+  const handleShipRequest = async () => {
+    if (!context.user?.accessToken || !context.user?.employeeId || !shippingRequest) return;
+    
+    // Validate responsibility checkbox
+    if (!shippingResponsibility) {
+      toast.error('Please confirm your responsibility for shipping these items');
+      return;
+    }
+    
+    // Check if quantities differ and notes are required
+    const missingNotes: string[] = [];
+    Object.entries(shippedQuantities).forEach(([key, shippedQty]) => {
+      // Get requested quantity
+      let requestedQty = 0;
+      if (key.startsWith('kitchenUtility_')) {
+        const utilityName = key.replace('kitchenUtility_', '');
+        requestedQty = shippingRequest.kitchenUtilities?.[utilityName]?.quantity || 0;
+      } else if (key.startsWith('utility_')) {
+        const utilityName = key.replace('utility_', '');
+        requestedQty = shippingRequest.utilities?.[utilityName] || 0;
+      } else {
+        requestedQty = (shippingRequest as any)[key] || 0;
+      }
+      
+      // Check if sauce (sauces don't need notes)
+      const isSauce = key.toLowerCase().includes('sauce') || 
+                      key.toLowerCase().includes('mayo') ||
+                      key.toLowerCase().includes('schezwan');
+      
+      if (shippedQty !== requestedQty && !isSauce && !shippingNotes[key]) {
+        missingNotes.push(key.replace('_', ' '));
+      }
+    });
+    
+    if (missingNotes.length > 0) {
+      toast.error(`Please add notes for items with different quantities: ${missingNotes.join(', ')}`);
+      return;
+    }
+    
+    try {
+      await api.shipProductionRequest(
+        context.user.accessToken,
+        shippingRequest.id,
+        shippedQuantities,
+        shippingNotes,
+        context.user.employeeId
+      );
+      
+      toast.success('Request marked as shipped with quantities recorded');
+      setShowShippingDialog(false);
+      await loadRequests();
+    } catch (error: any) {
+      console.error('Error shipping request:', error);
+      toast.error(error.message || 'Failed to ship request');
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
@@ -801,7 +904,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       case 'in-preparation': return 'bg-purple-100 text-purple-800 border-purple-300';
       case 'prepared': return 'bg-indigo-100 text-indigo-800 border-indigo-300';
       case 'shipped': return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'partially-shipped': return 'bg-amber-100 text-amber-800 border-amber-300';
       case 'delivered': return 'bg-green-100 text-green-800 border-green-300';
+      case 'partially-delivered': return 'bg-lime-100 text-lime-800 border-lime-300';
       default: return 'bg-gray-100 text-gray-800 border-gray-300';
     }
   };
@@ -2146,7 +2251,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                 
                                 {isProductionHead && request.status === 'prepared' && (
                                   <button
-                                    onClick={() => handleStatusUpdate(request.id, 'shipped')}
+                                    onClick={() => openShippingDialog(request)}
                                     className="w-full sm:w-auto px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 active:bg-orange-800 transition-colors text-sm font-medium"
                                   >
                                     Mark as Shipped
@@ -2154,9 +2259,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                 )}
                                 
                                 {/* Store In-Charge Actions */}
-                                {isStoreIncharge && request.status === 'shipped' && (
+                                {isStoreIncharge && (request.status === 'shipped' || request.status === 'partially-shipped') && (
                                   <button
-                                    onClick={() => handleStatusUpdate(request.id, 'delivered')}
+                                    onClick={() => handleStatusUpdate(request.id, request.status === 'partially-shipped' ? 'partially-delivered' : 'delivered')}
                                     className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium"
                                   >
                                     Confirm Delivery
@@ -2341,6 +2446,248 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shipping Confirmation Dialog */}
+      {showShippingDialog && shippingRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+            <div className="bg-gradient-to-r from-orange-500 to-pink-500 p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <Truck className="w-6 h-6" />
+                    Confirm Shipping Details
+                  </h2>
+                  <p className="text-orange-100 mt-1">
+                    Verify quantities and add notes for any changes
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowShippingDialog(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-220px)]">
+              <div className="space-y-6">
+                {/* Momos Section */}
+                {Object.entries(shippedQuantities).filter(([key]) => 
+                  !key.startsWith('kitchenUtility_') && !key.startsWith('utility_')
+                ).length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-900 mb-3">Momos</h3>
+                    <div className="space-y-3">
+                      {Object.entries(shippedQuantities)
+                        .filter(([key]) => !key.startsWith('kitchenUtility_') && !key.startsWith('utility_'))
+                        .map(([key, qty]) => {
+                          const requestedQty = (shippingRequest as any)[key] || 0;
+                          const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                          const isDifferent = qty !== requestedQty;
+                          
+                          return (
+                            <div key={key} className={`border rounded-lg p-4 ${isDifferent ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
+                              <div className="flex items-start gap-4">
+                                <div className="flex-1">
+                                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    {label}
+                                    <span className="ml-2 text-xs text-gray-500">(Requested: {requestedQty})</span>
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={qty}
+                                    onChange={(e) => setShippedQuantities({
+                                      ...shippedQuantities,
+                                      [key]: parseInt(e.target.value) || 0
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                  />
+                                </div>
+                                {isDifferent && (
+                                  <div className="flex-1">
+                                    <label className="block text-sm font-medium text-amber-700 mb-1">
+                                      Reason for difference *
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={shippingNotes[key] || ''}
+                                      onChange={(e) => setShippingNotes({
+                                        ...shippingNotes,
+                                        [key]: e.target.value
+                                      })}
+                                      placeholder="e.g., Insufficient stock"
+                                      className="w-full px-3 py-2 border border-amber-300 rounded-lg bg-white"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Kitchen Utilities Section */}
+                {Object.entries(shippedQuantities).filter(([key]) => 
+                  key.startsWith('kitchenUtility_')
+                ).length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-900 mb-3">Kitchen Utilities</h3>
+                    <div className="space-y-3">
+                      {Object.entries(shippedQuantities)
+                        .filter(([key]) => key.startsWith('kitchenUtility_'))
+                        .map(([key, qty]) => {
+                          const utilityName = key.replace('kitchenUtility_', '');
+                          const requestedQty = shippingRequest.kitchenUtilities?.[utilityName]?.quantity || 0;
+                          const unit = shippingRequest.kitchenUtilities?.[utilityName]?.unit || '';
+                          const isDifferent = qty !== requestedQty;
+                          
+                          return (
+                            <div key={key} className={`border rounded-lg p-4 ${isDifferent ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
+                              <div className="flex items-start gap-4">
+                                <div className="flex-1">
+                                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    {utilityName}
+                                    <span className="ml-2 text-xs text-gray-500">(Requested: {requestedQty} {unit})</span>
+                                  </label>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={qty}
+                                      onChange={(e) => setShippedQuantities({
+                                        ...shippedQuantities,
+                                        [key]: parseFloat(e.target.value) || 0
+                                      })}
+                                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
+                                    />
+                                    <span className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700">
+                                      {unit}
+                                    </span>
+                                  </div>
+                                </div>
+                                {isDifferent && (
+                                  <div className="flex-1">
+                                    <label className="block text-sm font-medium text-amber-700 mb-1">
+                                      Reason for difference *
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={shippingNotes[key] || ''}
+                                      onChange={(e) => setShippingNotes({
+                                        ...shippingNotes,
+                                        [key]: e.target.value
+                                      })}
+                                      placeholder="e.g., Insufficient stock"
+                                      className="w-full px-3 py-2 border border-amber-300 rounded-lg bg-white"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Utilities Section */}
+                {Object.entries(shippedQuantities).filter(([key]) => 
+                  key.startsWith('utility_')
+                ).length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-900 mb-3">Utilities</h3>
+                    <div className="space-y-3">
+                      {Object.entries(shippedQuantities)
+                        .filter(([key]) => key.startsWith('utility_'))
+                        .map(([key, qty]) => {
+                          const utilityName = key.replace('utility_', '');
+                          const requestedQty = shippingRequest.utilities?.[utilityName] || 0;
+                          const isDifferent = qty !== requestedQty;
+                          
+                          return (
+                            <div key={key} className={`border rounded-lg p-4 ${isDifferent ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
+                              <div className="flex items-start gap-4">
+                                <div className="flex-1">
+                                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    {utilityName}
+                                    <span className="ml-2 text-xs text-gray-500">(Requested: {requestedQty} pcs)</span>
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={qty}
+                                    onChange={(e) => setShippedQuantities({
+                                      ...shippedQuantities,
+                                      [key]: parseInt(e.target.value) || 0
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                  />
+                                </div>
+                                {isDifferent && (
+                                  <div className="flex-1">
+                                    <label className="block text-sm font-medium text-amber-700 mb-1">
+                                      Reason for difference *
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={shippingNotes[key] || ''}
+                                      onChange={(e) => setShippingNotes({
+                                        ...shippingNotes,
+                                        [key]: e.target.value
+                                      })}
+                                      placeholder="e.g., Insufficient stock"
+                                      className="w-full px-3 py-2 border border-amber-300 rounded-lg bg-white"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Responsibility Checkbox */}
+                <div className="border-t border-gray-200 pt-4">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={shippingResponsibility}
+                      onChange={(e) => setShippingResponsibility(e.target.checked)}
+                      className="mt-1 w-5 h-5 text-orange-600 rounded border-gray-300"
+                    />
+                    <span className="text-sm text-gray-700">
+                      <strong className="text-gray-900">I confirm that I am responsible for shipping these items</strong> and have verified the quantities above. I understand that any discrepancies must be documented with a valid reason.
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-100 border-t flex justify-end gap-3">
+              <button
+                onClick={() => setShowShippingDialog(false)}
+                className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleShipRequest}
+                disabled={!shippingResponsibility}
+                className="px-6 py-2 bg-gradient-to-r from-orange-500 to-pink-500 text-white rounded-lg hover:from-orange-600 hover:to-pink-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Confirm Shipping
               </button>
             </div>
           </div>

@@ -1198,7 +1198,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
             const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
             const myPersonalExpenses = currentEmployee ? calculatePersonalExpenses(currentEmployee.id) : 0;
-            const myNetAmount = totalPayout - myPersonalExpenses;
+            // Net Amount = -(Personal Expenses + Total Paid)
+            // Both personal expenses and payouts reduce the net (shown as negative)
+            const myNetAmount = -(myPersonalExpenses + totalPayout);
 
             return (
               <div className="p-6">
@@ -1532,7 +1534,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
                             const totalPaid = empPayouts.reduce((sum, p) => sum + p.amount, 0);
                             const personalExpenses = calculatePersonalExpenses(emp.id);
-                            const netAmount = totalPaid - personalExpenses;
+                            // Net Amount = -(Personal Expenses + Total Paid)
+                            // Both personal expenses and payouts reduce the net (shown as negative)
+                            const netAmount = -(personalExpenses + totalPaid);
                             const lastPayout = empPayouts.length > 0 
                               ? empPayouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
                               : null;
@@ -1587,7 +1591,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                   )}
                                 </td>
                                 <td className="py-4 px-4 text-right">
-                                  <span className="text-gray-900 font-semibold">₹{netAmount.toLocaleString()}</span>
+                                  <span className={`font-semibold ${netAmount < 0 ? 'text-red-600' : netAmount > 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                                    ₹{netAmount.toLocaleString()}
+                                  </span>
                                 </td>
                                 {userRole === 'cluster_head' && (
                                   <td className="py-4 px-4 text-right">

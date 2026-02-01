@@ -7,6 +7,7 @@ interface LeaveApplication {
   employeeId: string;
   leaveDate: string;
   leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
+  isAdvanceLeave?: boolean; // Whether this is an advance leave (borrowed from next month)
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;
@@ -32,6 +33,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   const [newLeave, setNewLeave] = useState({
     leaveDate: '',
     leaveType: 'full' as 'full' | 'half', // NEW: Leave type
+    isAdvanceLeave: false, // NEW: Advance leave option
     reason: ''
   });
 
@@ -67,7 +69,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   };
 
   const calculateProjectedBalance = () => {
-    // Calculate pending leave days
+    // Calculate pending leave days (including advance leaves)
     const pendingLeaves = leaves.filter(l => l.status === 'pending');
     const pendingLeaveDays = pendingLeaves.reduce((total, leave) => {
       const leaveType = leave.leaveType || 'full';
@@ -75,7 +77,8 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     }, 0);
 
     // Projected balance = current balance - pending leaves
-    setProjectedBalance(Math.max(0, leaveBalance - pendingLeaveDays));
+    // Can be negative if advance leaves are pending
+    setProjectedBalance(leaveBalance - pendingLeaveDays);
   };
 
   const applyLeave = async () => {
@@ -91,10 +94,60 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       return;
     }
 
-    // Check leave balance
-    if (leaveBalance <= 0) {
-      alert('Insufficient leave balance');
-      return;
+    // Calculate leave days for this request
+    const requestedDays = newLeave.leaveType === 'half' ? 0.5 : 1;
+
+    // If advance leave is selected, validate constraints
+    if (newLeave.isAdvanceLeave) {
+      // Calculate total approved advance leaves for current month
+      const currentDate = new Date();
+      const currentMonth = currentDate.getMonth();
+      const currentYear = currentDate.getFullYear();
+      
+      const approvedAdvanceLeaves = leaves.filter(l => {
+        const leaveDate = new Date(l.leaveDate);
+        return (
+          l.isAdvanceLeave && 
+          l.status === 'approved' &&
+          leaveDate.getMonth() === currentMonth &&
+          leaveDate.getFullYear() === currentYear
+        );
+      });
+      
+      const totalAdvanceDays = approvedAdvanceLeaves.reduce((total, leave) => {
+        const leaveType = leave.leaveType || 'full';
+        return total + (leaveType === 'half' ? 0.5 : 1);
+      }, 0);
+      
+      // Check if adding this would exceed 2 days of advance leave
+      if (totalAdvanceDays + requestedDays > 2) {
+        alert(`You can only take maximum 2 days of advance leave per month. You have already used ${totalAdvanceDays} day(s).`);
+        return;
+      }
+      
+      // Advance leave can make balance negative, but total leaves (regular + advance) cannot exceed 5 days
+      const totalMonthLeaves = leaves.filter(l => {
+        const leaveDate = new Date(l.leaveDate);
+        return (
+          l.status === 'approved' &&
+          leaveDate.getMonth() === currentMonth &&
+          leaveDate.getFullYear() === currentYear
+        );
+      }).reduce((total, leave) => {
+        const leaveType = leave.leaveType || 'full';
+        return total + (leaveType === 'half' ? 0.5 : 1);
+      }, 0);
+      
+      if (totalMonthLeaves + requestedDays > 5) {
+        alert('Maximum 5 days of leave allowed per month (including advance leave).');
+        return;
+      }
+    } else {
+      // Regular leave - check if balance is sufficient
+      if (leaveBalance < requestedDays) {
+        alert(`Insufficient leave balance. You have ${leaveBalance} day(s) remaining. Consider applying for advance leave (max 2 days).`);
+        return;
+      }
     }
 
     try {
@@ -102,7 +155,8 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       const leaveData: LeaveApplication = {
         employeeId: user.employeeId,
         leaveDate: newLeave.leaveDate,
-        leaveType: newLeave.leaveType, // NEW: Leave type
+        leaveType: newLeave.leaveType,
+        isAdvanceLeave: newLeave.isAdvanceLeave,
         reason: newLeave.reason,
         status: 'pending',
         appliedAt: new Date().toISOString()
@@ -112,7 +166,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       await loadLeaves();
       await calculateLeaveBalance();
       
-      setNewLeave({ leaveDate: '', leaveType: 'full' as 'full' | 'half', reason: '' });
+      setNewLeave({ leaveDate: '', leaveType: 'full' as 'full' | 'half', isAdvanceLeave: false, reason: '' });
       setShowApplyForm(false);
       alert('Leave application submitted successfully');
     } catch (error) {
@@ -171,20 +225,33 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
               {/* Current Balance */}
               <div className="mb-4">
                 <div className="text-sm opacity-75 mb-1">Current Balance</div>
-                <div className="text-5xl mb-1">{leaveBalance}</div>
-                <p className="text-xs opacity-75">approved leaves deducted</p>
+                <div className={`text-5xl mb-1 ${leaveBalance < 0 ? 'text-red-200' : ''}`}>
+                  {leaveBalance}
+                  {leaveBalance < 0 && (
+                    <span className="text-sm ml-2 bg-red-500/30 px-2 py-1 rounded">
+                      Negative
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs opacity-75">
+                  {leaveBalance < 0 
+                    ? 'You have taken advance leave - will be deducted next month' 
+                    : 'approved leaves deducted'}
+                </p>
               </div>
 
               {/* Projected Balance - Only show if there are pending leaves */}
               {projectedBalance !== leaveBalance && (
                 <div className="pt-4 border-t border-white/20">
                   <div className="text-sm opacity-75 mb-1">Projected Balance</div>
-                  <div className="text-3xl mb-1">{projectedBalance}</div>
+                  <div className={`text-3xl mb-1 ${projectedBalance < 0 ? 'text-red-200' : ''}`}>
+                    {projectedBalance}
+                  </div>
                   <p className="text-xs opacity-75">if all pending leaves are approved</p>
                 </div>
               )}
               
-              <p className="text-sm opacity-75 mt-4">3 leaves/month • accumulates monthly • resets yearly</p>
+              <p className="text-sm opacity-75 mt-4">3 leaves/month • max 5 days (3 regular + 2 advance)</p>
             </div>
             <div className="bg-white/20 rounded-full p-6">
               <Calendar className="w-16 h-16" />
@@ -244,6 +311,29 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
               </div>
             </div>
 
+            {/* Advance Leave Option */}
+            <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newLeave.isAdvanceLeave}
+                  onChange={(e) => setNewLeave({ ...newLeave, isAdvanceLeave: e.target.checked })}
+                  className="mt-1 w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-gray-900 mb-1">
+                    Apply as Advance Leave
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    <AlertCircle className="w-4 h-4 inline mr-1" />
+                    You can take up to 2 days advance leave per month. This will make your balance negative and will be deducted from next month's quota.
+                    <br />
+                    <span className="font-medium">Maximum total: 5 days/month (3 regular + 2 advance)</span>
+                  </div>
+                </div>
+              </label>
+            </div>
+
             <div className="flex gap-3">
               <button
                 onClick={applyLeave}
@@ -299,13 +389,20 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                         })}
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          (leave.leaveType || 'full') === 'full' 
-                            ? 'bg-purple-100 text-purple-800' 
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            (leave.leaveType || 'full') === 'full' 
+                              ? 'bg-purple-100 text-purple-800' 
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                          </span>
+                          {leave.isAdvanceLeave && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                              Advance
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-gray-700">{leave.reason}</td>
                       <td className="px-6 py-4 text-gray-600 text-sm">

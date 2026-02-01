@@ -31,6 +31,14 @@ export function InventoryList({
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead' | 'fixedcost', id: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Helper function to format numbers - show decimals only if needed
+  const formatNumber = (num: number): string => {
+    // Round to 2 decimals
+    const rounded = Math.round(num * 100) / 100;
+    // If it's a whole number, don't show decimals
+    return rounded % 1 === 0 ? rounded.toString() : rounded.toFixed(2);
+  };
+
   // Group inventory by category
   const groupedInventory = inventory.reduce((acc, item) => {
     if (!acc[item.category]) {
@@ -108,9 +116,21 @@ export function InventoryList({
                         </div>
                         <div className="flex gap-4 text-sm text-gray-600">
                           <span>
-                            {item.quantity} {item.unit}
+                            {formatNumber(item.quantity || 0)} {item.unit}
                           </span>
-                          <span>₹{item.costPerUnit}/{item.unit}</span>
+                          <span>₹{formatNumber(item.costPerUnit || 0)}/{item.unit}</span>
+                          {/* Payment Method Badge */}
+                          {item.paymentMethod && (
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              item.paymentMethod === 'cash' ? 'bg-green-100 text-green-800' :
+                              item.paymentMethod === 'online' ? 'bg-blue-100 text-blue-800' :
+                              'bg-purple-100 text-purple-800'
+                            }`}>
+                              {item.paymentMethod === 'cash' ? '💵 Cash' :
+                               item.paymentMethod === 'online' ? '📱 Online' :
+                               `💰 Split (₹${formatNumber(item.cashAmount || 0)} + ₹${formatNumber(item.onlineAmount || 0)})`}
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}

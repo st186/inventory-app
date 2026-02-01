@@ -19,7 +19,10 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     customItem: editingItem ? !CATEGORY_ITEMS[editingItem.category].includes(editingItem.itemName) : false,
     quantity: editingItem?.quantity.toString() || '',
     unit: editingItem?.unit || 'kg',
-    totalCost: editingItem?.totalCost.toString() || ''
+    totalCost: editingItem?.totalCost.toString() || '',
+    paymentMethod: (editingItem?.paymentMethod || 'cash') as 'cash' | 'online' | 'both',
+    cashAmount: editingItem?.cashAmount?.toString() || '',
+    onlineAmount: editingItem?.onlineAmount?.toString() || ''
   });
 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
@@ -79,7 +82,10 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       customItem: false,
       quantity: '',
       unit: 'kg',
-      totalCost: ''
+      totalCost: '',
+      paymentMethod: 'cash', // Default to cash
+      cashAmount: '',
+      onlineAmount: ''
     });
     setSearchQuery(''); // Clear search query
   };
@@ -93,11 +99,43 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       return;
     }
     
+    // CRITICAL: Validate itemName is not empty
+    if (!formData.itemName || formData.itemName.trim() === '') {
+      alert('⚠️ Please select an item name before submitting!');
+      console.error('❌ Attempted to submit inventory item without itemName:', formData);
+      return;
+    }
+    
+    // Validate split payment amounts
+    if (formData.paymentMethod === 'both') {
+      const cashAmt = parseFloat(formData.cashAmount) || 0;
+      const onlineAmt = parseFloat(formData.onlineAmount) || 0;
+      const total = parseFloat(formData.totalCost) || 0;
+      
+      if (Math.abs((cashAmt + onlineAmt) - total) > 0.01) {
+        alert(`⚠️ Split payment amounts (₹${cashAmt.toFixed(2)} + ₹${onlineAmt.toFixed(2)} = ₹${(cashAmt + onlineAmt).toFixed(2)}) must equal total cost (₹${total.toFixed(2)})`);
+        return;
+      }
+    }
+    
     setIsSubmitting(true);
     
     const quantity = parseFloat(formData.quantity);
     const totalCost = parseFloat(formData.totalCost);
     const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
+    
+    // CRITICAL: Round numbers to prevent floating point precision issues
+    const roundedQuantity = Math.round(quantity * 100) / 100; // Round to 2 decimal places
+    const roundedTotalCost = Math.round(totalCost * 100) / 100; // Round to 2 decimal places
+    const roundedCostPerUnit = Math.round(costPerUnit * 100) / 100; // Round to 2 decimal places
+    
+    console.log('📝 Submitting inventory item:', {
+      itemName: formData.itemName,
+      quantity: roundedQuantity,
+      totalCost: roundedTotalCost,
+      costPerUnit: roundedCostPerUnit,
+      paymentMethod: formData.paymentMethod
+    });
     
     // If this is a new custom item, save it and reload the list
     if (formData.customItem && formData.itemName) {
@@ -111,14 +149,37 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       }
     }
     
+    // Calculate payment method amounts
+    let paymentData: any = {
+      paymentMethod: formData.paymentMethod
+    };
+    
+    if (formData.paymentMethod === 'both') {
+      const cashAmt = parseFloat(formData.cashAmount) || 0;
+      const onlineAmt = parseFloat(formData.onlineAmount) || 0;
+      paymentData.cashAmount = Math.round(cashAmt * 100) / 100;
+      paymentData.onlineAmount = Math.round(onlineAmt * 100) / 100;
+    } else if (formData.paymentMethod === 'online') {
+      // For online payment, set onlineAmount to totalCost
+      paymentData.onlineAmount = roundedTotalCost;
+      paymentData.cashAmount = 0;
+    } else if (formData.paymentMethod === 'cash') {
+      // For cash payment, set cashAmount to totalCost
+      paymentData.cashAmount = roundedTotalCost;
+      paymentData.onlineAmount = 0;
+    }
+    
+    console.log('💳 Payment data being sent:', paymentData);
+    
     await onSubmit({
       date: selectedDate,
       category: formData.category,
       itemName: formData.itemName,
-      quantity,
+      quantity: roundedQuantity,
       unit: formData.unit,
-      costPerUnit,
-      totalCost
+      costPerUnit: roundedCostPerUnit,
+      totalCost: roundedTotalCost,
+      ...paymentData
     });
     
     setIsSubmitting(false);
@@ -342,6 +403,79 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
               required
             />
           </div>
+
+          {/* Payment Method Selection */}
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Payment Method</label>
+            <select
+              value={formData.paymentMethod}
+              onChange={(e) => {
+                const method = e.target.value as 'cash' | 'online' | 'both';
+                setFormData({ 
+                  ...formData, 
+                  paymentMethod: method,
+                  // Reset split amounts when changing payment method
+                  cashAmount: method === 'both' ? formData.cashAmount : '',
+                  onlineAmount: method === 'both' ? formData.onlineAmount : ''
+                });
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"
+              required
+            >
+              <option value="cash">Cash in Hand 💵</option>
+              <option value="online">Online / Paytm 📱</option>
+              <option value="both">Split Payment (Both) 💰</option>
+            </select>
+          </div>
+
+          {/* Split Payment Fields */}
+          {formData.paymentMethod === 'both' && (
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-semibold text-blue-900 mb-2">Split Payment Details</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-blue-900 mb-1">Cash Amount (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.cashAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, cashAmount: e.target.value })
+                    }
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-blue-900 mb-1">Online Amount (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.onlineAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, onlineAmount: e.target.value })
+                    }
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              </div>
+              {formData.cashAmount && formData.onlineAmount && formData.totalCost && (
+                <div className="text-xs">
+                  {(parseFloat(formData.cashAmount) + parseFloat(formData.onlineAmount)) === parseFloat(formData.totalCost) ? (
+                    <p className="text-green-700 font-semibold">✓ Split amounts match total cost</p>
+                  ) : (
+                    <p className="text-red-700 font-semibold">
+                      ⚠️ Split total: ₹{(parseFloat(formData.cashAmount) + parseFloat(formData.onlineAmount)).toFixed(2)} 
+                      (Total Cost: ₹{parseFloat(formData.totalCost).toFixed(2)})
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {formData.quantity && formData.totalCost && (
             <div className="bg-gray-50 rounded-lg p-3">

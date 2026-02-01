@@ -169,10 +169,10 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                             {item.quantity} {item.unit}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                            ₹{item.costPerUnit.toFixed(2)}
+                            ₹{(item.costPerUnit || 0).toFixed(2)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-gray-900">
-                            ₹{item.totalCost.toLocaleString()}
+                            ₹{(item.totalCost || 0).toLocaleString()}
                           </td>
                         </tr>
                       ))}

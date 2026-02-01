@@ -1407,6 +1407,7 @@ export interface LeaveApplication {
   employeeId: string;
   leaveDate: string;
   leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
+  isAdvanceLeave?: boolean; // Whether this is an advance leave (borrowed from next month)
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;
@@ -1579,7 +1580,7 @@ export interface ProductionRequest {
   storeName?: string;
   requestedBy: string; // Store In-Charge employee ID
   requestedByName?: string;
-  status: 'pending' | 'accepted' | 'in-preparation' | 'prepared' | 'shipped' | 'delivered';
+  status: 'pending' | 'accepted' | 'in-preparation' | 'prepared' | 'shipped' | 'partially-shipped' | 'delivered' | 'partially-delivered';
   // Momos
   chickenMomos: number;
   chickenCheeseMomos: number;
@@ -1599,6 +1600,8 @@ export interface ProductionRequest {
   acceptedBy?: string; // Production Head employee ID
   preparedAt?: string;
   shippedAt?: string;
+  shippedQuantities?: Record<string, number>; // Actual quantities shipped
+  shippingNotes?: Record<string, string>; // Notes for items with different quantities
   deliveredAt?: string;
   deliveredBy?: string; // Store In-Charge employee ID
   createdAt: string;
@@ -1630,6 +1633,20 @@ export async function updateProductionRequestStatus(
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/status`, accessToken, {
     method: 'PUT',
     body: JSON.stringify({ status, updatedBy }),
+  });
+  return data.request;
+}
+
+export async function shipProductionRequest(
+  accessToken: string,
+  id: string,
+  shippedQuantities: Record<string, number>,
+  shippingNotes: Record<string, string>,
+  shippedBy: string
+): Promise<ProductionRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy }),
   });
   return data.request;
 }
