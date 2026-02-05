@@ -48,9 +48,12 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
 
   if (!response.ok) {
     let errorMessage = 'Request failed';
+    let isWarning = false;
     try {
       const error = await response.json();
       errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
+      // Check if this is a warning (non-critical error)
+      isWarning = !!error.warning;
     } catch (e) {
       errorMessage = `HTTP ${response.status}: ${response.statusText}`;
     }
@@ -80,7 +83,15 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
     throw new Error(errorMessage);
   }
 
-  return response.json();
+  const jsonData = await response.json();
+  
+  // Check for database unavailability warnings in successful responses
+  if (jsonData.warning) {
+    console.warn(`API Warning [${url}]:`, jsonData.warning);
+    // You could emit a toast notification here if needed
+  }
+  
+  return jsonData;
 }
 
 export async function fetchInventory(accessToken: string): Promise<InventoryItem[]> {
@@ -1038,6 +1049,7 @@ export interface Payout {
   employeeName: string;
   date: string;
   amount: number;
+  storeId?: string; // Optional for backward compatibility with existing data
   createdAt?: string;
 }
 
@@ -1094,6 +1106,64 @@ export async function deletePayout(id: string): Promise<void> {
   await fetchWithAuth(`${API_BASE}/payouts/${id}`, session.access_token, {
     method: 'DELETE',
   });
+}
+
+// ============================================
+// ONLINE SALES (SWIGGY/ZOMATO) API
+// ============================================
+
+export interface OnlineSalesEntry {
+  id: string;
+  date: string;
+  swiggySales: number;
+  zomatoSales: number;
+  storeId?: string;
+  createdAt: string;
+}
+
+export interface OnlinePayoutEntry {
+  id: string;
+  date: string;
+  swiggyPayout: number;
+  zomatoPayout: number;
+  storeId?: string;
+  createdAt: string;
+}
+
+export async function getOnlineSalesData(accessToken: string): Promise<OnlineSalesEntry[]> {
+  try {
+    const data = await fetchWithAuth(`${API_BASE}/online-sales`, accessToken);
+    return data.sales || [];
+  } catch (error) {
+    console.error('Error fetching online sales data:', error);
+    return [];
+  }
+}
+
+export async function saveOnlineSalesData(accessToken: string, entry: OnlineSalesEntry): Promise<OnlineSalesEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/online-sales`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
+  return data.entry;
+}
+
+export async function getOnlinePayoutData(accessToken: string): Promise<OnlinePayoutEntry[]> {
+  try {
+    const data = await fetchWithAuth(`${API_BASE}/online-payouts`, accessToken);
+    return data.payouts || [];
+  } catch (error) {
+    console.error('Error fetching online payout data:', error);
+    return [];
+  }
+}
+
+export async function saveOnlinePayoutData(accessToken: string, entry: OnlinePayoutEntry): Promise<OnlinePayoutEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/online-payouts`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
+  return data.entry;
 }
 
 // ============================================
@@ -1938,6 +2008,161 @@ export async function rejectRecalibration(accessToken: string, recalibrationId: 
     body: JSON.stringify({ reason }),
   });
   return response;
+}
+
+// ============================================
+// ONLINE CASH RECALIBRATION API
+// ============================================
+
+export type OnlineCashRecalibration = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  month: string; // Format: "YYYY-MM"
+  date: string; // Actual date of recalibration
+  systemBalance: number; // Calculated balance from system
+  actualBalance: number; // Actual balance verified by store
+  difference: number; // Difference (actual - system)
+  notes: string;
+  createdBy: string;
+  createdAt: string;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  approvedBy?: string;
+  approvedAt?: string;
+  discrepancyType?: 'none' | 'mistake' | 'loan';
+  loanAmount?: number | null;
+};
+
+export async function submitOnlineCashRecalibration(
+  accessToken: string, 
+  data: Omit<OnlineCashRecalibration, 'id' | 'createdAt'>
+) {
+  const response = await fetchWithAuth(`${API_BASE}/online-cash-recalibration`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return response;
+}
+
+export async function getLastOnlineCashRecalibration(accessToken: string, storeId: string) {
+  const timestamp = new Date().getTime();
+  const response = await fetchWithAuth(
+    `${API_BASE}/online-cash-recalibration/latest/${storeId}?_t=${timestamp}`, 
+    accessToken
+  );
+  return response;
+}
+
+export async function getOnlineCashRecalibrationHistory(accessToken: string, storeId: string) {
+  const response = await fetchWithAuth(
+    `${API_BASE}/online-cash-recalibration/history/${storeId}`, 
+    accessToken
+  );
+  return response;
+}
+
+// Update an existing online cash recalibration
+export async function updateOnlineCashRecalibration(
+  accessToken: string,
+  recalibrationId: string,
+  data: { date?: string; actualBalance?: number; notes?: string; discrepancyType?: string; loanAmount?: number | null }
+) {
+  const response = await fetchWithAuth(
+    `${API_BASE}/online-cash-recalibration/${recalibrationId}`,
+    accessToken,
+    {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }
+  );
+  return response;
+}
+
+// Delete an online cash recalibration
+export async function deleteOnlineCashRecalibration(accessToken: string, recalibrationId: string) {
+  const response = await fetchWithAuth(
+    `${API_BASE}/online-cash-recalibration/${recalibrationId}`,
+    accessToken,
+    {
+      method: 'DELETE',
+    }
+  );
+  return response;
+}
+
+// Fetch all online cash recalibrations (for all stores)
+export async function fetchOnlineCashRecalibrations(accessToken: string): Promise<OnlineCashRecalibration[]> {
+  const response = await fetchWithAuth(`${API_BASE}/online-cash-recalibration/all`, accessToken);
+  return response?.data || [];
+}
+
+// Convert offline cash to online cash (Paytm)
+export async function convertCashToOnline(
+  storeId: string,
+  date: string,
+  amount: number,
+  performedBy: string
+): Promise<void> {
+  const accessToken = localStorage.getItem('accessToken');
+  if (!accessToken) throw new Error('Not authenticated');
+  
+  await fetchWithAuth(`${API_BASE}/cash-conversion`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ storeId, date, amount, performedBy }),
+  });
+}
+
+// ============================================
+// ONLINE LOANS (Paytm/Online Cash Loans)
+// ============================================
+
+export type OnlineLoan = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  loanAmount: number;
+  loanDate: string; // Date when loan was taken
+  status: 'active' | 'repaid';
+  repaidAmount: number;
+  repaymentDate: string | null; // Date when fully repaid
+  notes: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export async function applyOnlineLoan(
+  accessToken: string,
+  data: Omit<OnlineLoan, 'id' | 'createdAt' | 'status' | 'repaidAmount' | 'repaymentDate'>
+) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return response.loan;
+}
+
+export async function getOnlineLoans(accessToken: string, storeId?: string) {
+  const url = storeId 
+    ? `${API_BASE}/online-loans?storeId=${storeId}`
+    : `${API_BASE}/online-loans`;
+  const response = await fetchWithAuth(url, accessToken);
+  return response.loans || [];
+}
+
+export async function repayOnlineLoan(
+  accessToken: string,
+  loanId: string,
+  repaymentData: {
+    repaymentAmount: number;
+    repaymentDate: string;
+    notes?: string;
+  }
+) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans/${loanId}/repay`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify(repaymentData),
+  });
+  return response.loan;
 }
 
 // ============================================

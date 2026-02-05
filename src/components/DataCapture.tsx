@@ -43,7 +43,7 @@ type PeriodStats = {
 };
 
 export function DataCapture({ context, selectedStoreId, selectedProductionHouseId }: DataCaptureProps) {
-  const [dateRange, setDateRange] = useState<'day' | 'week' | 'month' | 'custom'>('week');
+  const [dateRange, setDateRange] = useState<'day' | 'thisMonth' | 'prevMonth' | 'thisYear' | 'prevYear' | 'custom'>('thisMonth');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
@@ -56,23 +56,36 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
   useEffect(() => {
     generateDailyLogs();
-  }, [context.inventory, context.salesData, context.productionData, context.stockRequests, dateRange, customStartDate, customEndDate, effectiveStoreId]);
+  }, [context.inventory, context.salesData, context.productionData, context.productionRequests, dateRange, customStartDate, customEndDate, effectiveStoreId]);
 
   const getDateRangeDates = (): { startDate: Date; endDate: Date } => {
     const today = new Date();
     let startDate = new Date();
+    let endDate = new Date(today);
 
     switch (dateRange) {
       case 'day':
         startDate = new Date(today);
         break;
-      case 'week':
-        startDate = new Date(today);
-        startDate.setDate(today.getDate() - 7);
+      case 'thisMonth':
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        endDate = new Date(today);
         break;
-      case 'month':
-        startDate = new Date(today);
-        startDate.setMonth(today.getMonth() - 1);
+      case 'prevMonth':
+        // Start date: 1st of previous month
+        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        // End date: Last day of previous month (0th day of current month)
+        endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+        break;
+      case 'thisYear':
+        startDate = new Date(today.getFullYear(), 0, 1);
+        endDate = new Date(today);
+        break;
+      case 'prevYear':
+        // Start date: Jan 1 of previous year
+        startDate = new Date(today.getFullYear() - 1, 0, 1);
+        // End date: Dec 31 of previous year
+        endDate = new Date(today.getFullYear() - 1, 11, 31);
         break;
       case 'custom':
         if (customStartDate && customEndDate) {
@@ -86,13 +99,21 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
         break;
     }
 
-    return { startDate, endDate: today };
+    return { startDate, endDate };
   };
 
   const generateDailyLogs = () => {
     setLoading(true);
     const { startDate, endDate } = getDateRangeDates();
     const logs: DailyLog[] = [];
+    
+    // CRITICAL DEBUG: Check if productionRequests exist in context
+    console.log('🔍 DataCapture Context Check:', {
+      hasProductionRequests: !!context.productionRequests,
+      productionRequestsCount: context.productionRequests?.length || 0,
+      productionRequestsArray: context.productionRequests,
+      firstThreeRequests: context.productionRequests?.slice(0, 3)
+    });
 
     // Create a map of dates to their data
     const dateMap = new Map<string, DailyLog>();
@@ -253,17 +274,66 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       }
     });
 
-    // REMOVED: Production data tracking - no longer needed in Data Capture Monitor
-    // Users should only see Stock Request tracking here
+    // Process production data
+    const filteredProductionData = context.productionData;
+    
+    filteredProductionData.forEach(prod => {
+      if (dateMap.has(prod.date)) {
+        const log = dateMap.get(prod.date)!;
+        log.productionLogged = true;
+        
+        // Set who logged production - try to get name from employee list
+        let creatorName = '';
+        if ((prod as any).createdByName) {
+          creatorName = (prod as any).createdByName;
+        } else if ((prod as any).createdByEmail) {
+          creatorName = (prod as any).createdByEmail;
+        } else if (prod.createdBy) {
+          // Try to find employee name from employee list
+          const employee = context.employees?.find(emp => emp.employeeId === prod.createdBy);
+          if (employee) {
+            creatorName = employee.name;
+          } else {
+            // Check if createdBy is a UUID (contains dashes) - if so, hide it
+            const isUUID = typeof prod.createdBy === 'string' && prod.createdBy.includes('-');
+            if (isUUID) {
+              // Don't show UUID, show 'Production Manager' instead
+              creatorName = 'Production Manager';
+            } else {
+              // It's an employee ID like PM001 or BM002
+              creatorName = prod.createdBy;
+            }
+          }
+        } else {
+          creatorName = 'Unknown User';
+        }
+        log.productionLoggedBy = creatorName;
+        
+        // Get production logged timestamp - use createdAt if available
+        if (prod.createdAt) {
+          log.productionLoggedAt = prod.createdAt;
+          
+          // Check if logged late
+          const entryDate = new Date(prod.createdAt);
+          const targetDate = new Date(prod.date + 'T23:59:59');
+          if (entryDate > targetDate) {
+            log.lateEntry = true;
+          }
+        } else {
+          // Fallback: Use production date at noon if createdAt is not available
+          log.productionLoggedAt = new Date(prod.date + 'T12:00:00').toISOString();
+        }
+      }
+    });
 
     // Process stock request data
-    // Filter stock requests by store FIRST
+    // Filter production requests by store FIRST (these are the "stock requests" from store perspective)
     const filteredStockRequests = effectiveStoreId
-      ? context.stockRequests.filter(req => req.storeId === effectiveStoreId)
-      : context.stockRequests;
+      ? context.productionRequests.filter(req => req.storeId === effectiveStoreId)
+      : context.productionRequests;
     
     console.log('📦 DataCapture - Stock Requests Debug:', {
-      totalStockRequests: context.stockRequests.length,
+      totalStockRequests: context.productionRequests.length,
       filteredStockRequests: filteredStockRequests.length,
       effectiveStoreId,
       stockRequestDates: filteredStockRequests.map(r => r.requestDate),
@@ -293,7 +363,9 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
         const timestamp = req.id.split('-')[0];
         if (timestamp) {
           const timestampNum = parseInt(timestamp);
-          // Check if it's a valid timestamp (13-digit Unix timestamp in milliseconds, > 1000000000000)
+          // Check if it's a valid timestamp (8-digit or 13-digit Unix timestamp)
+          // 8-digit hex timestamp (like "e7fbe25c") won't parse as a valid date
+          // So we need to check if it's actually a timestamp
           if (!isNaN(timestampNum) && timestampNum > 1000000000000) {
             log.stockRequestLoggedAt = new Date(timestampNum).toISOString();
             
@@ -304,9 +376,24 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               log.lateEntry = true;
             }
           } else {
-            // Fallback: Old stock requests without timestamp - use requestDate at noon
-            log.stockRequestLoggedAt = new Date(req.requestDate + 'T12:00:00').toISOString();
+            // Fallback: Use createdAt timestamp if available
+            if (req.createdAt) {
+              log.stockRequestLoggedAt = req.createdAt;
+              
+              // Check if logged late
+              const entryDate = new Date(req.createdAt);
+              const targetDate = new Date(req.requestDate + 'T23:59:59');
+              if (entryDate > targetDate) {
+                log.lateEntry = true;
+              }
+            } else {
+              // Final fallback: Use requestDate at noon
+              log.stockRequestLoggedAt = new Date(req.requestDate + 'T12:00:00').toISOString();
+            }
           }
+        } else if (req.createdAt) {
+          // If no ID timestamp, use createdAt
+          log.stockRequestLoggedAt = req.createdAt;
         }
       }
     });
@@ -461,24 +548,44 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               Today
             </button>
             <button
-              onClick={() => setDateRange('week')}
+              onClick={() => setDateRange('thisMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'week'
+                dateRange === 'thisMonth'
                   ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              7 Days
+              This Month
             </button>
             <button
-              onClick={() => setDateRange('month')}
+              onClick={() => setDateRange('prevMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'month'
+                dateRange === 'prevMonth'
                   ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              30 Days
+              Last Month
+            </button>
+            <button
+              onClick={() => setDateRange('thisYear')}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                dateRange === 'thisYear'
+                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              This Year
+            </button>
+            <button
+              onClick={() => setDateRange('prevYear')}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                dateRange === 'prevYear'
+                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Last Year
             </button>
             <button
               onClick={() => setDateRange('custom')}
@@ -570,10 +677,16 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Inventory
+                  Expense
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
                   Sales
+                </th>
+                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                  Production
+                </th>
+                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                  Stock Requests
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
                   Cash Discrepancy
@@ -583,13 +696,13 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
             <tbody className="divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                     Loading data...
                   </td>
                 </tr>
               ) : dailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                     No data for selected period
                   </td>
                 </tr>
@@ -632,6 +745,32 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                           <p className="text-gray-500">{formatDateTime(log.salesLoggedAt)}</p>
                           {log.salesLoggedBy && (
                             <p className="text-xs text-gray-400">By: {log.salesLoggedBy}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">Not logged</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {log.productionLogged ? (
+                        <div className="text-sm">
+                          <p className="text-gray-900">✓ Logged</p>
+                          <p className="text-gray-500">{formatDateTime(log.productionLoggedAt)}</p>
+                          {log.productionLoggedBy && (
+                            <p className="text-xs text-gray-400">By: {log.productionLoggedBy}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">Not logged</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {log.stockRequestLogged ? (
+                        <div className="text-sm">
+                          <p className="text-gray-900">✓ Logged</p>
+                          <p className="text-gray-500">{formatDateTime(log.stockRequestLoggedAt)}</p>
+                          {log.stockRequestLoggedBy && (
+                            <p className="text-xs text-gray-400">By: {log.stockRequestLoggedBy}</p>
                           )}
                         </div>
                       ) : (

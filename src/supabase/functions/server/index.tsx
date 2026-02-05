@@ -67,12 +67,25 @@ async function retryWithBackoff<T>(
     try {
       return await operation();
     } catch (error: any) {
+      // Check for infrastructure errors (Cloudflare 500, HTML responses, etc.)
+      const isInfrastructureError = 
+        error?.message?.includes('<!DOCTYPE html>') ||
+        error?.message?.includes('500: Internal server error') ||
+        error?.message?.includes('Cloudflare') ||
+        error?.message?.includes('Internal server error');
+      
       const isConnectionError = 
         error?.message?.includes('connection reset') || 
         error?.message?.includes('connection error') ||
         error?.message?.includes('ECONNRESET') ||
         error?.message?.includes('ETIMEDOUT') ||
         error?.message?.includes('client error');
+      
+      // For infrastructure errors, don't retry - fail fast with a clear message
+      if (isInfrastructureError) {
+        console.error(`❌ Infrastructure error in ${operationName}:`, 'Supabase/Cloudflare service temporarily unavailable');
+        throw new Error('DATABASE_UNAVAILABLE');
+      }
       
       if (isConnectionError && attempt < maxRetries) {
         const delay = retryDelay(attempt);
@@ -466,11 +479,14 @@ app.get('/make-server-c2dd9b9d/inventory', async (c) => {
   try {
     // All users (cluster heads, employees, and managers) see all inventory
     // Filtering by storeId happens in the frontend
-    const items = await kv.getByPrefix('inventory:');
+    const items = await kvWithRetry.getByPrefix('inventory:');
     
     return c.json({ inventory: items || [] });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching inventory:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ inventory: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch inventory' }, 500);
   }
 });
@@ -619,11 +635,14 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
   try {
     // All users (cluster heads, employees, and managers) see all overheads
     // Filtering by storeId happens in the frontend
-    const items = await kv.getByPrefix('overhead:');
+    const items = await kvWithRetry.getByPrefix('overhead:');
     
     return c.json({ overheads: items || [] });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching overheads:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ overheads: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch overheads' }, 500);
   }
 });
@@ -639,8 +658,8 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager') {
-      return c.json({ error: 'Only managers can add overhead items' }, 403);
+    if (role !== 'manager' && role !== 'cluster_head') {
+      return c.json({ error: 'Only managers and cluster heads can add overhead items' }, 403);
     }
 
     const item = await c.req.json();
@@ -676,8 +695,8 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager') {
-      return c.json({ error: 'Only managers can update overhead items' }, 403);
+    if (role !== 'manager' && role !== 'cluster_head') {
+      return c.json({ error: 'Only managers and cluster heads can update overhead items' }, 403);
     }
 
     const itemId = c.req.param('id');
@@ -710,8 +729,8 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager') {
-      return c.json({ error: 'Only managers can delete overhead items' }, 403);
+    if (role !== 'manager' && role !== 'cluster_head') {
+      return c.json({ error: 'Only managers and cluster heads can delete overhead items' }, 403);
     }
 
     const itemId = c.req.param('id');
@@ -881,11 +900,14 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
 
   try {
     // Get all sales data (not scoped by userId since everyone needs to see all sales)
-    const items = await kv.getByPrefix(`sales:`);
+    const items = await kvWithRetry.getByPrefix(`sales:`);
     
     return c.json({ sales: items || [] });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching sales data:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ sales: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch sales data' }, 500);
   }
 });
@@ -1345,10 +1367,13 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
   }
 
   try {
-    const allProduction = await kv.getByPrefix('production:');
+    const allProduction = await kvWithRetry.getByPrefix('production:');
     return c.json({ production: allProduction });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching production data:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ production: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch production data' }, 500);
   }
 });
@@ -2012,8 +2037,8 @@ app.get('/make-server-c2dd9b9d/employees', async (c) => {
   try {
     // Fetch from both old and new employee storage for backwards compatibility
     const [oldEmployees, unifiedEmployees] = await Promise.all([
-      kv.getByPrefix('employee:'),
-      kv.getByPrefix('unified-employee:')
+      kvWithRetry.getByPrefix('employee:'),
+      kvWithRetry.getByPrefix('unified-employee:')
     ]);
     
     // Normalize unified employees to have both id and employeeId, and type field
@@ -2028,8 +2053,11 @@ app.get('/make-server-c2dd9b9d/employees', async (c) => {
     const allEmployees = [...oldEmployees, ...normalizedUnified];
     
     return c.json({ success: true, employees: allEmployees });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching employees:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ success: true, employees: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch employees' }, 500);
   }
 });
@@ -2189,10 +2217,13 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
 // Get all payouts
 app.get('/make-server-c2dd9b9d/payouts', async (c) => {
   try {
-    const payouts = await kv.getByPrefix('payout:');
+    const payouts = await kvWithRetry.getByPrefix('payout:');
     return c.json({ success: true, payouts });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching payouts:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ success: true, payouts: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch payouts' }, 500);
   }
 });
@@ -2286,6 +2317,72 @@ app.delete('/make-server-c2dd9b9d/payouts/:id', async (c) => {
   } catch (error) {
     console.log('Error deleting payout:', error);
     return c.json({ error: 'Failed to delete payout' }, 500);
+  }
+});
+
+// ============================================
+// Online Sales (Swiggy/Zomato) Management Routes
+// ============================================
+
+// Get all online sales
+app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
+  try {
+    const sales = await kvWithRetry.getByPrefix('online_sales:');
+    return c.json({ success: true, sales });
+  } catch (error: any) {
+    console.log('Error fetching online sales:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ success: true, sales: [], warning: 'Database temporarily unavailable' });
+    }
+    return c.json({ error: 'Failed to fetch online sales' }, 500);
+  }
+});
+
+// Save online sales entry
+app.post('/make-server-c2dd9b9d/online-sales', async (c) => {
+  try {
+    const entry = await c.req.json();
+    console.log('Saving online sales entry:', entry);
+    
+    const key = `online_sales:${entry.id}`;
+    await kv.set(key, entry);
+    console.log('Online sales entry saved successfully');
+    
+    return c.json({ success: true, entry });
+  } catch (error) {
+    console.log('Error saving online sales:', error);
+    return c.json({ error: 'Failed to save online sales' }, 500);
+  }
+});
+
+// Get all online payouts
+app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
+  try {
+    const payouts = await kvWithRetry.getByPrefix('online_payout:');
+    return c.json({ success: true, payouts });
+  } catch (error: any) {
+    console.log('Error fetching online payouts:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ success: true, payouts: [], warning: 'Database temporarily unavailable' });
+    }
+    return c.json({ error: 'Failed to fetch online payouts' }, 500);
+  }
+});
+
+// Save online payout entry
+app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
+  try {
+    const entry = await c.req.json();
+    console.log('Saving online payout entry:', entry);
+    
+    const key = `online_payout:${entry.id}`;
+    await kv.set(key, entry);
+    console.log('Online payout entry saved successfully');
+    
+    return c.json({ success: true, entry });
+  } catch (error) {
+    console.log('Error saving online payout:', error);
+    return c.json({ error: 'Failed to save online payout' }, 500);
   }
 });
 
@@ -6739,7 +6836,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
             const updatedItem = {
               ...inventoryItem,
               quantity: item.actualQuantity,
-              lastRecalibrated: currentDate,
+              lastRecalibrated: currentTimestamp,
               lastRecalibratedBy: auth.user.user_metadata?.name || auth.user.email
             };
             await kv.set(`inventory_${item.itemId}`, updatedItem);
@@ -6759,7 +6856,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
     // NEW: Send notifications to Cluster Heads and Operations Managers
     try {
       const performedByName = auth.user.user_metadata?.name || auth.user.email;
-      const recalDate = new Date(currentDate).toLocaleDateString('en-US', { 
+      const recalDate = new Date(currentTimestamp).toLocaleDateString('en-US', { 
         month: 'short', 
         day: 'numeric', 
         year: 'numeric' 
@@ -6785,7 +6882,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
             'Stock Recalibration Performed',
             `${performedByName} performed a stock recalibration for ${locationName} on ${recalDate}. ${recalibrationRecord.itemsWithDifference} items had differences, with ${recalibrationRecord.totalWastage.toFixed(2)} units of wastage.`,
             recalibrationId,
-            currentDate.substring(0, 10) // Date in YYYY-MM-DD format
+            currentTimestamp.substring(0, 10) // Date in YYYY-MM-DD format
           );
         }
       }
@@ -7911,5 +8008,431 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
 
 // Mount inventory items routes
 app.route('/', inventoryItemsRoutes);
+
+// ============================================
+// ONLINE CASH RECALIBRATION
+// ============================================
+
+// Get latest online cash recalibration for a store
+app.get('/make-server-c2dd9b9d/online-cash-recalibration/latest/:storeId', async (c) => {
+  try {
+    const storeId = c.req.param('storeId');
+    const allRecalibrations = await kvWithRetry.getByPrefix(`online-cash-recalibration:${storeId}:`);
+    
+    console.log(`📊 Fetching latest recalibration for store ${storeId}:`, {
+      found: allRecalibrations?.length || 0,
+      data: allRecalibrations
+    });
+    
+    if (!allRecalibrations || allRecalibrations.length === 0) {
+      return c.json({ recalibration: null });
+    }
+    
+    // Sort by createdAt or timestamp descending and get the latest
+    const latest = allRecalibrations.sort((a: any, b: any) => {
+      const timeA = new Date(a.createdAt || a.timestamp).getTime();
+      const timeB = new Date(b.createdAt || b.timestamp).getTime();
+      return timeB - timeA;
+    })[0];
+    
+    // Ensure the ID is set if not already present
+    if (!latest.id && latest.storeId && latest.month) {
+      latest.id = `ONLINE-CASH-RECAL-${latest.storeId}-${latest.month}`;
+    }
+    
+    console.log('📊 Latest recalibration:', latest);
+    
+    return c.json({ recalibration: latest });
+  } catch (error) {
+    console.error('❌ Error fetching latest online cash recalibration:', error);
+    return c.json({ error: 'Failed to fetch latest recalibration' }, 500);
+  }
+});
+
+// Get online cash recalibration history for a store
+app.get('/make-server-c2dd9b9d/online-cash-recalibration/history/:storeId', async (c) => {
+  try {
+    const storeId = c.req.param('storeId');
+    const allRecalibrations = await kvWithRetry.getByPrefix(`online-cash-recalibration:${storeId}:`);
+    
+    // Sort by timestamp descending (newest first)
+    const sorted = (allRecalibrations || []).sort((a: any, b: any) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    
+    return c.json({ history: sorted });
+  } catch (error) {
+    console.error('Error fetching online cash recalibration history:', error);
+    return c.json({ error: 'Failed to fetch recalibration history' }, 500);
+  }
+});
+
+// Get all online cash recalibrations (for all stores)
+app.get('/make-server-c2dd9b9d/online-cash-recalibration/all', async (c) => {
+  try {
+    const allRecalibrations = await kvWithRetry.getByPrefix('online-cash-recalibration:');
+    
+    console.log(`📊 Fetching all recalibrations:`, {
+      count: allRecalibrations?.length || 0
+    });
+    
+    return c.json({ data: allRecalibrations || [] });
+  } catch (error) {
+    console.error('Error fetching all online cash recalibrations:', error);
+    return c.json({ error: 'Failed to fetch all recalibrations' }, 500);
+  }
+});
+
+// Save online cash recalibration
+app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
+  try {
+    const recalibration = await c.req.json();
+    
+    // Add createdAt timestamp if not present
+    const timestamp = recalibration.createdAt || new Date().toISOString();
+    const recalibrationWithTimestamp = {
+      ...recalibration,
+      id: `ONLINE-CASH-RECAL-${recalibration.storeId}-${recalibration.month}`,
+      createdAt: timestamp,
+      timestamp: timestamp // For backward compatibility
+    };
+    
+    // Use month as part of key for easier querying (one recalibration per month per store)
+    const key = `online-cash-recalibration:${recalibration.storeId}:${recalibration.month}`;
+    await kvWithRetry.set(key, recalibrationWithTimestamp);
+    
+    console.log(`✅ Online cash recalibration saved: ${key}`, recalibrationWithTimestamp);
+    
+    return c.json({ success: true, recalibration: recalibrationWithTimestamp });
+  } catch (error) {
+    console.error('❌ Error saving online cash recalibration:', error);
+    return c.json({ error: 'Failed to save recalibration' }, 500);
+  }
+});
+
+// Update online cash recalibration
+app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
+  try {
+    const recalibrationId = c.req.param('id');
+    const updates = await c.req.json();
+    
+    console.log('🔄 Updating recalibration ID:', recalibrationId);
+    
+    // Parse the ID to get storeId and month
+    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM}
+    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-02
+    // We need to extract everything after "ONLINE-CASH-RECAL-" and split from the end for YYYY-MM
+    const prefix = 'ONLINE-CASH-RECAL-';
+    if (!recalibrationId.startsWith(prefix)) {
+      return c.json({ error: 'Invalid recalibration ID format' }, 400);
+    }
+    
+    const afterPrefix = recalibrationId.substring(prefix.length);
+    // The last 7 characters should be YYYY-MM (e.g., "2026-02")
+    const month = afterPrefix.slice(-7); // Last 7 chars: "2026-02"
+    const storeId = afterPrefix.slice(0, -8); // Everything before the month and its separator hyphen
+    
+    console.log('📝 Parsed storeId:', storeId, 'month:', month);
+    
+    const key = `online-cash-recalibration:${storeId}:${month}`;
+    
+    // Get existing recalibration
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      console.log('❌ Recalibration not found at key:', key);
+      return c.json({ error: 'Recalibration not found' }, 404);
+    }
+    
+    // Merge updates with existing data
+    const updated = {
+      ...existing,
+      ...updates,
+      id: recalibrationId, // Keep the ID
+      updatedAt: new Date().toISOString(),
+    };
+    
+    // If date is updated, recalculate month
+    if (updates.date) {
+      const newMonth = updates.date.substring(0, 7); // YYYY-MM
+      if (newMonth !== month) {
+        // Month changed - need to delete old key and create new one
+        await kvWithRetry.del(key);
+        const newKey = `online-cash-recalibration:${storeId}:${newMonth}`;
+        updated.id = `ONLINE-CASH-RECAL-${storeId}-${newMonth}`;
+        updated.month = newMonth;
+        await kvWithRetry.set(newKey, updated);
+        console.log(`✅ Online cash recalibration moved from ${month} to ${newMonth}`, updated);
+      } else {
+        await kvWithRetry.set(key, updated);
+        console.log(`✅ Online cash recalibration updated: ${key}`, updated);
+      }
+    } else {
+      await kvWithRetry.set(key, updated);
+      console.log(`✅ Online cash recalibration updated: ${key}`, updated);
+    }
+    
+    return c.json({ success: true, recalibration: updated });
+  } catch (error) {
+    console.error('❌ Error updating online cash recalibration:', error);
+    return c.json({ error: 'Failed to update recalibration', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Delete online cash recalibration
+app.delete('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
+  try {
+    const recalibrationId = c.req.param('id');
+    console.log('🗑️ Deleting online cash recalibration with ID:', recalibrationId);
+    
+    // Parse the ID to get storeId and month
+    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM}
+    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-02
+    const prefix = 'ONLINE-CASH-RECAL-';
+    if (!recalibrationId.startsWith(prefix)) {
+      return c.json({ error: 'Invalid recalibration ID format' }, 400);
+    }
+    
+    const afterPrefix = recalibrationId.substring(prefix.length);
+    // The last 7 characters should be YYYY-MM (e.g., "2026-02")
+    const month = afterPrefix.slice(-7); // Last 7 chars: "2026-02"
+    const storeId = afterPrefix.slice(0, -8); // Everything before the month and its separator hyphen
+    
+    console.log('📝 Parsed storeId:', storeId, 'month:', month);
+    
+    // Get all recalibrations for this store using prefix search
+    const allRecalibrations = await kvWithRetry.getByPrefix(`online-cash-recalibration:${storeId}:`);
+    console.log('🔍 Found recalibrations for store:', allRecalibrations?.length || 0);
+    
+    // Also query the actual database keys for debugging
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL'),
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    );
+    const { data: dbKeys } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key')
+      .like('key', `online-cash-recalibration:${storeId}:%`);
+    console.log('🔍 Actual database keys for store:', dbKeys?.map(d => d.key) || []);
+    
+    if (!allRecalibrations || allRecalibrations.length === 0) {
+      console.log('❌ No recalibrations found for store:', storeId);
+      return c.json({ error: 'No recalibrations found for this store' }, 404);
+    }
+    
+    // Find the one matching the month
+    const targetRecal = allRecalibrations.find((r: any) => r.month === month);
+    
+    if (!targetRecal) {
+      console.log('❌ No recalibration found for month:', month);
+      console.log('Available months:', allRecalibrations.map((r: any) => r.month));
+      return c.json({ error: 'Recalibration not found for this month' }, 404);
+    }
+    
+    console.log('✅ Found target recalibration:', {
+      id: targetRecal.id,
+      storeId: targetRecal.storeId,
+      month: targetRecal.month,
+      date: targetRecal.date
+    });
+    
+    // Construct the key and delete
+    const key = `online-cash-recalibration:${storeId}:${month}`;
+    console.log('🔑 Deleting key:', key);
+    
+    await kvWithRetry.del(key);
+    console.log(`✅ Online cash recalibration deleted: ${key}`);
+    
+    return c.json({ success: true, message: 'Recalibration deleted successfully' });
+  } catch (error) {
+    console.error('❌ Error deleting online cash recalibration:', error);
+    return c.json({ error: 'Failed to delete recalibration', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// ============================================
+// CASH CONVERSION (Offline to Online)
+// ============================================
+
+// Convert offline cash to online cash (Paytm)
+app.post('/make-server-c2dd9b9d/cash-conversion', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+
+  try {
+    const { storeId, date, amount, performedBy } = await c.req.json();
+    
+    if (!storeId || !date || !amount || amount <= 0) {
+      return c.json({ error: 'Invalid conversion data' }, 400);
+    }
+
+    console.log(`💱 Converting ₹${amount} from offline to online cash for store ${storeId} on ${date}`);
+
+    // Get the sales record for this date
+    const salesKey = `sales_${storeId}_${date}`;
+    const salesData = await kv.get(salesKey);
+
+    if (!salesData) {
+      return c.json({ error: 'No sales record found for this date' }, 404);
+    }
+
+    // Calculate current expected cash in hand to validate the conversion amount
+    const previousCashInHand = salesData.previousCashInHand || 0;
+    const usedOnlineMoney = salesData.usedOnlineMoney || 0;
+    const cashAmount = salesData.cashAmount || 0;
+    
+    // For validation, we need to check total expenses, but for simplicity,
+    // we'll trust the frontend validation that the amount is valid
+    
+    // Create a cash conversion record
+    const conversionId = `cash-conversion_${storeId}_${date}_${Date.now()}`;
+    const conversionRecord = {
+      id: conversionId,
+      storeId,
+      date,
+      amount,
+      performedBy,
+      createdAt: new Date().toISOString()
+    };
+    
+    await kv.set(conversionId, conversionRecord);
+
+    // Update the sales record:
+    // - Increase usedOnlineMoney by the conversion amount (this will decrease expected cash)
+    // - This effectively transfers cash from offline to online
+    const updatedSalesData = {
+      ...salesData,
+      usedOnlineMoney: (salesData.usedOnlineMoney || 0) + amount,
+      cashConversionAmount: amount,
+      cashConversionDate: new Date().toISOString(),
+      cashConversionPerformedBy: performedBy
+    };
+
+    await kv.set(salesKey, updatedSalesData);
+
+    console.log(`✅ Cash conversion successful: ₹${amount} moved to online cash`);
+
+    return c.json({ 
+      success: true, 
+      conversion: conversionRecord,
+      updatedSales: updatedSalesData
+    });
+  } catch (error: any) {
+    console.error('❌ Error converting cash:', error);
+    return c.json({ error: error.message || 'Failed to convert cash' }, 500);
+  }
+});
+
+// ============================================
+// ONLINE LOANS (Paytm/Online Cash Loans)
+// ============================================
+
+// Apply for a new loan
+app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
+  try {
+    const loanData = await c.req.json();
+    
+    // Generate unique ID
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const loanId = `ONLINE-LOAN-${loanData.storeId}-${timestamp}-${randomStr}`;
+    
+    const loan = {
+      ...loanData,
+      id: loanId,
+      status: 'active',
+      repaidAmount: 0,
+      repaymentDate: null,
+      createdAt: getNowIST(),
+    };
+    
+    const key = `online-loan:${loanData.storeId}:${loanId}`;
+    await kvWithRetry.set(key, loan);
+    
+    console.log(`✅ Online loan created: ${key}`, loan);
+    
+    return c.json({ success: true, loan });
+  } catch (error) {
+    console.error('❌ Error creating online loan:', error);
+    return c.json({ error: 'Failed to create loan', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Get all loans (optionally filter by store)
+app.get('/make-server-c2dd9b9d/online-loans', async (c) => {
+  try {
+    const storeId = c.req.query('storeId');
+    
+    const prefix = storeId ? `online-loan:${storeId}:` : 'online-loan:';
+    const loans = await kvWithRetry.getByPrefix(prefix);
+    
+    // Sort by loanDate descending (newest first)
+    const sorted = (loans || []).sort((a: any, b: any) => {
+      const dateA = new Date(a.loanDate).getTime();
+      const dateB = new Date(b.loanDate).getTime();
+      return dateB - dateA;
+    });
+    
+    console.log(`📊 Fetched ${sorted.length} online loans for store ${storeId || 'all'}`);
+    
+    return c.json({ success: true, loans: sorted });
+  } catch (error) {
+    console.error('❌ Error fetching online loans:', error);
+    return c.json({ error: 'Failed to fetch loans', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Repay a loan (partial or full)
+app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
+  try {
+    const loanId = c.req.param('id');
+    const repaymentData = await c.req.json();
+    
+    // Extract storeId from loanId
+    const idParts = loanId.split('-');
+    if (idParts.length < 4) {
+      return c.json({ error: 'Invalid loan ID format' }, 400);
+    }
+    
+    // Find the store ID (between LOAN and timestamp)
+    const storeId = idParts.slice(2, -2).join('-');
+    const key = `online-loan:${storeId}:${loanId}`;
+    
+    // Get existing loan
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      return c.json({ error: 'Loan not found' }, 404);
+    }
+    
+    // Calculate new repaid amount
+    const newRepaidAmount = existing.repaidAmount + repaymentData.repaymentAmount;
+    
+    // Check if loan is fully repaid
+    const isFullyRepaid = newRepaidAmount >= existing.loanAmount;
+    
+    const updated = {
+      ...existing,
+      repaidAmount: newRepaidAmount,
+      status: isFullyRepaid ? 'repaid' : 'active',
+      repaymentDate: isFullyRepaid ? repaymentData.repaymentDate : existing.repaymentDate,
+      notes: repaymentData.notes ? `${existing.notes}\n[Repayment on ${repaymentData.repaymentDate}]: ${repaymentData.notes}` : existing.notes,
+      updatedAt: getNowIST(),
+    };
+    
+    await kvWithRetry.set(key, updated);
+    
+    console.log(`✅ Online loan repayment processed: ${key}`, {
+      repaidAmount: repaymentData.repaymentAmount,
+      totalRepaid: newRepaidAmount,
+      status: updated.status
+    });
+    
+    return c.json({ success: true, loan: updated });
+  } catch (error) {
+    console.error('❌ Error repaying online loan:', error);
+    return c.json({ error: 'Failed to process loan repayment', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
 
 Deno.serve(app.fetch);

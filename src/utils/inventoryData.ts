@@ -58,6 +58,8 @@ export const OVERHEAD_CATEGORIES = {
   personal_expense: '👤 Personal Expense By an Employee',
   utensils: '🍴 Utensils',
   equipments: '🔨 Equipments',
+  license: '📜 License Cost',
+  water_jar: '💧 Water Jar',
   miscellaneous: '📝 Miscellaneous Cost'
 } as const;
 

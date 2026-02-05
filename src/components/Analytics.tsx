@@ -15,6 +15,7 @@ import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from
 import { getSupabaseClient } from '../utils/supabase/client';
 import { logger } from '../utils/logger';
 import * as exportUtils from '../utils/export';
+import { ExpenseBreakdownModal } from './ExpenseBreakdownModal';
 
 interface AnalyticsProps {
   context: InventoryContextType;
@@ -136,9 +137,48 @@ const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
   return null;
 };
 
-type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastWeek' | 'lastMonth' | 'custom';
 
 export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
+  // Load online sales and payout data for commission calculation
+  const [onlineSalesData, setOnlineSalesData] = useState<any[]>([]);
+  const [onlinePayoutData, setOnlinePayoutData] = useState<any[]>([]);
+  const [isLoadingOnlineData, setIsLoadingOnlineData] = useState(false);
+
+  // Load online sales and payout data
+  useEffect(() => {
+    const loadOnlineData = async () => {
+      if (!context.user?.accessToken) return;
+      
+      setIsLoadingOnlineData(true);
+      try {
+        const [salesData, payoutData] = await Promise.all([
+          api.getOnlineSalesData(context.user.accessToken),
+          api.getOnlinePayoutData(context.user.accessToken)
+        ]);
+        
+        setOnlineSalesData(salesData || []);
+        setOnlinePayoutData(payoutData || []);
+      } catch (error) {
+        console.error('Error loading online sales/payout data:', error);
+      } finally {
+        setIsLoadingOnlineData(false);
+      }
+    };
+    
+    loadOnlineData();
+  }, [context.user?.accessToken]);
+
+  // Helper function to identify commission entries (LEGACY - no longer used for commission calculation)
+  // Commission entries are stored as overhead items with category 'service_charge' and description containing 'Aggregator Commission'
+  // Legacy entries may have category 'commission'
+  const isCommissionEntry = (item: any) => {
+    return (
+      (item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) ||
+      item.category === 'commission' // Legacy format
+    );
+  };
+
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
   const isAudit = context.user?.role === 'audit';
@@ -176,6 +216,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     highlightRequestId ? 'production-requests' : 'profit'
   );
   
+  // Expense breakdown modal state
+  const [selectedExpenseCategory, setSelectedExpenseCategory] = useState<{
+    category: string;
+    items: any[];
+    amount: number;
+  } | null>(null);
+  
   // Debug: Log activeView changes
   useEffect(() => {
     logger.debugAnalytics('activeView changed to:', activeView);
@@ -193,12 +240,23 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   }, [analyticsMode]);
   
   const [salesSubView, setSalesSubView] = useState<'revenue' | 'category'>('revenue');
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('monthly');
-  const [wastageTimeFilter, setWastageTimeFilter] = useState<TimeFilter>('monthly');
-  const [dateRange, setDateRange] = useState({
-    from: '2025-03-01',
-    to: '2025-12-25'
-  });
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('thisMonth');
+  const [wastageTimeFilter, setWastageTimeFilter] = useState<TimeFilter>('thisMonth');
+  
+  // Initialize date range to current month (from 1st to today)
+  const getDateRangeDefaults = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    
+    return {
+      from: `${year}-${month}-01`, // Start of current month
+      to: `${year}-${month}-${day}` // Today
+    };
+  };
+  
+  const [dateRange, setDateRange] = useState(getDateRangeDefaults());
   const [todayLeaveCount, setTodayLeaveCount] = useState<number>(0);
   const [todayLeaveDetails, setTodayLeaveDetails] = useState<any[]>([]);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -808,29 +866,40 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
       
       switch (timeFilter) {
-        case 'daily':
-          // Show last 10 days to support daily trend charts
-          const tenDaysAgo = new Date(today);
-          tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
-          return itemDateOnly >= tenDaysAgo && itemDateOnly <= today;
+        case 'today':
+          return itemDateOnly.getTime() === today.getTime();
           
-        case 'weekly':
-          // Show last 10 weeks (70 days) to support weekly trend charts
-          const tenWeeksAgo = new Date(today);
-          tenWeeksAgo.setDate(tenWeeksAgo.getDate() - 70);
-          return itemDateOnly >= tenWeeksAgo && itemDateOnly <= today;
+        case 'yesterday':
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          return itemDateOnly.getTime() === yesterday.getTime();
           
-        case 'monthly':
-          // Show last 10 months to support monthly trend charts
-          const tenMonthsAgo = new Date(today);
-          tenMonthsAgo.setMonth(tenMonthsAgo.getMonth() - 10);
-          return itemDateOnly >= tenMonthsAgo && itemDateOnly <= today;
+        case 'thisWeek':
+          // Get start of this week (Monday)
+          const startOfThisWeek = new Date(today);
+          const dayOfWeek = today.getDay();
+          const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // If Sunday, go back 6 days, else go to Monday
+          startOfThisWeek.setDate(today.getDate() + diff);
+          return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
           
-        case 'yearly':
-          // Show last 5 years to support yearly trend charts
-          const fiveYearsAgo = new Date(today);
-          fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-          return itemDateOnly >= fiveYearsAgo && itemDateOnly <= today;
+        case 'thisMonth':
+          const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+          return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
+          
+        case 'lastWeek':
+          // Get start and end of last week (Monday to Sunday)
+          const startOfLastWeek = new Date(today);
+          const currentDay = today.getDay();
+          const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6); // If Sunday, go back 13 days, else go to last Monday
+          startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
+          const endOfLastWeek = new Date(startOfLastWeek);
+          endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
+          return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
+          
+        case 'lastMonth':
+          const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+          return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
           
         case 'custom':
           const fromDate = new Date(dateRange.from);
@@ -848,7 +917,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   const timeFilteredInventoryData = filterByTimeRange(inventoryData);
   const timeFilteredOverheadData = filterByTimeRange(overheadData);
   const timeFilteredFixedCostsData = filterByTimeRange(fixedCostsData);
-  const timeFilteredPayoutsData = filterByTimeRange(payoutsData, 'payoutDate');
+  console.log('💰 Before time filtering - payoutsData:', payoutsData.length, 'payouts');
+  console.log('💰 Payouts before filtering:', payoutsData.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
+  console.log('💰 Sample payout object:', payoutsData[0]);
+  console.log('💰 All payout dates as strings:', payoutsData.map(p => p.date).join(', '));
+  // FIX: Payouts use 'date' field, not 'payoutDate'
+  const timeFilteredPayoutsData = filterByTimeRange(payoutsData, 'date');
+  console.log('💰 After time filtering - timeFilteredPayoutsData:', timeFilteredPayoutsData.length, 'payouts');
+  console.log('💰 Time filter:', timeFilter);
+  console.log('💰 Current date for reference:', new Date().toISOString());
 
   // Filter data by selected store (after time filtering)
   const filteredSalesData = useMemo(() => {
@@ -990,14 +1067,20 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   useEffect(() => {
     const loadData = async () => {
       try {
+        console.log('💰 === LOADING PAYOUTS AND EMPLOYEES ===');
         const [payouts, employees] = await Promise.all([
           api.getPayouts(),
           api.getEmployees()
         ]);
+        console.log('💰 Raw payouts from API:', payouts);
+        console.log('💰 Number of payouts:', payouts?.length || 0);
+        console.log('💰 Payout dates:', payouts?.map(p => ({ id: p.id, date: p.payoutDate, amount: p.amount })));
+        console.log('👥 Number of employees:', employees?.length || 0);
         setPayoutsData(payouts || []);
         setEmployeesData(employees || []);
+        console.log('💰 === END LOADING PAYOUTS AND EMPLOYEES ===');
       } catch (error) {
-        console.error('Error loading payouts and employees:', error);
+        console.error('❌ Error loading payouts and employees:', error);
         setPayoutsData([]);
         setEmployeesData([]);
       }
@@ -1165,10 +1248,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   // Get period label for summary cards
   const getPeriodLabel = () => {
     switch (timeFilter) {
-      case 'daily': return 'Last 10 days';
-      case 'weekly': return 'Last 10 weeks';
-      case 'monthly': return 'Last 10 months';
-      case 'yearly': return 'Last 5 years';
+      case 'today': return 'Today';
+      case 'yesterday': return 'Yesterday';
+      case 'thisWeek': return 'This week';
+      case 'thisMonth': return 'This month';
+      case 'lastWeek': return 'Last week';
+      case 'lastMonth': return 'Last month';
       case 'custom': return `${dateRange.from} to ${dateRange.to}`;
       default: return 'Current period';
     }
@@ -1199,16 +1284,106 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     const inventoryExpenses = filteredInventoryData.reduce((sum, item) => sum + (item.totalCost || 0), 0);
     console.log('Inventory expenses:', inventoryExpenses);
     
-    // Calculate overhead expenses
-    const overheadExpenses = filteredOverheadData.reduce((sum, item) => sum + (item.amount || 0), 0);
-    
-    // Calculate commission expenses (treated as overhead expense)
-    // Commission is for monthly online food aggregator fees (Swiggy + Zomato)
-    const commissionExpenses = filteredOverheadData
-      .filter(item => item.category === 'commission')
+    // Calculate overhead expenses (EXCLUDING legacy commission entries)
+    const overheadExpenses = filteredOverheadData
+      .filter(item => !isCommissionEntry(item)) // Exclude legacy commission entries
       .reduce((sum, item) => sum + (item.amount || 0), 0);
     
-    console.log('Total commission (as expense):', commissionExpenses);
+    // Calculate commission expenses from online sales and payout data
+    // Commission = Total Sales - Total Payouts for the filtered time period
+    console.log('🔍 DEBUG COMMISSION - Calculating from online sales/payout data');
+    
+    // Filter online sales and payouts by time and store
+    const filteredOnlineSales = onlineSalesData.filter(sale => {
+      const dateMatch = (() => {
+        switch (timeFilter) {
+          case 'today':
+            return sale.date === getTodayIST();
+          case 'yesterday':
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return sale.date === yesterday.toISOString().split('T')[0];
+          case 'thisWeek':
+            const today = new Date();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+            return new Date(sale.date) >= startOfWeek && new Date(sale.date) <= today;
+          case 'lastWeek':
+            const lastWeekEnd = new Date();
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+            const lastWeekStart = new Date(lastWeekEnd);
+            lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+            return new Date(sale.date) >= lastWeekStart && new Date(sale.date) <= lastWeekEnd;
+          case 'thisMonth':
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            return sale.date.startsWith(currentMonth);
+          case 'lastMonth':
+            const lastMonthDate = new Date();
+            lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+            const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+            return sale.date.startsWith(lastMonth);
+          case 'custom':
+            return sale.date >= dateRange.from && sale.date <= dateRange.to;
+          default:
+            return true;
+        }
+      })();
+      
+      const storeMatch = effectiveStoreId ? sale.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    });
+    
+    const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
+      const dateMatch = (() => {
+        switch (timeFilter) {
+          case 'today':
+            return payout.date === getTodayIST();
+          case 'yesterday':
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return payout.date === yesterday.toISOString().split('T')[0];
+          case 'thisWeek':
+            const today = new Date();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+            return new Date(payout.date) >= startOfWeek && new Date(payout.date) <= today;
+          case 'lastWeek':
+            const lastWeekEnd = new Date();
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+            const lastWeekStart = new Date(lastWeekEnd);
+            lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+            return new Date(payout.date) >= lastWeekStart && new Date(payout.date) <= lastWeekEnd;
+          case 'thisMonth':
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            return payout.date.startsWith(currentMonth);
+          case 'lastMonth':
+            const lastMonthDate = new Date();
+            lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+            const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+            return payout.date.startsWith(lastMonth);
+          case 'custom':
+            return payout.date >= dateRange.from && payout.date <= dateRange.to;
+          default:
+            return true;
+        }
+      })();
+      
+      const storeMatch = effectiveStoreId ? payout.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    });
+    
+    const totalOnlineSales = filteredOnlineSales.reduce((sum, sale) => 
+      sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
+    const totalOnlinePayouts = filteredOnlinePayouts.reduce((sum, payout) => 
+      sum + (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0), 0);
+    
+    const commissionExpenses = totalOnlineSales - totalOnlinePayouts;
+    
+    console.log('🔍 DEBUG COMMISSION - Filtered online sales:', filteredOnlineSales.length);
+    console.log('🔍 DEBUG COMMISSION - Filtered online payouts:', filteredOnlinePayouts.length);
+    console.log('🔍 DEBUG COMMISSION - Total online sales:', totalOnlineSales);
+    console.log('🔍 DEBUG COMMISSION - Total online payouts:', totalOnlinePayouts);
+    console.log('🔍 DEBUG COMMISSION - Commission expenses:', commissionExpenses);
 
     // Calculate fixed costs
     const electricityExpenses = filteredFixedCostsData
@@ -1221,7 +1396,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
     // Calculate contract worker expenses (from salesData.employeeSalary)
     // These are daily wages, so they should be filtered by time
+    console.log('💼 === CONTRACT WORKER SALARY DEBUG ===');
+    console.log('Total filteredSalesData:', filteredSalesData.length);
+    const salesWithSalary = filteredSalesData.filter(sale => (sale.employeeSalary || 0) > 0);
+    console.log('Sales with employee salary:', salesWithSalary.length);
+    console.log('Sales with salary data:', salesWithSalary.map(s => ({ date: s.date, salary: s.employeeSalary })));
     const contractWorkerExpenses = filteredSalesData.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
+    console.log('Total contract worker expenses:', contractWorkerExpenses);
+    console.log('💼 === END CONTRACT WORKER SALARY DEBUG ===');
 
     // Calculate permanent employee expenses (from payoutsData)
     // IMPORTANT: Permanent employee salaries are MONTHLY expenses
@@ -1229,8 +1411,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     // For daily/weekly, only contract workers appear
     let permanentEmployeeExpenses = 0;
     
-    if (timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') {
-      // For monthly/yearly/custom view: Use DATE-FILTERED payouts to respect the selected time range
+    console.log('💵 === PERMANENT EMPLOYEE SALARY DEBUG ===');
+    console.log('Time filter:', timeFilter);
+    console.log('Total filteredPayoutsData:', filteredPayoutsData.length);
+    console.log('Payouts data:', filteredPayoutsData);
+    console.log('Filtered employees:', filteredEmployeesData.length);
+    
+    if (timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') {
+      // For month/custom view: Use DATE-FILTERED payouts to respect the selected time range
       // Filter by store if needed
       let relevantPayouts = filteredPayoutsData;
       
@@ -1238,18 +1426,29 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         // Use filteredEmployeesData to include employees with null storeIds
         const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
         relevantPayouts = relevantPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
+        console.log('Store filtered payouts:', relevantPayouts.length);
       }
+      
+      console.log('Relevant payouts for calculation:', relevantPayouts);
       
       permanentEmployeeExpenses = relevantPayouts.reduce((sum, payout) => {
         // Find the employee for this payout
         const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+        console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, 'employee found:', employee ? `${employee.name} (${employee.type})` : 'NOT FOUND');
         // Only include if employee is fulltime (permanent)
         if (employee && employee.type === 'fulltime') {
+          console.log('  ✓ Including permanent employee payout:', payout.amount);
           return sum + (payout.amount || 0);
         }
+        console.log('  ✗ Skipping (not fulltime or employee not found)');
         return sum;
       }, 0);
+      
+      console.log('Total permanent employee expenses calculated:', permanentEmployeeExpenses);
+    } else {
+      console.log('Skipping permanent employee calculation - time filter is:', timeFilter);
     }
+    console.log('💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===');
     // For daily/weekly view, permanentEmployeeExpenses stays 0
 
     // Total salary expenses = contract workers + permanent employees
@@ -1258,13 +1457,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     // Total fixed costs = electricity + rent + salaries
     const fixedCostsTotal = electricityExpenses + rentExpenses + salaryExpenses;
 
-    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal;
+    // Total costs now includes commission as a separate category
+    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses;
     
-    // Net profit calculation (commission is already included in overheadExpenses)
+    // Net profit calculation (commission is now separate)
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
 
     console.log('Total expenses:', totalCosts);
+    console.log('Commission expenses:', commissionExpenses);
     console.log('Net profit:', netProfit);
     console.log('💰 === END METRICS DEBUG ===');
 
@@ -1367,114 +1568,74 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   // Prepare sales chart data with online/offline breakdown based on time filter
   const prepareSalesChartData = () => {
     const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const chartData: any[] = [];
     
-    if (timeFilter === 'daily') {
-      // Show last 10 days
-      for (let i = 9; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-        const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        
-        const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
-        const onlineRevenue = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
-        const offlineRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
-        const total = onlineRevenue + offlineRevenue;
-        
-        // Only include periods with sales data
-        if (total > 0) {
-          chartData.push({
-            period: dayLabel,
-            online: onlineRevenue,
-            offline: offlineRevenue,
-            total: total
-          });
-        }
+    // Helper function to add day data
+    const addDayData = (date: Date) => {
+      const dateStr = date.toISOString().split('T')[0];
+      const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+      
+      const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
+      const onlineRevenue = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+      const offlineRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
+      const total = onlineRevenue + offlineRevenue;
+      
+      chartData.push({
+        period: dayLabel,
+        online: onlineRevenue,
+        offline: offlineRevenue,
+        total: total
+      });
+    };
+    
+    if (timeFilter === 'today') {
+      addDayData(today);
+    } else if (timeFilter === 'yesterday') {
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      addDayData(yesterday);
+    } else if (timeFilter === 'thisWeek') {
+      // Get days from Monday of this week to today
+      const dayOfWeek = today.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() + diff);
+      
+      let current = new Date(startOfWeek);
+      while (current <= today) {
+        addDayData(new Date(current));
+        current.setDate(current.getDate() + 1);
       }
-    } else if (timeFilter === 'weekly') {
-      // Show last 10 weeks
-      for (let i = 9; i >= 0; i--) {
-        const weekEnd = new Date(now);
-        weekEnd.setDate(weekEnd.getDate() - (i * 7));
-        const weekStart = new Date(weekEnd);
-        weekStart.setDate(weekStart.getDate() - 6);
-        
-        const startLabel = weekStart.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        const endLabel = weekEnd.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        const weekLabel = `${startLabel} - ${endLabel}`;
-        
-        const weekSales = filteredSalesData.filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate >= weekStart && saleDate <= weekEnd;
-        });
-        
-        const onlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
-        const offlineRevenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
-        const total = onlineRevenue + offlineRevenue;
-        
-        // Only include periods with sales data
-        if (total > 0) {
-          chartData.push({
-            period: weekLabel,
-            online: onlineRevenue,
-            offline: offlineRevenue,
-            total: total
-          });
-        }
+    } else if (timeFilter === 'thisMonth') {
+      // Get days from 1st of this month to today
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      let current = new Date(startOfMonth);
+      while (current <= today) {
+        addDayData(new Date(current));
+        current.setDate(current.getDate() + 1);
       }
-    } else if (timeFilter === 'monthly') {
-      // Show last 10 months
-      for (let i = 9; i >= 0; i--) {
-        const date = new Date(now);
-        date.setMonth(date.getMonth() - i);
-        const monthLabel = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
-        const monthStr = date.toLocaleString('default', { month: 'short' });
-        const yearStr = date.getFullYear().toString();
-        
-        const monthSales = filteredSalesData.filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate.toLocaleString('default', { month: 'short' }) === monthStr &&
-                 saleDate.getFullYear().toString() === yearStr;
-        });
-        
-        const onlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
-        const offlineRevenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
-        const total = onlineRevenue + offlineRevenue;
-        
-        // Only include periods with sales data
-        if (total > 0) {
-          chartData.push({
-            period: monthLabel,
-            online: onlineRevenue,
-            offline: offlineRevenue,
-            total: total
-          });
-        }
+    } else if (timeFilter === 'lastWeek') {
+      // Get days from last Monday to last Sunday
+      const currentDay = today.getDay();
+      const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6);
+      const startOfLastWeek = new Date(today);
+      startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
+      
+      let current = new Date(startOfLastWeek);
+      for (let i = 0; i < 7; i++) {
+        addDayData(new Date(current));
+        current.setDate(current.getDate() + 1);
       }
-    } else if (timeFilter === 'yearly') {
-      // Show last 5 years
-      for (let i = 4; i >= 0; i--) {
-        const year = now.getFullYear() - i;
-        
-        const yearSales = filteredSalesData.filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate.getFullYear() === year;
-        });
-        
-        const onlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
-        const offlineRevenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
-        const total = onlineRevenue + offlineRevenue;
-        
-        // Only include periods with sales data
-        if (total > 0) {
-          chartData.push({
-            period: year.toString(),
-            online: onlineRevenue,
-            offline: offlineRevenue,
-            total: total
-          });
-        }
+    } else if (timeFilter === 'lastMonth') {
+      // Get all days from last month
+      const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+      
+      let current = new Date(startOfLastMonth);
+      while (current <= endOfLastMonth) {
+        addDayData(new Date(current));
+        current.setDate(current.getDate() + 1);
       }
     } else if (timeFilter === 'custom') {
       // For custom range, group by month
@@ -1515,215 +1676,190 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   // Prepare profit chart data with revenue, expenses, profit based on time filter
   const prepareProfitChartData = () => {
     const now = new Date();
-    const chartData: any[] = [];
+    const dailyData: any = {};
     
-    if (timeFilter === 'daily') {
-      // Show last 5 days
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-        const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        
-        // Get sales for this day (use filtered data to respect store selection)
-        const daySales = (filteredSalesData || []).filter(sale => sale.date === dateStr);
-        const grossRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
-        const commission = daySales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
-        const revenue = grossRevenue - commission;
-        
-        // Get expenses for this day (inventory + overhead + contract workers)
-        const dayInventory = (filteredInventoryData || []).filter(item => item.date === dateStr);
-        const dayOverhead = (filteredOverheadData || []).filter(item => item.date === dateStr);
-        const inventoryExp = dayInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-        const overheadExp = dayOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const contractWorkerExp = daySales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
-        const expenses = inventoryExp + overheadExp + contractWorkerExp;
-        
-        chartData.push({
-          period: dayLabel,
-          revenue: revenue,
-          expenses: expenses,
-          profit: revenue - expenses
-        });
-      }
-    } else if (timeFilter === 'weekly') {
-      // Show last 5 weeks
-      for (let i = 4; i >= 0; i--) {
-        const weekEnd = new Date(now);
-        weekEnd.setDate(weekEnd.getDate() - (i * 7));
-        const weekStart = new Date(weekEnd);
-        weekStart.setDate(weekStart.getDate() - 6);
-        
-        const startLabel = weekStart.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        const endLabel = weekEnd.toLocaleDateString('default', { month: 'short', day: 'numeric' });
-        const weekLabel = `${startLabel} - ${endLabel}`;
-        
-        // Get sales for this week (use filtered data to respect store selection)
-        const weekSales = (filteredSalesData || []).filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate >= weekStart && saleDate <= weekEnd;
-        });
-        const grossRevenue = weekSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
-        const commission = weekSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
-        const revenue = grossRevenue - commission;
-        
-        // Get expenses for this week (use filtered data to respect store selection)
-        const weekInventory = (filteredInventoryData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate >= weekStart && itemDate <= weekEnd;
-        });
-        const weekOverhead = (filteredOverheadData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate >= weekStart && itemDate <= weekEnd;
-        });
-        const inventoryExp = weekInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-        const overheadExp = weekOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const contractWorkerExp = weekSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
-        const expenses = inventoryExp + overheadExp + contractWorkerExp;
-        
-        chartData.push({
-          period: weekLabel,
-          revenue: revenue,
-          expenses: expenses,
-          profit: revenue - expenses
-        });
-      }
-    } else if (timeFilter === 'monthly') {
-      // Show last 5 months
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setMonth(date.getMonth() - i);
-        const monthLabel = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
-        const monthNum = date.getMonth(); // 0-11
-        const yearNum = date.getFullYear();
-        
-        // Get sales for this month (use filtered data to respect store selection)
-        const monthSales = (filteredSalesData || []).filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate.getMonth() === monthNum && saleDate.getFullYear() === yearNum;
-        });
-        const grossRevenue = monthSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
-        const commission = monthSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
-        const revenue = grossRevenue - commission;
-        
-        // Get expenses for this month (use filtered data to respect store selection)
-        const monthInventory = (filteredInventoryData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
-        });
-        const monthOverhead = (filteredOverheadData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
-        });
-        const monthFixedCosts = (filteredFixedCostsData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getMonth() === monthNum && itemDate.getFullYear() === yearNum;
-        });
-        
-        const inventoryExp = monthInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-        const overheadExp = monthOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const fixedCostsExp = monthFixedCosts.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const contractWorkerExp = monthSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
-        
-        // Calculate permanent employee monthly salary cost ONLY for payouts in this specific month
-        let permanentEmployeeExp = 0;
-        let monthPayouts = payoutsData.filter(payout => {
-          const payoutDate = new Date(payout.month + '-01'); // Convert "YYYY-MM" to date
-          return payoutDate.getMonth() === monthNum && payoutDate.getFullYear() === yearNum;
-        });
-        
-        if (effectiveStoreId) {
-          // Use filteredEmployeesData to include employees with null storeIds
-          const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
-          monthPayouts = monthPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
-        }
-        
-        permanentEmployeeExp = monthPayouts.reduce((sum, payout) => {
-          const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
-          if (employee && employee.type === 'fulltime') {
-            return sum + (payout.amount || 0);
-          }
-          return sum;
-        }, 0);
-        
-        const expenses = inventoryExp + overheadExp + fixedCostsExp + contractWorkerExp + permanentEmployeeExp;
-        
-        chartData.push({
-          period: monthLabel,
-          revenue: revenue,
-          expenses: expenses,
-          profit: revenue - expenses
-        });
-      }
-    } else if (timeFilter === 'yearly') {
-      // Show last 5 years
-      for (let i = 4; i >= 0; i--) {
-        const year = now.getFullYear() - i;
-        
-        // Get sales for this year (use filtered data to respect store selection)
-        const yearSales = (filteredSalesData || []).filter(sale => {
-          const saleDate = new Date(sale.date);
-          return saleDate.getFullYear() === year;
-        });
-        const grossRevenue = yearSales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0), 0);
-        const commission = yearSales.reduce((sum, sale) => sum + (sale.onlineSalesCommission || 0), 0);
-        const revenue = grossRevenue - commission;
-        
-        // Get expenses for this year (use filtered data to respect store selection)
-        const yearInventory = (filteredInventoryData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getFullYear() === year;
-        });
-        const yearOverhead = (filteredOverheadData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getFullYear() === year;
-        });
-        const yearFixedCosts = (filteredFixedCostsData || []).filter(item => {
-          const itemDate = new Date(item.date);
-          return itemDate.getFullYear() === year;
-        });
-        
-        const inventoryExp = yearInventory.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-        const overheadExp = yearOverhead.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const fixedCostsExp = yearFixedCosts.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const contractWorkerExp = yearSales.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
-        
-        // Calculate permanent employee annual salary cost (ALL payouts x 12 months)
-        // This treats salaries as a recurring annual expense
-        let permanentEmployeeExp = 0;
-        let allPayouts = payoutsData;
-        
-        if (effectiveStoreId) {
-          // Use filteredEmployeesData to include employees with null storeIds
-          const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
-          allPayouts = allPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
-        }
-        
-        const monthlyPermanentSalary = allPayouts.reduce((sum, payout) => {
-          const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
-          if (employee && employee.type === 'fulltime') {
-            return sum + (payout.amount || 0);
-          }
-          return sum;
-        }, 0);
-        
-        // Multiply by 12 to get annual cost
-        permanentEmployeeExp = monthlyPermanentSalary * 12;
-        
-        const expenses = inventoryExp + overheadExp + fixedCostsExp + contractWorkerExp + permanentEmployeeExp;
-        
-        chartData.push({
-          period: year.toString(),
-          revenue: revenue,
-          expenses: expenses,
-          profit: revenue - expenses
-        });
-      }
-    } else if (timeFilter === 'custom') {
-      // For custom range, use the existing monthlyChartData
-      return monthlyChartData;
-    }
+    console.log('📊 === CHART DATA PREPARATION DEBUG ===');
     
+    // Group by date for daily breakdown
+    filteredSalesData.forEach(sale => {
+      const date = sale.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      // Use GROSS revenue (to match metrics calculation)
+      const grossRevenue = (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0);
+      dailyData[date].revenue += grossRevenue;
+      
+      // Add contract worker salary
+      dailyData[date].expenses += (sale.employeeSalary || 0);
+    });
+    
+    // Calculate commission by date from onlineSalesData and onlinePayoutData (same as metrics)
+    const filteredOnlineSales = onlineSalesData.filter(sale => {
+      const dateMatch = (() => {
+        switch (timeFilter) {
+          case 'today':
+            return sale.date === getTodayIST();
+          case 'yesterday':
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return sale.date === yesterday.toISOString().split('T')[0];
+          case 'thisWeek':
+            const today = new Date();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+            return new Date(sale.date) >= startOfWeek && new Date(sale.date) <= today;
+          case 'lastWeek':
+            const lastWeekEnd = new Date();
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+            const lastWeekStart = new Date(lastWeekEnd);
+            lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+            return new Date(sale.date) >= lastWeekStart && new Date(sale.date) <= lastWeekEnd;
+          case 'thisMonth':
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            return sale.date.startsWith(currentMonth);
+          case 'lastMonth':
+            const lastMonthDate = new Date();
+            lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+            const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+            return sale.date.startsWith(lastMonth);
+          case 'custom':
+            return sale.date >= dateRange.from && sale.date <= dateRange.to;
+          default:
+            return true;
+        }
+      })();
+      const storeMatch = effectiveStoreId ? sale.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    });
+    
+    const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
+      const dateMatch = (() => {
+        switch (timeFilter) {
+          case 'today':
+            return payout.date === getTodayIST();
+          case 'yesterday':
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return payout.date === yesterday.toISOString().split('T')[0];
+          case 'thisWeek':
+            const today = new Date();
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+            return new Date(payout.date) >= startOfWeek && new Date(payout.date) <= today;
+          case 'lastWeek':
+            const lastWeekEnd = new Date();
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+            const lastWeekStart = new Date(lastWeekEnd);
+            lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+            return new Date(payout.date) >= lastWeekStart && new Date(payout.date) <= lastWeekEnd;
+          case 'thisMonth':
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            return payout.date.startsWith(currentMonth);
+          case 'lastMonth':
+            const lastMonthDate = new Date();
+            lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+            const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+            return payout.date.startsWith(lastMonth);
+          case 'custom':
+            return payout.date >= dateRange.from && payout.date <= dateRange.to;
+          default:
+            return true;
+        }
+      })();
+      const storeMatch = effectiveStoreId ? payout.storeId === effectiveStoreId : true;
+      return dateMatch && storeMatch;
+    });
+    
+    // Group commission by date
+    filteredOnlineSales.forEach(sale => {
+      const date = sale.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      // Add online sales to calculate commission
+      const onlineSales = (sale.swiggySales || 0) + (sale.zomatoSales || 0);
+      if (!dailyData[date].onlineSales) dailyData[date].onlineSales = 0;
+      dailyData[date].onlineSales += onlineSales;
+    });
+    
+    filteredOnlinePayouts.forEach(payout => {
+      const date = payout.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      // Add online payouts to calculate commission
+      const onlinePayouts = (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0);
+      if (!dailyData[date].onlinePayouts) dailyData[date].onlinePayouts = 0;
+      dailyData[date].onlinePayouts += onlinePayouts;
+    });
+    
+    // Calculate and add commission expense for each day
+    Object.keys(dailyData).forEach(date => {
+      const onlineSales = dailyData[date].onlineSales || 0;
+      const onlinePayouts = dailyData[date].onlinePayouts || 0;
+      const commission = onlineSales - onlinePayouts;
+      dailyData[date].expenses += commission;
+      console.log(`Date ${date}: onlineSales=${onlineSales}, onlinePayouts=${onlinePayouts}, commission=${commission}`);
+    });
+    
+    // Add inventory expenses by date
+    filteredInventoryData.forEach(item => {
+      const date = item.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      dailyData[date].expenses += (item.totalCost || 0);
+    });
+    
+    // Add overhead expenses by date
+    filteredOverheadData.forEach(item => {
+      const date = item.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      dailyData[date].expenses += (item.amount || 0);
+    });
+    
+    // Add fixed costs by date
+    filteredFixedCostsData.forEach(item => {
+      const date = item.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      dailyData[date].expenses += (item.amount || 0);
+    });
+    
+    // Add employee payouts by date (only for fulltime employees to avoid double-counting)
+    filteredPayoutsData.forEach(payout => {
+      const date = payout.date;
+      if (!dailyData[date]) {
+        dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+      }
+      // Find the employee for this payout
+      const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+      // Only include if employee is fulltime (permanent) - contract workers are in sales.employeeSalary
+      if (employee && employee.type === 'fulltime') {
+        dailyData[date].expenses += (payout.amount || 0);
+      }
+    });
+    
+    // Calculate profit and format for chart
+    const chartData = Object.keys(dailyData)
+      .sort()
+      .map(date => {
+        const data = dailyData[date];
+        const profit = data.revenue - data.expenses;
+        console.log(`Chart data for ${date}: revenue=${data.revenue}, expenses=${data.expenses}, profit=${profit}`);
+        return {
+          period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+          revenue: Math.round(data.revenue),
+          expenses: Math.round(data.expenses),
+          profit: Math.round(profit)
+        };
+      });
+    
+    console.log('📊 === END CHART DATA DEBUG ===');
     return chartData;
   };
 
@@ -1731,29 +1867,54 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     filteredSalesData,
     filteredInventoryData,
     filteredOverheadData,
-    timeFilter
+    filteredFixedCostsData,
+    filteredPayoutsData,
+    filteredEmployeesData,
+    onlineSalesData,
+    onlinePayoutData,
+    timeFilter,
+    effectiveStoreId,
+    dateRange
   ]);
 
   // Prepare expense breakdown by category
   const prepareExpenseBreakdown = () => {
     const categoryExpenses: any = {};
+    const categoryItems: any = {}; // Track items by category
+    const categoryTypes: any = {}; // Track type (inventory/overhead/fixed/salary)
 
     filteredInventoryData.forEach(item => {
       const category = item.category || 'Other';
-      if (!categoryExpenses[category]) {
-        categoryExpenses[category] = 0;
+      let displayName = INVENTORY_CATEGORIES[category] || category;
+      
+      // Combine Meat and Dairy into a single display category for Analytics
+      if (category === 'meat' || category === 'dairy') {
+        displayName = '🍖🧈 Meat & Dairy';
       }
-      categoryExpenses[category] += (item.totalCost || 0);
+      
+      if (!categoryExpenses[displayName]) {
+        categoryExpenses[displayName] = 0;
+        categoryItems[displayName] = [];
+        categoryTypes[displayName] = 'inventory';
+      }
+      categoryExpenses[displayName] += (item.totalCost || 0);
+      categoryItems[displayName].push(item);
     });
 
-    // Add overhead expenses by category
+    // Add overhead expenses by category (EXCLUDING legacy commission entries)
     filteredOverheadData.forEach(item => {
+      // Skip legacy commission entries - they're now calculated from online sales/payout data
+      if (isCommissionEntry(item)) return;
+      
       const category = item.category || 'Other';
       const displayName = OVERHEAD_CATEGORIES[category] || category;
       if (!categoryExpenses[displayName]) {
         categoryExpenses[displayName] = 0;
+        categoryItems[displayName] = [];
+        categoryTypes[displayName] = 'overhead';
       }
       categoryExpenses[displayName] += (item.amount || 0);
+      categoryItems[displayName].push(item);
     });
 
     // Add fixed costs by category
@@ -1762,26 +1923,39 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       const displayName = FIXED_COST_CATEGORIES[category] || category;
       if (!categoryExpenses[displayName]) {
         categoryExpenses[displayName] = 0;
+        categoryItems[displayName] = [];
+        categoryTypes[displayName] = 'fixed';
       }
       categoryExpenses[displayName] += (item.amount || 0);
+      categoryItems[displayName].push(item);
     });
 
     // Add salaries separately (contract + permanent)
     if (metrics.salaryExpenses > 0) {
       categoryExpenses['💰 Salaries'] = metrics.salaryExpenses;
+      categoryItems['💰 Salaries'] = []; // No detailed breakdown for salaries in this view
+      categoryTypes['💰 Salaries'] = 'salary';
     }
 
-    const breakdown = Object.keys(categoryExpenses).map(category => {
-      // Get display name for inventory categories
-      const displayName = INVENTORY_CATEGORIES[category] || category;
-      
+    // Add aggregator commission as a separate category
+    if (metrics.commissionExpenses > 0) {
+      categoryExpenses['🍔 Aggregator Commission'] = metrics.commissionExpenses;
+      categoryItems['🍔 Aggregator Commission'] = []; // Calculated from online sales/payout data
+      categoryTypes['🍔 Aggregator Commission'] = 'commission';
+    }
+
+    // Create breakdown - show all categories without grouping
+    let breakdown = Object.keys(categoryExpenses).map(displayName => {
       return {
         name: displayName,
-        value: categoryExpenses[category],
-        percentage: ((categoryExpenses[category] / metrics.totalExpenses) * 100).toFixed(1)
+        value: categoryExpenses[displayName],
+        percentage: parseFloat(((categoryExpenses[displayName] / metrics.totalExpenses) * 100).toFixed(1)),
+        items: categoryItems[displayName] || [],
+        type: categoryTypes[displayName]
       };
     });
 
+    // Sort by value (highest to lowest) - No grouping, show all categories for complete visibility
     return breakdown.sort((a, b) => b.value - a.value);
   };
 
@@ -2302,17 +2476,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
                   {/* Time Filter */}
                   <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                    {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                    {[
+                      { value: 'today', label: 'Today' },
+                      { value: 'yesterday', label: 'Yesterday' },
+                      { value: 'thisWeek', label: 'This Week' },
+                      { value: 'thisMonth', label: 'This Month' },
+                      { value: 'lastWeek', label: 'Last Week' },
+                      { value: 'lastMonth', label: 'Last Month' },
+                      { value: 'custom', label: 'Custom' }
+                    ].map((filter) => (
                       <button
-                        key={filter}
-                        onClick={() => setTimeFilter(filter as TimeFilter)}
+                        key={filter.value}
+                        onClick={() => setTimeFilter(filter.value as TimeFilter)}
                         className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                          timeFilter === filter
+                          timeFilter === filter.value
                             ? 'bg-gray-900 text-white'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                         }`}
                       >
-                        {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                        {filter.label}
                       </button>
                     ))}
                   </div>
@@ -2473,96 +2655,138 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 )}
               </div>
 
-              {/* Bar Chart */}
+              {/* Daily Profit Trend */}
               <div className="mb-6 sm:mb-8 overflow-x-auto">
                 <h3 className="text-base sm:text-lg text-gray-900 mb-4">
-                  Profit Trend - {timeFilter === 'daily' ? 'Last 5 Days' : timeFilter === 'weekly' ? 'Last 5 Weeks' : timeFilter === 'monthly' ? 'Last 5 Months' : timeFilter === 'yearly' ? 'Last 5 Years' : 'Custom Range'}
+                  Daily Performance - {getPeriodLabel()}
                 </h3>
                 <div className="min-w-[300px]">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={profitChartData} barGap={8} barCategoryGap="20%">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={profitChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 12 }} />
-                      <YAxis stroke="#666" tick={{ fontSize: 12 }} />
+                      <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 11 }} />
+                      <YAxis stroke="#666" tick={{ fontSize: 11 }} />
                       <Tooltip content={<CustomTooltip />} />
                       <Legend wrapperStyle={{ fontSize: '12px' }} />
-                      <Bar dataKey="revenue" fill="#a5b4fc" name="Revenue" radius={[8, 8, 0, 0]} maxBarSize={60} />
-                      <Bar dataKey="expenses" fill="#fca5a5" name="Expenses" radius={[8, 8, 0, 0]} maxBarSize={60} />
-                      <Bar dataKey="profit" fill="#86efac" name="Profit" radius={[8, 8, 0, 0]} maxBarSize={60} />
-                    </BarChart>
+                      <Line type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#8b5cf6', r: 4 }} />
+                      <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} name="Expenses" dot={{ fill: '#ef4444', r: 4 }} />
+                      <Line type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.5} name="Profit" dot={{ fill: '#10b981', r: 4 }} />
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* Revenue Breakdown and Key Metrics */}
+              {/* Profitability by Day and Profit Metrics */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                {/* Daily Profitability Bar Chart */}
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <div className="flex items-center gap-2 mb-3 sm:mb-4">
-                    <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
-                    <h3 className="text-base sm:text-lg text-gray-900">Revenue Breakdown</h3>
+                    <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
+                    <h3 className="text-base sm:text-lg text-gray-900">Daily Profitability</h3>
                   </div>
-                  <div className="space-y-3 sm:space-y-4">
-                    <div className="flex justify-between items-center bg-green-50 p-3 sm:p-4 rounded-lg">
-                      <div>
-                        <div className="text-xs sm:text-sm text-gray-600">Online Sales</div>
-                        <div className="text-lg sm:text-xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
+                  {profitChartData.length > 0 ? (
+                    <>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={profitChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 10 }} />
+                          <YAxis stroke="#666" tick={{ fontSize: 10 }} />
+                          <Tooltip content={<CustomTooltip />} />
+                          <Bar dataKey="profit" fill="#10b981" name="Daily Profit" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="bg-green-50 p-3 rounded-lg">
+                          <div className="text-xs text-gray-600 mb-1">Best Day</div>
+                          <div className="text-sm font-bold text-green-600">
+                            {profitChartData.length > 0 
+                              ? `₹${Math.max(...profitChartData.map(d => d.profit)).toLocaleString()}`
+                              : 'N/A'}
+                          </div>
+                        </div>
+                        <div className="bg-red-50 p-3 rounded-lg">
+                          <div className="text-xs text-gray-600 mb-1">Worst Day</div>
+                          <div className="text-sm font-bold text-red-600">
+                            {profitChartData.length > 0 
+                              ? `₹${Math.min(...profitChartData.map(d => d.profit)).toLocaleString()}`
+                              : 'N/A'}
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-xs sm:text-sm text-green-600">
-                        {((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}%
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center bg-blue-50 p-3 sm:p-4 rounded-lg">
-                      <div>
-                        <div className="text-xs sm:text-sm text-gray-600">Offline Sales</div>
-                        <div className="text-lg sm:text-xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
-                      </div>
-                      <div className="text-xs sm:text-sm text-blue-600">
-                        {((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}%
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  ) : (
+                    <div className="text-center text-gray-500 py-8">No data available</div>
+                  )}
                 </div>
 
+                {/* Profitability Metrics */}
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <div className="flex items-center gap-2 mb-3 sm:mb-4">
-                    <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
-                    <h3 className="text-base sm:text-lg text-gray-900">Key Metrics</h3>
+                    <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
+                    <h3 className="text-base sm:text-lg text-gray-900">Profitability Metrics</h3>
                   </div>
-                  <div className="space-y-3 sm:space-y-4">
+                  <div className="space-y-3">
+                    {/* Profit Margin */}
                     <div className="bg-purple-50 p-3 sm:p-4 rounded-lg">
-                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Cost-to-Revenue Ratio</div>
-                      <div className="text-lg sm:text-xl text-gray-900 mb-1">
-                        {metrics.totalRevenue > 0 
-                          ? `${((metrics.totalExpenses / metrics.totalRevenue) * 100).toFixed(1)}%`
-                          : 'N/A'}
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="text-xs sm:text-sm text-gray-700">Profit Margin</div>
+                        <div className={`text-lg font-bold ${metrics.profitMargin > 30 ? 'text-green-600' : metrics.profitMargin > 15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                          {metrics.profitMargin.toFixed(1)}%
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {metrics.profitMargin > 30 ? '🎯 Excellent' : metrics.profitMargin > 15 ? '✓ Good' : metrics.profitMargin > 0 ? '⚠️ Low' : '❌ Loss'}
+                      </div>
+                    </div>
+
+                    {/* Cost to Revenue Ratio */}
+                    <div className="bg-blue-50 p-3 sm:p-4 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="text-xs sm:text-sm text-gray-700">Cost-to-Revenue</div>
+                        <div className={`text-lg font-bold ${metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7 ? 'text-green-600' : 'text-orange-600'}`}>
+                          {metrics.totalRevenue > 0 
+                            ? `${((metrics.totalExpenses / metrics.totalRevenue) * 100).toFixed(1)}%`
+                            : 'N/A'}
+                        </div>
                       </div>
                       <div className="text-xs text-gray-600">
                         {metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7
-                          ? '✓ Healthy ratio'
-                          : metrics.totalRevenue > 0 
-                          ? '⚠️ High expense ratio'
-                          : 'No sales yet'}
+                          ? '✓ Efficient operations'
+                          : '⚠️ High cost ratio'}
                       </div>
                     </div>
+
+                    {/* Average Daily Profit */}
                     <div className="bg-green-50 p-3 sm:p-4 rounded-lg">
-                      <div className="text-xs sm:text-sm text-gray-600 mb-1">Profit per ₹100 Revenue</div>
-                      <div className="text-lg sm:text-xl text-gray-900 mb-1">
-                        {metrics.totalRevenue > 0 
-                          ? `₹${((metrics.netProfit / metrics.totalRevenue) * 100).toFixed(1)}`
-                          : 'N/A'}
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="text-xs sm:text-sm text-gray-700">Avg Daily Profit</div>
+                        <div className="text-lg font-bold text-green-600">
+                          {profitChartData.length > 0 
+                            ? `₹${Math.round(profitChartData.reduce((sum, d) => sum + d.profit, 0) / profitChartData.length).toLocaleString()}`
+                            : 'N/A'}
+                        </div>
                       </div>
                       <div className="text-xs text-gray-600">
-                        {metrics.totalRevenue > 0 && metrics.profitMargin > 30
-                          ? '🎯 Excellent margins'
-                          : metrics.totalRevenue > 0 && metrics.profitMargin > 15
-                          ? '✓ Good margins'
-                          : metrics.totalRevenue > 0 && metrics.profitMargin > 0
-                          ? '⚠️ Thin margins'
-                          : metrics.totalRevenue > 0
-                          ? '❌ Operating at loss'
-                          : 'No sales yet'}
+                        Per day in selected period
                       </div>
                     </div>
+
+                    {/* Commission Impact */}
+                    {metrics.commissionExpenses > 0 && (
+                      <div className="bg-orange-50 p-3 sm:p-4 rounded-lg">
+                        <div className="flex justify-between items-center mb-2">
+                          <div className="text-xs sm:text-sm text-gray-700">Commission Impact</div>
+                          <div className="text-lg font-bold text-orange-600">
+                            {metrics.totalRevenue > 0 
+                              ? `${((metrics.commissionExpenses / (metrics.totalRevenue + metrics.commissionExpenses)) * 100).toFixed(1)}%`
+                              : 'N/A'}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          ₹{metrics.commissionExpenses.toLocaleString()} paid to aggregators
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2582,17 +2806,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 {/* Time Filter */}
                 <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                  {[
+                    { value: 'today', label: 'Today' },
+                    { value: 'yesterday', label: 'Yesterday' },
+                    { value: 'thisWeek', label: 'This Week' },
+                    { value: 'thisMonth', label: 'This Month' },
+                    { value: 'lastWeek', label: 'Last Week' },
+                    { value: 'lastMonth', label: 'Last Month' },
+                    { value: 'custom', label: 'Custom' }
+                  ].map((filter) => (
                     <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter as TimeFilter)}
+                      key={filter.value}
+                      onClick={() => setTimeFilter(filter.value as TimeFilter)}
                       className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        timeFilter === filter
+                        timeFilter === filter.value
                           ? 'bg-gray-900 text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      {filter.label}
                     </button>
                   ))}
                 </div>
@@ -2624,7 +2856,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               )}
 
               {/* Total Expense Summary */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <div className="bg-gradient-to-br from-red-100 to-red-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalExpenses.toLocaleString()}</div>
@@ -2633,6 +2865,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Inventory Costs</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.inventoryExpenses.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+                </div>
+                <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Overhead Costs</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.overheadExpenses.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+                </div>
+                <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Commission</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.commissionExpenses.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{metrics.totalExpenses > 0 ? ((metrics.commissionExpenses / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
+                </div>
+                <div className="bg-gradient-to-br from-indigo-100 to-indigo-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Fixed Costs</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{(metrics.fixedCostsTotal || 0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{(((metrics.fixedCostsTotal || 0) / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
                 </div>
                 <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Salary Costs</div>
@@ -2644,104 +2891,265 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               {/* Pie Chart */}
               <div className="mb-6 sm:mb-8">
                 <h3 className="text-base sm:text-lg text-gray-900 mb-4">Expense Distribution</h3>
-                <div className="flex flex-col lg:flex-row gap-6 items-center">
-                  <div className="w-full lg:w-1/2 relative">
-                    {/* Add shadow and background */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl blur-xl opacity-50"></div>
-                    <div className="relative bg-white rounded-2xl p-6 shadow-lg">
-                      <ResponsiveContainer width="100%" height={320}>
-                        <PieChart>
-                          <defs>
-                            {/* Add gradient definitions for each color */}
-                            {COLORS.map((color, index) => (
-                              <linearGradient key={`gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={color} stopOpacity={0.9} />
-                                <stop offset="100%" stopColor={color} stopOpacity={0.7} />
-                              </linearGradient>
-                            ))}
-                          </defs>
-                          <Pie
-                            data={expenseBreakdown}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={{
-                              stroke: '#666',
-                              strokeWidth: 1,
-                              strokeDasharray: '3 3'
-                            }}
-                            label={({ percentage }) => `${percentage}%`}
-                            outerRadius={110}
-                            innerRadius={40}
-                            fill="#8884d8"
-                            dataKey="value"
-                            paddingAngle={2}
-                            animationBegin={0}
-                            animationDuration={800}
-                            animationEasing="ease-out"
-                          >
-                            {expenseBreakdown.map((entry, index) => (
-                              <Cell 
-                                key={`cell-${index}`} 
-                                fill={`url(#gradient-${index % COLORS.length})`}
-                                stroke="#fff"
-                                strokeWidth={3}
-                              />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<CustomPieTooltip />} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                  <div className="w-full lg:w-1/2 space-y-3">
-                    {expenseBreakdown.map((item, index) => (
-                      <div 
-                        key={item.name} 
-                        className="group relative border border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-gray-300 transition-all duration-300 cursor-pointer bg-white overflow-hidden"
-                      >
-                        {/* Animated background gradient on hover */}
-                        <div 
-                          className="absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300"
-                          style={{ 
-                            background: `linear-gradient(135deg, ${COLORS[index % COLORS.length]}40, ${COLORS[index % COLORS.length]}10)` 
+                
+                {/* Large Pie Chart - Full Width */}
+                <div className="relative mb-8">
+                  <div className="absolute inset-0 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl blur-xl opacity-50"></div>
+                  <div className="relative bg-white rounded-2xl p-8 shadow-lg">
+                    <ResponsiveContainer width="100%" height={500}>
+                      <PieChart>
+                        <defs>
+                          {COLORS.map((color, index) => (
+                            <linearGradient key={`gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={color} stopOpacity={0.9} />
+                              <stop offset="100%" stopColor={color} stopOpacity={0.7} />
+                            </linearGradient>
+                          ))}
+                        </defs>
+                        <Pie
+                          data={expenseBreakdown}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={{
+                            stroke: '#666',
+                            strokeWidth: 1.5,
+                            strokeDasharray: '3 3'
                           }}
-                        ></div>
-                        
-                        <div className="relative">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-3">
-                              <div 
-                                className="w-5 h-5 rounded-full shadow-md group-hover:scale-110 transition-transform duration-300" 
-                                style={{ 
-                                  background: `linear-gradient(135deg, ${COLORS[index % COLORS.length]}, ${COLORS[(index + 1) % COLORS.length]})` 
-                                }}
-                              />
-                              <span className="text-sm font-medium text-gray-900">{item.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-gray-600 bg-gray-100 px-2 py-1 rounded-lg">
-                                {item.percentage}%
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-xl font-semibold text-gray-900 group-hover:text-gray-700 transition-colors">
-                            ₹{item.value.toLocaleString()}
-                          </div>
-                          {/* Progress bar */}
-                          <div className="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full transition-all duration-700 ease-out"
-                              style={{ 
-                                width: `${item.percentage}%`,
-                                background: `linear-gradient(90deg, ${COLORS[index % COLORS.length]}, ${COLORS[(index + 1) % COLORS.length]})`
-                              }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                          label={({ name, percentage }) => `${name}: ${percentage}%`}
+                          outerRadius={180}
+                          innerRadius={90}
+                          fill="#8884d8"
+                          dataKey="value"
+                          paddingAngle={3}
+                          animationBegin={0}
+                          animationDuration={800}
+                          animationEasing="ease-out"
+                        >
+                          {expenseBreakdown.map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={`url(#gradient-${index % COLORS.length})`}
+                              stroke="#fff"
+                              strokeWidth={4}
+                            />
+                          ))}
+                        </Pie>
+                        <Tooltip content={<CustomPieTooltip />} />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
+
+                {/* Grouped Expense List - Full Width */}
+                <div className="space-y-6">
+                    {/* Inventory Items */}
+                    {expenseBreakdown.filter(item => item.type === 'inventory').length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">📦 Inventory Items</h4>
+                        <div className="space-y-2">
+                          {expenseBreakdown.filter(item => item.type === 'inventory').map((item, index) => {
+                            const colorIndex = expenseBreakdown.indexOf(item);
+                            return (
+                              <div 
+                                key={item.name} 
+                                className="group border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer bg-white"
+                                onClick={() => {
+                                  setSelectedExpenseCategory({
+                                    category: item.name,
+                                    items: item.items || [],
+                                    amount: item.value
+                                  });
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <div 
+                                      className="w-3 h-3 rounded-full" 
+                                      style={{ 
+                                        background: `linear-gradient(135deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` 
+                                      }}
+                                    />
+                                    <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
+                                      {item.percentage}%
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{ 
+                                      width: `${item.percentage}%`,
+                                      background: `linear-gradient(90deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})`
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Overhead Costs */}
+                    {expenseBreakdown.filter(item => item.type === 'overhead').length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">💼 Overhead Costs</h4>
+                        <div className="space-y-2">
+                          {expenseBreakdown.filter(item => item.type === 'overhead').map((item, index) => {
+                            const colorIndex = expenseBreakdown.indexOf(item);
+                            return (
+                              <div 
+                                key={item.name} 
+                                className="group border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer bg-white"
+                                onClick={() => {
+                                  setSelectedExpenseCategory({
+                                    category: item.name,
+                                    items: item.items || [],
+                                    amount: item.value
+                                  });
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <div 
+                                      className="w-3 h-3 rounded-full" 
+                                      style={{ 
+                                        background: `linear-gradient(135deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` 
+                                      }}
+                                    />
+                                    <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
+                                      {item.percentage}%
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{ 
+                                      width: `${item.percentage}%`,
+                                      background: `linear-gradient(90deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})`
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fixed Costs */}
+                    {expenseBreakdown.filter(item => item.type === 'fixed').length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">🏠 Fixed Costs</h4>
+                        <div className="space-y-2">
+                          {expenseBreakdown.filter(item => item.type === 'fixed').map((item, index) => {
+                            const colorIndex = expenseBreakdown.indexOf(item);
+                            return (
+                              <div 
+                                key={item.name} 
+                                className="group border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer bg-white"
+                                onClick={() => {
+                                  setSelectedExpenseCategory({
+                                    category: item.name,
+                                    items: item.items || [],
+                                    amount: item.value
+                                  });
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <div 
+                                      className="w-3 h-3 rounded-full" 
+                                      style={{ 
+                                        background: `linear-gradient(135deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` 
+                                      }}
+                                    />
+                                    <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
+                                      {item.percentage}%
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{ 
+                                      width: `${item.percentage}%`,
+                                      background: `linear-gradient(90deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})`
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Salaries */}
+                    {expenseBreakdown.filter(item => item.type === 'salary').length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">💰 Salaries</h4>
+                        <div className="space-y-2">
+                          {expenseBreakdown.filter(item => item.type === 'salary').map((item, index) => {
+                            const colorIndex = expenseBreakdown.indexOf(item);
+                            return (
+                              <div 
+                                key={item.name} 
+                                className="group border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer bg-white"
+                                onClick={() => {
+                                  setSelectedExpenseCategory({
+                                    category: item.name,
+                                    items: item.items || [],
+                                    amount: item.value
+                                  });
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <div 
+                                      className="w-3 h-3 rounded-full" 
+                                      style={{ 
+                                        background: `linear-gradient(135deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` 
+                                      }}
+                                    />
+                                    <span className="text-sm font-medium text-gray-900">{item.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
+                                      {item.percentage}%
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{ 
+                                      width: `${item.percentage}%`,
+                                      background: `linear-gradient(90deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})`
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
               </div>
 
               {/* Detailed Breakdown */}
@@ -2749,8 +3157,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <h3 className="text-base sm:text-lg text-gray-900 mb-4">Salary Breakdown</h3>
                   
-                  {/* Info Note for Monthly/Yearly/Custom views */}
-                  {(timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') && metrics.permanentEmployeeExpenses > 0 && (
+                  {/* Info Note for Month/Custom views */}
+                  {(timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') && metrics.permanentEmployeeExpenses > 0 && (
                     <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
                       <div className="flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
@@ -2771,9 +3179,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       <div className="text-xs text-gray-600 mb-1">Permanent Employees</div>
                       <div className="text-xl text-gray-900">₹{metrics.permanentEmployeeExpenses.toLocaleString()}</div>
                       <div className="text-xs text-gray-600 mt-1">
-                        {(timeFilter === 'monthly' || timeFilter === 'yearly' || timeFilter === 'custom') 
+                        {(timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') 
                           ? 'Total monthly salary payouts (all periods)' 
-                          : 'Only shown in monthly/yearly views'}
+                          : 'Only shown in monthly views'}
                       </div>
                     </div>
                   </div>
@@ -2899,17 +3307,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 {/* Time Filter */}
                 <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                  {[
+                    { value: 'today', label: 'Today' },
+                    { value: 'yesterday', label: 'Yesterday' },
+                    { value: 'thisWeek', label: 'This Week' },
+                    { value: 'thisMonth', label: 'This Month' },
+                    { value: 'lastWeek', label: 'Last Week' },
+                    { value: 'lastMonth', label: 'Last Month' },
+                    { value: 'custom', label: 'Custom' }
+                  ].map((filter) => (
                     <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter as TimeFilter)}
+                      key={filter.value}
+                      onClick={() => setTimeFilter(filter.value as TimeFilter)}
                       className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        timeFilter === filter
+                        timeFilter === filter.value
                           ? 'bg-gray-900 text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      {filter.label}
                     </button>
                   ))}
                 </div>
@@ -2967,7 +3383,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               {/* Sales Trend Chart */}
               <div className="mb-6 sm:mb-8">
                 <h3 className="text-base sm:text-lg text-gray-900 mb-4">
-                  Sales Trend - {timeFilter === 'daily' ? 'Last 10 Days' : timeFilter === 'weekly' ? 'Last 10 Weeks' : timeFilter === 'monthly' ? 'Last 10 Months' : timeFilter === 'yearly' ? 'Last 5 Years' : 'Custom Range'}
+                  Sales Trend - {getPeriodLabel()}
                 </h3>
                 <div className="overflow-x-auto">
                   <div className="min-w-[300px]">
@@ -5508,6 +5924,16 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             </div>
           </div>
         </div>
+      )}
+
+      {/* Expense Breakdown Modal */}
+      {selectedExpenseCategory && (
+        <ExpenseBreakdownModal
+          category={selectedExpenseCategory.category}
+          items={selectedExpenseCategory.items}
+          totalAmount={selectedExpenseCategory.amount}
+          onClose={() => setSelectedExpenseCategory(null)}
+        />
       )}
     </div>
   );

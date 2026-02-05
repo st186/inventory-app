@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
@@ -2178,51 +2178,84 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-0">
                     {/* Individual Store Requests */}
                     <div className="space-y-4">
-                      <h4 className="text-sm text-gray-700">Requests by Store</h4>
+                      <h4 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                        <Package className="w-5 h-5 text-purple-600" />
+                        Requests by Store
+                      </h4>
                       {dateRequests.map((request) => {
                         const isHighlighted = highlightRequestId === request.id;
+                        const isPending = request.status === 'pending';
+                        const isUrgent = isPending;
+                        
                         return (
                           <div 
                             key={request.id} 
                             id={`request-${request.id}`}
-                            className={`border rounded-lg p-4 transition-all duration-300 ${
-                              isHighlighted 
-                                ? 'border-purple-500 bg-purple-50 shadow-lg ring-2 ring-purple-300' 
-                                : 'border-gray-200'
-                            }`}
+                            className={`
+                              relative overflow-hidden rounded-xl transition-all duration-300 transform hover:scale-[1.01]
+                              ${isHighlighted 
+                                ? 'border-4 border-purple-500 bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 shadow-2xl ring-4 ring-purple-300/50' 
+                                : isPending
+                                ? 'border-4 border-yellow-400 bg-gradient-to-br from-yellow-50 via-orange-50 to-yellow-50 shadow-xl'
+                                : 'border-2 border-gray-200 bg-white shadow-lg'
+                              }
+                            `}
                           >
-                            {/* Request ID Badge */}
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="bg-gray-100 px-3 py-1 rounded-full">
-                                <span className="text-xs text-gray-700">
-                                  <strong>Request ID:</strong> {request.id.slice(0, 8).toUpperCase()}
-                                </span>
-                              </div>
-                              {isHighlighted && (
-                                <div className="bg-purple-600 text-white px-3 py-1 rounded-full text-xs animate-pulse">
-                                  New Notification
+                            {/* Urgency Banner for Pending Requests */}
+                            {isPending && (
+                              <div className="absolute top-0 left-0 right-0 bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 h-2"></div>
+                            )}
+                            
+                            <div className="p-5">
+                              {/* Request ID Badge */}
+                              <div className="flex items-center justify-between mb-4">
+                                <div className={`
+                                  px-4 py-2 rounded-full font-semibold shadow-md
+                                  ${isPending 
+                                    ? 'bg-gradient-to-r from-yellow-400 to-orange-400 text-gray-900' 
+                                    : 'bg-gradient-to-r from-purple-400 to-pink-400 text-white'
+                                  }
+                                `}>
+                                  <span className="text-sm flex items-center gap-2">
+                                    <strong>Request ID:</strong> {request.id.slice(0, 8).toUpperCase()}
+                                  </span>
                                 </div>
-                              )}
-                            </div>
-
-                            <div className="flex flex-col gap-3 mb-4">
-                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                                  <div className={`px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 border-2 ${getStatusColor(request.status)} w-fit`}>
-                                    {getStatusIcon(request.status)}
-                                    <span className="capitalize">{request.status.replace('-', ' ')}</span>
+                                {isHighlighted && (
+                                  <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 rounded-full text-sm font-bold animate-bounce shadow-lg">
+                                    🔔 New Notification
                                   </div>
-                                  
-                                  <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
-                                    <Store className="w-4 h-4 flex-shrink-0" />
-                                    <span className="truncate">{request.storeName || 'Unknown Store'}</span>
+                                )}
+                                {isPending && !isHighlighted && (
+                                  <div className="bg-gradient-to-r from-red-600 to-orange-600 text-white px-4 py-2 rounded-full text-sm font-bold animate-pulse shadow-lg">
+                                    ⚡ ACTION REQUIRED
                                   </div>
-                                </div>
+                                )}
                               </div>
 
-                              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
-                                {/* Production Head Actions */}
-                                {isProductionHead && request.status === 'pending' && (
+                              <div className="flex flex-col gap-4 mb-4">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                                    <div className={`
+                                      px-4 py-3 rounded-xl text-sm font-bold flex items-center gap-2 border-3 shadow-lg
+                                      ${isPending 
+                                        ? 'bg-gradient-to-r from-yellow-400 to-orange-400 text-gray-900 border-orange-500' 
+                                        : getStatusColor(request.status)
+                                      }
+                                    `}>
+                                      {getStatusIcon(request.status)}
+                                      <span className="capitalize text-base">{request.status.replace('-', ' ')}</span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2 text-base font-semibold text-gray-700 bg-white px-4 py-2 rounded-lg shadow-md">
+                                      <Store className="w-5 h-5 flex-shrink-0 text-purple-600" />
+                                      <span className="truncate">{request.storeName || 'Unknown Store'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                                  {/* Production Head Actions */}
+                                  {isProductionHead && request.status === 'pending' && (
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'accepted')}
                                     className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors text-sm font-medium"
@@ -2276,17 +2309,20 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             </div>
 
                             {/* Momos Quantities - DYNAMIC */}
-                            <div className="bg-gray-50 rounded-lg p-3 mb-3">
-                              <h5 className="text-xs sm:text-sm text-gray-600 mb-3">Momos Quantities</h5>
-                              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2 sm:gap-3">
+                            <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-xl p-4 mb-4 border-2 border-indigo-200 shadow-md">
+                              <h5 className="text-base font-bold text-indigo-800 mb-4 flex items-center gap-2">
+                                <Package className="w-5 h-5" />
+                                Momos Quantities
+                              </h5>
+                              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-3">
                                 {finishedProducts.map(({ camelKey, label }) => {
                                   const quantity = (request as any)[camelKey];
                                   if (!quantity || quantity === 0) return null;
                                   
                                   return (
-                                    <div key={camelKey} className="text-center">
-                                      <p className="text-gray-900">{quantity}</p>
-                                      <p className="text-xs text-gray-600">{label.replace(' Momos', '')}</p>
+                                    <div key={camelKey} className="text-center bg-white rounded-lg p-3 shadow-md border-2 border-indigo-200 hover:border-indigo-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-indigo-600">{quantity}</p>
+                                      <p className="text-xs font-semibold text-gray-700 mt-1">{label.replace(' Momos', '').replace(' Momo', '')}</p>
                                     </div>
                                   );
                                 })}
@@ -2295,13 +2331,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Kitchen Utilities */}
                             {request.kitchenUtilities && Object.keys(request.kitchenUtilities).length > 0 && (
-                              <div className="bg-purple-50 rounded-lg p-3 mb-3">
-                                <h5 className="text-xs sm:text-sm text-purple-700 mb-3">Kitchen Utilities</h5>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
+                              <div className="bg-gradient-to-br from-purple-100 via-purple-50 to-pink-100 rounded-xl p-5 mb-4 border-2 border-purple-300 shadow-lg">
+                                <h5 className="text-base font-bold text-purple-900 mb-4 flex items-center gap-2">
+                                  <Utensils className="w-6 h-6 text-purple-700" />
+                                  Kitchen Utilities
+                                </h5>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                                   {Object.entries(request.kitchenUtilities).map(([item, data]) => (
-                                    <div key={item} className="text-sm">
-                                      <p className="text-gray-900">{data.quantity} {data.unit}</p>
-                                      <p className="text-xs text-gray-600">{item}</p>
+                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-purple-200 hover:border-purple-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-purple-700 mb-1">{data.quantity} <span className="text-sm font-semibold text-purple-600">{data.unit}</span></p>
+                                      <p className="text-sm font-semibold text-gray-800">{item}</p>
                                     </div>
                                   ))}
                                 </div>
@@ -2310,11 +2349,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Sauces */}
                             {request.sauces && Object.keys(request.sauces).length > 0 && (
-                              <div className="bg-pink-50 rounded-lg p-3 mb-3">
-                                <h5 className="text-xs sm:text-sm text-pink-700 mb-3">Sauces Requested</h5>
-                                <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                              <div className="bg-gradient-to-br from-pink-100 via-pink-50 to-rose-100 rounded-xl p-5 mb-4 border-2 border-pink-300 shadow-lg">
+                                <h5 className="text-base font-bold text-pink-900 mb-4 flex items-center gap-2">
+                                  <Droplet className="w-6 h-6 text-pink-700" />
+                                  Sauces Requested
+                                </h5>
+                                <div className="flex flex-wrap gap-3">
                                   {Object.keys(request.sauces).map((sauce) => (
-                                    <span key={sauce} className="px-3 py-1 bg-pink-200 text-pink-900 rounded-full text-xs">
+                                    <span key={sauce} className="px-5 py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-base font-bold shadow-lg hover:shadow-xl transform hover:scale-110 transition-all">
                                       {sauce}
                                     </span>
                                   ))}
@@ -2324,13 +2366,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Utilities */}
                             {request.utilities && Object.keys(request.utilities).length > 0 && (
-                              <div className="bg-indigo-50 rounded-lg p-3 mb-3">
-                                <h5 className="text-xs sm:text-sm text-indigo-700 mb-3">Utilities</h5>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                              <div className="bg-gradient-to-br from-indigo-100 via-indigo-50 to-blue-100 rounded-xl p-5 mb-4 border-2 border-indigo-300 shadow-lg">
+                                <h5 className="text-base font-bold text-indigo-900 mb-4 flex items-center gap-2">
+                                  <Box className="w-6 h-6 text-indigo-700" />
+                                  Utilities
+                                </h5>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                   {Object.entries(request.utilities).map(([item, quantity]) => (
-                                    <div key={item} className="text-sm">
-                                      <p className="text-gray-900">{quantity} pcs</p>
-                                      <p className="text-xs text-gray-600">{item}</p>
+                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-indigo-200 hover:border-indigo-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-indigo-700 mb-1">{quantity} <span className="text-sm font-semibold text-indigo-600">pcs</span></p>
+                                      <p className="text-sm font-semibold text-gray-800">{item}</p>
                                     </div>
                                   ))}
                                 </div>
@@ -2338,8 +2383,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             )}
 
                             {request.notes && (
-                              <div className="bg-blue-50 border-l-4 border-blue-400 p-2 rounded mb-3">
-                                <p className="text-xs text-gray-700"><strong>Notes:</strong> {request.notes}</p>
+                              <div className="bg-gradient-to-r from-blue-100 to-cyan-100 border-l-4 border-blue-500 p-4 rounded-lg mb-4 shadow-md">
+                                <p className="text-base text-gray-900 font-semibold"><span className="text-blue-700">📝 Notes:</span> {request.notes}</p>
                               </div>
                             )}
 
@@ -2352,6 +2397,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                 {request.shippedAt && <div>Shipped: {new Date(request.shippedAt).toLocaleString()}</div>}
                                 {request.deliveredAt && <div>Delivered: {new Date(request.deliveredAt).toLocaleString()}</div>}
                               </div>
+                            </div>
                             </div>
                           </div>
                         );

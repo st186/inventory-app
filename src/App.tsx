@@ -31,8 +31,6 @@ import { AdvancedInventoryManagement } from './components/AdvancedInventoryManag
 import { InventoryItemsManagement } from './components/InventoryItemsManagement';
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
-import { FixMissingItemNames } from './components/FixMissingItemNames';
-import { FixFloatingPointPrecision } from './components/FixFloatingPointPrecision';
 import { BackupRestore } from './components/BackupRestore';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
@@ -63,7 +61,7 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar';
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
@@ -133,6 +131,23 @@ export type MonthlyCommission = {
   createdByEmail?: string;
   createdAt: string;
   notes?: string; // Optional notes about the commission
+};
+
+export type OnlineCashRecalibration = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  month: string; // Format: "YYYY-MM"
+  date: string; // Actual date of recalibration
+  systemBalance: number; // Calculated balance from system
+  actualBalance: number; // Actual balance verified by store
+  difference: number; // Difference (actual - system)
+  notes: string;
+  createdBy: string;
+  createdAt: string;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  approvedBy?: string;
+  approvedAt?: string;
 };
 
 export type ProductionData = {
@@ -211,7 +226,7 @@ export type InventoryContextType = {
   fixedCosts: FixedCostItem[];
   salesData: SalesData[];
   categorySalesData: api.SalesDataRecord[]; // NEW: Detailed momo sales by type
-  monthlyCommissions: MonthlyCommission[];
+  onlineCashRecalibrations: OnlineCashRecalibration[];
   productionData: ProductionData[];
   productionHouses: api.ProductionHouse[];
   stockRequests: api.StockRequest[];
@@ -266,7 +281,7 @@ export default function App() {
   const [fixedCosts, setFixedCosts] = useState<FixedCostItem[]>([]);
   const [salesData, setSalesData] = useState<SalesData[]>([]);
   const [categorySalesData, setCategorySalesData] = useState<api.SalesDataRecord[]>([]); // NEW: Detailed momo sales
-  const [monthlyCommissions, setMonthlyCommissions] = useState<MonthlyCommission[]>([]);
+  const [onlineCashRecalibrations, setOnlineCashRecalibrations] = useState<OnlineCashRecalibration[]>([]);
   const [productionData, setProductionData] = useState<ProductionData[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
@@ -349,7 +364,8 @@ export default function App() {
       'productionHouses',
       'stockRequests',
       'productionRequests',
-      'inventoryItems'
+      'inventoryItems',
+      'onlineCashRecalibrations'
     ];
 
     // Load cached data immediately if available
@@ -368,6 +384,7 @@ export default function App() {
         setStockRequests(cachedData.get('stockRequests') as api.StockRequest[] || []);
         setProductionRequests(cachedData.get('productionRequests') as api.ProductionRequest[] || []);
         setInventoryItems(cachedData.get('inventoryItems') as api.DynamicInventoryItem[] || []);
+        setOnlineCashRecalibrations(cachedData.get('onlineCashRecalibrations') as OnlineCashRecalibration[] || []);
         
         // Check if cache is fresh
         const isFresh = cacheKeys.every(key => dataCache.isCacheFresh(key));
@@ -383,7 +400,7 @@ export default function App() {
     setDataError(null);
     try {
       console.log('🔍 Starting loadData - fetching from API...');
-      const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData] = await Promise.all([
+      const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData, onlineCashRecalibrationsData] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
         api.fetchFixedCosts(accessToken),
@@ -393,7 +410,8 @@ export default function App() {
         api.getProductionHouses(accessToken),
         api.getStockRequests(accessToken),
         api.fetchProductionRequests(accessToken),
-        api.fetchInventoryItems() // NEW: Dynamic inventory items metadata
+        api.fetchInventoryItems(), // NEW: Dynamic inventory items metadata
+        api.fetchOnlineCashRecalibrations(accessToken) // NEW: Online cash recalibrations
       ]);
       
       console.log('🔍 Stock Requests API Response:', stockRequestsData);
@@ -481,6 +499,7 @@ export default function App() {
       setStockRequests(stockRequestsData);
       setProductionRequests(productionRequestsData);
       setInventoryItems(inventoryItemsData); // NEW: Set inventory items metadata
+      setOnlineCashRecalibrations(onlineCashRecalibrationsData); // NEW: Set online cash recalibrations
       
       // Cache all data for instant future loads
       const cacheMap = new Map<string, any>();
@@ -494,6 +513,7 @@ export default function App() {
       cacheMap.set('stockRequests', stockRequestsData);
       cacheMap.set('productionRequests', productionRequestsData);
       cacheMap.set('inventoryItems', inventoryItemsData);
+      cacheMap.set('onlineCashRecalibrations', onlineCashRecalibrationsData);
       dataCache.batchSetCache(cacheMap);
       console.log('💾 Data cached for instant future loads');
     } catch (error) {
@@ -1309,6 +1329,7 @@ export default function App() {
     fixedCosts,
     salesData,
     categorySalesData, // NEW: Detailed category sales data
+    onlineCashRecalibrations,
     productionData,
     productionHouses,
     stockRequests,
@@ -1481,7 +1502,7 @@ export default function App() {
                       }`}
                     >
                       <Package className="w-4 h-4" />
-                      <span>Inventory</span>
+                      <span>Expense</span>
                     </button>
                     <button
                       onClick={() => setActiveView('sales')}
@@ -1663,7 +1684,7 @@ export default function App() {
                       }`}
                     >
                       <Package className="w-5 h-5" />
-                      <span>Inventory</span>
+                      <span>Expense</span>
                     </button>
                     <button
                       onClick={() => {
@@ -1972,7 +1993,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-4 h-4" />
-                    <span className="hidden xl:inline">Inventory</span>
+                    <span className="hidden xl:inline">Expense</span>
                   </button>
                   <button
                     onClick={() => setActiveView('sales')}
@@ -2076,7 +2097,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-4 h-4" />
-                    <span className="hidden xl:inline">Inventory</span>
+                    <span className="hidden xl:inline">Expense</span>
                   </button>
                   {canViewProduction && (
                     <button
@@ -2507,16 +2528,6 @@ export default function App() {
     {/* Fix Legacy Inventory - Shows when there are items missing storeId */}
     {user && activeView === 'inventory' && (
       <FixLegacyInventory context={contextValue} />
-    )}
-    
-    {/* Fix Missing Item Names - Shows when there are items with no name */}
-    {user && activeView === 'inventory' && (
-      <FixMissingItemNames context={contextValue} />
-    )}
-    
-    {/* Fix Floating Point Precision - Shows when there are items with long decimals */}
-    {user && activeView === 'inventory' && (
-      <FixFloatingPointPrecision context={contextValue} />
     )}
     </>
   );

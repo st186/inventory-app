@@ -24,6 +24,8 @@ const overheadCategories = [
   { value: 'personal_expense', label: '👤 Personal Expense By an Employee' },
   { value: 'utensils', label: '🍴 Utensils' },
   { value: 'equipments', label: '🔨 Equipments' },
+  { value: 'license', label: '📜 License Cost' },
+  { value: 'water_jar', label: '💧 Water Jar' },
   { value: 'miscellaneous', label: '📝 Miscellaneous Cost' }
 ] as const;
 

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings, TrendingDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
@@ -32,7 +32,7 @@ interface SalesRecord {
   uploadedAt: string;
 }
 
-type TimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'lastYear' | 'custom';
 
 // Default pieces per plate for each momo type
 const DEFAULT_PIECES_PER_PLATE: Record<keyof CategoryData, number> = {
@@ -50,7 +50,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('daily');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [dateRange, setDateRange] = useState({ 
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
@@ -58,8 +58,22 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(new Date().getDay()); // 0-6 for Sun-Sat
   const [showPlateConfig, setShowPlateConfig] = useState(false);
   const [piecesPerPlate, setPiecesPerPlate] = useState<Record<keyof CategoryData, number>>(DEFAULT_PIECES_PER_PLATE);
+  const [collapsedRecords, setCollapsedRecords] = useState<Set<string>>(new Set());
   
   const effectiveStoreId = selectedStoreId || context.user?.storeId || null;
+
+  // Toggle collapse state for a record
+  const toggleRecordCollapse = (recordId: string) => {
+    setCollapsedRecords(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(recordId)) {
+        newSet.delete(recordId);
+      } else {
+        newSet.add(recordId);
+      }
+      return newSet;
+    });
+  };
 
   // Load plate configuration from localStorage on mount
   useEffect(() => {
@@ -273,26 +287,57 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     }
     
     // Try to extract date from filename
-    // Expected format: "Itemwise sales_StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx"
-    let extractedDate = selectedDate; // Default to manually selected date
+    // Supported formats:
+    // 1. "Itemwise sales_StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx"
+    // 2. "StoreName_DD_MM_YYYY.xlsx"
+    // 3. "DD_MM_YYYY.xlsx"
+    // 4. "YYYY-MM-DD.xlsx"
+    let extractedDate = ''; // Start with empty, will fall back to selectedDate if no match
+    let dateSource = '';
     
-    const datePattern = /_(\d{2})_(\d{2})_(\d{4})-\d{2}_\d{2}_\d{4}\./;
-    const match = file.name.match(datePattern);
+    // Pattern 1: DD_MM_YYYY-DD_MM_YYYY (range format)
+    const rangePattern = /_(\d{2})_(\d{2})_(\d{4})-\d{2}_\d{2}_\d{4}\./;
+    let match = file.name.match(rangePattern);
     
     if (match) {
       const [, day, month, year] = match;
-      // Convert DD_MM_YYYY to YYYY-MM-DD format
       extractedDate = `${year}-${month}-${day}`;
-      console.log(`📅 Extracted date from filename: ${file.name} -> ${extractedDate}`);
-      
-      // Update the selected date in the UI to reflect the extracted date
-      setSelectedDate(extractedDate);
+      dateSource = 'range format';
     } else {
-      console.warn('⚠️ Could not extract date from filename, using manually selected date:', selectedDate);
+      // Pattern 2: DD_MM_YYYY (single date)
+      const singlePattern = /_(\d{2})_(\d{2})_(\d{4})\./;
+      match = file.name.match(singlePattern);
+      
+      if (match) {
+        const [, day, month, year] = match;
+        extractedDate = `${year}-${month}-${day}`;
+        dateSource = 'single date format';
+      } else {
+        // Pattern 3: YYYY-MM-DD (ISO format)
+        const isoPattern = /(\d{4})-(\d{2})-(\d{2})/;
+        match = file.name.match(isoPattern);
+        
+        if (match) {
+          extractedDate = match[0]; // Already in YYYY-MM-DD format
+          dateSource = 'ISO date format';
+        }
+      }
     }
     
-    if (!extractedDate) {
-      toast.error('Please select a date or use a filename with date format: StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx');
+    // Use extracted date if found, otherwise fall back to manually selected date
+    const finalDate = extractedDate || selectedDate;
+    
+    if (extractedDate) {
+      console.log(`📅 Extracted date from filename (${dateSource}): ${file.name} -> ${extractedDate}`);
+      setSelectedDate(extractedDate);
+      toast.success(`📅 Using date from filename: ${extractedDate}`, { duration: 2000 });
+    } else {
+      console.log(`📅 Using manually selected date: ${selectedDate}`);
+      toast.info(`📅 Using manually selected date: ${selectedDate}`, { duration: 2000 });
+    }
+    
+    if (!finalDate) {
+      toast.error('Please select a date before uploading');
       return;
     }
     
@@ -316,7 +361,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // Create sales record with the extracted date
       const record: SalesRecord = {
         id: `SALES-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-        date: extractedDate, // Use extracted date instead of selectedDate
+        date: finalDate, // Use extracted date instead of selectedDate
         storeId: effectiveStoreId,
         storeName,
         data: categoryData,
@@ -327,7 +372,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // Save to backend
       await api.saveSalesData(record, context.user?.accessToken || '');
       
-      toast.success(`✅ Sales data uploaded for ${extractedDate}!`);
+      toast.success(`✅ Sales data uploaded for ${finalDate}!`);
       
       // Reload data
       await loadSalesData();
@@ -373,6 +418,167 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       '#06b6d4'  // cyan - Veg Kurkure Momos
     ];
     return colors[index % colors.length];
+  };
+
+  // Helper to get readable filter label
+  const getFilterLabel = (filter: TimeFilter): string => {
+    const labels: Record<TimeFilter, string> = {
+      today: 'Today',
+      yesterday: 'Yesterday',
+      thisWeek: 'This Week',
+      previousWeek: 'Previous Week',
+      thisMonth: 'This Month',
+      previousMonth: 'Previous Month',
+      thisYear: 'This Year',
+      lastYear: 'Last Year',
+      custom: 'Custom'
+    };
+    return labels[filter];
+  };
+
+  // Helper to get date ranges for a time period
+  const getDateRange = (filter: TimeFilter, customRange?: { from: string; to: string }): { start: string; end: string } => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let start: Date;
+    let end: Date;
+    
+    switch (filter) {
+      case 'today':
+        start = new Date(today);
+        end = new Date(today);
+        break;
+      case 'yesterday':
+        start = new Date(today);
+        start.setDate(today.getDate() - 1);
+        end = new Date(start);
+        break;
+      case 'thisWeek':
+        start = new Date(today);
+        start.setDate(today.getDate() - today.getDay()); // Sunday
+        end = new Date(today);
+        break;
+      case 'previousWeek':
+        start = new Date(today);
+        start.setDate(today.getDate() - today.getDay() - 7); // Previous Sunday
+        end = new Date(start);
+        end.setDate(start.getDate() + 6); // Previous Saturday
+        break;
+      case 'thisMonth':
+        start = new Date(today.getFullYear(), today.getMonth(), 1);
+        end = new Date(today);
+        break;
+      case 'previousMonth':
+        start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        end = new Date(today.getFullYear(), today.getMonth(), 0); // Last day of previous month
+        break;
+      case 'thisYear':
+        start = new Date(today.getFullYear(), 0, 1);
+        end = new Date(today);
+        break;
+      case 'lastYear':
+        start = new Date(today.getFullYear() - 1, 0, 1);
+        end = new Date(today.getFullYear() - 1, 11, 31);
+        break;
+      case 'custom':
+        return {
+          start: customRange?.from || today.toISOString().split('T')[0],
+          end: customRange?.to || today.toISOString().split('T')[0]
+        };
+      default:
+        start = new Date(today);
+        end = new Date(today);
+    }
+    
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  };
+
+  // Helper to get comparison period
+  const getComparisonRange = (filter: TimeFilter, customRange?: { from: string; to: string }): { start: string; end: string } => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let start: Date;
+    let end: Date;
+    
+    switch (filter) {
+      case 'today':
+        // Compare with yesterday
+        start = new Date(today);
+        start.setDate(today.getDate() - 1);
+        end = new Date(start);
+        break;
+      case 'yesterday':
+        // Compare with day before yesterday
+        start = new Date(today);
+        start.setDate(today.getDate() - 2);
+        end = new Date(start);
+        break;
+      case 'thisWeek':
+        // Compare with previous week
+        start = new Date(today);
+        start.setDate(today.getDate() - today.getDay() - 7);
+        end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        break;
+      case 'previousWeek':
+        // Compare with 2 weeks ago
+        start = new Date(today);
+        start.setDate(today.getDate() - today.getDay() - 14);
+        end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        break;
+      case 'thisMonth':
+        // Compare with previous month
+        start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        end = new Date(today.getFullYear(), today.getMonth(), 0);
+        break;
+      case 'previousMonth':
+        // Compare with 2 months ago
+        start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+        end = new Date(today.getFullYear(), today.getMonth() - 1, 0);
+        break;
+      case 'thisYear':
+        // Compare with last year
+        start = new Date(today.getFullYear() - 1, 0, 1);
+        end = new Date(today.getFullYear() - 1, 11, 31);
+        break;
+      case 'lastYear':
+        // Compare with 2 years ago
+        start = new Date(today.getFullYear() - 2, 0, 1);
+        end = new Date(today.getFullYear() - 2, 11, 31);
+        break;
+      case 'custom':
+        if (customRange) {
+          const fromDate = new Date(customRange.from);
+          const toDate = new Date(customRange.to);
+          const daysDiff = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          const compStart = new Date(fromDate);
+          compStart.setDate(fromDate.getDate() - daysDiff - 1);
+          const compEnd = new Date(fromDate);
+          compEnd.setDate(fromDate.getDate() - 1);
+          
+          return {
+            start: compStart.toISOString().split('T')[0],
+            end: compEnd.toISOString().split('T')[0]
+          };
+        }
+        return { start: '', end: '' };
+      default:
+        start = new Date(today);
+        start.setDate(today.getDate() - 1);
+        end = new Date(start);
+    }
+    
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
   };
 
   if (loading) {
@@ -532,17 +738,17 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             
             {/* Time Filter */}
             <div className="flex gap-2 flex-wrap">
-              {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+              {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'thisYear', 'lastYear', 'custom'] as TimeFilter[]).map((filter) => (
                 <button
                   key={filter}
-                  onClick={() => setTimeFilter(filter as TimeFilter)}
+                  onClick={() => setTimeFilter(filter)}
                   className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform hover:scale-105 ${
                     timeFilter === filter
                       ? 'bg-gradient-to-r from-teal-500 to-teal-600 text-white shadow-lg'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
-                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                  {getFilterLabel(filter)}
                 </button>
               ))}
             </div>
@@ -566,145 +772,117 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             </div>
           )}
 
-          {/* Chart */}
-          <ResponsiveContainer width="100%" height={500}>
-            <BarChart data={(() => {
-              // Filter records based on time period
-              let filteredRecords = [...salesRecords];
-              
-              if (timeFilter === 'custom') {
-                filteredRecords = filteredRecords.filter(r => 
-                  r.date >= dateRange.from && r.date <= dateRange.to
-                );
-              } else {
-                const today = new Date();
-                const cutoffDate = new Date();
-                
-                if (timeFilter === 'daily') {
-                  cutoffDate.setDate(today.getDate() - 5);
-                } else if (timeFilter === 'weekly') {
-                  cutoffDate.setDate(today.getDate() - 35); // 5 weeks
-                } else if (timeFilter === 'monthly') {
-                  cutoffDate.setMonth(today.getMonth() - 5); // 5 months
-                } else if (timeFilter === 'yearly') {
-                  cutoffDate.setFullYear(today.getFullYear() - 5); // 5 years
-                }
-                
-                filteredRecords = filteredRecords.filter(r => 
-                  new Date(r.date) >= cutoffDate
-                );
-              }
-
-              // Group by time period
-              const grouped = new Map();
-              filteredRecords.forEach(r => {
-                let key = r.date;
-                let displayLabel = r.date;
-                
-                if (timeFilter === 'weekly') {
-                  const date = new Date(r.date);
-                  const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
-                  const weekEnd = new Date(weekStart);
-                  weekEnd.setDate(weekEnd.getDate() + 6);
-                  key = weekStart.toISOString().split('T')[0];
-                  displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-                } else if (timeFilter === 'monthly') {
-                  key = r.date.substring(0, 7); // YYYY-MM
-                  displayLabel = new Date(r.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-                } else if (timeFilter === 'yearly') {
-                  key = r.date.substring(0, 4); // YYYY
-                  displayLabel = key;
-                } else if (timeFilter === 'daily') {
-                  displayLabel = new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                }
-
-                if (!grouped.has(key)) {
-                  grouped.set(key, {
-                    period: displayLabel,
-                    'Chicken Momos': 0,
-                    'Chicken Cheese Momos': 0,
-                    'Veg Momos': 0,
-                    'Paneer Momos': 0,
-                    'Corn Cheese Momos': 0,
-                    'Chicken Kurkure Momos': 0,
-                    'Veg Kurkure Momos': 0
-                  });
-                }
-
-                const periodData = grouped.get(key);
+          {/* Metrics Grid with Comparisons */}
+          {(() => {
+            const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
+            
+            // Get date ranges for current and comparison periods
+            const currentRange = getDateRange(timeFilter, dateRange);
+            const comparisonRange = getComparisonRange(timeFilter, dateRange);
+            
+            // Calculate totals for current period
+            const currentTotals: Record<string, number> = {};
+            categories.forEach(cat => currentTotals[cat] = 0);
+            
+            salesRecords.forEach(r => {
+              if (r.date >= currentRange.start && r.date <= currentRange.end) {
                 Object.entries(r.data).forEach(([category, count]) => {
-                  periodData[category] += count;
+                  if (category in currentTotals) {
+                    currentTotals[category] += count;
+                  }
                 });
-              });
-
-              // Convert to array and get last 5 periods
-              const chartData = Array.from(grouped.values())
-                .sort((a, b) => {
-                  // Sort chronologically
-                  const dateA = filteredRecords.find(r => {
-                    if (timeFilter === 'weekly') {
-                      const date = new Date(r.date);
-                      const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
-                      return a.period.includes(weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-                    } else if (timeFilter === 'monthly') {
-                      return a.period === new Date(r.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-                    } else if (timeFilter === 'yearly') {
-                      return a.period === r.date.substring(0, 4);
-                    } else {
-                      return a.period === new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    }
-                  })?.date || a.period;
+              }
+            });
+            
+            // Calculate totals for comparison period
+            const comparisonTotals: Record<string, number> = {};
+            categories.forEach(cat => comparisonTotals[cat] = 0);
+            
+            salesRecords.forEach(r => {
+              if (r.date >= comparisonRange.start && r.date <= comparisonRange.end) {
+                Object.entries(r.data).forEach(([category, count]) => {
+                  if (category in comparisonTotals) {
+                    comparisonTotals[category] += count;
+                  }
+                });
+              }
+            });
+            
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {categories.map((category, index) => {
+                  const current = currentTotals[category] || 0;
+                  const previous = comparisonTotals[category] || 0;
                   
-                  const dateB = filteredRecords.find(r => {
-                    if (timeFilter === 'weekly') {
-                      const date = new Date(r.date);
-                      const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
-                      return b.period.includes(weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-                    } else if (timeFilter === 'monthly') {
-                      return b.period === new Date(r.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-                    } else if (timeFilter === 'yearly') {
-                      return b.period === r.date.substring(0, 4);
-                    } else {
-                      return b.period === new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    }
-                  })?.date || b.period;
+                  // Calculate percentage change
+                  let percentChange = 0;
+                  if (previous > 0) {
+                    percentChange = ((current - previous) / previous) * 100;
+                  } else if (current > 0) {
+                    percentChange = 100; // If no previous data but we have current, it's 100% increase
+                  }
                   
-                  return new Date(dateA).getTime() - new Date(dateB).getTime();
-                })
-                .slice(-5); // Get last 5 periods
-
-              return chartData;
-            })()}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis 
-                dataKey="period" 
-                tick={{ fontSize: 12 }} 
-                angle={-15}
-                textAnchor="end"
-                height={80}
-              />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)', 
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend 
-                wrapperStyle={{ paddingTop: '20px' }}
-                iconType="rect"
-              />
-              <Bar dataKey="Chicken Momos" fill="#ef4444" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Chicken Cheese Momos" fill="#f97316" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Veg Momos" fill="#22c55e" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Paneer Momos" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Corn Cheese Momos" fill="#eab308" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Chicken Kurkure Momos" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="Veg Kurkure Momos" fill="#06b6d4" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+                  const isIncrease = percentChange > 0;
+                  const isDecrease = percentChange < 0;
+                  const color = getChartColor(index);
+                  
+                  return (
+                    <div 
+                      key={category}
+                      className="bg-gradient-to-br from-white to-gray-50 rounded-xl p-5 border-2 border-gray-200 hover:shadow-lg transition-all duration-300 hover:scale-102"
+                      style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-gray-700">{category}</h3>
+                        <div 
+                          className="w-3 h-3 rounded-full" 
+                          style={{ backgroundColor: color }}
+                        />
+                      </div>
+                      
+                      <div className="mb-3">
+                        <p className="text-4xl font-bold text-gray-900 mb-1">
+                          {current.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-gray-500">pieces sold</p>
+                      </div>
+                      
+                      {previous > 0 && (
+                        <div className="flex items-center gap-2">
+                          <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
+                            isIncrease ? 'bg-green-100' : isDecrease ? 'bg-red-100' : 'bg-gray-100'
+                          }`}>
+                            {isIncrease && <ArrowUp className="w-3 h-3 text-green-600" />}
+                            {isDecrease && <ArrowDown className="w-3 h-3 text-red-600" />}
+                            <span className={`text-xs font-semibold ${
+                              isIncrease ? 'text-green-700' : isDecrease ? 'text-red-700' : 'text-gray-700'
+                            }`}>
+                              {Math.abs(percentChange).toFixed(1)}%
+                            </span>
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            vs previous
+                          </span>
+                        </div>
+                      )}
+                      
+                      {previous === 0 && current > 0 && (
+                        <div className="text-xs text-blue-600 font-medium">
+                          New sales in this period
+                        </div>
+                      )}
+                      
+                      {previous === 0 && current === 0 && (
+                        <div className="text-xs text-gray-400">
+                          No data for both periods
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Summary Stats */}
           <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -729,14 +907,28 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 const today = new Date();
                 const cutoffDate = new Date();
                 
-                if (timeFilter === 'daily') {
-                  cutoffDate.setDate(today.getDate() - 5);
-                } else if (timeFilter === 'weekly') {
-                  cutoffDate.setDate(today.getDate() - 35);
-                } else if (timeFilter === 'monthly') {
-                  cutoffDate.setMonth(today.getMonth() - 5);
-                } else if (timeFilter === 'yearly') {
-                  cutoffDate.setFullYear(today.getFullYear() - 5);
+                if (timeFilter === 'today') {
+                  cutoffDate.setDate(today.getDate());
+                } else if (timeFilter === 'yesterday') {
+                  cutoffDate.setDate(today.getDate() - 1);
+                } else if (timeFilter === 'thisWeek') {
+                  cutoffDate.setDate(today.getDate() - today.getDay());
+                } else if (timeFilter === 'previousWeek') {
+                  cutoffDate.setDate(today.getDate() - today.getDay() - 7);
+                } else if (timeFilter === 'thisMonth') {
+                  cutoffDate.setMonth(today.getMonth());
+                  cutoffDate.setDate(1);
+                } else if (timeFilter === 'previousMonth') {
+                  cutoffDate.setMonth(today.getMonth() - 1);
+                  cutoffDate.setDate(1);
+                } else if (timeFilter === 'thisYear') {
+                  cutoffDate.setFullYear(today.getFullYear());
+                  cutoffDate.setMonth(0);
+                  cutoffDate.setDate(1);
+                } else if (timeFilter === 'lastYear') {
+                  cutoffDate.setFullYear(today.getFullYear() - 1);
+                  cutoffDate.setMonth(0);
+                  cutoffDate.setDate(1);
                 }
                 
                 filteredRecords = filteredRecords.filter(r => 
@@ -889,34 +1081,102 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               </div>
             </div>
 
-            <ResponsiveContainer width="100%" height={500}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis 
-                  dataKey="category" 
-                  tick={{ fontSize: 11 }}
-                  angle={-15}
-                  textAnchor="end"
-                  height={100}
-                />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)', 
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-                  }}
-                  formatter={(value: any) => [`${value} pcs (avg)`, 'Average']}
-                  labelFormatter={(label: string) => label}
-                />
-                <Bar dataKey="average" radius={[8, 8, 0, 0]}>
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+{/* Metrics Grid for Selected Day */}
+            {(() => {
+              // Find best day for each category (across all days) for comparison
+              const bestDays: Record<string, { day: string, avg: number }> = {};
+              
+              categories.forEach(category => {
+                let maxAvg = 0;
+                let bestDay = '';
+                
+                allDaysData.forEach(dayData => {
+                  if (dayData[category] > maxAvg) {
+                    maxAvg = dayData[category];
+                    bestDay = dayData.day;
+                  }
+                });
+                
+                bestDays[category] = { day: bestDay, avg: maxAvg };
+              });
+
+              const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
+              
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {categories.map((category, index) => {
+                    const current = selectedDayFullData?.[category] || 0;
+                    const bestDay = bestDays[category];
+                    
+                    // Calculate percentage compared to best day
+                    let percentDiff = 0;
+                    const isBestDay = selectedDayFullData?.day === bestDay.day;
+                    
+                    if (bestDay.avg > 0 && current > 0) {
+                      percentDiff = ((current - bestDay.avg) / bestDay.avg) * 100;
+                    }
+                    
+                    const color = getChartColor(index);
+                    
+                    return (
+                      <div 
+                        key={category}
+                        className="bg-gradient-to-br from-white to-gray-50 rounded-xl p-5 border-2 border-gray-200 hover:shadow-lg transition-all duration-300 hover:scale-102"
+                        style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <h3 className="text-sm font-semibold text-gray-700">{category}</h3>
+                          <div 
+                            className="w-3 h-3 rounded-full" 
+                            style={{ backgroundColor: color }}
+                          />
+                        </div>
+                        
+                        <div className="mb-3">
+                          <p className="text-4xl font-bold text-gray-900 mb-1">
+                            {Math.round(current).toLocaleString()}
+                          </p>
+                          <p className="text-xs text-gray-500">avg pieces/day</p>
+                        </div>
+                        
+                        {isBestDay ? (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-yellow-100">
+                            <span className="text-xs font-semibold text-yellow-700">
+                              🏆 Best day
+                            </span>
+                          </div>
+                        ) : current > 0 && bestDay.avg > 0 ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
+                                percentDiff >= 0 ? 'bg-green-100' : 'bg-red-100'
+                              }`}>
+                                {percentDiff >= 0 ? <ArrowUp className="w-3 h-3 text-green-600" /> : <ArrowDown className="w-3 h-3 text-red-600" />}
+                                <span className={`text-xs font-semibold ${
+                                  percentDiff >= 0 ? 'text-green-700' : 'text-red-700'
+                                }`}>
+                                  {Math.abs(percentDiff).toFixed(1)}%
+                                </span>
+                              </div>
+                              <span className="text-xs text-gray-500">
+                                vs {bestDay.day.slice(0, 3)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-400">
+                              Best: {Math.round(bestDay.avg)} on {bestDay.day}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">
+                            No sales data
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Day of Week Insights */}
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1009,6 +1269,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           {salesRecords.map((record, idx) => {
             const totalPieces = getTotalPieces(record.data);
             const recordDate = new Date(record.date);
+            const isCollapsed = collapsedRecords.has(record.id);
             
             // Resolve store name - fallback to context.stores if record.storeName is missing or "Unknown Store"
             const displayStoreName = record.storeName && record.storeName !== 'Unknown Store'
@@ -1018,7 +1279,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             return (
               <div key={record.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
                 {/* Header */}
-                <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-4 text-white">
+                <div 
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 p-4 text-white cursor-pointer"
+                  onClick={() => toggleRecordCollapse(record.id)}
+                >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Calendar className="w-5 h-5" />
@@ -1037,58 +1301,78 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                       </div>
                     </div>
                     
-                    <button
-                      onClick={() => handleDelete(record.id)}
-                      className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                      title="Delete record"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(record.id);
+                        }}
+                        className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                        title="Delete record"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                      <button
+                        className="p-2 hover:bg-white/20 rounded-lg transition-all duration-300"
+                        title={isCollapsed ? "Expand" : "Collapse"}
+                      >
+                        <svg 
+                          className={`w-5 h-5 transform transition-transform duration-300 ${isCollapsed ? '' : 'rotate-180'}`}
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
                 
                 {/* Category Grid */}
-                <div className="p-6">
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {Object.entries(record.data).map(([category, count], index) => {
-                      const safeCount = count || 0;
-                      const percentage = totalPieces > 0 ? ((safeCount / totalPieces) * 100).toFixed(1) : '0';
-                      const color = getChartColor(index);
-                      const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
-                      const plates = Math.floor(safeCount / piecesPerPlateValue);
-                      
-                      return (
-                        <div 
-                          key={category} 
-                          className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200 hover:shadow-md transition-all duration-300 hover:scale-105"
-                          style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <Package className="w-5 h-5 text-gray-400" />
-                            <span className="text-xs font-semibold text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
-                              {percentage}%
-                            </span>
+                {!isCollapsed && (
+                  <div className="p-6">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {Object.entries(record.data).map(([category, count], index) => {
+                        const safeCount = count || 0;
+                        const percentage = totalPieces > 0 ? ((safeCount / totalPieces) * 100).toFixed(1) : '0';
+                        const color = getChartColor(index);
+                        const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
+                        const plates = Math.floor(safeCount / piecesPerPlateValue);
+                        
+                        return (
+                          <div 
+                            key={category} 
+                            className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200 hover:shadow-md transition-all duration-300 hover:scale-105"
+                            style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <Package className="w-5 h-5 text-gray-400" />
+                              <span className="text-xs font-semibold text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+                                {percentage}%
+                              </span>
+                            </div>
+                            <h4 className="text-sm text-gray-600 mb-1">{category}</h4>
+                            <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
+                              {safeCount.toLocaleString()}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-xs text-gray-500">pieces</p>
+                              <span className="text-xs text-gray-400">•</span>
+                              <p className="text-xs text-gray-600 font-semibold">{plates} plates</p>
+                            </div>
                           </div>
-                          <h4 className="text-sm text-gray-600 mb-1">{category}</h4>
-                          <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
-                            {safeCount.toLocaleString()}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <p className="text-xs text-gray-500">pieces</p>
-                            <span className="text-xs text-gray-400">•</span>
-                            <p className="text-xs text-gray-600 font-semibold">{plates} plates</p>
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Upload Info */}
+                    <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between text-sm text-gray-500">
+                      <span>Uploaded by {record.uploadedBy}</span>
+                      <span>{new Date(record.uploadedAt).toLocaleString()}</span>
+                    </div>
                   </div>
-                  
-                  {/* Upload Info */}
-                  <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between text-sm text-gray-500">
-                    <span>Uploaded by {record.uploadedBy}</span>
-                    <span>{new Date(record.uploadedAt).toLocaleString()}</span>
-                  </div>
-                </div>
+                )}
               </div>
             );
           })}

@@ -2,7 +2,11 @@ import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
 import { MonthlyCommissionEntry } from './MonthlyCommissionEntry';
-import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2 } from 'lucide-react';
+import { OnlineCashRecalibration } from './OnlineCashRecalibration';
+import { OnlineSalesTab } from './OnlineSalesTab';
+import { ApplyLoanModal } from './ApplyLoanModal';
+import { RepayLoanModal } from './RepayLoanModal';
+import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2, Calendar, CreditCard, ArrowRightLeft } from 'lucide-react';
 import * as api from '../utils/api';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
 
@@ -12,15 +16,33 @@ type Props = {
 };
 
 export function SalesManagement({ context, selectedStoreId }: Props) {
+  const [activeTab, setActiveTab] = useState<'offline' | 'online'>('offline');
   const [selectedDate, setSelectedDate] = useState<string>(
     getTodayIST()
   );
+  
+  // State for online payout data
+  const [onlinePayoutData, setOnlinePayoutData] = useState<api.OnlinePayoutEntry[]>([]);
+  const [isLoadingPayouts, setIsLoadingPayouts] = useState(false);
+  
+  // State for online sales data (to display in summary cards)
+  const [onlineSalesData, setOnlineSalesData] = useState<api.OnlineSalesEntry[]>([]);
+  const [isLoadingOnlineSales, setIsLoadingOnlineSales] = useState(false);
+
+  // Helper function to identify commission entries
+  // Commission entries are stored as overhead items with category 'service_charge' and description containing 'Aggregator Commission'
+  // Legacy entries may have category 'commission'
+  const isCommissionEntry = (item: any) => {
+    return (
+      (item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) ||
+      item.category === 'commission' // Legacy format
+    );
+  };
 
   const [formData, setFormData] = useState({
     offlineSales: '',
     paytmAmount: '',
     cashAmount: '',
-    onlineSales: '',
     employeeSalary: '',
     previousCashInHand: '',
     usedOnlineMoney: '',
@@ -34,24 +56,128 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const [confirmationChecked, setConfirmationChecked] = useState(false);
   const [pendingSubmitEvent, setPendingSubmitEvent] = useState<React.FormEvent | null>(null);
   const [showPaytmBreakdown, setShowPaytmBreakdown] = useState(false);
+  const [showOnlineCashRecalibration, setShowOnlineCashRecalibration] = useState(false);
+  
+  // Monthly Online Cash Recalibration Prompt State
+  const [needsOnlineRecalibration, setNeedsOnlineRecalibration] = useState(false);
+  const [isCheckingRecalibration, setIsCheckingRecalibration] = useState(false);
+  const [dismissedRecalibrationPrompt, setDismissedRecalibrationPrompt] = useState(false);
+  
+  // Cash Conversion Modal State
+  const [showCashConversion, setShowCashConversion] = useState(false);
+  const [conversionAmount, setConversionAmount] = useState('');
+  const [isConverting, setIsConverting] = useState(false);
+  
+  // Load last online cash recalibration for the current month
+  const [lastOnlineRecalibration, setLastOnlineRecalibration] = useState<any>(null);
+  
+  // Loan Management State
+  const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
+  const [isLoadingLoans, setIsLoadingLoans] = useState(false);
+  const [showApplyLoanModal, setShowApplyLoanModal] = useState(false);
+  const [showRepayLoanModal, setShowRepayLoanModal] = useState(false);
+  const [selectedLoanForRepayment, setSelectedLoanForRepayment] = useState<api.OnlineLoan | null>(null);
   
   const isClusterHead = context.user?.role === 'cluster_head';
   const isManager = context.user?.role === 'manager';
   const isStoreIncharge = context.user?.designation === 'store_incharge';
   const isProductionIncharge = context.user?.designation === 'production_incharge';
   const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge; // Operations manager (not store/production incharge)
+  const isShopManager = isStoreIncharge || isProductionIncharge; // Store or production incharge
   const canEditSales = isOperationsManager; // Only operations manager can enter/edit sales
   const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
+  
+  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
+  // This allows cluster heads to view data for any selected store
+  const effectiveStoreId = selectedStoreId || context.user?.storeId;
   
   // Contract worker payout state
   const [contractWorkers, setContractWorkers] = useState<any[]>([]);
   const [contractPayouts, setContractPayouts] = useState<Array<{employeeId: string, amount: string}>>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
+  
+  // Employee payouts data (for all employees - used in online cash calculation)
+  const [employeePayouts, setEmployeePayouts] = useState<any[]>([]);
 
   // Load contract workers
   useEffect(() => {
     loadContractWorkers();
   }, []);
+  
+  // Load employee payouts (for online cash calculation)
+  useEffect(() => {
+    loadEmployeePayouts();
+  }, [context.user]);
+  
+  const loadEmployeePayouts = async () => {
+    if (!context.user?.accessToken) return;
+    
+    try {
+      const payouts = await api.getPayouts();
+      setEmployeePayouts(payouts);
+    } catch (error) {
+      console.error('Error loading employee payouts:', error);
+    }
+  };
+  
+  // Load online payout data
+  useEffect(() => {
+    loadOnlinePayoutData();
+  }, [context.user]);
+  
+  const loadOnlinePayoutData = async () => {
+    if (!context.user?.accessToken) return;
+    
+    setIsLoadingPayouts(true);
+    try {
+      const payouts = await api.getOnlinePayoutData(context.user.accessToken);
+      setOnlinePayoutData(payouts);
+    } catch (error) {
+      console.error('Error loading online payout data:', error);
+    } finally {
+      setIsLoadingPayouts(false);
+    }
+  };
+  
+  // Load online sales data
+  useEffect(() => {
+    loadOnlineSalesData();
+  }, [context.user]);
+  
+  const loadOnlineSalesData = async () => {
+    if (!context.user?.accessToken) return;
+    
+    setIsLoadingOnlineSales(true);
+    try {
+      const sales = await api.getOnlineSalesData(context.user.accessToken);
+      setOnlineSalesData(sales);
+    } catch (error) {
+      console.error('Error loading online sales data:', error);
+    } finally {
+      setIsLoadingOnlineSales(false);
+    }
+  };
+  
+  // Load online loans
+  useEffect(() => {
+    loadOnlineLoans();
+  }, [context.user, effectiveStoreId]);
+  
+  const loadOnlineLoans = async () => {
+    if (!context.user?.accessToken) return;
+    
+    setIsLoadingLoans(true);
+    try {
+      // For "All Stores" view, pass undefined to get all loans
+      const storeIdParam = (!effectiveStoreId || effectiveStoreId === 'all') ? undefined : effectiveStoreId;
+      const loans = await api.getOnlineLoans(context.user.accessToken, storeIdParam);
+      setOnlineLoans(loans);
+    } catch (error) {
+      console.error('Error loading online loans:', error);
+    } finally {
+      setIsLoadingLoans(false);
+    }
+  };
 
   // Handle ESC key to close confirmation dialog
   useEffect(() => {
@@ -66,6 +192,54 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
   }, [showConfirmDialog]);
+
+  // Check if online cash recalibration is needed for the current month
+  useEffect(() => {
+    checkOnlineRecalibrationStatus();
+  }, [context.user, effectiveStoreId]);
+
+  const checkOnlineRecalibrationStatus = async () => {
+    const today = new Date();
+    const currentDay = today.getDate(); // Day of the month (1-31)
+    const currentMonthKey = today.toISOString().slice(0, 7); // "YYYY-MM"
+    
+    // For "All Stores" view, we don't use recalibration (aggregate from beginning)
+    if (!effectiveStoreId || effectiveStoreId === 'all') {
+      setLastOnlineRecalibration(null);
+      setNeedsOnlineRecalibration(false);
+      return;
+    }
+    
+    if (!context.user?.accessToken) return;
+    
+    try {
+      setIsCheckingRecalibration(true);
+      const response = await api.getLastOnlineCashRecalibration(
+        context.user.accessToken,
+        effectiveStoreId
+      );
+      
+      // Extract the recalibration data from the response
+      const lastRecalibration = response?.recalibration || null;
+      
+      // Store the last recalibration for use in balance calculation
+      setLastOnlineRecalibration(lastRecalibration);
+      
+      console.log('📊 Loaded recalibration data:', lastRecalibration);
+      
+      // Only show the prompt on the 1st of the month
+      // AND only if recalibration hasn't been done for the current month yet
+      if (currentDay === 1 && (!lastRecalibration || lastRecalibration.month !== currentMonthKey)) {
+        setNeedsOnlineRecalibration(true);
+      } else {
+        setNeedsOnlineRecalibration(false);
+      }
+    } catch (error) {
+      console.error('Error checking online recalibration status:', error);
+    } finally {
+      setIsCheckingRecalibration(false);
+    }
+  };
 
   const loadContractWorkers = async () => {
     setLoadingEmployees(true);
@@ -142,9 +316,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   // Get sales data for selected date (filtered by selected store, not user's store)
   const salesForDate = useMemo(() => {
-    // Use selectedStoreId prop (from store selector) instead of user's storeId
-    // This allows cluster heads to view data for any selected store
-    const effectiveStoreId = selectedStoreId || context.user?.storeId;
     console.log('🏪 SalesManagement - effectiveStoreId:', effectiveStoreId);
     console.log('🏪 SalesManagement - selectedStoreId prop:', selectedStoreId);
     console.log('🏪 SalesManagement - user storeId:', context.user?.storeId);
@@ -177,7 +348,17 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     return context.salesData.length === 0 || (!salesForDate && context.salesData.every(s => s.date > selectedDate));
   }, [context.salesData, selectedDate, salesForDate]);
   
-  // Check if this is the 1st of the month
+  // Check if this is the last day (31st, 30th, 29th, or 28th) of the month
+  const isLastDayOfMonth = useMemo(() => {
+    const date = new Date(selectedDate);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    // Get the last day of the month
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return date.getDate() === lastDay;
+  }, [selectedDate]);
+  
+  // Check if this is the first day of the month
   const isFirstOfMonth = useMemo(() => {
     const date = new Date(selectedDate);
     return date.getDate() === 1;
@@ -200,26 +381,42 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   // Calculate total expenses for the day
   const totalExpenses = useMemo(() => {
     const inventoryCost = context.inventory
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => sum + item.totalCost, 0);
     
-    // Include ALL overhead costs (both cash and online/paytm)
+    // Include ALL overhead costs (both cash and online/paytm) for the current store
     const allOverheadCosts = context.overheads
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => sum + item.amount, 0);
     
-    // Include ALL fixed costs (both cash and online/paytm)
+    // Include ALL fixed costs (both cash and online/paytm) for the current store
     const allFixedCosts = context.fixedCosts
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => sum + item.amount, 0);
     
     return inventoryCost + allOverheadCosts + allFixedCosts;
-  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate]);
+  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId]);
 
   // Calculate fixed costs paid via cash (to deduct from Expected Cash in Hand)
   const fixedCostsCash = useMemo(() => {
     return context.fixedCosts
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => {
         if (item.paymentMethod === 'cash') {
           return sum + item.amount;
@@ -228,12 +425,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-  }, [context.fixedCosts, selectedDate]);
+  }, [context.fixedCosts, selectedDate, effectiveStoreId]);
 
   // Calculate fixed costs paid via online/Paytm (to deduct from Online Cash in Hand)
   const fixedCostsOnline = useMemo(() => {
     return context.fixedCosts
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => {
         if (item.paymentMethod === 'online') {
           return sum + item.amount;
@@ -242,12 +443,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-  }, [context.fixedCosts, selectedDate]);
+  }, [context.fixedCosts, selectedDate, effectiveStoreId]);
 
   // Calculate overhead costs paid via cash (to deduct from Expected Cash in Hand)
   const overheadCostsCash = useMemo(() => {
     return context.overheads
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => {
         if (item.paymentMethod === 'cash' || !item.paymentMethod) {
           // Default to cash if no payment method specified (backward compatibility)
@@ -257,12 +462,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-  }, [context.overheads, selectedDate]);
+  }, [context.overheads, selectedDate, effectiveStoreId]);
 
   // Calculate overhead costs paid via online/Paytm (to deduct from Online Cash in Hand)
   const overheadCostsOnline = useMemo(() => {
     return context.overheads
-      .filter(item => item.date === selectedDate)
+      .filter(item => {
+        const dateMatch = item.date === selectedDate;
+        const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+        return dateMatch && storeMatch;
+      })
       .reduce((sum, item) => {
         if (item.paymentMethod === 'online') {
           return sum + item.amount;
@@ -271,22 +480,23 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         }
         return sum;
       }, 0);
-  }, [context.overheads, selectedDate]);
+  }, [context.overheads, selectedDate, effectiveStoreId]);
 
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, salary: number, paytmAmount: number) => {
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number) => {
+    // Employee payouts are now deducted from Online Cash in Hand (Paytm), not from Expected Cash
     // Fixed costs and overhead costs are already included in expenses, so don't subtract them separately
-    return prevCash + paytmAmount + cashReceived - expenses - salary;
+    return prevCash + paytmAmount + cashReceived - expenses;
   };
 
   // Calculate expected cash for current form data
   const expectedCashInHand = useMemo(() => {
     const prevCash = parseFloat(formData.previousCashInHand) || 0;
     const cashReceived = parseFloat(formData.cashAmount) || 0;
-    const salary = totalContractPayout; // Use total from contract workers
     const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, salary, paytmAmount);
-  }, [formData.previousCashInHand, formData.cashAmount, totalContractPayout, totalExpenses, formData.usedOnlineMoney]);
+    // Note: totalContractPayout is now excluded from expected cash calculation
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount);
+  }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -297,72 +507,277 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   const needsApproval = Math.abs(cashDiscrepancy) > 500; // Changed from 200 to 500
 
-  // Calculate cumulative Paytm balance from all days up to selected date
+  // Calculate cumulative Paytm/Online balance from all days up to selected date
   const calculatePaytmBalance = useMemo(() => {
-    // Get all sales data up to and including selected date
-    const allPaytmReceived = context.salesData
-      .filter(s => s.date <= selectedDate)
-      .reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
+    // Check if there's a recalibration for the current month
+    const selectedMonth = selectedDate.slice(0, 7); // "YYYY-MM"
+    const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
     
-    // Subtract all used online money up to and including selected date
-    // This already includes inventory, overhead, and fixed costs paid online
-    const allUsedOnlineMoney = context.salesData
-      .filter(s => s.date <= selectedDate)
-      .reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0);
+    // Filter data by store
+    const storeFilteredSales = effectiveStoreId 
+      ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+      : context.salesData;
+    const storeFilteredInventory = effectiveStoreId 
+      ? context.inventory.filter(i => i.storeId === effectiveStoreId)
+      : context.inventory;
+    const storeFilteredOverhead = effectiveStoreId 
+      ? context.overheads.filter(o => o.storeId === effectiveStoreId)
+      : context.overheads;
+    const storeFilteredFixed = effectiveStoreId 
+      ? context.fixedCosts.filter(f => f.storeId === effectiveStoreId)
+      : context.fixedCosts;
     
-    return allPaytmReceived - allUsedOnlineMoney;
-  }, [context.salesData, selectedDate]);
+    // If there's a recalibration for this month, use it as the starting balance
+    // and only calculate transactions AFTER the recalibration date
+    const startDate = hasRecalibrationThisMonth ? lastOnlineRecalibration.date : '2000-01-01';
+    const startingBalance = hasRecalibrationThisMonth ? lastOnlineRecalibration.actualBalance : 0;
+    
+    console.log('📊 ONLINE CASH BALANCE CALCULATION:', {
+      effectiveStoreId,
+      selectedDate,
+      selectedMonth,
+      hasRecalibration: hasRecalibrationThisMonth,
+      recalibrationDate: hasRecalibrationThisMonth ? lastOnlineRecalibration.date : 'none',
+      startingBalance,
+      startDate,
+      totalSalesRecords: context.salesData.length,
+      filteredSalesRecords: storeFilteredSales.length,
+      totalInventoryRecords: context.inventory.length,
+      filteredInventoryRecords: storeFilteredInventory.length
+    });
+    
+    // Get all historical Paytm received FROM recalibration date onwards and BEFORE today (not including today)
+    const paytmTransactions = storeFilteredSales.filter(s => s.date >= startDate && s.date < selectedDate);
+    const historicalPaytmReceived = paytmTransactions.reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
+    // Add today's form value
+    const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
+    const allPaytmReceived = historicalPaytmReceived + todaysPaytm;
+    
+    console.log('💰 Paytm transactions included:', {
+      count: paytmTransactions.length,
+      historicalTransactions: paytmTransactions.map(s => ({ date: s.date, amount: s.paytmAmount })),
+      historicalTotal: historicalPaytmReceived,
+      todaysPaytm,
+      totalIncludingToday: allPaytmReceived
+    });
+    
+    // Get all Online Payouts (Swiggy + Zomato) FROM recalibration date onwards and BEFORE today (not including today)
+    // This is what actually gets deposited into Online Cash in Hand (Paytm)
+    const storeFilteredPayouts = effectiveStoreId 
+      ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
+      : onlinePayoutData;
+    
+    const historicalOnlinePayoutTransactions = storeFilteredPayouts.filter(p => p.date >= startDate && p.date < selectedDate);
+    const historicalOnlinePayouts = historicalOnlinePayoutTransactions.reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
+    // Add today's form value
+    const todaysOnlinePayouts = parseFloat(formData.onlineSales) || 0;
+    const allOnlinePayouts = historicalOnlinePayouts + todaysOnlinePayouts;
+    
+    console.log('💰 Online payout transactions included:', {
+      count: historicalOnlinePayoutTransactions.length,
+      historicalTransactions: historicalOnlinePayoutTransactions.map(p => ({ 
+        date: p.date, 
+        swiggy: p.swiggyPayout, 
+        zomato: p.zomatoPayout 
+      })),
+      historicalTotal: historicalOnlinePayouts,
+      todaysOnlinePayouts,
+      totalIncludingToday: allOnlinePayouts
+    });
+    
+    // Recalculate all used online money from actual data FROM recalibration date onwards and BEFORE today (not including today)
+    const allInventoryOnline = storeFilteredInventory
+      .filter(i => i.date >= startDate && i.date < selectedDate)
+      .reduce((sum, i) => {
+        if (i.paymentMethod === 'online') return sum + i.totalCost;
+        if (i.paymentMethod === 'both' && i.onlineAmount) return sum + i.onlineAmount;
+        return sum;
+      }, 0);
+    
+    const allOverheadOnline = storeFilteredOverhead
+      .filter(o => o.date >= startDate && o.date < selectedDate && !isCommissionEntry(o))
+      .reduce((sum, o) => {
+        if (o.paymentMethod === 'online') return sum + o.amount;
+        if (o.paymentMethod === 'both' && o.onlineAmount) return sum + o.onlineAmount;
+        return sum;
+      }, 0);
+    
+    const allFixedOnline = storeFilteredFixed
+      .filter(f => f.date >= startDate && f.date < selectedDate)
+      .reduce((sum, f) => {
+        if (f.paymentMethod === 'online') return sum + f.amount;
+        if (f.paymentMethod === 'both' && f.onlineAmount) return sum + f.onlineAmount;
+        return sum;
+      }, 0);
+    
+    // Calculate commission separately (FROM recalibration date onwards and BEFORE today, not including today)
+    const allCommission = storeFilteredOverhead
+      .filter(o => isCommissionEntry(o) && o.date >= startDate && o.date < selectedDate)
+      .reduce((sum, o) => {
+        const paymentMethod = o.paymentMethod || 'online';
+        if (paymentMethod === 'online') return sum + (o.amount || 0);
+        if (paymentMethod === 'both') return sum + (o.onlineAmount || 0);
+        return sum;
+      }, 0);
+    
+    const historicalUsedOnlineMoney = allInventoryOnline + allOverheadOnline + allFixedOnline;
+    // Add today's form value
+    const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
+    const allUsedOnlineMoney = historicalUsedOnlineMoney + todaysUsedOnlineMoney;
+    
+    // Calculate loans FROM recalibration date onwards and BEFORE today (not including today)
+    const storeFilteredLoans = effectiveStoreId 
+      ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
+      : onlineLoans;
+    
+    // Loans received (adds to balance) - FROM recalibration date onwards and BEFORE today (not including today)
+    const loansReceived = storeFilteredLoans
+      .filter(l => l.loanDate >= startDate && l.loanDate < selectedDate)
+      .reduce((sum, l) => sum + l.loanAmount, 0);
+    
+    // Loan repayments (reduces balance) - FROM recalibration date onwards and BEFORE today (not including today)
+    // For loans that were taken AND fully/partially repaid in the period
+    const loanRepayments = storeFilteredLoans
+      .filter(l => {
+        // Only include repayments made in the date range
+        // If loan was taken before startDate, include all its repayments in range
+        // If loan was taken in range, include repayments after loan date
+        const loanStarted = l.loanDate < startDate ? startDate : l.loanDate;
+        return l.repaidAmount > 0 && l.loanDate < selectedDate;
+      })
+      .reduce((sum, l) => {
+        // If the loan was taken in this period, we need to calculate repayments carefully
+        // For now, we include the full repaid amount if the loan was started before or in this period
+        if (l.loanDate >= startDate && l.loanDate < selectedDate) {
+          // Loan started in this period - include all repayments
+          return sum + l.repaidAmount;
+        } else if (l.loanDate < startDate) {
+          // Loan started before this period - include full repaid amount
+          // (This is a simplification - ideally we'd track each repayment date)
+          return sum + l.repaidAmount;
+        }
+        return sum;
+      }, 0);
+    
+    // Calculate balance: Starting Balance + Paytm Received + Online Payouts + Loans Received - Used - Commission - Loan Repayments - Employee Payouts
+    
+    // Get all employee payouts FROM recalibration date onwards and BEFORE today (not including today)
+    const storeFilteredEmployeePayouts = effectiveStoreId 
+      ? employeePayouts.filter(p => !p.storeId || p.storeId === effectiveStoreId) // Include payouts without storeId for backward compatibility
+      : employeePayouts;
+    
+    const historicalEmployeePayouts = storeFilteredEmployeePayouts
+      .filter(p => p.date >= startDate && p.date < selectedDate)
+      .reduce((sum, p) => sum + (p.amount || 0), 0);
+    
+    // Add today's employee payouts (contract workers entered in form)
+    const todaysEmployeePayouts = totalContractPayout;
+    const allEmployeePayouts = historicalEmployeePayouts + todaysEmployeePayouts;
+    
+    const finalBalance = startingBalance + allPaytmReceived + allOnlinePayouts + loansReceived - allUsedOnlineMoney - allCommission - loanRepayments - allEmployeePayouts;
+    
+    console.log('📊 Balance breakdown:', {
+      startingBalance,
+      allPaytmReceived,
+      allOnlinePayouts,
+      loansReceived,
+      allUsedOnlineMoney,
+      allCommission,
+      loanRepayments,
+      allEmployeePayouts,
+      finalBalance
+    });
+    
+    return finalBalance;
+  }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, onlinePayoutData, onlineLoans, employeePayouts, totalContractPayout, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.onlineSales, formData.usedOnlineMoney]);
 
-  // Calculate daily breakdown for Paytm
+  // Calculate daily breakdown for Paytm/Online Cash
   const paytmDailyBreakdown = useMemo(() => {
-    // Get all unique dates from sales data, fixed costs, overheads, and inventory up to selected date
+    // Check if there's a recalibration for the current month
+    const selectedMonth = selectedDate.slice(0, 7);
+    const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
+    const recalibrationDate = hasRecalibrationThisMonth ? lastOnlineRecalibration.date : '2000-01-01';
+    
+    // Filter by store
+    const storeFilteredSales = effectiveStoreId 
+      ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+      : context.salesData;
+    const storeFilteredFixed = effectiveStoreId 
+      ? context.fixedCosts.filter(i => i.storeId === effectiveStoreId)
+      : context.fixedCosts;
+    const storeFilteredOverhead = effectiveStoreId 
+      ? context.overheads.filter(i => i.storeId === effectiveStoreId)
+      : context.overheads;
+    const storeFilteredInventory = effectiveStoreId 
+      ? context.inventory.filter(i => i.storeId === effectiveStoreId)
+      : context.inventory;
+    
+    // Get all unique dates FROM recalibration date onwards, up to selected date
     const allDates = new Set<string>();
     
-    context.salesData
-      .filter(s => s.date <= selectedDate)
+    storeFilteredSales
+      .filter(s => s.date >= recalibrationDate && s.date <= selectedDate)
       .forEach(s => allDates.add(s.date));
     
-    context.fixedCosts
-      .filter(item => item.date <= selectedDate)
+    storeFilteredFixed
+      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
-    context.overheads
-      .filter(item => item.date <= selectedDate)
+    storeFilteredOverhead
+      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
-    context.inventory
-      .filter(item => item.date <= selectedDate)
+    storeFilteredInventory
+      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
+      .forEach(item => allDates.add(item.date));
+    
+    // Add commission dates (commission entries identified by description pattern)
+    storeFilteredOverhead
+      .filter(item => isCommissionEntry(item) && item.date >= recalibrationDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
     // Sort dates chronologically
     const sortedDates = Array.from(allDates).sort();
     
     // Calculate running balance for each day
-    let runningBalance = 0;
+    // Start from recalibration balance if available, otherwise from 0
+    let runningBalance = hasRecalibrationThisMonth ? lastOnlineRecalibration.actualBalance : 0;
+    
+    console.log('📊 Daily Breakdown Calculation:', {
+      hasRecalibration: hasRecalibrationThisMonth,
+      recalibrationDate,
+      startingBalance: runningBalance,
+      numberOfDays: sortedDates.length
+    });
     
     return sortedDates.map(date => {
-      const salesForDay = context.salesData.find(s => s.date === date);
+      const salesForDay = storeFilteredSales.find(s => s.date === date);
       const paytmReceived = salesForDay?.paytmAmount ?? 0;
-      const usedOnlineMoney = salesForDay?.usedOnlineMoney ?? 0;
       
-      const fixedCostsForDay = context.fixedCosts
+      // Calculate all costs paid via online/Paytm for this day
+      const fixedCostsForDay = storeFilteredFixed
         .filter(item => item.date === date)
         .reduce((sum, item) => {
-          if (item.paymentMethod === 'online') return sum + item.amount;
-          if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+          // Handle legacy entries where paymentMethod might be undefined
+          const paymentMethod = item.paymentMethod;
+          if (paymentMethod === 'online') return sum + item.amount;
+          if (paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
           return sum;
         }, 0);
       
-      const overheadCostsForDay = context.overheads
-        .filter(item => item.date === date)
+      const overheadCostsForDay = storeFilteredOverhead
+        .filter(item => item.date === date && !isCommissionEntry(item)) // Exclude commission from regular overheads
         .reduce((sum, item) => {
-          if (item.paymentMethod === 'online') return sum + item.amount;
-          if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
+          // Handle legacy entries where paymentMethod might be undefined
+          const paymentMethod = item.paymentMethod || 
+            (item.description?.includes('Commission') ? 'online' : undefined);
+          if (paymentMethod === 'online') return sum + item.amount;
+          if (paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
           return sum;
         }, 0);
       
-      // Calculate inventory costs for display
-      const inventoryForDay = context.inventory
+      // Calculate inventory costs paid via online/Paytm
+      const inventoryForDay = storeFilteredInventory
         .filter(item => item.date === date)
         .reduce((sum, item) => {
           if (item.paymentMethod === 'online') return sum + item.totalCost;
@@ -370,14 +785,58 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           return sum;
         }, 0);
       
-      // Net change uses ONLY the "Used" field from sales data (not double counting)
-      const netChange = paytmReceived - usedOnlineMoney;
+      // Check if there's a commission entry for this date (from overheads)
+      // Sum all commissions for this date (in case there are multiple entries)
+      // Commission is PAID via Paytm to aggregators (Swiggy/Zomato)
+      // If payment method is 'both', only include the online portion
+      const commission = storeFilteredOverhead
+        .filter(item => isCommissionEntry(item) && item.date === date)
+        .reduce((sum, item) => {
+          // Handle legacy entries where paymentMethod might be undefined (assume 'online' for commission)
+          const paymentMethod = item.paymentMethod || 'online';
+          // For 'online' payment method, include full amount
+          if (paymentMethod === 'online') return sum + (item.amount || 0);
+          // For 'both' payment method, only include the online portion
+          if (paymentMethod === 'both') return sum + (item.onlineAmount || 0);
+          // For 'cash' payment method, don't include in online money
+          return sum;
+        }, 0);
+      
+      // TOTAL used online money = inventory + overheads + fixed costs (EXCLUDING commission)
+      // Commission is shown separately in its own column, so don't include it here
+      const usedOnlineMoney = inventoryForDay + overheadCostsForDay + fixedCostsForDay;
+      
+      // Get online payouts for the day (what Swiggy/Zomato actually pay us)
+      const storeFilteredPayouts = effectiveStoreId
+        ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
+        : onlinePayoutData;
+      
+      const payoutForDay = storeFilteredPayouts.find(p => p.date === date);
+      const onlinePayouts = payoutForDay 
+        ? (payoutForDay.swiggyPayout ?? 0) + (payoutForDay.zomatoPayout ?? 0)
+        : 0;
+      
+      // Get employee payouts for the day (paid from Online Cash in Hand)
+      const storeFilteredEmployeePayouts = effectiveStoreId
+        ? employeePayouts.filter(p => !p.storeId || p.storeId === effectiveStoreId) // Include payouts without storeId for backward compatibility
+        : employeePayouts;
+      
+      const employeePayoutsForDay = storeFilteredEmployeePayouts
+        .filter(p => p.date === date)
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
+      
+      // Net change = Paytm Received + Online Payouts - Used - Commission - Employee Payouts
+      // Commission and Employee Payouts are deducted separately since they're shown in their own columns
+      const netChange = paytmReceived + onlinePayouts - usedOnlineMoney - commission - employeePayoutsForDay;
       runningBalance += netChange;
       
       return {
         date,
         paytmReceived,
+        onlinePayouts, // Changed from onlineSales to onlinePayouts
         usedOnlineMoney,
+        commission,
+        employeePayouts: employeePayoutsForDay, // Add employee payouts to breakdown
         inventoryCosts: inventoryForDay,
         fixedCosts: fixedCostsForDay,
         overheadCosts: overheadCostsForDay,
@@ -385,7 +844,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         runningBalance
       };
     });
-  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, selectedDate]);
+  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, onlinePayoutData, employeePayouts, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
 
   // Calculate total inventory purchases paid via online for the selected date
   const inventoryOnlineTotal = useMemo(() => {
@@ -405,17 +864,81 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   // Calculate total overhead costs paid via online for the selected date
   const overheadOnlineTotal = useMemo(() => {
-    const total = context.overheads
-      .filter(item => item.date === selectedDate)
-      .reduce((sum, item) => {
-        if (item.paymentMethod === 'online') {
-          return sum + item.amount;
-        } else if (item.paymentMethod === 'both' && item.onlineAmount) {
-          return sum + item.onlineAmount;
-        }
-        return sum;
-      }, 0);
-    console.log(`💰 Overhead Online Total for ${selectedDate}:`, total, 'items:', context.overheads.filter(item => item.date === selectedDate).map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})));
+    // Get all overheads for the selected date
+    const dailyOverheads = context.overheads.filter(item => item.date === selectedDate);
+    
+    // Also check for monthly commission entries (they're stored on last day of month but apply to whole month)
+    const selectedMonth = selectedDate.substring(0, 7); // e.g., "2026-01"
+    
+    // Debug logging
+    const serviceCharges = context.overheads.filter(item => 
+      item.category === 'service_charge' && item.date?.startsWith(selectedMonth)
+    );
+    console.log(`🔍 [OH] Month: ${selectedMonth}, Service charges:`, serviceCharges.length, serviceCharges.map(s => ({desc: s.description, amt: s.amount, payment: s.paymentMethod})));
+    
+    // Find ALL commission entries for this month (there might be duplicates from migration)
+    const monthlyCommissions = context.overheads.filter(item =>
+      ((item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) ||
+       item.category === 'commission') && // Legacy format
+      item.date?.startsWith(selectedMonth)
+    );
+    
+    console.log(`🔍 [OH] Commission entries found:`, monthlyCommissions.length, monthlyCommissions.map(c => ({category: c.category, desc: c.description, amt: c.amount, payment: c.paymentMethod})));
+    
+    // Calculate total from daily overheads (EXCLUDING commission entries - they're handled separately)
+    let total = dailyOverheads.reduce((sum, item) => {
+      // SKIP commission entries - they should be handled separately as monthly prorated amounts
+      const isCommission = item.category === 'commission' || 
+        (item.category === 'service_charge' && item.description?.includes('Aggregator Commission'));
+      
+      if (isCommission) {
+        console.log(`⏭️ [OH] Skipping commission in daily loop:`, {category: item.category, desc: item.description, amount: item.amount});
+        return sum; // Skip this item
+      }
+      
+      // Handle legacy entries where paymentMethod might be undefined
+      const paymentMethod = item.paymentMethod || undefined;
+      
+      if (paymentMethod === 'online') {
+        return sum + item.amount;
+      } else if (paymentMethod === 'both' && item.onlineAmount) {
+        return sum + item.onlineAmount;
+      }
+      return sum;
+    }, 0);
+    
+    // Add FULL monthly commission ONLY on the last day of the month
+    // Note: We skip commission entries in the dailyOverheads loop above, so we handle them here
+    if (monthlyCommissions.length > 0) {
+      const dateObj = new Date(selectedDate);
+      const year = dateObj.getFullYear();
+      const month = dateObj.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const dayOfMonth = dateObj.getDate();
+      
+      // Check if this is the LAST day of the month
+      const isLastDayOfMonth = dayOfMonth === daysInMonth;
+      
+      if (isLastDayOfMonth) {
+        // Sum up all commission amounts (handling duplicates if they exist)
+        const totalMonthlyCommission = monthlyCommissions.reduce((sum, commission) => {
+          const paymentMethod = commission.paymentMethod || 'online';
+          if (paymentMethod === 'online') {
+            return sum + commission.amount;
+          } else if (paymentMethod === 'both' && commission.onlineAmount) {
+            return sum + commission.onlineAmount;
+          }
+          return sum;
+        }, 0);
+        
+        console.log(`💰 [OH] Adding FULL monthly commission (last day of month): ₹${totalMonthlyCommission.toFixed(2)} (entries: ${monthlyCommissions.length})`);
+        total += totalMonthlyCommission;
+      } else {
+        console.log(`⏭️ [OH] Skipping commission (not last day): Day ${dayOfMonth}/${daysInMonth}`);
+      }
+    }
+    
+    console.log(`💰 Overhead Online Total for ${selectedDate}:`, total, 'items:', dailyOverheads.map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})), 'commissions:', monthlyCommissions.map(c => ({amount: c.amount, payment: c.paymentMethod, category: c.category})));
     return total;
   }, [context.overheads, selectedDate]);
 
@@ -447,6 +970,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     return total;
   }, [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, selectedDate]);
 
+  // Daily online expenses breakdown object (for expense breakdown display)
+  const dailyOnlineExpenses = useMemo(() => ({
+    inventory: inventoryOnlineTotal,
+    overhead: overheadOnlineTotal,
+    fixedCost: fixedCostOnlineTotal,
+    total: totalOnlineExpenses
+  }), [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, totalOnlineExpenses]);
+
   // Load existing data when date changes
   useEffect(() => {
     if (salesForDate) {
@@ -454,7 +985,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         offlineSales: (salesForDate.offlineSales ?? 0).toString(),
         paytmAmount: (salesForDate.paytmAmount ?? 0).toString(),
         cashAmount: (salesForDate.cashAmount ?? 0).toString(),
-        onlineSales: (salesForDate.onlineSales ?? 0).toString(),
         employeeSalary: (salesForDate.employeeSalary ?? 0).toString(),
         previousCashInHand: (salesForDate.previousCashInHand ?? 0).toString(),
         usedOnlineMoney: (salesForDate.usedOnlineMoney ?? 0).toString(),
@@ -475,7 +1005,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         offlineSales: '',
         paytmAmount: '',
         cashAmount: '',
-        onlineSales: '',
         employeeSalary: '0',
         previousCashInHand: prevCash.toString(),
         usedOnlineMoney: totalOnlineExpenses.toString(), // Auto-populate from inventory + overhead + fixed costs
@@ -529,9 +1058,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       offlineSales: parseFloat(formData.offlineSales) || 0,
       paytmAmount: parseFloat(formData.paytmAmount) || 0,
       cashAmount: parseFloat(formData.cashAmount) || 0,
-      onlineSales: parseFloat(formData.onlineSales) || 0,
+      onlineSales: 0, // Online sales now tracked separately in Online Sales tab
       onlineSalesCommission: 0, // Commission now handled separately
-      employeeSalary: totalContractPayout, // Store total contract payout
+      employeeSalary: totalContractPayout, // Store total contract payout (deducted from Online Cash, not offline cash)
       previousCashInHand: parseFloat(formData.previousCashInHand) || 0,
       usedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
       actualCashInHand: actualCash,
@@ -590,6 +1119,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               employeeName: worker?.name || '',
               amount: parseFloat(payout.amount),
               date: selectedDate,
+              storeId: effectiveStoreId, // Add storeId for proper filtering in online cash calculation
               createdAt: new Date().toISOString()
             };
           });
@@ -611,6 +1141,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           console.log('Deleted payout (no workers entered):', payout.id);
         }
       }
+      
+      // Reload employee payouts to refresh the online cash calculation
+      await loadEmployeePayouts();
       
       alert('Sales data and contract worker payouts saved successfully!');
     } catch (error) {
@@ -672,7 +1205,56 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     }
   };
 
-  const onlineSalesTotal = parseFloat(formData.onlineSales) || 0;
+  const handleCashConversion = async () => {
+    const amount = parseFloat(conversionAmount);
+    if (!amount || amount <= 0) {
+      alert('Please enter a valid amount to convert');
+      return;
+    }
+
+    const maxConvertible = expectedCashInHand;
+    if (amount > maxConvertible) {
+      alert(`Cannot convert more than ₹${maxConvertible.toFixed(2)} (your current expected cash in hand)`);
+      return;
+    }
+
+    if (!confirm(`Convert ₹${amount.toFixed(2)} from Offline Cash to Online Cash (Paytm)?\n\nExpected Cash: ₹${expectedCashInHand.toFixed(2)} → ₹${(expectedCashInHand - amount).toFixed(2)}\nOnline Cash: ₹${calculatePaytmBalance.toFixed(2)} → ₹${(calculatePaytmBalance + amount).toFixed(2)}`)) {
+      return;
+    }
+
+    setIsConverting(true);
+    try {
+      await api.convertCashToOnline(
+        effectiveStoreId!,
+        selectedDate,
+        amount,
+        context.user?.name || context.user?.email || 'Unknown User'
+      );
+      
+      // Refresh the data
+      await context.loadSalesData();
+      
+      setShowCashConversion(false);
+      setConversionAmount('');
+      alert('Cash converted successfully!');
+    } catch (error: any) {
+      console.error('Error converting cash:', error);
+      alert(error.message || 'Failed to convert cash. Please try again.');
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
+  // Calculate online sales total from actual online sales data
+  const onlineSalesTotal = useMemo(() => {
+    const filtered = effectiveStoreId
+      ? onlineSalesData.filter(s => s.storeId === effectiveStoreId)
+      : onlineSalesData;
+    const salesForDate = filtered.find(s => s.date === selectedDate);
+    if (!salesForDate) return 0;
+    return (salesForDate.swiggySales || 0) + (salesForDate.zomatoSales || 0);
+  }, [onlineSalesData, selectedDate, effectiveStoreId]);
+  
   const offlineSalesTotal = parseFloat(formData.offlineSales) || 0;
   const paytm = parseFloat(formData.paytmAmount) || 0;
   const cash = parseFloat(formData.cashAmount) || 0;
@@ -683,6 +1265,112 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Date Selector */}
       <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+      
+      {/* Tabs for Offline and Online Sales */}
+      <div className="flex gap-2 mb-6 mt-4">
+        <button
+          onClick={() => setActiveTab('offline')}
+          className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
+            activeTab === 'offline'
+              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80 border border-purple-200'
+          }`}
+        >
+          <ShoppingBag className="inline-block w-5 h-5 mr-2" />
+          Offline Sales
+        </button>
+        <button
+          onClick={() => setActiveTab('online')}
+          className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
+            activeTab === 'online'
+              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80 border border-purple-200'
+          }`}
+        >
+          <Smartphone className="inline-block w-5 h-5 mr-2" />
+          Online Sales (Swiggy/Zomato)
+        </button>
+      </div>
+
+      {/* Show Online Sales Tab */}
+      {activeTab === 'online' && (
+        <OnlineSalesTab 
+          context={context}
+          selectedStoreId={selectedStoreId}
+          selectedDate={selectedDate}
+          onDateChange={setSelectedDate}
+          onDataUpdate={loadOnlineSalesData}
+        />
+      )}
+
+      {/* Show Offline Sales Tab (existing content) */}
+      {activeTab === 'offline' && (
+        <>
+      
+      {/* Monthly Online Cash Recalibration Prompt - Shows throughout the month until completed */}
+      {needsOnlineRecalibration && !dismissedRecalibrationPrompt && !isCheckingRecalibration && (() => {
+        const today = new Date();
+        // Show the prompt from the 1st onwards, but more prominently on the 1st
+        const isFirstOfMonth = today.getDate() === 1;
+        const needsPrompt = isFirstOfMonth || today.getDate() <= 7; // Show for first week of month
+        return needsPrompt;
+      })() && (
+        <div className="mt-6 bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 border-2 border-purple-400 rounded-xl p-6 shadow-lg animate-pulse" style={{animationDuration: '3s'}}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-3">
+                <Smartphone className="w-7 h-7 text-purple-600" />
+                <h2 className="text-xl font-bold text-gray-900">📅 Monthly Online Cash Recalibration Required</h2>
+              </div>
+              <div className="space-y-2 text-gray-700">
+                <p className="font-semibold text-purple-900">
+                  {new Date().getDate() === 1 
+                    ? "It's the 1st of the month! Time to recalibrate your Online Cash in Hand (Paytm) balance."
+                    : "Monthly recalibration reminder: Please recalibrate your Online Cash in Hand (Paytm) balance for this month."}
+                </p>
+                <p className="text-sm">
+                  Monthly recalibration helps you:
+                </p>
+                <ul className="text-sm space-y-1 ml-5 list-disc">
+                  <li>Verify your actual Paytm balance matches system records</li>
+                  <li>Catch any missing transactions, fees, or discrepancies early</li>
+                  <li>Maintain accurate financial tracking for your business</li>
+                  <li>Categorize any differences as mistakes or loans</li>
+                </ul>
+                <p className="text-xs text-purple-800 mt-3 bg-purple-100 rounded-lg p-2">
+                  ⚠️ <strong>Important:</strong> Please complete this recalibration as soon as possible to ensure accurate financial records.
+                </p>
+              </div>
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => {
+                    setShowOnlineCashRecalibration(true);
+                    setDismissedRecalibrationPrompt(true);
+                  }}
+                  className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all font-semibold shadow-md hover:shadow-lg flex items-center gap-2"
+                >
+                  <Calendar className="w-5 h-5" />
+                  Recalibrate Now
+                </button>
+                <button
+                  onClick={() => setDismissedRecalibrationPrompt(true)}
+                  className="px-5 py-2.5 bg-white text-gray-700 border-2 border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" />
+                  Remind Me Later
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setDismissedRecalibrationPrompt(true)}
+              className="p-2 hover:bg-purple-100 rounded-lg transition-colors flex-shrink-0"
+              title="Dismiss"
+            >
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Friday Weekly Reporting Reminder */}
       {isFriday && context.isManager && (
@@ -726,28 +1414,24 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                           Expected Cash: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)}
                         </p>
                         <p className="text-sm text-gray-600">
-                          Requested Cash: ₹{(sale.requestedCashInHand || 0).toFixed(2)}
+                          Actual Cash: ₹{sale.requestedCashInHand?.toFixed(2)}
                         </p>
-                        <p className="text-sm mt-1">
-                          Discrepancy: <span className={(sale.requestedOffset || 0) > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
-                            {(sale.requestedOffset || 0) > 0 ? '+' : ''}₹{(sale.requestedOffset || 0).toFixed(2)}
-                          </span>
+                        <p className="text-sm font-semibold text-orange-600 mt-1">
+                          Discrepancy: ₹{((sale.requestedCashInHand || 0) - (sale.actualCashInHand - sale.cashOffset)).toFixed(2)}
                         </p>
                       </div>
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleApproveDiscrepancy(sale.id)}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
                         >
-                          <CheckSquare className="w-4 h-4" />
-                          Approve
+                          ✓ Approve
                         </button>
                         <button
                           onClick={() => handleRejectDiscrepancy(sale.id)}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
                         >
-                          <X className="w-4 h-4" />
-                          Reject
+                          ✗ Reject
                         </button>
                       </div>
                     </div>
@@ -789,123 +1473,23 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                             await context.approveSalesData(sale.id);
                             alert('Approved successfully!');
                           } catch (error) {
-                            alert('Failed to approve');
+                            alert('Failed to approve. Please try again.');
                           }
                         }}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
                       >
-                        <CheckSquare className="w-4 h-4" />
-                        Approve
+                        ✓ Approve
                       </button>
                     </div>
                   ))}
               </div>
             </div>
           )}
-          
-          {/* No pending approvals message */}
-          {context.salesData.filter(s => (s.approvalRequired && !s.approvedBy) || (s.approvalRequested && !s.approvedBy && !s.rejectedBy)).length === 0 && (
-            <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
-                <h2 className="text-gray-900">Pending Approvals</h2>
-              </div>
-              <p className="text-gray-600">No pending approvals at the moment.</p>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Pending Approvals for Operations Manager */}
-      {isOperationsManager && (
-        <div className="mt-6 space-y-4">
-          {/* Sales Pending Approval */}
-          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length > 0 && (
-            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <CheckSquare className="w-6 h-6 text-green-600" />
-                <h2 className="text-gray-900">Sales Pending Approval</h2>
-              </div>
-              
-              <div className="space-y-3">
-                {context.salesData
-                  .filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId)
-                  .map(sale => (
-                    <div key={sale.id} className="bg-white rounded-lg p-4 border border-green-300">
-                      <div className="mb-3">
-                        <p className="text-gray-900 font-medium">
-                          {formatDateIST(sale.date)}
-                        </p>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Submitted by: {sale.createdBy}
-                        </p>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <span className="text-gray-600">Total Sales:</span>
-                            <span className="ml-1 font-medium">₹{(sale.offlineSales + sale.onlineSales).toFixed(2)}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-600">Cash in Hand:</span>
-                            <span className="ml-1 font-medium">₹{sale.actualCashInHand.toFixed(2)}</span>
-                          </div>
-                        </div>
-                        {Math.abs(sale.cashOffset) > 0 && (
-                          <p className="text-sm mt-1">
-                            Cash Offset: <span className={sale.cashOffset > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
-                              {sale.cashOffset > 0 ? '+' : ''}₹{sale.cashOffset.toFixed(2)}
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        onClick={async () => {
-                          if (!confirm(`Approve sales data for ${formatDateIST(sale.date)}?`)) return;
-                          try {
-                            await context.approveSalesData(sale.id);
-                            alert('Sales data approved successfully!');
-                          } catch (error) {
-                            alert('Failed to approve sales data');
-                          }
-                        }}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      >
-                        <CheckSquare className="w-4 h-4" />
-                        Approve Sales Data
-                      </button>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-          
-          {/* No pending sales message */}
-          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length === 0 && (
-            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <CheckSquare className="w-6 h-6 text-green-600" />
-                <h2 className="text-gray-900">Sales Pending Approval</h2>
-              </div>
-              <p className="text-gray-600">No pending sales at the moment.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Operations Manager - Show if sales is pending approval */}
-      {isOperationsManager && salesForDate && salesForDate.approvalStatus === 'pending' && (
-        <div className="mt-6 bg-[#FFF9E6] border-2 border-[#FFD54F] rounded-xl p-6">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="w-6 h-6 text-orange-600" />
-            <h2 className="text-gray-900">Sales Pending Approval</h2>
-          </div>
-          <p className="text-gray-700">
-            Your sales entry for {formatDateIST(salesForDate.date)} is awaiting approval from the Cluster Head.
-          </p>
-        </div>
-      )}
-
-      {/* Operations Manager - Show if sales is approved */}
-      {isOperationsManager && salesForDate && salesForDate.approvalStatus === 'approved' && (
+      {/* Approved Sales Message */}
+      {salesForDate && salesForDate.approvedBy && (
         <div className="mt-6 bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle className="w-6 h-6 text-green-600" />
@@ -916,28 +1500,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           </p>
         </div>
       )}
-
-      {/* Monthly Commission Entry - Only show on 1st of month */}
-      {(() => {
-        const dateObj = new Date(selectedDate);
-        const dayOfMonth = dateObj.getDate();
-        return dayOfMonth === 1 && context.user?.accessToken && (
-          <MonthlyCommissionEntry
-            selectedDate={selectedDate}
-            accessToken={context.user.accessToken}
-            userEmail={context.user.email}
-            userName={context.user.name}
-            storeId={selectedStoreId || context.user.storeId}
-            onCommissionSaved={async () => {
-              // Reload overhead data after commission is saved
-              if (context.user?.accessToken) {
-                const overheads = await api.fetchOverheads(context.user.accessToken);
-                // You'd need to update context here, but for now just show success
-              }
-            }}
-          />
-        );
-      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
         {/* Sales Entry Form */}
@@ -955,81 +1517,67 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 Offline Sales
               </h3>
               
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Total Offline Sales (₹)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.offlineSales}
-                    onChange={(e) => setFormData({ ...formData, offlineSales: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                    required
-                    disabled={!canEditSales}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Paytm (₹)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.paytmAmount}
-                      onChange={(e) => setFormData({ ...formData, paytmAmount: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                      required
-                      disabled={!canEditSales}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Cash (₹)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.cashAmount}
-                      onChange={(e) => setFormData({ ...formData, cashAmount: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                      required
-                      disabled={!canEditSales}
-                    />
-                  </div>
-                </div>
-
-                {paymentMismatch && (
-                  <div className="bg-red-100 border border-red-300 text-red-700 px-3 py-2 rounded-lg text-sm">
-                    ⚠️ Payment mode total (₹{offlinePaymentTotal.toFixed(2)}) doesn't match offline sales (₹{offlineSalesTotal.toFixed(2)})
-                  </div>
-                )}
-
-                {!paymentMismatch && offlineSalesTotal > 0 && (
-                  <div className="bg-green-100 border border-green-300 text-green-700 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    Payment modes match total sales
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Online Sales Section */}
-            <div className="bg-gradient-to-br from-[#FFE6CC] to-[#FFDAB9] rounded-lg p-4">
-              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-[#E8A87C]" />
-                Online Sales
-              </h3>
-              
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Total Online Sales (Zomato + Swiggy) (₹)</label>
+                <label className="block text-sm text-gray-700 mb-1">Total Offline Sales (₹)</label>
                 <input
                   type="number"
                   step="0.01"
-                  value={formData.onlineSales}
-                  onChange={(e) => setFormData({ ...formData, onlineSales: e.target.value })}
+                  value={formData.offlineSales}
+                  onChange={(e) => setFormData({ ...formData, offlineSales: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                   required
                   disabled={!canEditSales}
                 />
               </div>
+            </div>
+
+            {/* Payment Mode Distribution */}
+            <div className="bg-gradient-to-br from-[#FFF3E0] to-[#FFE0B2] rounded-lg p-4">
+              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-[#FFB74D]" />
+                Payment Mode Distribution
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Paytm (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.paytmAmount}
+                    onChange={(e) => setFormData({ ...formData, paytmAmount: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    required
+                    disabled={!canEditSales}
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Cash (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.cashAmount}
+                    onChange={(e) => setFormData({ ...formData, cashAmount: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    required
+                    disabled={!canEditSales}
+                  />
+                </div>
+              </div>
+
+              {paymentMismatch && (
+                <div className="bg-red-100 border border-red-300 text-red-700 px-3 py-2 rounded-lg text-sm">
+                  ⚠️ Payment mode total (₹{offlinePaymentTotal.toFixed(2)}) doesn't match offline sales (₹{offlineSalesTotal.toFixed(2)})
+                </div>
+              )}
+
+              {!paymentMismatch && offlineSalesTotal > 0 && (
+                <div className="bg-green-100 border border-green-300 text-green-700 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Payment modes match total sales
+                </div>
+              )}
             </div>
 
             {/* Used Online Money Section */}
@@ -1054,24 +1602,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   value={formData.usedOnlineMoney}
                   onChange={(e) => setFormData({ ...formData, usedOnlineMoney: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  required
                   disabled={!canEditSales}
                 />
-                {totalOnlineExpenses > 0 ? (
-                  <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
-                    <p className="text-xs text-blue-900 font-semibold mb-1">💡 Auto-calculated from:</p>
-                    <ul className="text-xs text-blue-800 space-y-0.5 ml-4">
-                      {inventoryOnlineTotal > 0 && <li>• Inventory: ₹{inventoryOnlineTotal.toFixed(2)}</li>}
-                      {overheadOnlineTotal > 0 && <li>• Overhead Costs: ₹{overheadOnlineTotal.toFixed(2)}</li>}
-                      {fixedCostOnlineTotal > 0 && <li>• Fixed Costs: ₹{fixedCostOnlineTotal.toFixed(2)}</li>}
-                      <li className="font-semibold">Total: ₹{totalOnlineExpenses.toFixed(2)}</li>
-                    </ul>
-                    <p className="text-xs text-blue-700 mt-1 italic">
-                      This field is editable if you need to adjust for other expenses.
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500 mt-1">Enter amount if Paytm balance was used for expenses</p>
-                )}
               </div>
             </div>
 
@@ -1092,6 +1625,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     Add Worker
                   </button>
                 )}
+              </div>
+              
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 text-sm text-blue-800">
+                <p className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4" />
+                  <span>💡 Employee payouts are deducted from <strong>Online Cash in Hand (Paytm)</strong>, not from Expected Cash.</span>
+                </p>
               </div>
               
               {loadingEmployees ? (
@@ -1181,7 +1721,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               
               {totalContractPayout > 0 && (
                 <p className="text-xs text-purple-700 mt-2 bg-purple-100 p-2 rounded border border-purple-300 flex items-center gap-1">
-                  💰 <strong>Cash Impact:</strong> ₹{totalContractPayout.toFixed(2)} will be deducted from offline cash when calculating cash in hand.
+                  💰 <strong>Cash Impact:</strong> ₹{totalContractPayout.toFixed(2)} will be deducted from Online Cash in Hand (Paytm).
                 </p>
               )}
             </div>
@@ -1207,8 +1747,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   <p className="text-xs text-gray-500 mt-1">
                     {isFirstDay 
                       ? 'Enter starting cash for the first day' 
-                      : 'Enter cash left from previous month (after deducting all expenses and salaries)'
-                    }
+                      : 'Enter cash left from previous month (after deducting all expenses and salaries)'}
                   </p>
                 </div>
               </div>
@@ -1224,113 +1763,186 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 <div className="bg-white rounded-lg p-3 border border-gray-200">
                   <p className="text-2xl text-gray-900">₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    💡 This is automatically calculated from previous day's cash left after deducting expenses and salaries.
+                    💡 This is automatically calculated from previous day's cash left after deducting expenses (not including employee payouts).
                     {isFirstOfMonth && " You can edit this only on the 1st of the month."}
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Cash Reconciliation */}
-            {!isFirstDay && (
-              <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-lg p-4">
-                <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-teal-600" />
-                  Cash Reconciliation
-                </h3>
-                
-                <div className="space-y-3">
-                  <div className="bg-white rounded-lg p-3 border border-teal-200">
-                    <p className="text-sm text-gray-600">Expected Cash in Hand</p>
-                    <p className="text-2xl text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
-                      Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
-                      Cash Received: ₹{cash.toFixed(2)} - 
-                      Expenses: ₹{totalExpenses.toFixed(2)} - 
-                      Contract Payouts: ₹{totalContractPayout.toFixed(2)}
-                    </p>
-                    <details className="mt-2">
-                      <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
-                        View expense breakdown
-                      </summary>
-                      <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
-                        <p>Inventory Cost: ₹{context.inventory.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.totalCost, 0).toFixed(2)} ({context.inventory.filter(item => item.date === selectedDate).length} items)</p>
-                        <p>Overhead Cost: ₹{context.overheads.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.overheads.filter(item => item.date === selectedDate).length} items)</p>
-                        <p>Fixed Costs: ₹{context.fixedCosts.filter(item => item.date === selectedDate).reduce((sum, item) => sum + item.amount, 0).toFixed(2)} ({context.fixedCosts.filter(item => item.date === selectedDate).length} items)</p>
-                        <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
-                      </div>
-                    </details>
-                  </div>
+            {/* Cash Reconciliation Section */}
+            <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-lg p-4">
+              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-teal-600" />
+                Cash Reconciliation
+              </h3>
+              
+              <div className="space-y-3">
+                <div className="bg-white rounded-lg p-3 border border-teal-200">
+                  <p className="text-sm text-gray-600">Expected Cash in Hand</p>
+                  <p className="text-2xl text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
+                    Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
+                    Cash Received: ₹{cash.toFixed(2)} - 
+                    Expenses: ₹{totalExpenses.toFixed(2)} - 
+                    Contract Payouts: ₹{totalContractPayout.toFixed(2)}
+                  </p>
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
+                      View expense breakdown (all expenses incl. commission)
+                    </summary>
+                    <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                      <p>Inventory Cost: ₹{(() => {
+                        // Only count CASH inventory items, not ALL inventory
+                        const cashInventory = context.inventory.filter(item => {
+                          const dateMatch = item.date === selectedDate;
+                          const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+                          return dateMatch && storeMatch;
+                        }).reduce((sum, item) => {
+                          if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+                            return sum + item.totalCost;
+                          } else if (item.paymentMethod === 'both' && item.cashAmount) {
+                            return sum + item.cashAmount;
+                          }
+                          return sum;
+                        }, 0);
+                        return (cashInventory + dailyOnlineExpenses.inventory).toFixed(2);
+                      })()} (cash: ₹{(() => {
+                        const cashInventory = context.inventory.filter(item => {
+                          const dateMatch = item.date === selectedDate;
+                          const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+                          return dateMatch && storeMatch;
+                        }).reduce((sum, item) => {
+                          if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+                            return sum + item.totalCost;
+                          } else if (item.paymentMethod === 'both' && item.cashAmount) {
+                            return sum + item.cashAmount;
+                          }
+                          return sum;
+                        }, 0);
+                        return cashInventory.toFixed(2);
+                      })()}, online: ₹{dailyOnlineExpenses.inventory.toFixed(2)})</p>
+                      <p>Overhead Cost: ₹{(() => {
+                        // Only count CASH overheads, not ALL overheads
+                        const cashOverheads = context.overheads.filter(item => {
+                          const dateMatch = item.date === selectedDate;
+                          const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+                          return dateMatch && storeMatch;
+                        }).reduce((sum, item) => {
+                          if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+                            return sum + item.amount;
+                          } else if (item.paymentMethod === 'both' && item.cashAmount) {
+                            return sum + item.cashAmount;
+                          }
+                          return sum;
+                        }, 0);
+                        return (cashOverheads + dailyOnlineExpenses.overhead).toFixed(2);
+                      })()} (cash: ₹{(() => {
+                        const cashOverheads = context.overheads.filter(item => {
+                          const dateMatch = item.date === selectedDate;
+                          const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+                          return dateMatch && storeMatch;
+                        }).reduce((sum, item) => {
+                          if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+                            return sum + item.amount;
+                          } else if (item.paymentMethod === 'both' && item.cashAmount) {
+                            return sum + item.cashAmount;
+                          }
+                          return sum;
+                        }, 0);
+                        return cashOverheads.toFixed(2);
+                      })()}, online: ₹{dailyOnlineExpenses.overhead.toFixed(2)})</p>
+                      <p>Fixed Costs: ₹{(() => {
+                        // Only count CASH fixed costs, not ALL fixed costs
+                        const cashFixed = context.fixedCosts.filter(item => {
+                          const dateMatch = item.date === selectedDate;
+                          const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+                          return dateMatch && storeMatch;
+                        }).reduce((sum, item) => {
+                          if (item.paymentMethod === 'cash' || !item.paymentMethod) {
+                            return sum + item.amount;
+                          } else if (item.paymentMethod === 'both' && item.cashAmount) {
+                            return sum + item.cashAmount;
+                          }
+                          return sum;
+                        }, 0);
+                        return (cashFixed + dailyOnlineExpenses.fixedCost).toFixed(2);
+                      })()} (cash + online)</p>
+                      <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
+                    </div>
+                  </details>
+                </div>
 
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Actual Cash in Hand (₹)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.actualCashInHand}
-                      onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                      required
-                      disabled={!canEditSales}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
-                  </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Actual Cash in Hand (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.actualCashInHand}
+                    onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    required
+                    disabled={!canEditSales}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
+                </div>
 
-                  {formData.actualCashInHand && (
-                    <div className={`rounded-lg p-3 border-2 ${
-                      Math.abs(cashDiscrepancy) === 0 
-                        ? 'bg-green-100 border-green-300' 
-                        : needsApproval 
-                        ? 'bg-red-100 border-red-300'
-                        : 'bg-yellow-100 border-yellow-300'
+                {/* Cash discrepancy display */}
+                {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && (
+                  <div className={`p-3 rounded-lg border-2 ${
+                    cashDiscrepancy > 0 
+                      ? 'bg-green-50 border-green-300' 
+                      : 'bg-red-50 border-red-300'
+                  }`}>
+                    <p className={`font-semibold ${
+                      cashDiscrepancy > 0 ? 'text-green-700' : 'text-red-700'
                     }`}>
-                      <p className="text-sm font-medium">
-                        {Math.abs(cashDiscrepancy) === 0 ? (
-                          <span className="text-green-700 flex items-center gap-2">
-                            <CheckCircle className="w-4 h-4" />
-                            Perfect Match! No discrepancy.
-                          </span>
-                        ) : needsApproval ? (
-                          <span className="text-red-700 flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4" />
-                            High Discrepancy: {cashDiscrepancy > 0 ? '+' : ''}₹{cashDiscrepancy.toFixed(2)}
-                          </span>
-                        ) : (
-                          <span className="text-yellow-700">
-                            Small Offset: {cashDiscrepancy > 0 ? '+' : ''}₹{cashDiscrepancy.toFixed(2)}
-                          </span>
+                      {cashDiscrepancy > 0 ? 'Cash Excess' : 'Cash Shortage'}: ₹{Math.abs(cashDiscrepancy).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {Math.abs(cashDiscrepancy) > 500 
+                        ? '⚠️ High discrepancy - requires approval from cluster head' 
+                        : 'Discrepancy will be noted in records'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Approval status display */}
+            {isEditing && salesForDate && (
+              <div className="bg-white border border-gray-300 rounded-lg p-4">
+                <div className="space-y-3">
+                  {needsApproval && salesForDate.approvalRequested && !salesForDate.approvedBy && (
+                    <div className="bg-yellow-50 border-2 border-yellow-300 text-yellow-800 px-4 py-3 rounded-lg">\n                      <p className="font-semibold">⏳ Pending Approval</p>
+                      <p className="mt-1">This entry is waiting for cluster head approval due to high cash discrepancy.</p>
+                    </div>
+                  )}
+                  
+                  {salesForDate.approvedBy && (
+                    <div className="bg-green-50 border-2 border-green-300 text-green-700 px-4 py-3 rounded-lg">
+                      <p className="font-semibold">✅ Approved</p>
+                      <p className="mt-1">Approved by: {salesForDate.approvedBy}</p>
+                      {salesForDate.approvalDate && (
+                        <p className="text-sm">Date: {new Date(salesForDate.approvalDate).toLocaleString()}</p>
+                      )}
+                    </div>
+                  )}
+                  
+                  {salesForDate.rejectedBy && (
+                    <div className="bg-red-50 border-2 border-red-300 text-red-700 px-4 py-3 rounded-lg">
+                      <div>
+                        <p className="font-semibold">❌ Rejected</p>
+                        <p className="mt-1">Rejected by: {salesForDate.rejectedBy}</p>
+                        {salesForDate.rejectionDate && (
+                          <p className="text-sm">Date: {new Date(salesForDate.rejectionDate).toLocaleString()}</p>
                         )}
-                      </p>
-                      {needsApproval && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
-                        <p className="text-xs text-red-600 mt-1">
-                          ⚠️ Exceeds ₹500 limit - Save first, then request cluster head approval
-                        </p>
-                      )}
-                      {salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
-                        <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          Approval pending from cluster head
-                        </p>
-                      )}
-                      {salesForDate?.approvedBy && (
-                        <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                          <CheckSquare className="w-3 h-3" />
-                          Approved by: {salesForDate.approvedBy}
-                        </p>
-                      )}
-                      {salesForDate?.rejectedBy && (
-                        <div className="text-xs text-red-600 mt-1">
-                          <p className="flex items-center gap-1">
-                            <X className="w-3 h-3" />
-                            Rejected by: {salesForDate.rejectedBy}
-                          </p>
-                          {salesForDate.rejectionReason && (
-                            <p className="mt-1 italic">Reason: {salesForDate.rejectionReason}</p>
-                          )}
-                          <p className="mt-1 font-medium">You must pay the discrepancy from your pocket.</p>
-                        </div>
-                      )}
+                        {salesForDate.rejectionReason && (
+                          <p className="mt-1 italic">Reason: {salesForDate.rejectionReason}</p>
+                        )}
+                        <p className="mt-1 font-medium">You must pay the discrepancy from your pocket.</p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1415,9 +2027,21 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           {/* Expected vs Actual Cash */}
           {!isFirstDay && (
             <div className="bg-gradient-to-br from-[#D8B5FF] to-[#C7A7FF] rounded-xl shadow-lg p-6 text-gray-800">
-              <div className="flex items-center gap-2 mb-2">
-                <Wallet className="w-6 h-6" />
-                <p className="text-sm uppercase tracking-wide">Cash Status</p>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-6 h-6" />
+                  <p className="text-sm uppercase tracking-wide">Cash Status</p>
+                </div>
+                {expectedCashInHand > 0 && (
+                  <button
+                    onClick={() => setShowCashConversion(true)}
+                    className="flex items-center gap-1 px-3 py-1 bg-white/30 hover:bg-white/50 rounded-lg text-xs font-semibold transition-colors"
+                    title="Convert Offline Cash to Online Cash (Paytm)"
+                  >
+                    <ArrowRightLeft className="w-3 h-3" />
+                    Convert to Online
+                  </button>
+                )}
               </div>
               <div className="space-y-3">
                 <div>
@@ -1429,8 +2053,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     ₹{cash.toFixed(2)} - 
                     ₹{totalExpenses.toFixed(2)} - 
                     ₹{fixedCostsCash.toFixed(2)} - 
-                    ₹{overheadCostsCash.toFixed(2)} - 
-                    ₹{totalContractPayout.toFixed(2)}
+                    ₹{overheadCostsCash.toFixed(2)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1 italic">
+                    Note: Employee payouts are deducted from Online Cash (Paytm)
                   </p>
                 </div>
                 {formData.actualCashInHand && (
@@ -1462,33 +2088,89 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             <p className="text-4xl mb-4">₹{calculatePaytmBalance.toLocaleString()}</p>
             <div className="space-y-2 text-sm bg-gray-800/10 rounded-lg p-3">
               <div className="flex justify-between text-green-700">
-                <span>Total Paytm Received:</span>
-                <span>₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0).toLocaleString()}</span>
+                <span>+ Paytm In:</span>
+                <span>₹{(() => {
+                  // Find the latest recalibration on or before the selected date
+                  const latestRecalibration = context.onlineCashRecalibrations
+                    .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                  
+                  const startDate = latestRecalibration?.date || '0000-00-00';
+                  
+                  // Get all sales AFTER recalibration and BEFORE today
+                  const historicalPaytm = (effectiveStoreId 
+                    ? context.salesData.filter(s => s.storeId === effectiveStoreId && s.date > startDate && s.date < selectedDate)
+                    : context.salesData.filter(s => s.date > startDate && s.date < selectedDate)
+                  ).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
+                  // Always use today's form value for the selected date
+                  const todaysPaytm = paytm;
+                  return (historicalPaytm + todaysPaytm).toLocaleString();
+                })()}</span>
+              </div>
+              <div className="flex justify-between text-emerald-700">
+                <span>+ Online Payouts:</span>
+                <span>₹{(() => {
+                  // Find the latest recalibration on or before the selected date
+                  const latestRecalibration = context.onlineCashRecalibrations
+                    .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                  
+                  const startDate = latestRecalibration?.date || '0000-00-00';
+                  
+                  // Get all sales AFTER recalibration and BEFORE today
+                  const historicalOnline = (effectiveStoreId 
+                    ? context.salesData.filter(s => s.storeId === effectiveStoreId && s.date > startDate && s.date < selectedDate)
+                    : context.salesData.filter(s => s.date > startDate && s.date < selectedDate)
+                  ).reduce((sum, s) => sum + (s.onlineSales ?? 0), 0);
+                  // Always use today's form value for the selected date
+                  const todaysOnline = onlineSalesTotal;
+                  return (historicalOnline + todaysOnline).toLocaleString();
+                })()}</span>
               </div>
               <div className="flex justify-between text-red-700">
-                <span>- Total Used:</span>
-                <span>₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}</span>
+                <span>- Used for Expenses:</span>
+                <span>₹{(() => {
+                  // Find the latest recalibration on or before the selected date
+                  const latestRecalibration = context.onlineCashRecalibrations
+                    .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                  
+                  const startDate = latestRecalibration?.date || '0000-00-00';
+                  
+                  // Filter breakdown to only include entries after recalibration
+                  return paytmDailyBreakdown
+                    .filter(day => day.date > startDate)
+                    .reduce((sum, day) => sum + day.usedOnlineMoney, 0)
+                    .toLocaleString();
+                })()}</span>
               </div>
-              <div className="flex justify-between text-red-700">
-                <span>- Fixed Costs (Online):</span>
-                <span>₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                  if (item.paymentMethod === 'online') return sum + item.amount;
-                  if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                  return sum;
-                }, 0).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-red-700">
-                <span>- Overhead Costs (Online):</span>
-                <span>₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                  if (item.paymentMethod === 'online') return sum + item.amount;
-                  if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                  return sum;
-                }, 0).toLocaleString()}</span>
+              <div className="flex justify-between text-orange-700">
+                <span>- Employee Payouts:</span>
+                <span>₹{(() => {
+                  // Find the latest recalibration on or before the selected date
+                  const latestRecalibration = context.onlineCashRecalibrations
+                    .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                  
+                  const startDate = latestRecalibration?.date || '0000-00-00';
+                  
+                  // Filter breakdown to only include entries after recalibration
+                  return paytmDailyBreakdown
+                    .filter(day => day.date > startDate)
+                    .reduce((sum, day) => sum + (day.employeePayouts || 0), 0)
+                    .toLocaleString();
+                })()}</span>
               </div>
               <div className="flex justify-between text-gray-700 pt-2 border-t border-gray-700/20">
                 <span>Used Today:</span>
                 <span>₹{(parseFloat(formData.usedOnlineMoney) || 0).toLocaleString()}</span>
               </div>
+              {totalContractPayout > 0 && (
+                <div className="flex justify-between text-gray-700">
+                  <span>Employee Payouts Today:</span>
+                  <span>₹{totalContractPayout.toLocaleString()}</span>
+                </div>
+              )}
               {fixedCostsOnline > 0 && (
                 <div className="flex justify-between text-gray-700">
                   <span>Fixed Costs Today (Online):</span>
@@ -1503,15 +2185,182 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               )}
             </div>
             
-            {/* View Detailed Breakdown Button */}
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <button
+                onClick={() => setShowPaytmBreakdown(true)}
+                className="px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              >
+                <TrendingUp className="w-4 h-4" />
+                Daily Breakdown
+              </button>
+              <button
+                onClick={() => setShowOnlineCashRecalibration(true)}
+                className="px-4 py-2 bg-white/30 hover:bg-white/40 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              >
+                <Calendar className="w-4 h-4" />
+                Recalibrate
+              </button>
+            </div>
+          </div>
+
+          {/* Total Cash (Offline + Paytm) */}
+          <div className="bg-gradient-to-br from-[#FFD700] to-[#FFA500] rounded-xl shadow-lg p-6 text-gray-800">
+            <div className="flex items-center gap-2 mb-2">
+              <Wallet className="w-6 h-6" />
+              <p className="text-sm uppercase tracking-wide font-semibold">Total Cash (Offline + Paytm)</p>
+            </div>
+            <p className="text-4xl font-bold mb-4">
+              ₹{(expectedCashInHand + calculatePaytmBalance).toLocaleString()}
+            </p>
+            <div className="space-y-2 text-sm bg-gray-800/10 rounded-lg p-3">
+              <div className="flex justify-between items-center">
+                <span className="font-medium">Expected Cash (Offline):</span>
+                <span className="text-xl font-semibold">₹{expectedCashInHand.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-gray-700/20">
+                <span className="font-medium">Online Cash (Paytm):</span>
+                <span className="text-xl font-semibold">₹{calculatePaytmBalance.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Loan Management Section */}
+      <div className="mt-6">
+        <div className="bg-white rounded-xl shadow-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <DollarSign className="w-6 h-6 text-purple-600" />
+                Loan Management
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">Track loans taken and repayments made</p>
+            </div>
             <button
-              onClick={() => setShowPaytmBreakdown(true)}
-              className="mt-4 w-full px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              onClick={() => setShowApplyLoanModal(true)}
+              className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all flex items-center gap-2 shadow-md"
             >
-              <TrendingUp className="w-4 h-4" />
-              View Daily Breakdown
+              <Plus className="w-4 h-4" />
+              Apply Loan
             </button>
           </div>
+
+          {/* Active Loans Summary */}
+          {(() => {
+            const activeLoans = onlineLoans.filter(l => l.status === 'active');
+            const totalActiveLoans = activeLoans.reduce((sum, l) => sum + l.loanAmount, 0);
+            const totalRepaid = activeLoans.reduce((sum, l) => sum + l.repaidAmount, 0);
+            const totalRemaining = activeLoans.reduce((sum, l) => sum + (l.loanAmount - l.repaidAmount), 0);
+
+            return activeLoans.length > 0 && (
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-600 font-medium">Total Active Loans</p>
+                  <p className="text-2xl font-bold text-blue-700">₹{totalActiveLoans.toLocaleString()}</p>
+                </div>
+                <div className="bg-green-50 border-2 border-green-200 rounded-lg p-4">
+                  <p className="text-sm text-green-600 font-medium">Total Repaid</p>
+                  <p className="text-2xl font-bold text-green-700">₹{totalRepaid.toLocaleString()}</p>
+                </div>
+                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4">
+                  <p className="text-sm text-red-600 font-medium">Remaining to Pay</p>
+                  <p className="text-2xl font-bold text-red-700">₹{totalRemaining.toLocaleString()}</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Loans List */}
+          {isLoadingLoans ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
+              <span className="ml-2 text-gray-600">Loading loans...</span>
+            </div>
+          ) : onlineLoans.length === 0 ? (
+            <div className="text-center py-8 bg-gray-50 rounded-lg">
+              <DollarSign className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-600">No loans recorded yet</p>
+              <p className="text-sm text-gray-500 mt-1">Click "Apply Loan" to add a loan</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {onlineLoans.map(loan => {
+                const remaining = loan.loanAmount - loan.repaidAmount;
+                const progress = (loan.repaidAmount / loan.loanAmount) * 100;
+                
+                return (
+                  <div 
+                    key={loan.id}
+                    className={`border-2 rounded-lg p-4 ${
+                      loan.status === 'active' 
+                        ? 'border-blue-200 bg-blue-50' 
+                        : 'border-green-200 bg-green-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                            loan.status === 'active' 
+                              ? 'bg-blue-200 text-blue-800' 
+                              : 'bg-green-200 text-green-800'
+                          }`}>
+                            {loan.status === 'active' ? 'Active' : 'Repaid'}
+                          </span>
+                          <span className="text-sm text-gray-600">
+                            {new Date(loan.loanDate).toLocaleDateString('en-IN')}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">{loan.notes || 'No notes'}</p>
+                      </div>
+                      <div className="text-right ml-4">
+                        <p className="text-xs text-gray-600">Loan Amount</p>
+                        <p className="text-xl font-bold text-gray-900">₹{loan.loanAmount.toLocaleString()}</p>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="mb-3">
+                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <span>Repaid: ₹{loan.repaidAmount.toLocaleString()}</span>
+                        <span>Remaining: ₹{remaining.toLocaleString()}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className={`h-2 rounded-full transition-all ${
+                            loan.status === 'repaid' ? 'bg-green-500' : 'bg-blue-500'
+                          }`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-600 mt-1 text-center">{progress.toFixed(0)}% repaid</p>
+                    </div>
+
+                    {/* Repay Button */}
+                    {loan.status === 'active' && (
+                      <button
+                        onClick={() => {
+                          setSelectedLoanForRepayment(loan);
+                          setShowRepayLoanModal(true);
+                        }}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all flex items-center justify-center gap-2 text-sm font-medium"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        Repay Loan
+                      </button>
+                    )}
+
+                    {loan.status === 'repaid' && loan.repaymentDate && (
+                      <div className="text-center text-xs text-green-700 mt-2">
+                        ✅ Fully repaid on {new Date(loan.repaymentDate).toLocaleDateString('en-IN')}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1528,13 +2377,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold flex items-center gap-2">
-                    <Smartphone className="w-6 h-6" />
-                    Online Cash in Hand - Daily Breakdown
-                  </h2>
-                  <p className="text-purple-100 mt-1">
-                    How we reached ₹{calculatePaytmBalance.toLocaleString()}
-                  </p>
+                  <h2 className="text-2xl font-bold">Paytm Daily Breakdown</h2>
+                  <p className="text-purple-100 mt-1">Complete transaction history</p>
                 </div>
                 <button
                   onClick={() => setShowPaytmBreakdown(false)}
@@ -1544,256 +2388,336 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 </button>
               </div>
             </div>
-
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-              {/* Summary */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                <div className="bg-green-50 rounded-lg p-4 border-2 border-green-200">
-                  <p className="text-xs text-green-700 mb-1">Total Received</p>
-                  <p className="text-xl font-bold text-green-800">
-                    ₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0).toLocaleString()}
+            
+            <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-120px)]">
+              {/* Summary Cards at top */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-sm text-green-600 font-medium">Total Received</p>
+                  <p className="text-2xl font-bold text-green-700">
+                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.paytmReceived + day.onlinePayouts, 0)).toLocaleString()}
                   </p>
                 </div>
-                <div className="bg-red-50 rounded-lg p-4 border-2 border-red-200">
-                  <p className="text-xs text-red-700 mb-1">Total Used</p>
-                  <p className="text-xl font-bold text-red-800">
-                    ₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-sm text-red-600 font-medium">Total Used</p>
+                  <p className="text-2xl font-bold text-red-700">
+                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.usedOnlineMoney + day.commission, 0)).toLocaleString()}
                   </p>
                 </div>
-                <div className="bg-teal-50 rounded-lg p-4 border-2 border-teal-200">
-                  <p className="text-xs text-teal-700 mb-1">Inventory</p>
-                  <p className="text-xl font-bold text-teal-800">
-                    ₹{context.inventory.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                      if (item.paymentMethod === 'online') return sum + item.totalCost;
-                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                      return sum;
-                    }, 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-orange-50 rounded-lg p-4 border-2 border-orange-200">
-                  <p className="text-xs text-orange-700 mb-1">Fixed Costs</p>
-                  <p className="text-xl font-bold text-orange-800">
-                    ₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                      if (item.paymentMethod === 'online') return sum + item.amount;
-                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                      return sum;
-                    }, 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-purple-50 rounded-lg p-4 border-2 border-purple-200">
-                  <p className="text-xs text-purple-700 mb-1">Overhead Costs</p>
-                  <p className="text-xl font-bold text-purple-800">
-                    ₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                      if (item.paymentMethod === 'online') return sum + item.amount;
-                      if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                      return sum;
-                    }, 0).toLocaleString()}
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <p className="text-sm text-purple-600 font-medium">Current Balance</p>
+                  <p className="text-2xl font-bold text-purple-700">
+                    ₹{calculatePaytmBalance.toLocaleString()}
                   </p>
                 </div>
               </div>
 
-              {/* Daily Breakdown Table */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-purple-600" />
-                  Day-by-Day Transactions
-                </h3>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b-2 border-gray-300">
-                        <th className="text-left p-3 font-semibold text-gray-700">Date</th>
-                        <th className="text-right p-3 font-semibold text-green-700">Received</th>
-                        <th className="text-right p-3 font-semibold text-red-700">Used</th>
-                        <th className="text-right p-3 font-semibold text-teal-700">Inventory</th>
-                        <th className="text-right p-3 font-semibold text-orange-700">Fixed Costs</th>
-                        <th className="text-right p-3 font-semibold text-purple-700">Overheads</th>
-                        <th className="text-right p-3 font-semibold text-gray-700">Net Change</th>
-                        <th className="text-right p-3 font-semibold text-blue-700">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paytmDailyBreakdown.map((day, index) => (
-                        <tr 
-                          key={day.date} 
-                          className={`border-b border-gray-200 hover:bg-white transition-colors ${day.date === selectedDate ? 'bg-blue-50 font-semibold' : ''}`}
-                        >
-                          <td className="p-3 text-gray-900">
+              {/* Daily breakdown table */}
+              <div className="space-y-2">
+                {paytmDailyBreakdown.map((day, index) => {
+                  const dayBalance = day.runningBalance;
+                  const isToday = day.date === selectedDate;
+                  
+                  return (
+                    <div 
+                      key={day.date} 
+                      className={`border rounded-lg p-4 ${
+                        isToday ? 'border-purple-400 bg-purple-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <p className="font-semibold text-gray-900">
                             {formatDateIST(day.date)}
-                            {day.date === selectedDate && (
-                              <span className="ml-2 text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">Today</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-right text-green-700">
-                            {day.paytmReceived > 0 ? `+₹${day.paytmReceived.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="p-3 text-right text-red-700">
-                            {day.usedOnlineMoney > 0 ? `-₹${day.usedOnlineMoney.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="p-3 text-right text-teal-700">
-                            {day.inventoryCosts > 0 ? `-₹${day.inventoryCosts.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="p-3 text-right text-orange-700">
-                            {day.fixedCosts > 0 ? `-₹${day.fixedCosts.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="p-3 text-right text-purple-700">
-                            {day.overheadCosts > 0 ? `-₹${day.overheadCosts.toLocaleString()}` : '-'}
-                          </td>
-                          <td className={`p-3 text-right font-semibold ${day.netChange >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                            {day.netChange >= 0 ? '+' : ''}₹{day.netChange.toLocaleString()}
-                          </td>
-                          <td className={`p-3 text-right font-bold ${day.runningBalance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                            ₹{day.runningBalance.toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-300 bg-gray-100">
-                        <td className="p-3 font-bold text-gray-900">TOTAL / FINAL</td>
-                        <td className="p-3 text-right font-bold text-green-700">
-                          +₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-right font-bold text-red-700">
-                          -₹{context.salesData.filter(s => s.date <= selectedDate).reduce((sum, s) => sum + (s.usedOnlineMoney ?? 0), 0).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-right font-bold text-teal-700">
-                          -₹{context.inventory.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                            if (item.paymentMethod === 'online') return sum + item.totalCost;
-                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                            return sum;
-                          }, 0).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-right font-bold text-orange-700">
-                          -₹{context.fixedCosts.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                            if (item.paymentMethod === 'online') return sum + item.amount;
-                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                            return sum;
-                          }, 0).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-right font-bold text-purple-700">
-                          -₹{context.overheads.filter(item => item.date <= selectedDate).reduce((sum, item) => {
-                            if (item.paymentMethod === 'online') return sum + item.amount;
-                            if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
-                            return sum;
-                          }, 0).toLocaleString()}
-                        </td>
-                        <td className="p-3"></td>
-                        <td className={`p-3 text-right font-bold text-lg ${calculatePaytmBalance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                          ₹{calculatePaytmBalance.toLocaleString()}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-
-                {/* Explanation */}
-                <div className="mt-6 bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    How is this calculated?
-                  </h4>
-                  <div className="text-sm text-blue-800 space-y-2">
-                    <p>
-                      <strong>Online Cash in Hand</strong> = Total Paytm Received - Used Online Money
-                    </p>
-                    <p className="mt-2">
-                      <strong>"Used"</strong> column is the total money spent from Paytm (can include inventory, fixed costs, overheads, and other expenses).
-                    </p>
-                    <p className="mt-2">
-                      <strong>Inventory, Fixed Costs, Overheads</strong> columns show individual expense categories for reference (already included in "Used").
-                    </p>
-                    <p className="mt-2">
-                      <strong>Running Balance</strong> accumulates day by day, showing how much online cash you had at the end of each day.
-                    </p>
-                    <ul className="list-disc list-inside mt-2 space-y-1 ml-2">
-                      <li><span className="text-green-700 font-semibold">Green (+)</span> = Money received via Paytm</li>
-                      <li><span className="text-red-700 font-semibold">Red (-)</span> = Total money used from Paytm (as entered in Sales form)</li>
-                      <li><span className="text-teal-700 font-semibold">Teal (-)</span> = Inventory purchases paid online (part of Used)</li>
-                      <li><span className="text-orange-700 font-semibold">Orange (-)</span> = Fixed costs paid online (part of Used)</li>
-                      <li><span className="text-purple-700 font-semibold">Purple (-)</span> = Overhead costs paid online (part of Used)</li>
-                    </ul>
-                    <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded p-2">
-                      <p className="text-xs text-yellow-900">
-                        <strong>💡 Note:</strong> "Used Online Money" is auto-populated with Inventory + Fixed Costs + Overheads paid online, but can be manually edited if needed for other expenses.
-                      </p>
+                            {isToday && <span className="ml-2 text-xs bg-purple-500 text-white px-2 py-1 rounded-full">Today</span>}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500">Running Balance</p>
+                          <p className="text-lg font-bold text-purple-600">₹{dayBalance.toLocaleString()}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        {day.paytmReceived > 0 && (
+                          <div className="flex justify-between items-center bg-green-50 px-3 py-2 rounded">
+                            <span className="text-green-700">+ Paytm In:</span>
+                            <span className="font-semibold text-green-800">₹{day.paytmReceived.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.onlinePayouts > 0 && (
+                          <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded">
+                            <span className="text-emerald-700">+ Online Payouts:</span>
+                            <span className="font-semibold text-emerald-800">₹{day.onlinePayouts.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.usedOnlineMoney > 0 && (
+                          <div className="flex justify-between items-center bg-red-50 px-3 py-2 rounded">
+                            <span className="text-red-700">- Used for Expenses:</span>
+                            <span className="font-semibold text-red-800">₹{day.usedOnlineMoney.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.commission > 0 && (
+                          <div className="flex justify-between items-center bg-rose-50 px-3 py-2 rounded">
+                            <span className="text-rose-700">- Commission:</span>
+                            <span className="font-semibold text-rose-800">₹{day.commission.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.employeePayouts > 0 && (
+                          <div className="flex justify-between items-center bg-orange-50 px-3 py-2 rounded">
+                            <span className="text-orange-700">- Employee Payouts:</span>
+                            <span className="font-semibold text-orange-800">₹{day.employeePayouts.toLocaleString()}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
-            </div>
-
-            <div className="p-4 bg-gray-100 border-t flex justify-end">
-              <button
-                onClick={() => setShowPaytmBreakdown(false)}
-                className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all font-medium"
-              >
-                Close
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Confirmation Dialog */}
-      {showConfirmDialog && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          onClick={handleCancelDialog}
-        >
-          <div 
-            className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-full flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-white" />
+      {/* Pending Approvals for Operations Manager */}
+      {isOperationsManager && (
+        <div className="mt-6 space-y-4">
+          {/* Sales Pending Approval */}
+          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length > 0 && (
+            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <CheckSquare className="w-6 h-6 text-green-600" />
+                <h2 className="text-gray-900">Sales Pending Approval</h2>
               </div>
-              <h3 className="text-xl font-bold text-gray-900">Confirm Sales Data Submission</h3>
+              
+              <div className="space-y-3">
+                {context.salesData
+                  .filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId)
+                  .map(sale => (
+                    <div key={sale.id} className="bg-white rounded-lg p-4 border border-green-300">
+                      <div className="mb-3">
+                        <p className="text-gray-900 font-medium">
+                          {formatDateIST(sale.date)}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Submitted by: {sale.createdBy}
+                        </p>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <span className="text-gray-600">Total Sales:</span>
+                            <span className="ml-1 font-medium">₹{(sale.offlineSales + sale.onlineSales).toFixed(2)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Cash in Hand:</span>
+                            <span className="ml-1 font-medium">₹{sale.actualCashInHand.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await context.approveSalesData(sale.id);
+                              alert('Sales approved successfully!');
+                            } catch (error) {
+                              alert('Failed to approve sales');
+                            }
+                          }}
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
+                        >
+                          ✓ Approve
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await context.rejectSalesData(sale.id);
+                              alert('Sales rejected successfully!');
+                            } catch (error) {
+                              alert('Failed to reject sales');
+                            }
+                          }}
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
+                        >
+                          ✗ Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+          
+          {/* No Pending Sales Message */}
+          {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length === 0 && (
+            <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <CheckSquare className="w-6 h-6 text-green-600" />
+                <h2 className="text-gray-900">Sales Pending Approval</h2>
+              </div>
+              <p className="text-gray-600">No pending sales at the moment.</p>
+            </div>
+          )}
+        </div>
+      )}
+      </>
+      )}
+      
+      {/* Online Cash Recalibration Modal */}
+      {showOnlineCashRecalibration && (
+        <OnlineCashRecalibration
+          context={context}
+          selectedStoreId={effectiveStoreId}
+          selectedDate={selectedDate}
+          systemBalance={calculatePaytmBalance}
+          onClose={() => setShowOnlineCashRecalibration(false)}
+          onSaveSuccess={async () => {
+            // Wait a moment for the server to save
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Reload all recalibrations into context by refreshing the page
+            // This ensures the breakdown calculations pick up the new recalibration
+            window.location.reload();
+          }}
+        />
+      )}
+
+      {/* Apply Loan Modal */}
+      {showApplyLoanModal && (
+        <ApplyLoanModal
+          context={context}
+          selectedStoreId={effectiveStoreId}
+          selectedDate={selectedDate}
+          onClose={() => setShowApplyLoanModal(false)}
+          onSaveSuccess={async () => {
+            await loadOnlineLoans();
+          }}
+        />
+      )}
+
+      {/* Repay Loan Modal */}
+      {showRepayLoanModal && selectedLoanForRepayment && (
+        <RepayLoanModal
+          context={context}
+          loan={selectedLoanForRepayment}
+          selectedDate={selectedDate}
+          onClose={() => {
+            setShowRepayLoanModal(false);
+            setSelectedLoanForRepayment(null);
+          }}
+          onSaveSuccess={async () => {
+            await loadOnlineLoans();
+          }}
+        />
+      )}
+
+      {/* Cash Conversion Modal */}
+      {showCashConversion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 rounded-t-2xl">
+              <div className="flex items-center justify-between text-white">
+                <div className="flex items-center gap-3">
+                  <ArrowRightLeft className="w-6 h-6" />
+                  <h2 className="text-xl font-bold">Convert Cash to Online</h2>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowCashConversion(false);
+                    setConversionAmount('');
+                  }}
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             
-            <div className="mb-6">
-              <p className="text-gray-700 mb-4">
-                You are about to {isEditing ? 'update' : 'submit'} sales data for <span className="font-semibold">{formatDateIST(selectedDate)}</span>.
-              </p>
-              <p className="text-gray-700 mb-4">
-                Please review all the information carefully before proceeding.
-              </p>
-              
-              <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 mb-4">
-                <p className="text-sm text-gray-800 font-medium">
-                  ⚠️ This sales data will be used for financial reporting and reconciliation. Inaccurate data may lead to discrepancies.
+            <div className="p-6 space-y-6">
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
+                <p className="text-sm text-gray-700 mb-3">
+                  Convert offline cash in hand to online cash (Paytm). This is useful when you transfer physical cash to your Paytm account.
+                </p>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="bg-white rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Current Expected Cash</p>
+                    <p className="text-lg font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Current Online Cash</p>
+                    <p className="text-lg font-bold text-purple-600">₹{calculatePaytmBalance.toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Amount to Convert (₹)
+                </label>
+                <input
+                  type="number"
+                  value={conversionAmount}
+                  onChange={(e) => setConversionAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  step="0.01"
+                  min="0"
+                  max={expectedCashInHand}
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-lg"
+                  disabled={isConverting}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Max: ₹{expectedCashInHand.toFixed(2)}
                 </p>
               </div>
 
-              <label className="flex items-start gap-3 cursor-pointer p-3 bg-gray-50 rounded-lg border-2 border-gray-200 hover:border-blue-400 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={confirmationChecked}
-                  onChange={(e) => setConfirmationChecked(e.target.checked)}
-                  className="mt-1 w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-800 font-medium">
-                  I confirm that I have reviewed all the sales data and I take full responsibility for the accuracy of this information.
-                </span>
-              </label>
-            </div>
+              {parseFloat(conversionAmount) > 0 && (
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200">
+                  <p className="text-sm font-semibold text-gray-700 mb-2">After Conversion:</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Expected Cash:</span>
+                      <span className="font-bold text-gray-900">
+                        ₹{expectedCashInHand.toFixed(2)} → ₹{(expectedCashInHand - parseFloat(conversionAmount)).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Online Cash:</span>
+                      <span className="font-bold text-purple-600">
+                        ₹{calculatePaytmBalance.toFixed(2)} → ₹{(calculatePaytmBalance + parseFloat(conversionAmount)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-            <div className="flex gap-3">
-              <button
-                onClick={handleCancelDialog}
-                className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmSubmit}
-                disabled={!confirmationChecked}
-                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white font-medium rounded-lg hover:from-green-600 hover:to-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-400"
-              >
-                {isEditing ? 'Update Sales Data' : 'Save Sales Data'}
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowCashConversion(false);
+                    setConversionAmount('');
+                  }}
+                  className="flex-1 px-4 py-3 bg-gray-200 hover:bg-gray-300 rounded-lg font-semibold transition-colors"
+                  disabled={isConverting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCashConversion}
+                  disabled={!conversionAmount || parseFloat(conversionAmount) <= 0 || isConverting}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isConverting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Converting...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRightLeft className="w-4 h-4" />
+                      Convert
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -15,12 +15,25 @@ async function retryKvOperation<T>(
     try {
       return await operation();
     } catch (error: any) {
+      // Check for infrastructure errors (Cloudflare 500, HTML responses, etc.)
+      const isInfrastructureError = 
+        error?.message?.includes('<!DOCTYPE html>') ||
+        error?.message?.includes('500: Internal server error') ||
+        error?.message?.includes('Cloudflare') ||
+        error?.message?.includes('Internal server error');
+      
       const isConnectionError = 
         error?.message?.includes('connection reset') || 
         error?.message?.includes('connection error') ||
         error?.message?.includes('ECONNRESET') ||
         error?.message?.includes('ETIMEDOUT') ||
         error?.message?.includes('client error');
+      
+      // For infrastructure errors, don't retry - fail fast with a clear message
+      if (isInfrastructureError) {
+        console.error(`❌ Infrastructure error in ${operationName}:`, 'Supabase/Cloudflare service temporarily unavailable');
+        throw new Error('DATABASE_UNAVAILABLE');
+      }
       
       if (isConnectionError && attempt < maxRetries) {
         const delay = retryDelay(attempt);
@@ -75,12 +88,17 @@ app.get('/make-server-c2dd9b9d/inventory-items', async (c) => {
       console.log(`📊 Raw items fetched: ${items.length}`);
     } catch (kvError) {
       console.error('❌ KV Store error:', kvError);
-      // If no items exist yet, return empty array
-      if (kvError.message?.includes('<!DOCTYPE html>') || kvError.message?.includes('500')) {
-        console.log('⚠️ Database connection issue or no items exist yet, returning empty array');
-        return c.json({ items: [] });
+      // Handle database unavailability gracefully
+      if (kvError.message === 'DATABASE_UNAVAILABLE') {
+        console.log('⚠️ Database temporarily unavailable, returning empty array');
+        return c.json({ 
+          items: [], 
+          warning: 'Database temporarily unavailable. Please try again in a moment.' 
+        });
       }
-      throw kvError;
+      // If error doesn't indicate unavailability, return empty array (might be no data yet)
+      console.log('⚠️ Returning empty array (might be no data yet)');
+      return c.json({ items: [] });
     }
     
     let filteredItems = items.filter(item => item.isActive);

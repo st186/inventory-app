@@ -21,6 +21,7 @@ interface Payout {
   employeeName: string;
   amount: number;
   date: string;
+  storeId?: string; // Optional for backward compatibility with existing data
   createdAt: string;
 }
 
@@ -576,6 +577,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           employeeName: employee?.name || '',
           amount: parseFloat(payoutData.amount),
           date: payoutData.date,
+          storeId: selectedStoreId || undefined, // Add storeId for proper filtering
           createdAt: new Date().toISOString()
         };
       });

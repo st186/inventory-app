@@ -110,11 +110,11 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
       </div>
 
       {/* Action Buttons */}
-      <div className="flex gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
         <button
           onClick={() => setShowInventoryForm(true)}
           disabled={!context.isManager}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           title={!context.isManager ? 'Only managers can add inventory items' : ''}
         >
           <Plus className="w-4 h-4" />
@@ -123,7 +123,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
         <button
           onClick={() => setShowOverheadForm(true)}
           disabled={!context.isManager}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           title={!context.isManager ? 'Only managers can add overhead costs' : ''}
         >
           <Plus className="w-4 h-4" />
@@ -132,7 +132,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
         <button
           onClick={() => setShowFixedCostForm(true)}
           disabled={!context.isManager}
-          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           title={!context.isManager ? 'Only managers can add fixed costs' : ''}
         >
           <Plus className="w-4 h-4" />
