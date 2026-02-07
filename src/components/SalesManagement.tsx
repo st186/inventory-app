@@ -494,6 +494,22 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
       : context.salesData.find(s => s.date === previousDateStr);
     
+    // If there's NO previous day data at all AND we're not on a recalibration date,
+    // check if there's a recalibration for the exact previous day
+    if (!previousDaySales) {
+      // Check if there's a recalibration specifically for the previous day
+      const previousDayRecalibration = context.onlineCashRecalibrations.find(
+        r => r.date === previousDateStr && r.storeId === effectiveStoreId
+      );
+      
+      // If no previous day data and no recalibration for previous day, return 0
+      // This prevents carrying forward old balances when there's a data gap
+      if (!previousDayRecalibration) {
+        console.log('⚠️ No previous day data found. Starting from 0. Fill in previous day or create recalibration.');
+        return 0;
+      }
+    }
+    
     // If previous day has actualPaytmBalance, use it as starting point (like offline cash)
     if (previousDaySales && previousDaySales.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
       // Start from previous day's actual balance
@@ -2045,6 +2061,18 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                         return previousDaySales.actualPaytmBalance.toFixed(2);
                       }
                       
+                      // If no previous day data, check if there's a recalibration for the previous day
+                      if (!previousDaySales) {
+                        const previousDayRecalibration = context.onlineCashRecalibrations.find(
+                          r => r.date === previousDateStr && r.storeId === effectiveStoreId
+                        );
+                        
+                        // If no data and no recalibration for previous day, return 0
+                        if (!previousDayRecalibration) {
+                          return '0.00';
+                        }
+                      }
+                      
                       const latestRecalibration = context.onlineCashRecalibrations
                         .filter(r => r.storeId === effectiveStoreId && r.date < selectedDate)
                         .sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -2284,7 +2312,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                           className="w-full px-4 py-3 border border-purple-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
                           required
                           disabled={!canEditSales}
-                          placeholder="3236"
+                          placeholder="Check and enter actual paytm balance"
                         />
                         <p className="text-xs text-gray-500 mt-1">📱 Check your Paytm wallet balance</p>
                       </div>
