@@ -36,6 +36,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     amount: editingItem ? editingItem.amount.toString() : '',
     employeeId: editingItem?.employeeId || '',
     employeeName: editingItem?.employeeName || '',
+    expenseMonth: editingItem?.expenseMonth || selectedDate.slice(0, 7), // Default to current month (YYYY-MM)
     paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
@@ -110,6 +111,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     if (formData.category === 'personal_expense') {
       submissionData.employeeId = formData.employeeId;
       submissionData.employeeName = formData.employeeName;
+      submissionData.expenseMonth = formData.expenseMonth;
     }
 
     // Calculate payment method amounts
@@ -211,6 +213,25 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
                   />
                 </div>
               )}
+              
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">
+                  Expense Month
+                  <span className="text-xs text-gray-500 ml-2">(For which month is this salary/advance?)</span>
+                </label>
+                <input
+                  type="month"
+                  value={formData.expenseMonth}
+                  onChange={(e) =>
+                    setFormData({ ...formData, expenseMonth: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Select the month this expense belongs to (useful for backlogged salaries)
+                </p>
+              </div>
 
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Expense Description</label>

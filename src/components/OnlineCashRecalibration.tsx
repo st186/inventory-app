@@ -65,6 +65,7 @@ export function OnlineCashRecalibration({
         setNotes(recalibration.notes || '');
         setDiscrepancyType(recalibration.discrepancyType || 'none');
         setLoanAmount(recalibration.loanAmount?.toString() || '');
+        setManualDate(recalibration.date || ''); // Load the recalibration date
       }
     } catch (err) {
       console.error('Error fetching last recalibration:', err);
@@ -106,10 +107,22 @@ export function OnlineCashRecalibration({
         loanAmount: discrepancyType === 'loan' ? parseFloat(loanAmount) : null,
       };
 
+      console.log('💾 ===== SUBMITTING RECALIBRATION =====');
+      console.log('📊 Recalibration data being saved:', recalibrationData);
+      console.log('🏪 Store ID:', effectiveStoreId);
+      console.log('📅 Month:', currentMonthKey);
+      console.log('📅 Date:', recalibrationDate);
+      console.log('💰 System Balance:', systemBalance);
+      console.log('💰 Actual Balance:', actualBalanceNum);
+      console.log('💰 Difference:', actualBalanceNum - systemBalance);
+
       await api.submitOnlineCashRecalibration(
         context.user.accessToken,
         recalibrationData
       );
+
+      console.log('✅ Recalibration saved successfully!');
+      console.log('💾 ===== END SUBMITTING RECALIBRATION =====\n');
 
       setSuccess(true);
       setTimeout(() => {
@@ -117,7 +130,7 @@ export function OnlineCashRecalibration({
         onClose();
       }, 1500);
     } catch (err: any) {
-      console.error('Error submitting recalibration:', err);
+      console.error('❌ Error submitting recalibration:', err);
       setError(err.message || 'Failed to submit recalibration');
     } finally {
       setSaving(false);
@@ -194,14 +207,20 @@ export function OnlineCashRecalibration({
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
                 <p className="text-sm text-blue-900">
-                  <strong>Last Recalibration:</strong> {formatDateTimeIST(lastRecalibration.createdAt)}
+                  <strong>Current Recalibration for {currentMonth}:</strong>
                   <br />
-                  <strong>Date:</strong> {new Date(lastRecalibration.date).toLocaleDateString('en-IN')}
+                  <strong>Created:</strong> {lastRecalibration.createdAt ? formatDateTimeIST(lastRecalibration.createdAt) : 'N/A'}
+                  <br />
+                  <strong>Date:</strong> {lastRecalibration.date ? new Date(lastRecalibration.date).toLocaleDateString('en-IN') : 'N/A'}
                   <br />
                   System Balance: ₹{lastRecalibration.systemBalance.toLocaleString()} | 
                   Actual Balance: ₹{lastRecalibration.actualBalance.toLocaleString()} | 
                   Difference: <span className={lastRecalibration.difference >= 0 ? 'text-green-700' : 'text-red-700'}>
                     {lastRecalibration.difference >= 0 ? '+' : ''}₹{lastRecalibration.difference.toLocaleString()}
+                  </span>
+                  <br />
+                  <span className="text-xs text-blue-700 mt-1 inline-block">
+                    ℹ️ You can edit the date, balance, and notes below. Saving will update this recalibration.
                   </span>
                 </p>
               </div>
@@ -210,11 +229,14 @@ export function OnlineCashRecalibration({
                 onClick={async () => {
                   if (window.confirm('Are you sure you want to delete this recalibration? This will recalculate the balance from the beginning of time.')) {
                     try {
-                      await api.deleteOnlineCashRecalibration(context.user!.accessToken, lastRecalibration.id);
+                      console.log('🗑️ [CLIENT] Deleting recalibration:', lastRecalibration.id);
+                      const response = await api.deleteOnlineCashRecalibration(context.user!.accessToken, lastRecalibration.id);
+                      console.log('✅ [CLIENT] Delete response:', response);
                       alert('Recalibration deleted successfully! The page will reload.');
-                      if (onSaveSuccess) onSaveSuccess();
-                      onClose();
+                      // Force a full page reload to clear all caches
+                      window.location.reload();
                     } catch (err) {
+                      console.error('❌ [CLIENT] Delete failed:', err);
                       alert('Failed to delete recalibration: ' + (err as Error).message);
                     }
                   }

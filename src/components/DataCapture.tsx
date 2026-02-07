@@ -677,7 +677,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Expense
+                  <span>Expense</span>
                 </th>
                 <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
                   Sales

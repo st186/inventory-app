@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { DollarSign, Calendar, FileText, Save, XCircle, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { DollarSign, Calendar, FileText, Save, XCircle, AlertCircle, User, Percent } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { getTodayIST } from '../utils/timezone';
@@ -22,13 +22,34 @@ export function ApplyLoanModal({
   const [loanAmount, setLoanAmount] = useState<string>('');
   const [loanDate, setLoanDate] = useState(selectedDate || getTodayIST());
   const [notes, setNotes] = useState('');
+  const [investorId, setInvestorId] = useState<string>('');
+  const [interestRate, setInterestRate] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [investors, setInvestors] = useState<api.Investor[]>([]);
+  const [loadingInvestors, setLoadingInvestors] = useState(true);
   
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
   const store = context.stores?.find(s => s.id === effectiveStoreId);
   const storeName = store?.name || 'Unknown Store';
+
+  useEffect(() => {
+    loadInvestors();
+  }, [context.user]);
+
+  const loadInvestors = async () => {
+    if (!context.user?.accessToken) return;
+    try {
+      setLoadingInvestors(true);
+      const data = await api.getInvestors(context.user.accessToken);
+      setInvestors(data);
+    } catch (error) {
+      console.error('Error loading investors:', error);
+    } finally {
+      setLoadingInvestors(false);
+    }
+  };
 
   // Check for missing store info on mount
   if (!effectiveStoreId || !store) {
@@ -84,6 +105,8 @@ export function ApplyLoanModal({
         loanDate,
         notes,
         createdBy: context.user.email,
+        investorId,
+        interestRate: parseFloat(interestRate) || 0,
       };
 
       await api.applyOnlineLoan(context.user.accessToken, loanData);
@@ -202,6 +225,52 @@ export function ApplyLoanModal({
                 rows={3}
                 className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                 placeholder="Purpose of loan, source, repayment terms, etc."
+              />
+            </div>
+          </div>
+
+          {/* Investor Selection */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Investor *
+            </label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <select
+                value={investorId}
+                onChange={(e) => setInvestorId(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                required
+              >
+                <option value="">Select Investor</option>
+                {loadingInvestors ? (
+                  <option value="">Loading...</option>
+                ) : (
+                  investors.map(investor => (
+                    <option key={investor.id} value={investor.id}>
+                      {investor.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          </div>
+
+          {/* Interest Rate */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Interest Rate *
+            </label>
+            <div className="relative">
+              <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <input
+                type="number"
+                step="0.01"
+                value={interestRate}
+                onChange={(e) => setInterestRate(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                placeholder="Enter interest rate"
+                required
               />
             </div>
           </div>

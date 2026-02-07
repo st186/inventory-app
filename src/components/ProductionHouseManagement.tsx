@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { Factory, MapPin, User, Plus, Package, Hash, Trash2 } from 'lucide-react';
@@ -13,6 +13,7 @@ type Props = {
 export function ProductionHouseManagement({ context, stores, employees, onRefreshStores }: Props) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [productionHouseStocks, setProductionHouseStocks] = useState<Record<string, any>>({});
   const [formData, setFormData] = useState({
     name: '',
     location: '',
@@ -33,6 +34,137 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
   });
 
   const productionHeads = employees.filter(e => e.designation === 'production_incharge');
+
+  // Calculate real-time stock for all production houses
+  useEffect(() => {
+    calculateAllProductionHouseStocks();
+  }, [context.productionData, context.productionRequests, context.productionHouses]);
+
+  const calculateAllProductionHouseStocks = async () => {
+    if (!context.user?.accessToken || !context.productionHouses) return;
+
+    const stocks: Record<string, any> = {};
+    const currentMonth = new Date().toISOString().substring(0, 7); // "2026-02"
+
+    for (const house of context.productionHouses) {
+      try {
+        // Get recalibration data for this production house
+        const recalResponse = await api.getRecalibrationByLocation(
+          context.user.accessToken,
+          house.id,
+          'production_house'
+        );
+
+        // Calculate opening balance
+        let openingBalance: any = {};
+        if (recalResponse?.record && recalResponse.record.date.substring(0, 7) === currentMonth) {
+          // Use recalibration from current month as opening balance
+          recalResponse.record.items.forEach((item: any) => {
+            const inventoryItem = context.inventoryItems?.find(invItem => 
+              invItem.id === item.itemId || invItem.name === item.itemId
+            );
+            if (inventoryItem) {
+              const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+              const stockKey = camelName.replace(/Momo(s)?$/i, '');
+              openingBalance[stockKey] = item.actualQuantity;
+            }
+          });
+        } else {
+          // No recalibration - start from 0
+          openingBalance = {
+            chicken: 0,
+            chickenCheese: 0,
+            veg: 0,
+            cheeseCorn: 0,
+            paneer: 0,
+            vegKurkure: 0,
+            chickenKurkure: 0,
+          };
+        }
+
+        // Filter production data for this house and current month
+        const houseProduction = (context.productionData || []).filter(
+          (p: any) => 
+            p.productionHouseId === house.id && 
+            p.date.substring(0, 7) === currentMonth &&
+            p.approvalStatus === 'approved'
+        );
+
+        // Sum up production
+        const totalProduced: any = {
+          chicken: 0,
+          chickenCheese: 0,
+          veg: 0,
+          cheeseCorn: 0,
+          paneer: 0,
+          vegKurkure: 0,
+          chickenKurkure: 0,
+        };
+
+        houseProduction.forEach((prod: any) => {
+          const inventoryItem = context.inventoryItems?.find(item => item.id === prod.itemId);
+          if (inventoryItem) {
+            const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+            const stockKey = camelName.replace(/Momo(s)?$/i, '');
+            totalProduced[stockKey] = (totalProduced[stockKey] || 0) + prod.quantityProduced;
+          }
+        });
+
+        // Filter fulfilled requests for this house and current month
+        const houseRequests = (context.productionRequests || []).filter(
+          (req: any) =>
+            req.productionHouseId === house.id &&
+            req.status === 'fulfilled' &&
+            req.fulfilledDate &&
+            req.fulfilledDate.substring(0, 7) === currentMonth
+        );
+
+        // Sum up deliveries
+        const totalDelivered: any = {
+          chicken: 0,
+          chickenCheese: 0,
+          veg: 0,
+          cheeseCorn: 0,
+          paneer: 0,
+          vegKurkure: 0,
+          chickenKurkure: 0,
+        };
+
+        houseRequests.forEach((req: any) => {
+          // Support both formats
+          totalDelivered.chicken += (req.chickenMomos || req.chicken || 0);
+          totalDelivered.chickenCheese += (req.chickenCheeseMomos || req.chickenCheese || 0);
+          totalDelivered.veg += (req.vegMomos || req.veg || 0);
+          totalDelivered.cheeseCorn += (req.cheeseCornMomos || req.cheeseCorn || 0);
+          totalDelivered.paneer += (req.paneerMomos || req.paneer || 0);
+          totalDelivered.vegKurkure += (req.vegKurkureMomos || req.vegKurkure || 0);
+          totalDelivered.chickenKurkure += (req.chickenKurkureMomos || req.chickenKurkure || 0);
+        });
+
+        // Calculate final stock: Opening + Production - Delivered
+        const currentStock: any = {};
+        Object.keys(openingBalance).forEach(key => {
+          currentStock[key] = (openingBalance[key] || 0) + (totalProduced[key] || 0) - (totalDelivered[key] || 0);
+        });
+
+        stocks[house.id] = currentStock;
+      } catch (error) {
+        console.error(`Error calculating stock for ${house.name}:`, error);
+        // Default to zeros on error
+        stocks[house.id] = {
+          chicken: 0,
+          chickenCheese: 0,
+          veg: 0,
+          cheeseCorn: 0,
+          paneer: 0,
+          vegKurkure: 0,
+          chickenKurkure: 0,
+        };
+      }
+    }
+
+    setProductionHouseStocks(stocks);
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -8088,6 +8088,13 @@ app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
   try {
     const recalibration = await c.req.json();
     
+    console.log('💾 [SERVER] ===== SAVING RECALIBRATION =====');
+    console.log('📦 [SERVER] Received recalibration data:', recalibration);
+    console.log('🏪 [SERVER] Store ID:', recalibration.storeId);
+    console.log('📅 [SERVER] Month:', recalibration.month);
+    console.log('📅 [SERVER] Date:', recalibration.date);
+    console.log('💰 [SERVER] Actual Balance:', recalibration.actualBalance);
+    
     // Add createdAt timestamp if not present
     const timestamp = recalibration.createdAt || new Date().toISOString();
     const recalibrationWithTimestamp = {
@@ -8097,15 +8104,22 @@ app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
       timestamp: timestamp // For backward compatibility
     };
     
+    console.log('🆔 [SERVER] Generated ID:', recalibrationWithTimestamp.id);
+    console.log('⏰ [SERVER] Timestamp:', timestamp);
+    
     // Use month as part of key for easier querying (one recalibration per month per store)
     const key = `online-cash-recalibration:${recalibration.storeId}:${recalibration.month}`;
+    console.log('🔑 [SERVER] Storage key:', key);
+    
     await kvWithRetry.set(key, recalibrationWithTimestamp);
     
-    console.log(`✅ Online cash recalibration saved: ${key}`, recalibrationWithTimestamp);
+    console.log(`✅ [SERVER] Online cash recalibration saved to KV store`);
+    console.log('📊 [SERVER] Final data:', recalibrationWithTimestamp);
+    console.log('💾 [SERVER] ===== END SAVING RECALIBRATION =====\n');
     
     return c.json({ success: true, recalibration: recalibrationWithTimestamp });
   } catch (error) {
-    console.error('❌ Error saving online cash recalibration:', error);
+    console.error('❌ [SERVER] Error saving online cash recalibration:', error);
     return c.json({ error: 'Failed to save recalibration' }, 500);
   }
 });
@@ -8325,6 +8339,103 @@ app.post('/make-server-c2dd9b9d/cash-conversion', async (c) => {
 });
 
 // ============================================
+// INVESTOR MANAGEMENT
+// ============================================
+
+// Create a new investor
+app.post('/make-server-c2dd9b9d/investors', async (c) => {
+  try {
+    const investorData = await c.req.json();
+    
+    // Generate unique ID
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const investorId = `INVESTOR-${timestamp}-${randomStr}`;
+    
+    const investor = {
+      ...investorData,
+      id: investorId,
+      createdAt: getNowIST(),
+    };
+    
+    const key = `investor:${investorId}`;
+    await kvWithRetry.set(key, investor);
+    
+    console.log(`✅ Investor created: ${key}`, investor);
+    
+    return c.json({ success: true, investor });
+  } catch (error) {
+    console.error('❌ Error creating investor:', error);
+    return c.json({ error: 'Failed to create investor', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Get all investors
+app.get('/make-server-c2dd9b9d/investors', async (c) => {
+  try {
+    const investors = await kvWithRetry.getByPrefix('investor:');
+    
+    // Sort by name
+    const sorted = (investors || []).sort((a: any, b: any) => 
+      a.name.localeCompare(b.name)
+    );
+    
+    console.log(`📊 Fetched ${sorted.length} investors`);
+    
+    return c.json({ success: true, investors: sorted });
+  } catch (error) {
+    console.error('❌ Error fetching investors:', error);
+    return c.json({ error: 'Failed to fetch investors', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Update investor
+app.put('/make-server-c2dd9b9d/investors/:id', async (c) => {
+  try {
+    const investorId = c.req.param('id');
+    const updateData = await c.req.json();
+    
+    const key = `investor:${investorId}`;
+    const existing = await kvWithRetry.get(key);
+    
+    if (!existing) {
+      return c.json({ error: 'Investor not found' }, 404);
+    }
+    
+    const updatedInvestor = {
+      ...existing,
+      ...updateData,
+    };
+    
+    await kvWithRetry.set(key, updatedInvestor);
+    
+    console.log(`✅ Investor updated: ${key}`);
+    
+    return c.json({ success: true, investor: updatedInvestor });
+  } catch (error) {
+    console.error('❌ Error updating investor:', error);
+    return c.json({ error: 'Failed to update investor', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Delete investor
+app.delete('/make-server-c2dd9b9d/investors/:id', async (c) => {
+  try {
+    const investorId = c.req.param('id');
+    
+    const key = `investor:${investorId}`;
+    await kvWithRetry.del(key);
+    
+    console.log(`✅ Investor deleted: ${key}`);
+    
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('❌ Error deleting investor:', error);
+    return c.json({ error: 'Failed to delete investor', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// ============================================
 // ONLINE LOANS (Paytm/Online Cash Loans)
 // ============================================
 
@@ -8332,6 +8443,15 @@ app.post('/make-server-c2dd9b9d/cash-conversion', async (c) => {
 app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
   try {
     const loanData = await c.req.json();
+    
+    // Get investor name if investorId is provided
+    let investorName = null;
+    if (loanData.investorId) {
+      const investor = await kvWithRetry.get(`investor:${loanData.investorId}`);
+      if (investor) {
+        investorName = investor.name;
+      }
+    }
     
     // Generate unique ID
     const timestamp = Date.now();
@@ -8344,6 +8464,8 @@ app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
       status: 'active',
       repaidAmount: 0,
       repaymentDate: null,
+      repaymentType: null,
+      investorName,
       createdAt: getNowIST(),
     };
     
@@ -8416,6 +8538,7 @@ app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
       repaidAmount: newRepaidAmount,
       status: isFullyRepaid ? 'repaid' : 'active',
       repaymentDate: isFullyRepaid ? repaymentData.repaymentDate : existing.repaymentDate,
+      repaymentType: isFullyRepaid ? 'full' : 'partial',
       notes: repaymentData.notes ? `${existing.notes}\n[Repayment on ${repaymentData.repaymentDate}]: ${repaymentData.notes}` : existing.notes,
       updatedAt: getNowIST(),
     };
@@ -8432,6 +8555,64 @@ app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
   } catch (error) {
     console.error('❌ Error repaying online loan:', error);
     return c.json({ error: 'Failed to process loan repayment', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Get all loans across all stores
+app.get('/make-server-c2dd9b9d/online-loans/all', async (c) => {
+  try {
+    const loans = await kvWithRetry.getByPrefix('online-loan:');
+    
+    // Sort by loanDate descending (newest first)
+    const sorted = (loans || []).sort((a: any, b: any) => {
+      const dateA = new Date(a.loanDate).getTime();
+      const dateB = new Date(b.loanDate).getTime();
+      return dateB - dateA;
+    });
+    
+    console.log(`📊 Fetched ${sorted.length} online loans (all stores)`);
+    
+    return c.json({ success: true, loans: sorted });
+  } catch (error) {
+    console.error('❌ Error fetching all online loans:', error);
+    return c.json({ error: 'Failed to fetch loans', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Get all loan repayments (for analytics)
+app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
+  try {
+    const loans = await kvWithRetry.getByPrefix('online-loan:');
+    
+    // Filter loans that have repayments
+    const repaymentsData = (loans || [])
+      .filter((loan: any) => loan.repaidAmount > 0)
+      .map((loan: any) => ({
+        id: loan.id,
+        storeId: loan.storeId,
+        storeName: loan.storeName,
+        investorId: loan.investorId,
+        investorName: loan.investorName,
+        loanAmount: loan.loanAmount,
+        repaidAmount: loan.repaidAmount,
+        interestRate: loan.interestRate,
+        loanDate: loan.loanDate,
+        repaymentDate: loan.repaymentDate,
+        status: loan.status,
+        repaymentType: loan.repaymentType,
+      }))
+      .sort((a: any, b: any) => {
+        const dateA = new Date(a.repaymentDate || a.loanDate).getTime();
+        const dateB = new Date(b.repaymentDate || b.loanDate).getTime();
+        return dateB - dateA;
+      });
+    
+    console.log(`📊 Fetched ${repaymentsData.length} loan repayments`);
+    
+    return c.json({ success: true, repayments: repaymentsData });
+  } catch (error) {
+    console.error('❌ Error fetching loan repayments:', error);
+    return c.json({ error: 'Failed to fetch repayments', details: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
 

@@ -2098,14 +2098,12 @@ export async function fetchOnlineCashRecalibrations(accessToken: string): Promis
 
 // Convert offline cash to online cash (Paytm)
 export async function convertCashToOnline(
+  accessToken: string,
   storeId: string,
   date: string,
   amount: number,
   performedBy: string
 ): Promise<void> {
-  const accessToken = localStorage.getItem('accessToken');
-  if (!accessToken) throw new Error('Not authenticated');
-  
   await fetchWithAuth(`${API_BASE}/cash-conversion`, accessToken, {
     method: 'POST',
     body: JSON.stringify({ storeId, date, amount, performedBy }),
@@ -2128,11 +2126,15 @@ export type OnlineLoan = {
   notes: string;
   createdBy: string;
   createdAt: string;
+  investorId?: string; // ID of the investor who provided the loan
+  investorName?: string; // Name of the investor
+  interestRate?: number; // Interest rate as percentage (e.g., 5 for 5%)
+  repaymentType?: 'partial' | 'full'; // Type of last repayment
 };
 
 export async function applyOnlineLoan(
   accessToken: string,
-  data: Omit<OnlineLoan, 'id' | 'createdAt' | 'status' | 'repaidAmount' | 'repaymentDate'>
+  data: Omit<OnlineLoan, 'id' | 'createdAt' | 'status' | 'repaidAmount' | 'repaymentDate' | 'repaymentType'>
 ) {
   const response = await fetchWithAuth(`${API_BASE}/online-loans`, accessToken, {
     method: 'POST',
@@ -2219,4 +2221,64 @@ export async function updateClusterAssignments(
 export async function getAllClusterHeads(accessToken: string) {
   const response = await fetchWithAuth(`${API_BASE}/cluster/all-cluster-heads`, accessToken);
   return response;
+}
+
+// ============================================
+// INVESTOR MANAGEMENT API
+// ============================================
+
+export type Investor = {
+  id: string;
+  name: string;
+  contactNumber?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export async function createInvestor(
+  accessToken: string,
+  data: Omit<Investor, 'id' | 'createdAt'>
+) {
+  const response = await fetchWithAuth(`${API_BASE}/investors`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return response.investor;
+}
+
+export async function getInvestors(accessToken: string) {
+  const response = await fetchWithAuth(`${API_BASE}/investors`, accessToken);
+  return response.investors || [];
+}
+
+export async function updateInvestor(
+  accessToken: string,
+  investorId: string,
+  data: Partial<Omit<Investor, 'id' | 'createdAt' | 'createdBy'>>
+) {
+  const response = await fetchWithAuth(`${API_BASE}/investors/${investorId}`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return response.investor;
+}
+
+export async function deleteInvestor(accessToken: string, investorId: string) {
+  const response = await fetchWithAuth(`${API_BASE}/investors/${investorId}`, accessToken, {
+    method: 'DELETE',
+  });
+  return response;
+}
+
+export async function getAllOnlineLoans(accessToken: string) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans/all`, accessToken);
+  return response.loans || [];
+}
+
+export async function getAllLoanRepayments(accessToken: string) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans/repayments`, accessToken);
+  return response.repayments || [];
 }

@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Store, Factory, Package, Settings } from 'lucide-react';
+import { Store, Factory, Package, Settings, TrendingUp } from 'lucide-react';
 import { StoreManagement } from './StoreManagement';
 import { ProductionHouseManagement } from './ProductionHouseManagement';
 import { ClusterManagement } from './ClusterManagement';
+import { InvestmentsManagement } from './InvestmentsManagement';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 
@@ -15,6 +16,7 @@ type Props = {
 
 export function AssetsManagement({ context, stores, employees, onRefreshStores }: Props) {
   const isClusterHead = context.user?.role === 'cluster_head';
+  const [mainTab, setMainTab] = useState<'assets' | 'investments'>('assets');
   const [activeTab, setActiveTab] = useState<'stores' | 'production-houses' | 'cluster-management'>(
     isClusterHead ? 'cluster-management' : 'stores'
   );
@@ -31,56 +33,86 @@ export function AssetsManagement({ context, stores, employees, onRefreshStores }
                 <Package className="w-8 h-8 text-white" />
               </div>
               <div>
-                <h1 className="text-3xl text-white mb-1">Assets Management</h1>
-                <p className="text-white/80 text-sm">Manage your stores and production houses</p>
+                <h1 className="text-3xl text-white mb-1">Investments & Assets Management</h1>
+                <p className="text-white/80 text-sm">Manage your investors, stores, and production houses</p>
               </div>
             </div>
             
-            {/* Glassmorphism Tabs */}
-            <div className="flex gap-3">
-              {isClusterHead && (
+            {/* Main Tabs - Assets vs Investments */}
+            <div className="flex gap-3 mb-4">
+              <button
+                onClick={() => setMainTab('assets')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                  mainTab === 'assets'
+                    ? 'bg-white text-purple-600 border-white shadow-lg'
+                    : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                }`}
+              >
+                <Package className="w-5 h-5" />
+                <span>Assets</span>
+              </button>
+              <button
+                onClick={() => setMainTab('investments')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                  mainTab === 'investments'
+                    ? 'bg-white text-purple-600 border-white shadow-lg'
+                    : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                }`}
+              >
+                <TrendingUp className="w-5 h-5" />
+                <span>Investments</span>
+              </button>
+            </div>
+
+            {/* Sub-tabs for Assets */}
+            {mainTab === 'assets' && (
+              <div className="flex gap-3">
+                {isClusterHead && (
+                  <button
+                    onClick={() => setActiveTab('cluster-management')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                      activeTab === 'cluster-management'
+                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                    }`}
+                  >
+                    <Settings className="w-5 h-5" />
+                    <span>Cluster Settings</span>
+                  </button>
+                )}
                 <button
-                  onClick={() => setActiveTab('cluster-management')}
+                  onClick={() => setActiveTab('stores')}
                   className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
-                    activeTab === 'cluster-management'
+                    activeTab === 'stores'
                       ? 'bg-white text-purple-600 border-white shadow-lg'
                       : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
-                  <Settings className="w-5 h-5" />
-                  <span>Cluster Settings</span>
+                  <Store className="w-5 h-5" />
+                  <span>Stores</span>
                 </button>
-              )}
-              <button
-                onClick={() => setActiveTab('stores')}
-                className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
-                  activeTab === 'stores'
-                    ? 'bg-white text-purple-600 border-white shadow-lg'
-                    : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
-                }`}
-              >
-                <Store className="w-5 h-5" />
-                <span>Stores</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('production-houses')}
-                className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
-                  activeTab === 'production-houses'
-                    ? 'bg-white text-purple-600 border-white shadow-lg'
-                    : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
-                }`}
-              >
-                <Factory className="w-5 h-5" />
-                <span>Production Houses</span>
-              </button>
-            </div>
+                <button
+                  onClick={() => setActiveTab('production-houses')}
+                  className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all backdrop-blur-sm border-2 ${
+                    activeTab === 'production-houses'
+                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                  }`}
+                >
+                  <Factory className="w-5 h-5" />
+                  <span>Production Houses</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Tab Content */}
       <div>
-        {activeTab === 'cluster-management' ? (
+        {mainTab === 'investments' ? (
+          <InvestmentsManagement context={context} />
+        ) : activeTab === 'cluster-management' ? (
           <ClusterManagement context={context} />
         ) : activeTab === 'stores' ? (
           <StoreManagement onStoreCreated={onRefreshStores} userRole={context.user?.role} />

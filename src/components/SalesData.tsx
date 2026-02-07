@@ -519,33 +519,44 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         end = new Date(start);
         break;
       case 'thisWeek':
-        // Compare with previous week
-        start = new Date(today);
-        start.setDate(today.getDate() - today.getDay() - 7);
+        // Compare with same days in previous week (Sun of current week to today of previous week)
+        const currentWeekStart = new Date(today);
+        currentWeekStart.setDate(today.getDate() - today.getDay());
+        const daysIntoWeek = today.getDay(); // How many days into the week we are
+        
+        start = new Date(currentWeekStart);
+        start.setDate(currentWeekStart.getDate() - 7); // Previous week's Sunday
         end = new Date(start);
-        end.setDate(start.getDate() + 6);
+        end.setDate(start.getDate() + daysIntoWeek); // Same day of week in previous week
         break;
       case 'previousWeek':
-        // Compare with 2 weeks ago
+        // Compare with 2 weeks ago (full week)
         start = new Date(today);
         start.setDate(today.getDate() - today.getDay() - 14);
         end = new Date(start);
         end.setDate(start.getDate() + 6);
         break;
       case 'thisMonth':
-        // Compare with previous month
-        start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        end = new Date(today.getFullYear(), today.getMonth(), 0);
+        // Compare with same date range in previous month (e.g., Feb 1-4 compares with Jan 1-4)
+        const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        const daysIntoMonth = today.getDate(); // How many days into the month we are
+        
+        start = new Date(today.getFullYear(), today.getMonth() - 1, 1); // 1st of previous month
+        end = new Date(today.getFullYear(), today.getMonth() - 1, daysIntoMonth); // Same date in previous month
         break;
       case 'previousMonth':
-        // Compare with 2 months ago
+        // Compare with same full month 2 months ago
         start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
         end = new Date(today.getFullYear(), today.getMonth() - 1, 0);
         break;
       case 'thisYear':
-        // Compare with last year
-        start = new Date(today.getFullYear() - 1, 0, 1);
-        end = new Date(today.getFullYear() - 1, 11, 31);
+        // Compare with same date range in previous year (e.g., Jan 1-Feb 4 2025 compares with Jan 1-Feb 4 2024)
+        const currentYearStart = new Date(today.getFullYear(), 0, 1);
+        const daysIntoYear = Math.floor((today.getTime() - currentYearStart.getTime()) / (1000 * 60 * 60 * 24));
+        
+        start = new Date(today.getFullYear() - 1, 0, 1); // Jan 1 of previous year
+        end = new Date(start);
+        end.setDate(start.getDate() + daysIntoYear); // Same number of days into previous year
         break;
       case 'lastYear':
         // Compare with 2 years ago

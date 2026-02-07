@@ -67,6 +67,7 @@ export type OverheadItem = {
   storeId?: string; // Optional storeId for multi-store filtering
   employeeId?: string; // For personal_expense category
   employeeName?: string; // For personal_expense category
+  expenseMonth?: string; // For personal_expense: YYYY-MM format to map expense to specific month (for backlogged salaries)
   // Payment method fields
   paymentMethod?: 'cash' | 'online' | 'both';
   cashAmount?: number; // Amount paid via cash (for 'both' option)
@@ -119,6 +120,8 @@ export type SalesData = {
   rejectionReason: string | null;
   previousCashInHand?: number;
   usedOnlineMoney?: number;
+  actualPaytmBalance?: number; // Actual Paytm balance reconciliation
+  paytmOffset?: number; // Paytm discrepancy/offset
 };
 
 export type MonthlyCommission = {
@@ -2039,7 +2042,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-4 h-4" />
-                    <span className="hidden xl:inline">Assets</span>
+                    <span className="hidden xl:inline">Investments & Assets</span>
                   </button>
                   <button
                     onClick={() => setActiveView('export')}
@@ -2197,7 +2200,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-5 h-5" />
-                    <span>Inventory</span>
+                    <span>Expense</span>
                   </button>
                   <button
                     onClick={() => {
@@ -2255,7 +2258,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-5 h-5" />
-                    <span>Assets</span>
+                    <span>Investments & Assets</span>
                   </button>
                   <button
                     onClick={() => {
@@ -2328,7 +2331,7 @@ export default function App() {
                     }`}
                   >
                     <Package className="w-5 h-5" />
-                    <span>Inventory</span>
+                    <span>Expense</span>
                   </button>
                   {canViewProduction && (
                     <button

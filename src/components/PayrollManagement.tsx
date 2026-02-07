@@ -3,6 +3,7 @@ import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
+import { PaymentHistoryModal } from './PaymentHistoryModal';
 
 interface Employee {
   id: string;
@@ -34,6 +35,7 @@ interface OverheadItem {
   storeId?: string;
   employeeId?: string;
   employeeName?: string;
+  expenseMonth?: string; // Format: "YYYY-MM" for month mapping feature
 }
 
 interface PayrollManagementProps {
@@ -53,9 +55,11 @@ const generatePayslip = (
   month: string,
   year: string,
   payouts: Payout[],
-  employeeType: string
+  employeeType: string,
+  personalExpenses: number = 0
 ) => {
-  const totalAmount = payouts.reduce((sum, p) => sum + p.amount, 0);
+  const regularPayouts = payouts.reduce((sum, p) => sum + p.amount, 0);
+  const totalAmount = regularPayouts + personalExpenses;
   const grossSalary = totalAmount;
   
   // Create a simple HTML content for the payslip
@@ -242,10 +246,17 @@ const generatePayslip = (
             ${payouts.map(payout => `
               <tr>
                 <td>${new Date(payout.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                <td>Salary Payment</td>
+                <td>Regular Payout</td>
                 <td style="text-align: right;">₹${payout.amount.toLocaleString('en-IN')}</td>
               </tr>
             `).join('')}
+            ${personalExpenses > 0 ? `
+              <tr>
+                <td>Various</td>
+                <td>Salary (via Personal Expense)</td>
+                <td style="text-align: right;">₹${personalExpenses.toLocaleString('en-IN')}</td>
+              </tr>
+            ` : ''}
           </tbody>
         </table>
 
@@ -298,6 +309,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   // Manager salary advance state
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceAmount, setAdvanceAmount] = useState('');
+  
+  // Payment history modal state
+  const [showPaymentHistory, setShowPaymentHistory] = useState(false);
+  const [selectedEmployeeForHistory, setSelectedEmployeeForHistory] = useState<Employee | null>(null);
   
   // Date range filter state
   const [viewMode, setViewMode] = useState<'current' | 'last' | 'custom'>('current');
@@ -667,6 +682,50 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
   };
 
+  // Calculate personal expense deductions for an employee in the current date range
+  const calculatePersonalExpenses = (employeeInternalId: string): number => {
+    // For personal expenses with month mapping, use expenseMonth instead of date
+    let monthFiltered;
+    
+    if (viewMode === 'current') {
+      // Get current month in YYYY-MM format
+      const currentMonthStr = currentMonth.start.substring(0, 7); // "2026-02"
+      monthFiltered = overheads.filter(o => {
+        // If expenseMonth exists (month-mapped), use it; otherwise fall back to date filtering
+        if (o.expenseMonth) {
+          return o.expenseMonth === currentMonthStr;
+        }
+        return o.date >= currentMonth.start && o.date <= currentMonth.end;
+      });
+    } else if (viewMode === 'last') {
+      // Get last month in YYYY-MM format
+      const lastMonthStr = lastMonth.start.substring(0, 7);
+      monthFiltered = overheads.filter(o => {
+        if (o.expenseMonth) {
+          return o.expenseMonth === lastMonthStr;
+        }
+        return o.date >= lastMonth.start && o.date <= lastMonth.end;
+      });
+    } else {
+      if (!customStartDate || !customEndDate) return 0;
+      // For custom date range, we need to check if expenseMonth falls within range
+      const startMonthStr = customStartDate.substring(0, 7);
+      const endMonthStr = customEndDate.substring(0, 7);
+      monthFiltered = overheads.filter(o => {
+        if (o.expenseMonth) {
+          return o.expenseMonth >= startMonthStr && o.expenseMonth <= endMonthStr;
+        }
+        return o.date >= customStartDate && o.date <= customEndDate;
+      });
+    }
+
+    const personalExpenses = monthFiltered.filter(
+      o => o.category === 'personal_expense' && o.employeeId === employeeInternalId
+    );
+
+    return personalExpenses.reduce((sum, o) => sum + o.amount, 0);
+  };
+
   const calculateContractStats = () => {
     const contractEmployees = filteredEmployees.filter(e => e.type === 'contract');
     const contractPayouts = filteredPayouts.filter(p => {
@@ -698,6 +757,19 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     });
 
     const totalPayout = permanentPayouts.reduce((sum, p) => sum + p.amount, 0);
+    
+    // Calculate total personal expenses for all permanent employees
+    const totalPersonalExpenses = permanentEmployees.reduce((sum, emp) => {
+      const empExpense = calculatePersonalExpenses(emp.id);
+      console.log(`🔍 Personal expense for ${emp.name} (${emp.id}): ₹${empExpense}`);
+      return sum + empExpense;
+    }, 0);
+    
+    console.log(`💰 Total Payout Calculation:`);
+    console.log(`   Regular Payouts: ₹${totalPayout}`);
+    console.log(`   Personal Expenses: ₹${totalPersonalExpenses}`);
+    console.log(`   TOTAL: ₹${totalPayout + totalPersonalExpenses}`);
+    
     const employeePayouts = permanentEmployees.map(emp => {
       const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
       return {
@@ -707,26 +779,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       };
     });
 
-    return { totalPayout, employeePayouts };
-  };
-
-  // Calculate personal expense deductions for an employee in the current date range
-  const calculatePersonalExpenses = (employeeInternalId: string): number => {
-    let dateFiltered;
-    if (viewMode === 'current') {
-      dateFiltered = overheads.filter(o => o.date >= currentMonth.start && o.date <= currentMonth.end);
-    } else if (viewMode === 'last') {
-      dateFiltered = overheads.filter(o => o.date >= lastMonth.start && o.date <= lastMonth.end);
-    } else {
-      if (!customStartDate || !customEndDate) return 0;
-      dateFiltered = overheads.filter(o => o.date >= customStartDate && o.date <= customEndDate);
-    }
-
-    const personalExpenses = dateFiltered.filter(
-      o => o.category === 'personal_expense' && o.employeeId === employeeInternalId
-    );
-
-    return personalExpenses.reduce((sum, o) => sum + o.amount, 0);
+    return { 
+      totalPayout: totalPayout + totalPersonalExpenses, // Include personal expenses in total
+      employeePayouts 
+    };
   };
 
   const getInitials = (name: string) => {
@@ -1165,6 +1221,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               year: string;
               payouts: Payout[];
               total: number;
+              personalExpenses: number;
               isAvailable: boolean;
             }> = [];
             
@@ -1185,13 +1242,25 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                        payoutDate.getFullYear() === date.getFullYear();
               });
               
-              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0);
+              // Get personal expenses mapped to this month (YYYY-MM format)
+              // Note: overhead.employeeId stores the employee ID string (e.g., "BM004"), not the internal database ID
+              const monthStr = `${date.getFullYear()}-${String(monthNumber).padStart(2, '0')}`;
+              const monthPersonalExpenses = overheads
+                .filter(o => 
+                  o.category === 'personal_expense' && 
+                  o.employeeId === userEmployeeId &&
+                  o.expenseMonth === monthStr
+                )
+                .reduce((sum, o) => sum + o.amount, 0);
+              
+              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0) + monthPersonalExpenses;
               
               monthlyPayslips.push({
                 month: monthName,
                 year,
                 payouts: monthPayouts,
                 total,
+                personalExpenses: monthPersonalExpenses,
                 isAvailable
               });
             }
@@ -1200,27 +1269,40 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
             const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
             const myPersonalExpenses = currentEmployee ? calculatePersonalExpenses(currentEmployee.id) : 0;
-            // Net Amount = -(Personal Expenses + Total Paid)
-            // Both personal expenses and payouts reduce the net (shown as negative)
-            const myNetAmount = -(myPersonalExpenses + totalPayout);
+            // Net Amount = Total amount paid out (payouts + personal expenses)
+            const myNetAmount = myPersonalExpenses + totalPayout;
 
             return (
               <div className="p-6">
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
-                    <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
-                    <p className="text-sm text-gray-600">
-                      View your salary records and download monthly payslips
-                    </p>
-                  </div>
-                  
-                  {/* Apply for Salary Advance Button - Only for permanent employees */}
-                  {employeeType === 'fulltime' && (
-                    <button
-                      onClick={() => setShowAdvanceModal(true)}
-                      disabled={hasActiveAdvance}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-                        hasActiveAdvance
+                <div className="mb-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
+                      <p className="text-sm text-gray-600">
+                        View your salary records and download monthly payslips
+                      </p>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                      {/* View All Payments Button */}
+                      <button
+                        onClick={() => {
+                          setSelectedEmployeeForHistory(currentEmployee!);
+                          setShowPaymentHistory(true);
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl"
+                      >
+                        <FileText className="w-4 h-4" />
+                        View All Payments
+                      </button>
+                      
+                      {/* Apply for Salary Advance Button - Only for permanent employees */}
+                      {employeeType === 'fulltime' && (
+                        <button
+                          onClick={() => setShowAdvanceModal(true)}
+                          disabled={hasActiveAdvance}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                            hasActiveAdvance
                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 shadow-md'
                       }`}
@@ -1230,6 +1312,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                       {hasActiveAdvance ? 'Advance Active' : 'Apply for Advance'}
                     </button>
                   )}
+                    </div>
+                  </div>
                 </div>
                 
                 {/* Salary Advances Status - Show if there are any advances */}
@@ -1382,7 +1466,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                       <div 
                         key={index}
                         className={`border-2 rounded-xl p-4 transition-all ${
-                          slip.isAvailable && slip.payouts.length > 0
+                          slip.isAvailable && (slip.payouts.length > 0 || (slip.personalExpenses && slip.personalExpenses > 0))
                             ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-pink-50 hover:shadow-lg'
                             : 'border-gray-200 bg-gray-50 opacity-60'
                         }`}
@@ -1391,10 +1475,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           <div>
                             <h4 className="text-gray-900 font-semibold">{slip.month} {slip.year}</h4>
                             <p className="text-sm text-gray-600 mt-1">
-                              {slip.payouts.length} payment{slip.payouts.length !== 1 ? 's' : ''}
+                              {slip.payouts.length} payout{slip.payouts.length !== 1 ? 's' : ''}
+                              {slip.personalExpenses > 0 && ` + ₹${slip.personalExpenses.toLocaleString('en-IN')} salary`}
                             </p>
                           </div>
-                          {slip.isAvailable && slip.payouts.length > 0 ? (
+                          {slip.isAvailable && (slip.payouts.length > 0 || (slip.personalExpenses && slip.personalExpenses > 0)) ? (
                             <button
                               onClick={() => generatePayslip(
                                 userName || 'Employee',
@@ -1402,7 +1487,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 slip.month,
                                 slip.year,
                                 slip.payouts,
-                                employeeType
+                                employeeType,
+                                slip.personalExpenses || 0
                               )}
                               className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
                               title="Download Payslip"
@@ -1412,7 +1498,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             </button>
                           ) : (
                             <div className="px-3 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed">
-                              {slip.payouts.length === 0 ? 'No Data' : 'Not Available'}
+                              {(slip.payouts.length === 0 && (!slip.personalExpenses || slip.personalExpenses === 0)) ? 'No Data' : 'Not Available'}
                             </div>
                           )}
                         </div>
@@ -1484,7 +1570,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               return emp?.type === 'fulltime';
             });
 
-            const totalPayout = permanentPayouts.reduce((sum, p) => sum + p.amount, 0);
+            const totalPayout = permanentStats.totalPayout; // Use calculated stats which includes personal expenses
 
             return (
               <div className="p-6">
@@ -1536,9 +1622,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
                             const totalPaid = empPayouts.reduce((sum, p) => sum + p.amount, 0);
                             const personalExpenses = calculatePersonalExpenses(emp.id);
-                            // Net Amount = -(Personal Expenses + Total Paid)
-                            // Both personal expenses and payouts reduce the net (shown as negative)
-                            const netAmount = -(personalExpenses + totalPaid);
+                            // Net Amount = Total amount paid out (payouts + personal expenses)
+                            const netAmount = personalExpenses + totalPaid;
                             const lastPayout = empPayouts.length > 0 
                               ? empPayouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
                               : null;
@@ -1550,7 +1635,15 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                     <div className={`w-10 h-10 rounded-full ${getAvatarColor(index)} flex items-center justify-center text-white text-sm`}>
                                       {getInitials(emp.name)}
                                     </div>
-                                    <div className="text-gray-900">{emp.name}</div>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedEmployeeForHistory(emp);
+                                        setShowPaymentHistory(true);
+                                      }}
+                                      className="text-gray-900 hover:text-purple-600 hover:underline transition-colors text-left"
+                                    >
+                                      {emp.name}
+                                    </button>
                                   </div>
                                 </td>
                                 <td className="py-4 px-4">
@@ -2310,6 +2403,19 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             </div>
           </div>
         </div>
+      )}
+
+      {/* Payment History Modal */}
+      {showPaymentHistory && selectedEmployeeForHistory && (
+        <PaymentHistoryModal
+          employee={selectedEmployeeForHistory}
+          payouts={payouts.filter(p => p.employeeId === selectedEmployeeForHistory.id)}
+          personalExpenses={overheads.filter(o => o.category === 'personal_expense' && o.employeeId === selectedEmployeeForHistory.employeeId)}
+          onClose={() => {
+            setShowPaymentHistory(false);
+            setSelectedEmployeeForHistory(null);
+          }}
+        />
       )}
 
       {/* Employee Account Setup Modal */}

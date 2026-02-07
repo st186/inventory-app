@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText } from 'lucide-react';
+import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
@@ -144,6 +144,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   const [onlineSalesData, setOnlineSalesData] = useState<any[]>([]);
   const [onlinePayoutData, setOnlinePayoutData] = useState<any[]>([]);
   const [isLoadingOnlineData, setIsLoadingOnlineData] = useState(false);
+  
+  // Load online loans data for interest expense calculation
+  const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
+  const [isLoadingLoans, setIsLoadingLoans] = useState(false);
 
   // Load online sales and payout data
   useEffect(() => {
@@ -167,6 +171,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     };
     
     loadOnlineData();
+  }, [context.user?.accessToken]);
+  
+  // Load online loans data for interest expense calculation
+  useEffect(() => {
+    const loadLoans = async () => {
+      if (!context.user?.accessToken) return;
+      
+      setIsLoadingLoans(true);
+      try {
+        const loans = await api.getOnlineLoans(context.user.accessToken);
+        setOnlineLoans(loans || []);
+      } catch (error) {
+        console.error('Error loading loans data:', error);
+      } finally {
+        setIsLoadingLoans(false);
+      }
+    };
+    
+    loadLoans();
   }, [context.user?.accessToken]);
 
   // Helper function to identify commission entries (LEGACY - no longer used for commission calculation)
@@ -346,8 +369,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   });
   
   // Production date range selector
-  type DateRangeType = 'today' | 'week' | 'month' | 'year' | 'custom';
-  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('month');
+  type DateRangeType = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'previousYear' | 'custom';
+  const [productionDateRange, setProductionDateRange] = useState<DateRangeType>('thisMonth');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   
@@ -373,29 +396,59 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         endDate = new Date(today);
         break;
       
-      case 'week':
+      case 'yesterday':
+        startDate = new Date(today);
+        startDate.setDate(startDate.getDate() - 1);
+        endDate = new Date(startDate);
+        break;
+      
+      case 'thisWeek':
         // Start of current week (Monday)
         startDate = new Date(today);
         const dayOfWeek = startDate.getDay();
         const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Adjust when day is Sunday
         startDate.setDate(startDate.getDate() + diff);
-        // End of current week (Sunday)
+        // End is today
+        endDate = new Date(today);
+        break;
+      
+      case 'previousWeek':
+        // Start of previous week (Monday)
+        startDate = new Date(today);
+        const currentDayOfWeek = startDate.getDay();
+        const diffToPrevMonday = currentDayOfWeek === 0 ? -13 : -(currentDayOfWeek + 6);
+        startDate.setDate(startDate.getDate() + diffToPrevMonday);
+        // End of previous week (Sunday)
         endDate = new Date(startDate);
         endDate.setDate(startDate.getDate() + 6);
         break;
       
-      case 'month':
+      case 'thisMonth':
         // Start of current month
         startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        // End of current month (last day)
-        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        // End is today
+        endDate = new Date(today);
         break;
       
-      case 'year':
+      case 'previousMonth':
+        // Start of previous month
+        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        // End of previous month (last day)
+        endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+        break;
+      
+      case 'thisYear':
         // Start of current year
         startDate = new Date(today.getFullYear(), 0, 1);
-        // End of current year (December 31)
-        endDate = new Date(today.getFullYear(), 11, 31);
+        // End is today
+        endDate = new Date(today);
+        break;
+      
+      case 'previousYear':
+        // Start of previous year
+        startDate = new Date(today.getFullYear() - 1, 0, 1);
+        // End of previous year (December 31)
+        endDate = new Date(today.getFullYear() - 1, 11, 31);
         break;
       
       case 'custom':
@@ -412,6 +465,119 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       default:
         startDate = new Date(today);
         endDate = new Date(today);
+    }
+    
+    return {
+      startDate: toLocalDateString(startDate),
+      endDate: toLocalDateString(endDate)
+    };
+  };
+  
+  // Helper function to calculate previous period date range for comparison
+  const getPreviousPeriodDateRange = (): { startDate: string; endDate: string } => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const toLocalDateString = (date: Date): string => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    let startDate: Date;
+    let endDate: Date;
+    
+    switch (productionDateRange) {
+      case 'today':
+        // Compare with yesterday
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - 1);
+        endDate = new Date(startDate);
+        break;
+      
+      case 'yesterday':
+        // Compare with day before yesterday
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - 2);
+        endDate = new Date(startDate);
+        break;
+      
+      case 'thisWeek':
+        // Compare with same days in previous week
+        const currentWeekStart = new Date(today);
+        currentWeekStart.setDate(today.getDate() - today.getDay());
+        const daysIntoWeek = today.getDay();
+        
+        startDate = new Date(currentWeekStart);
+        startDate.setDate(currentWeekStart.getDate() - 7);
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + daysIntoWeek);
+        break;
+      
+      case 'previousWeek':
+        // Compare with 2 weeks ago
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - today.getDay() - 14);
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 6);
+        break;
+      
+      case 'thisMonth':
+        // Compare with same date range in previous month
+        const daysIntoMonth = today.getDate();
+        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        endDate = new Date(today.getFullYear(), today.getMonth() - 1, daysIntoMonth);
+        break;
+      
+      case 'previousMonth':
+        // Compare with 2 months ago
+        startDate = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+        endDate = new Date(today.getFullYear(), today.getMonth() - 1, 0);
+        break;
+      
+      case 'thisYear':
+        // Compare with same date range in previous year
+        const currentYearStart = new Date(today.getFullYear(), 0, 1);
+        const daysIntoYear = Math.floor((today.getTime() - currentYearStart.getTime()) / (1000 * 60 * 60 * 24));
+        
+        startDate = new Date(today.getFullYear() - 1, 0, 1);
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + daysIntoYear);
+        break;
+      
+      case 'previousYear':
+        // Compare with 2 years ago
+        startDate = new Date(today.getFullYear() - 2, 0, 1);
+        endDate = new Date(today.getFullYear() - 2, 11, 31);
+        break;
+      
+      case 'custom':
+        if (customStartDate && customEndDate) {
+          const fromDate = new Date(customStartDate);
+          const toDate = new Date(customEndDate);
+          const daysDiff = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          const compStart = new Date(fromDate);
+          compStart.setDate(fromDate.getDate() - daysDiff - 1);
+          const compEnd = new Date(fromDate);
+          compEnd.setDate(fromDate.getDate() - 1);
+          
+          return {
+            startDate: toLocalDateString(compStart),
+            endDate: toLocalDateString(compEnd)
+          };
+        } else {
+          startDate = new Date(today);
+          startDate.setDate(today.getDate() - 1);
+          endDate = new Date(startDate);
+        }
+        break;
+      
+      default:
+        startDate = new Date(today);
+        startDate.setDate(today.getDate() - 1);
+        endDate = new Date(startDate);
     }
     
     return {
@@ -551,7 +717,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       
       // Check if recalibration exists and is from current month
       let openingBalance: any = null;
-      let midMonthRecalibration: any = null; // NEW: Track if we have mid-month recalibration
       
       if (recalResponse?.record) {
         const recalDate = recalResponse.record.date.substring(0, 7); // "2026-01"
@@ -566,58 +731,30 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         });
         
         if (recalDate === currentMonth) {
-          if (recalDay === 1) {
-            // CASE 1: Recalibration on 1st of month - RESET EVERYTHING
-            // Use recalibration as opening balance (production and deliveries start fresh)
-            console.log('✅ Recalibration on 1st of month - using as opening balance (RESET)');
-            console.log('   Recalibration items:', recalResponse.record.items);
-            openingBalance = {};
-            recalResponse.record.items.forEach((item: any) => {
-              const inventoryItem = context.inventoryItems?.find(invItem => 
-                invItem.id === item.itemId || invItem.name === item.itemId
-              );
-              
-              if (inventoryItem) {
-                const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-                const stockKey = camelName.replace(/Momo(s)?$/i, '');
-                openingBalance[stockKey] = item.actualQuantity;
-                console.log(`  📦 Opening balance (1st of month): ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
-              } else {
-                // Fallback: use itemId as-is
-                openingBalance[item.itemId] = item.actualQuantity;
-                console.log(`  ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
-              }
-            });
-            console.log('   Parsed opening balance:', openingBalance);
-          } else {
-            // CASE 2: Mid-month recalibration - DON'T change opening balance
-            // Opening balance should be calculated from previous month
-            // Only the final stock should reflect recalibration actual quantities
-            console.log('⚠️ Mid-month recalibration detected - keeping opening balance from previous month');
-            console.log(`   Recalibration date: ${recalResponse.record.date} (day ${recalDay})`);
+          // Use recalibration as opening balance regardless of the day
+          // This is the actual counted stock and becomes the new baseline
+          console.log('✅ Current month recalibration found - using as opening balance');
+          console.log(`   Recalibration date: ${recalResponse.record.date} (day ${recalDay})`);
+          console.log('   Recalibration items:', recalResponse.record.items);
+          
+          openingBalance = {};
+          recalResponse.record.items.forEach((item: any) => {
+            const inventoryItem = context.inventoryItems?.find(invItem => 
+              invItem.id === item.itemId || invItem.name === item.itemId
+            );
             
-            // Calculate opening balance from previous month as usual
-            openingBalance = calculatePreviousMonthClosingStock(productionHouseUUID);
-            
-            // Store mid-month recalibration data separately
-            midMonthRecalibration = {};
-            recalResponse.record.items.forEach((item: any) => {
-              const inventoryItem = context.inventoryItems?.find(invItem => 
-                invItem.id === item.itemId || invItem.name === item.itemId
-              );
-              
-              if (inventoryItem) {
-                const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-                const stockKey = camelName.replace(/Momo(s)?$/i, '');
-                midMonthRecalibration[stockKey] = item.actualQuantity;
-                console.log(`  📦 Mid-month stock override: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
-              } else {
-                midMonthRecalibration[item.itemId] = item.actualQuantity;
-              }
-            });
-            console.log('   Mid-month recalibration stock:', midMonthRecalibration);
-            console.log('   Opening balance (from previous month):', openingBalance);
-          }
+            if (inventoryItem) {
+              const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+              const stockKey = camelName.replace(/Momo(s)?$/i, '');
+              openingBalance[stockKey] = item.actualQuantity;
+              console.log(`  📦 Opening balance: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
+            } else {
+              // Fallback: use itemId as-is
+              openingBalance[item.itemId] = item.actualQuantity;
+              console.log(`  ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
+            }
+          });
+          console.log('   Parsed opening balance:', openingBalance);
         } else {
           // Recalibration is from a previous month - calculate from that point
           console.log('📅 Recalibration from previous month, calculating forward...');
@@ -631,15 +768,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       
       setLatestRecalibration(recalResponse?.record || null);
       setPreviousMonthStock(openingBalance);
-      
-      // NEW: Store mid-month recalibration separately if it exists
-      if (midMonthRecalibration) {
-        // We'll use this to override the final stock calculation
-        (window as any).__midMonthRecalibration = midMonthRecalibration;
-        console.log('💾 Stored mid-month recalibration for stock override:', midMonthRecalibration);
-      } else {
-        delete (window as any).__midMonthRecalibration;
-      }
       
       console.log('💰 Opening Balance Calculated:', openingBalance);
     } catch (error) {
@@ -858,56 +986,68 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
   // Helper function to filter data by time period
   const filterByTimeRange = (data: any[], dateField: string = 'date') => {
+    // Ensure we have a fresh `today` reference for this filter operation
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
     return data.filter(item => {
-      const itemDate = new Date(item[dateField]);
-      const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
+      // Safety check for null/undefined items or missing date field
+      if (!item || !item[dateField]) return false;
       
-      switch (timeFilter) {
-        case 'today':
-          return itemDateOnly.getTime() === today.getTime();
-          
-        case 'yesterday':
-          const yesterday = new Date(today);
-          yesterday.setDate(yesterday.getDate() - 1);
-          return itemDateOnly.getTime() === yesterday.getTime();
-          
-        case 'thisWeek':
-          // Get start of this week (Monday)
-          const startOfThisWeek = new Date(today);
-          const dayOfWeek = today.getDay();
-          const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // If Sunday, go back 6 days, else go to Monday
-          startOfThisWeek.setDate(today.getDate() + diff);
-          return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
-          
-        case 'thisMonth':
-          const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-          return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
-          
-        case 'lastWeek':
-          // Get start and end of last week (Monday to Sunday)
-          const startOfLastWeek = new Date(today);
-          const currentDay = today.getDay();
-          const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6); // If Sunday, go back 13 days, else go to last Monday
-          startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
-          const endOfLastWeek = new Date(startOfLastWeek);
-          endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
-          return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
-          
-        case 'lastMonth':
-          const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-          const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-          return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
-          
-        case 'custom':
-          const fromDate = new Date(dateRange.from);
-          const toDate = new Date(dateRange.to);
-          return itemDateOnly >= fromDate && itemDateOnly <= toDate;
-          
-        default:
-          return true;
+      // Safety check: ensure we have a valid date
+      try {
+        const itemDate = new Date(item[dateField]);
+        if (isNaN(itemDate.getTime())) return false;
+        
+        const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
+        
+        switch (timeFilter) {
+          case 'today':
+            return itemDateOnly.getTime() === today.getTime();
+            
+          case 'yesterday':
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            return itemDateOnly.getTime() === yesterday.getTime();
+            
+          case 'thisWeek':
+            // Get start of this week (Monday)
+            const startOfThisWeek = new Date(today);
+            const dayOfWeek = today.getDay();
+            const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // If Sunday, go back 6 days, else go to Monday
+            startOfThisWeek.setDate(today.getDate() + diff);
+            return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
+            
+          case 'thisMonth':
+            const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
+            
+          case 'lastWeek':
+            // Get start and end of last week (Monday to Sunday)
+            const startOfLastWeek = new Date(today);
+            const currentDay = today.getDay();
+            const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6); // If Sunday, go back 13 days, else go to last Monday
+            startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
+            const endOfLastWeek = new Date(startOfLastWeek);
+            endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
+            return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
+            
+          case 'lastMonth':
+            const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+            return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
+            
+          case 'custom':
+            const fromDate = new Date(dateRange.from);
+            const toDate = new Date(dateRange.to);
+            return itemDateOnly >= fromDate && itemDateOnly <= toDate;
+            
+          default:
+            return true;
+        }
+      } catch (error) {
+        console.error('Error filtering by time range:', error, 'Item:', item);
+        return false;
       }
     });
   };
@@ -915,7 +1055,100 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   // Apply time filtering first
   const timeFilteredSalesData = filterByTimeRange(salesData);
   const timeFilteredInventoryData = filterByTimeRange(inventoryData);
-  const timeFilteredOverheadData = filterByTimeRange(overheadData);
+  
+  // Special handling for overhead data: use expenseMonth for personal_expense category
+  const timeFilteredOverheadData = overheadData.filter(item => {
+    // Define today at the top of the filter so it's available in all code paths
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // For personal_expense with expenseMonth, filter based on expenseMonth instead of date
+    if (item.category === 'personal_expense' && item.expenseMonth) {
+      const expenseYearMonth = item.expenseMonth; // Format: "YYYY-MM"
+      
+      switch (timeFilter) {
+        case 'today':
+        case 'yesterday':
+          // Daily filters don't apply to monthly expense mapping
+          return false;
+          
+        case 'thisWeek':
+        case 'lastWeek':
+          // Weekly filters don't apply to monthly expense mapping
+          return false;
+          
+        case 'thisMonth':
+          const thisMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+          return expenseYearMonth === thisMonthStr;
+          
+        case 'lastMonth':
+          const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
+          return expenseYearMonth === lastMonthStr;
+          
+        case 'custom':
+          // For custom range, check if expenseMonth falls within the range
+          const fromDate = new Date(dateRange.from);
+          const toDate = new Date(dateRange.to);
+          const expenseDate = new Date(expenseYearMonth + '-01');
+          const expenseMonthStart = new Date(expenseDate.getFullYear(), expenseDate.getMonth(), 1);
+          const expenseMonthEnd = new Date(expenseDate.getFullYear(), expenseDate.getMonth() + 1, 0);
+          // Include if the expense month overlaps with the date range
+          return expenseMonthStart <= toDate && expenseMonthEnd >= fromDate;
+          
+        default:
+          return true;
+      }
+    }
+    
+    // For all other overhead items, use regular date-based filtering
+    const itemDate = new Date(item.date);
+    const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
+    
+    switch (timeFilter) {
+      case 'today':
+        return itemDateOnly.getTime() === today.getTime();
+        
+      case 'yesterday':
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return itemDateOnly.getTime() === yesterday.getTime();
+        
+      case 'thisWeek':
+        const startOfThisWeek = new Date(today);
+        const dayOfWeek = today.getDay();
+        const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        startOfThisWeek.setDate(today.getDate() + diff);
+        return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
+        
+      case 'thisMonth':
+        const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
+        
+      case 'lastWeek':
+        const startOfLastWeek = new Date(today);
+        const currentDay = today.getDay();
+        const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6);
+        startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
+        const endOfLastWeek = new Date(startOfLastWeek);
+        endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
+        return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
+        
+      case 'lastMonth':
+        const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+        return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
+        
+      case 'custom':
+        const fromDate = new Date(dateRange.from);
+        const toDate = new Date(dateRange.to);
+        return itemDateOnly >= fromDate && itemDateOnly <= toDate;
+        
+      default:
+        return true;
+    }
+  });
+  
   const timeFilteredFixedCostsData = filterByTimeRange(fixedCostsData);
   console.log('💰 Before time filtering - payoutsData:', payoutsData.length, 'payouts');
   console.log('💰 Payouts before filtering:', payoutsData.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
@@ -1258,6 +1491,61 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       default: return 'Current period';
     }
   };
+  
+  // Calculate accrued interest expense for a given time period
+  const calculateAccruedInterest = (startDate: string, endDate: string, storeId?: string) => {
+    // Filter loans by store if needed
+    const relevantLoans = storeId 
+      ? onlineLoans.filter(loan => loan.storeId === storeId)
+      : onlineLoans;
+    
+    let totalInterest = 0;
+    
+    relevantLoans.forEach(loan => {
+      // Skip loans with no interest rate
+      if (!loan.interestRate || loan.interestRate === 0) return;
+      
+      const loanDate = new Date(loan.loanDate);
+      const periodStart = new Date(startDate);
+      const periodEnd = new Date(endDate);
+      
+      // Determine the overlap period between loan duration and the analytics period
+      // Loan accrual starts from loanDate
+      // If loan is repaid, accrual stops at repaymentDate; otherwise continues
+      const loanEndDate = loan.status === 'repaid' && loan.repaymentDate 
+        ? new Date(loan.repaymentDate) 
+        : periodEnd; // If active, calculate till end of period
+      
+      // Calculate overlap: max(loanDate, periodStart) to min(loanEndDate, periodEnd)
+      const overlapStart = loanDate > periodStart ? loanDate : periodStart;
+      const overlapEnd = loanEndDate < periodEnd ? loanEndDate : periodEnd;
+      
+      // Only calculate if there's actual overlap
+      if (overlapStart < overlapEnd) {
+        const daysDiff = Math.floor((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end days
+        
+        // Monthly interest: (Principal × Rate × Days) / (100 × 30)
+        const interest = (loan.loanAmount * loan.interestRate * daysDiff) / (100 * 30);
+        totalInterest += Math.max(0, interest);
+        
+        console.log(`📊 Interest for loan ${loan.id}:`, {
+          storeName: loan.storeName,
+          principal: loan.loanAmount,
+          rate: loan.interestRate,
+          loanDate: loan.loanDate,
+          repaymentDate: loan.repaymentDate,
+          status: loan.status,
+          overlapStart: overlapStart.toISOString().split('T')[0],
+          overlapEnd: overlapEnd.toISOString().split('T')[0],
+          days: daysDiff,
+          interest: interest.toFixed(2)
+        });
+      }
+    });
+    
+    console.log(`💰 Total accrued interest for period ${startDate} to ${endDate}:`, totalInterest.toFixed(2));
+    return totalInterest;
+  };
 
   // Calculate analytics metrics
   const calculateMetrics = () => {
@@ -1456,9 +1744,73 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
     // Total fixed costs = electricity + rent + salaries
     const fixedCostsTotal = electricityExpenses + rentExpenses + salaryExpenses;
+    
+    // Calculate interest expense (accrual basis)
+    // Get the date range for the current filter
+    const getDateRangeForFilter = (): { startDate: string; endDate: string } => {
+      const today = new Date();
+      
+      switch (timeFilter) {
+        case 'today':
+          const todayStr = getTodayIST();
+          return { startDate: todayStr, endDate: todayStr };
+        
+        case 'yesterday':
+          const yesterday = new Date();
+          yesterday.setDate(yesterday.getDate() - 1);
+          const yesterdayStr = yesterday.toISOString().split('T')[0];
+          return { startDate: yesterdayStr, endDate: yesterdayStr };
+        
+        case 'thisWeek':
+          const startOfWeek = new Date(today);
+          startOfWeek.setDate(today.getDate() - today.getDay());
+          return { 
+            startDate: startOfWeek.toISOString().split('T')[0], 
+            endDate: getTodayIST() 
+          };
+        
+        case 'lastWeek':
+          const lastWeekEnd = new Date();
+          lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+          const lastWeekStart = new Date(lastWeekEnd);
+          lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+          return { 
+            startDate: lastWeekStart.toISOString().split('T')[0], 
+            endDate: lastWeekEnd.toISOString().split('T')[0] 
+          };
+        
+        case 'thisMonth':
+          const currentMonth = new Date().toISOString().slice(0, 7);
+          return { 
+            startDate: `${currentMonth}-01`, 
+            endDate: getTodayIST() 
+          };
+        
+        case 'lastMonth':
+          const lastMonthDate = new Date();
+          lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+          const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+          const lastMonthLastDay = new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth() + 1, 0).getDate();
+          return { 
+            startDate: `${lastMonth}-01`, 
+            endDate: `${lastMonth}-${lastMonthLastDay}` 
+          };
+        
+        case 'custom':
+          return { startDate: dateRange.from, endDate: dateRange.to };
+        
+        default:
+          return { startDate: getTodayIST(), endDate: getTodayIST() };
+      }
+    };
+    
+    const { startDate, endDate } = getDateRangeForFilter();
+    const interestExpenses = calculateAccruedInterest(startDate, endDate, effectiveStoreId || undefined);
+    
+    console.log('💸 Interest expense for period:', interestExpenses.toFixed(2));
 
-    // Total costs now includes commission as a separate category
-    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses;
+    // Total costs now includes commission and interest as separate categories
+    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses + interestExpenses;
     
     // Net profit calculation (commission is now separate)
     const netProfit = totalRevenue - totalCosts;
@@ -1474,6 +1826,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       onlineRevenue,
       offlineRevenue,
       commissionExpenses,
+      interestExpenses,
       totalExpenses: totalCosts,
       inventoryExpenses,
       overheadExpenses,
@@ -1494,7 +1847,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     filteredOverheadData, 
     filteredFixedCostsData, 
     filteredPayoutsData,
-    timeFilter
+    onlineLoans,
+    timeFilter,
+    dateRange
   ]);
 
   // Prepare chart data - group by month
@@ -1571,19 +1926,37 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const chartData: any[] = [];
     
+    // Helper function to get date string in YYYY-MM-DD format without timezone issues
+    const getLocalDateString = (date: Date): string => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
     // Helper function to add day data
     const addDayData = (date: Date) => {
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = getLocalDateString(date);
       const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
       
       const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
-      const onlineRevenue = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+      // Get online sales from main sales table
+      const onlineRevenueFromSales = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+      
+      // ALSO get online sales from the separate online sales table (Swiggy + Zomato)
+      const dayOnlineSales = onlineSalesData.filter(sale => sale.date === dateStr);
+      const onlineRevenueFromPlatforms = dayOnlineSales.reduce((sum, sale) => 
+        sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
+      
+      // Total online revenue = both sources
+      const totalOnlineRevenue = onlineRevenueFromSales + onlineRevenueFromPlatforms;
+      
       const offlineRevenue = daySales.reduce((sum, sale) => sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0), 0);
-      const total = onlineRevenue + offlineRevenue;
+      const total = totalOnlineRevenue + offlineRevenue;
       
       chartData.push({
         period: dayLabel,
-        online: onlineRevenue,
+        online: totalOnlineRevenue,
         offline: offlineRevenue,
         total: total
       });
@@ -1662,6 +2035,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         monthlyData[monthKey].total += onlineRev + offlineRev;
       });
       
+      // ALSO add online sales from Swiggy/Zomato
+      onlineSalesData.forEach(sale => {
+        const date = new Date(sale.date);
+        const monthKey = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+        
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = {
+            period: monthKey,
+            online: 0,
+            offline: 0,
+            total: 0
+          };
+        }
+        
+        const platformSales = (sale.swiggySales || 0) + (sale.zomatoSales || 0);
+        monthlyData[monthKey].online += platformSales;
+        monthlyData[monthKey].total += platformSales;
+      });
+      
       return Object.values(monthlyData);
     }
     
@@ -1670,6 +2062,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
   const salesChartData = useMemo(() => prepareSalesChartData(), [
     filteredSalesData,
+    onlineSalesData,
     timeFilter
   ]);
 
@@ -1942,6 +2335,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       categoryExpenses['🍔 Aggregator Commission'] = metrics.commissionExpenses;
       categoryItems['🍔 Aggregator Commission'] = []; // Calculated from online sales/payout data
       categoryTypes['🍔 Aggregator Commission'] = 'commission';
+    }
+    
+    // Add interest expense as a separate category
+    if (metrics.interestExpenses > 0) {
+      categoryExpenses['💸 Loan Interest'] = metrics.interestExpenses;
+      categoryItems['💸 Loan Interest'] = []; // Calculated from accrued interest on loans
+      categoryTypes['💸 Loan Interest'] = 'interest';
     }
 
     // Create breakdown - show all categories without grouping
@@ -3373,10 +3773,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
                 </div>
-                <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-lg p-4">
-                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Transactions</div>
-                  <div className="text-2xl sm:text-3xl text-gray-900">{filteredSalesData.length}</div>
-                  <div className="text-xs text-gray-600">Sales records</div>
+                <div className="bg-gradient-to-br from-amber-100 to-amber-200 rounded-lg p-4">
+                  <div className="text-xs sm:text-sm text-gray-700 mb-1">Net Profit</div>
+                  <div className="text-2xl sm:text-3xl text-gray-900">₹{realizedProfit.toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">{metrics.totalRevenue > 0 ? ((realizedProfit / metrics.totalRevenue) * 100).toFixed(1) : '0.0'}% margin</div>
                 </div>
               </div>
 
@@ -3396,6 +3796,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         <Legend wrapperStyle={{ fontSize: '12px' }} />
                         <Bar dataKey="online" stackId="a" fill="#60a5fa" name="Online Sales" radius={[0, 0, 0, 0]} maxBarSize={80} />
                         <Bar dataKey="offline" stackId="a" fill="#a78bfa" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
+                        <Line type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} dot={{ fill: '#f59e0b', r: 5 }} name="Total Sales Trend" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -3430,22 +3831,29 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <TrendingUp className="w-5 h-5 text-purple-600" />
-                    <h3 className="text-base sm:text-lg text-gray-900">Performance Metrics</h3>
+                    <h3 className="text-base sm:text-lg text-gray-900">Performance Insights</h3>
                   </div>
                   <div className="space-y-3">
                     <div className="bg-purple-50 p-4 rounded-lg">
-                      <div className="text-xs text-gray-600 mb-1">Average Transaction</div>
+                      <div className="text-xs text-gray-600 mb-1">Daily Revenue Average</div>
                       <div className="text-xl text-gray-900">
                         ₹{filteredSalesData.length > 0 ? (metrics.totalRevenue / filteredSalesData.length).toFixed(0) : 0}
                       </div>
-                      <div className="text-xs text-gray-600 mt-1">Per sale</div>
+                      <div className="text-xs text-gray-600 mt-1">Per day</div>
                     </div>
                     <div className="bg-pink-50 p-4 rounded-lg">
-                      <div className="text-xs text-gray-600 mb-1">Profit per Sale</div>
+                      <div className="text-xs text-gray-600 mb-1">Daily Profit Average</div>
                       <div className="text-xl text-gray-900">
                         ₹{filteredSalesData.length > 0 ? (metrics.netProfit / filteredSalesData.length).toFixed(0) : 0}
                       </div>
-                      <div className="text-xs text-gray-600 mt-1">Average margin</div>
+                      <div className="text-xs text-gray-600 mt-1">Per day</div>
+                    </div>
+                    <div className="bg-indigo-50 p-4 rounded-lg">
+                      <div className="text-xs text-gray-600 mb-1">Best Performing Day</div>
+                      <div className="text-xl text-gray-900">
+                        ₹{filteredSalesData.length > 0 ? Math.max(...filteredSalesData.map(sale => (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0))).toLocaleString() : 0}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">Highest daily revenue</div>
                     </div>
                   </div>
                 </div>
@@ -3487,9 +3895,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="flex flex-wrap gap-2">
                     {[
                       { value: 'today' as DateRangeType, label: 'Today' },
-                      { value: 'week' as DateRangeType, label: 'This Week' },
-                      { value: 'month' as DateRangeType, label: 'This Month' },
-                      { value: 'year' as DateRangeType, label: 'This Year' },
+                      { value: 'yesterday' as DateRangeType, label: 'Yesterday' },
+                      { value: 'thisWeek' as DateRangeType, label: 'This Week' },
+                      { value: 'previousWeek' as DateRangeType, label: 'Previous Week' },
+                      { value: 'thisMonth' as DateRangeType, label: 'This Month' },
+                      { value: 'previousMonth' as DateRangeType, label: 'Previous Month' },
+                      { value: 'thisYear' as DateRangeType, label: 'This Year' },
+                      { value: 'previousYear' as DateRangeType, label: 'Previous Year' },
                       { value: 'custom' as DateRangeType, label: 'Custom Range' },
                     ].map(option => (
                       <button
@@ -3583,7 +3995,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             </div>
 
             {/* Production Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
               {(() => {
                 // Use consistent production house filtering logic
                 const filterById = selectedProductionHouseId;  // Always use production house selector in production analytics
@@ -3679,16 +4091,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 
                 console.log('  - Filtered production records:', filteredProduction.length);
 
-                const totalProduction = filteredProduction.reduce((sum, p) => {
-                  return sum + 
-                    (p.chickenMomos?.final || 0) + 
-                    (p.chickenCheeseMomos?.final || 0) + 
-                    (p.vegMomos?.final || 0) + 
-                    (p.cheeseCornMomos?.final || 0) + 
-                    (p.paneerMomos?.final || 0) + 
-                    (p.vegKurkureMomos?.final || 0) + 
-                    (p.chickenKurkureMomos?.final || 0);
-                }, 0);
+                // Calculate production by type for current period
+                const chickenMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenMomos?.final || 0), 0);
+                const chickenCheeseMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenCheeseMomos?.final || 0), 0);
+                const vegMomos = filteredProduction.reduce((sum, p) => sum + (p.vegMomos?.final || 0), 0);
+                const cheeseCornMomos = filteredProduction.reduce((sum, p) => sum + (p.cheeseCornMomos?.final || 0), 0);
+                const paneerMomos = filteredProduction.reduce((sum, p) => sum + (p.paneerMomos?.final || 0), 0);
+                const vegKurkureMomos = filteredProduction.reduce((sum, p) => sum + (p.vegKurkureMomos?.final || 0), 0);
+                const chickenKurkureMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenKurkureMomos?.final || 0), 0);
 
                 const totalWastage = filteredProduction.reduce((sum, p) => {
                   return sum + 
@@ -3700,43 +4110,215 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 const approvedCount = filteredProduction.filter(p => p.approvalStatus === 'approved').length;
                 const pendingCount = filteredProduction.filter(p => p.approvalStatus === 'pending').length;
+                
+                // Calculate production for previous period for comparison
+                const previousRange = getPreviousPeriodDateRange();
+                const previousProduction = productionData.filter(p => {
+                  // Filter by date range first
+                  if (p.date < previousRange.startDate || p.date > previousRange.endDate) {
+                    return false;
+                  }
+                  
+                  if (!filterById) return true;
+                  
+                  // Same filtering logic as current period
+                  const matchesStoreId = p.storeId === filterById;
+                  const matchesProductionHouseId = p.productionHouseId === filterById;
+                  
+                  let recordProductionHouseId = p.productionHouseId;
+                  if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+                    const allStores = stores.length > 0 ? stores : (context.stores || []);
+                    const store = allStores.find(s => s.id === p.storeId);
+                    recordProductionHouseId = store?.productionHouseId || null;
+                  }
+                  
+                  const phId = recordProductionHouseId || p.storeId;
+                  const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
+                  
+                  return matches;
+                });
+                
+                const prevChickenMomos = previousProduction.reduce((sum, p) => sum + (p.chickenMomos?.final || 0), 0);
+                const prevChickenCheeseMomos = previousProduction.reduce((sum, p) => sum + (p.chickenCheeseMomos?.final || 0), 0);
+                const prevVegMomos = previousProduction.reduce((sum, p) => sum + (p.vegMomos?.final || 0), 0);
+                const prevCheeseCornMomos = previousProduction.reduce((sum, p) => sum + (p.cheeseCornMomos?.final || 0), 0);
+                const prevPaneerMomos = previousProduction.reduce((sum, p) => sum + (p.paneerMomos?.final || 0), 0);
+                const prevVegKurkureMomos = previousProduction.reduce((sum, p) => sum + (p.vegKurkureMomos?.final || 0), 0);
+                const prevChickenKurkureMomos = previousProduction.reduce((sum, p) => sum + (p.chickenKurkureMomos?.final || 0), 0);
+                
+                // Helper function to calculate percentage change
+                const calcPercentChange = (current: number, previous: number): number => {
+                  if (previous === 0) return current > 0 ? 100 : 0;
+                  return ((current - previous) / previous) * 100;
+                };
 
                 return (
                   <>
-                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl shadow-lg p-6">
+                    <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl shadow-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
-                        <Factory className="w-6 h-6 text-orange-600" />
-                        <p className="text-sm text-gray-600">Total Production</p>
+                        <Soup className="w-5 h-5 text-red-600" />
+                        <p className="text-xs text-gray-600">Chicken Momos</p>
                       </div>
-                      <p className="text-3xl text-gray-900">{totalProduction.toLocaleString()}</p>
-                      <p className="text-xs text-gray-600 mt-1">pieces</p>
+                      <p className="text-2xl text-gray-900">{chickenMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevChickenMomos > 0 && (() => {
+                          const change = calcPercentChange(chickenMomos, prevChickenMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
 
-                    <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl shadow-lg p-6">
+                    <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl shadow-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
-                        <Trash2 className="w-6 h-6 text-red-600" />
-                        <p className="text-sm text-gray-600">Total Wastage</p>
+                        <Soup className="w-5 h-5 text-yellow-600" />
+                        <p className="text-xs text-gray-600">Chicken Cheese</p>
                       </div>
-                      <p className="text-3xl text-gray-900">{totalWastage.toFixed(2)}</p>
-                      <p className="text-xs text-gray-600 mt-1">kg</p>
+                      <p className="text-2xl text-gray-900">{chickenCheeseMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevChickenCheeseMomos > 0 && (() => {
+                          const change = calcPercentChange(chickenCheeseMomos, prevChickenCheeseMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
 
-                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl shadow-lg p-6">
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl shadow-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
-                        <ClipboardCheck className="w-6 h-6 text-green-600" />
-                        <p className="text-sm text-gray-600">Approved Entries</p>
+                        <Soup className="w-5 h-5 text-green-600" />
+                        <p className="text-xs text-gray-600">Veg Momos</p>
                       </div>
-                      <p className="text-3xl text-gray-900">{approvedCount}</p>
-                      <p className="text-xs text-gray-600 mt-1">records</p>
+                      <p className="text-2xl text-gray-900">{vegMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevVegMomos > 0 && (() => {
+                          const change = calcPercentChange(vegMomos, prevVegMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
 
-                    <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl shadow-lg p-6">
+                    <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl shadow-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
-                        <AlertCircle className="w-6 h-6 text-yellow-600" />
-                        <p className="text-sm text-gray-600">Pending Approval</p>
+                        <Soup className="w-5 h-5 text-amber-600" />
+                        <p className="text-xs text-gray-600">Cheese Corn</p>
                       </div>
-                      <p className="text-3xl text-gray-900">{pendingCount}</p>
-                      <p className="text-xs text-gray-600 mt-1">records</p>
+                      <p className="text-2xl text-gray-900">{cheeseCornMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevCheeseCornMomos > 0 && (() => {
+                          const change = calcPercentChange(cheeseCornMomos, prevCheeseCornMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Soup className="w-5 h-5 text-blue-600" />
+                        <p className="text-xs text-gray-600">Paneer Momos</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{paneerMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevPaneerMomos > 0 && (() => {
+                          const change = calcPercentChange(paneerMomos, prevPaneerMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-lime-50 to-lime-100 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Soup className="w-5 h-5 text-lime-600" />
+                        <p className="text-xs text-gray-600">Veg Kurkure</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{vegKurkureMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevVegKurkureMomos > 0 && (() => {
+                          const change = calcPercentChange(vegKurkureMomos, prevVegKurkureMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Soup className="w-5 h-5 text-orange-600" />
+                        <p className="text-xs text-gray-600">Chicken Kurkure</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{chickenKurkureMomos.toLocaleString()}</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-gray-500">pieces</p>
+                        {prevChickenKurkureMomos > 0 && (() => {
+                          const change = calcPercentChange(chickenKurkureMomos, prevChickenKurkureMomos);
+                          return (
+                            <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                              <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-red-100 to-red-200 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Trash2 className="w-5 h-5 text-red-700" />
+                        <p className="text-xs text-gray-600">Total Wastage</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{totalWastage.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500 mt-1">kg</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <ClipboardCheck className="w-5 h-5 text-green-700" />
+                        <p className="text-xs text-gray-600">Approved</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{approvedCount}</p>
+                      <p className="text-xs text-gray-500 mt-1">records</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-xl shadow-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertCircle className="w-5 h-5 text-yellow-700" />
+                        <p className="text-xs text-gray-600">Pending</p>
+                      </div>
+                      <p className="text-2xl text-gray-900">{pendingCount}</p>
+                      <p className="text-xs text-gray-500 mt-1">records</p>
                     </div>
                   </>
                 );
@@ -4501,18 +5083,26 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </div>
 
                 {/* Time Filter */}
-                <div className="flex gap-2">
-                  {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { filter: 'today', label: 'Today' },
+                    { filter: 'yesterday', label: 'Yesterday' },
+                    { filter: 'thisWeek', label: 'This Week' },
+                    { filter: 'lastWeek', label: 'Last Week' },
+                    { filter: 'thisMonth', label: 'This Month' },
+                    { filter: 'lastMonth', label: 'Last Month' },
+                    { filter: 'custom', label: 'Custom' }
+                  ].map(({ filter, label }) => (
                     <button
                       key={filter}
                       onClick={() => setTimeFilter(filter as TimeFilter)}
-                      className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                      className={`px-3 py-2 rounded-lg text-xs sm:text-sm transition-colors ${
                         timeFilter === filter
                           ? 'bg-orange-600 text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
-                      {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -4544,122 +5134,244 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </div>
               )}
 
-              {/* Production Bar Chart */}
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={(() => {
-                  // Use consistent production house filtering logic
-                  const filterById = analyticsMode === 'production'
-                    ? selectedProductionHouseId  // In production mode, use production house selector
-                    : (context.user?.designation === 'production_incharge'
-                        ? effectiveStoreId  // Production incharge in store mode uses their store ID
-                        : selectedProductionHouseId);  // Cluster head in store mode uses production house selector
-                  
-                  // Find the selected production house to get BOTH its id and storeId
-                  const selectedProductionHouseForChart = filterById 
-                    ? context.productionHouses?.find(ph => ph.id === filterById || ph.storeId === filterById)
-                    : null;
-                  
-                  const filteredProduction = productionData.filter(p => {
-                    // Match on storeId OR productionHouseId
-                    if (filterById) {
-                      const matchesStoreId = p.storeId === filterById;
-                      const matchesProductionHouseId = p.productionHouseId === filterById;
-                      
-                      // Get the production house ID from the record
-                      let recordProductionHouseId = p.productionHouseId;
-                      
-                      // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
-                      if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
-                        const store = context.stores?.find(s => s.id === p.storeId);
-                        recordProductionHouseId = store?.productionHouseId || null;
-                      }
-                      
-                      const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
-                      
-                      const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
-                      if (!matches) return false;
+              {/* Card-based Production View */}
+              {(() => {
+                // Use consistent production house filtering logic
+                const filterById = analyticsMode === 'production'
+                  ? selectedProductionHouseId
+                  : (context.user?.designation === 'production_incharge'
+                      ? effectiveStoreId
+                      : selectedProductionHouseId);
+                
+                const now = new Date();
+                const today = now.toISOString().split('T')[0];
+                const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                
+                // Get week boundaries
+                const thisWeekStart = new Date(now);
+                thisWeekStart.setDate(now.getDate() - now.getDay());
+                thisWeekStart.setHours(0, 0, 0, 0);
+                
+                const lastWeekStart = new Date(thisWeekStart);
+                lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+                const lastWeekEnd = new Date(thisWeekStart);
+                lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
+                
+                // Get month boundaries
+                const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+                
+                // Filter production data by production house
+                let filteredProduction = productionData.filter(p => {
+                  if (filterById) {
+                    const matchesStoreId = p.storeId === filterById;
+                    const matchesProductionHouseId = p.productionHouseId === filterById;
+                    
+                    let recordProductionHouseId = p.productionHouseId;
+                    
+                    if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+                      const store = context.stores?.find(s => s.id === p.storeId);
+                      recordProductionHouseId = store?.productionHouseId || null;
                     }
                     
-                    if (timeFilter === 'custom') {
-                      return p.date >= dateRange.from && p.date <= dateRange.to;
-                    }
-                    return true;
+                    const phId = recordProductionHouseId || p.storeId;
+                    const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
+                    if (!matches) return false;
+                  }
+                  return true;
+                });
+                
+                // Further filter by time period
+                let currentPeriodProduction = [];
+                let comparisonPeriodProduction = [];
+                let periodLabel = '';
+                let comparisonLabel = '';
+                
+                if (timeFilter === 'today') {
+                  currentPeriodProduction = filteredProduction.filter(p => p.date === today);
+                  comparisonPeriodProduction = filteredProduction.filter(p => p.date === yesterday);
+                  periodLabel = 'Today';
+                  comparisonLabel = 'vs Yesterday';
+                } else if (timeFilter === 'yesterday') {
+                  currentPeriodProduction = filteredProduction.filter(p => p.date === yesterday);
+                  const dayBefore = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                  comparisonPeriodProduction = filteredProduction.filter(p => p.date === dayBefore);
+                  periodLabel = 'Yesterday';
+                  comparisonLabel = 'vs Day Before';
+                } else if (timeFilter === 'thisWeek') {
+                  currentPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= thisWeekStart && pDate <= now;
                   });
-
-                  // Group by time period
-                  const grouped = new Map();
-                  filteredProduction.forEach(p => {
-                    let key = p.date;
-                    let displayLabel = p.date;
-                    
-                    if (timeFilter === 'weekly') {
-                      const date = new Date(p.date);
-                      const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
-                      const weekEnd = new Date(weekStart);
-                      weekEnd.setDate(weekEnd.getDate() + 6);
-                      key = weekStart.toISOString().split('T')[0];
-                      // Format as "Dec 21 - Dec 27"
-                      displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-                    } else if (timeFilter === 'monthly') {
-                      key = p.date.substring(0, 7); // YYYY-MM
-                      displayLabel = key;
-                    } else if (timeFilter === 'yearly') {
-                      key = p.date.substring(0, 4); // YYYY
-                      displayLabel = key;
-                    }
-
-                    if (!grouped.has(key)) {
-                      grouped.set(key, {
-                        period: displayLabel,
-                        chickenMomos: 0,
-                        chickenCheeseMomos: 0,
-                        vegMomos: 0,
-                        cheeseCornMomos: 0,
-                        paneerMomos: 0,
-                        vegKurkure: 0,
-                        chickenKurkure: 0,
-                      });
-                    }
-
-                    const data = grouped.get(key)!;
-                    data.chickenMomos += p.chickenMomos?.final || 0;
-                    data.chickenCheeseMomos += p.chickenCheeseMomos?.final || 0;
-                    data.vegMomos += p.vegMomos?.final || 0;
-                    data.cheeseCornMomos += p.cheeseCornMomos?.final || 0;
-                    data.paneerMomos += p.paneerMomos?.final || 0;
-                    data.vegKurkure += p.vegKurkureMomos?.final || 0;
-                    data.chickenKurkure += p.chickenKurkureMomos?.final || 0;
+                  comparisonPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= lastWeekStart && pDate <= lastWeekEnd;
                   });
-
-                  return Array.from(grouped.values()).sort((a, b) => 
-                    a.period.localeCompare(b.period)
+                  periodLabel = 'This Week';
+                  comparisonLabel = 'vs Last Week';
+                } else if (timeFilter === 'lastWeek') {
+                  currentPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= lastWeekStart && pDate <= lastWeekEnd;
+                  });
+                  const weekBeforeStart = new Date(lastWeekStart);
+                  weekBeforeStart.setDate(lastWeekStart.getDate() - 7);
+                  const weekBeforeEnd = new Date(lastWeekStart);
+                  weekBeforeEnd.setDate(lastWeekStart.getDate() - 1);
+                  comparisonPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= weekBeforeStart && pDate <= weekBeforeEnd;
+                  });
+                  periodLabel = 'Last Week';
+                  comparisonLabel = 'vs Week Before';
+                } else if (timeFilter === 'thisMonth') {
+                  currentPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= thisMonthStart && pDate <= now;
+                  });
+                  // Compare same number of days from last month
+                  const currentDayOfMonth = now.getDate();
+                  const lastMonthSameDay = new Date(now.getFullYear(), now.getMonth() - 1, currentDayOfMonth);
+                  comparisonPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= lastMonthStart && pDate <= lastMonthSameDay;
+                  });
+                  periodLabel = 'This Month';
+                  comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
+                } else if (timeFilter === 'lastMonth') {
+                  currentPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= lastMonthStart && pDate <= lastMonthEnd;
+                  });
+                  // Get the number of days in last month
+                  const daysInLastMonth = lastMonthEnd.getDate();
+                  const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+                  const monthBeforeSameDay = new Date(now.getFullYear(), now.getMonth() - 2, daysInLastMonth);
+                  comparisonPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= monthBeforeStart && pDate <= monthBeforeSameDay;
+                  });
+                  periodLabel = 'Last Month';
+                  comparisonLabel = `vs Month Before (Day 1-${daysInLastMonth})`;
+                } else if (timeFilter === 'custom') {
+                  currentPeriodProduction = filteredProduction.filter(p => 
+                    p.date >= dateRange.from && p.date <= dateRange.to
                   );
-                })()}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                  <XAxis 
-                    dataKey="period" 
-                    tick={{ fontSize: 12 }}
-                    stroke="#666"
-                    angle={timeFilter === 'weekly' ? -15 : 0}
-                    textAnchor={timeFilter === 'weekly' ? 'end' : 'middle'}
-                    height={timeFilter === 'weekly' ? 60 : 30}
-                  />
-                  <YAxis 
-                    tick={{ fontSize: 12 }}
-                    stroke="#666"
-                    label={{ value: 'Pieces', angle: -90, position: 'insideLeft' }}
-                  />
-                  <Tooltip content={<ProductionTooltip />} />
-                  <Legend />
-                  <Bar dataKey="chickenMomos" name="Chicken Momos" fill="#ef4444" />
-                  <Bar dataKey="chickenCheeseMomos" name="Chicken Cheese" fill="#f97316" />
-                  <Bar dataKey="vegMomos" name="Veg Momos" fill="#10b981" />
-                  <Bar dataKey="cheeseCornMomos" name="Cheese Corn" fill="#fbbf24" />
-                  <Bar dataKey="paneerMomos" name="Paneer Momos" fill="#3b82f6" />
-                  <Bar dataKey="vegKurkure" name="Veg Kurkure" fill="#84cc16" />
-                  <Bar dataKey="chickenKurkure" name="Chicken Kurkure" fill="#f59e0b" />
-                </BarChart>
-              </ResponsiveContainer>
+                  const customStart = new Date(dateRange.from);
+                  const customEnd = new Date(dateRange.to);
+                  const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));
+                  const comparisonStart = new Date(customStart);
+                  comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
+                  const comparisonEnd = new Date(customStart);
+                  comparisonEnd.setDate(customStart.getDate() - 1);
+                  comparisonPeriodProduction = filteredProduction.filter(p => {
+                    const pDate = new Date(p.date);
+                    return pDate >= comparisonStart && pDate <= comparisonEnd;
+                  });
+                  periodLabel = `${dateRange.from} to ${dateRange.to}`;
+                  comparisonLabel = 'vs Previous Period';
+                }
+                
+                // Calculate totals for each momo type
+                const momoTypes = [
+                  { key: 'chickenMomos', label: 'Chicken Momos', color: { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', solid: '#ef4444' } },
+                  { key: 'chickenCheeseMomos', label: 'Chicken Cheese', color: { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', solid: '#f97316' } },
+                  { key: 'vegMomos', label: 'Veg Momos', color: { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300', solid: '#10b981' } },
+                  { key: 'cheeseCornMomos', label: 'Cheese Corn', color: { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-300', solid: '#fbbf24' } },
+                  { key: 'paneerMomos', label: 'Paneer Momos', color: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', solid: '#3b82f6' } },
+                  { key: 'vegKurkureMomos', label: 'Veg Kurkure', color: { bg: 'bg-lime-100', text: 'text-lime-700', border: 'border-lime-300', solid: '#84cc16' } },
+                  { key: 'chickenKurkureMomos', label: 'Chicken Kurkure', color: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300', solid: '#f59e0b' } },
+                ];
+                
+                const calculateTotal = (production: any[], momoKey: string) => {
+                  return production.reduce((sum, p) => sum + (p[momoKey]?.final || 0), 0);
+                };
+                
+                return (
+                  <div>
+                    <div className="mb-4 text-sm text-gray-600">
+                      <span className="font-medium">Period:</span> {periodLabel} • <span className="font-medium">Total Production Records:</span> {currentPeriodProduction.length}
+                    </div>
+                    
+                    {currentPeriodProduction.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
+                        <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                        <p>No production data for this period</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {momoTypes.map((momoType) => {
+                          const currentQty = calculateTotal(currentPeriodProduction, momoType.key);
+                          const comparisonQty = calculateTotal(comparisonPeriodProduction, momoType.key);
+                          
+                          // Calculate percentage change
+                          let percentChange = 0;
+                          let changeDirection: 'up' | 'down' | 'same' = 'same';
+                          if (comparisonQty > 0) {
+                            percentChange = ((currentQty - comparisonQty) / comparisonQty) * 100;
+                            if (percentChange > 0) changeDirection = 'up';
+                            else if (percentChange < 0) changeDirection = 'down';
+                          } else if (currentQty > 0) {
+                            percentChange = 100;
+                            changeDirection = 'up';
+                          }
+                          
+                          return (
+                            <div
+                              key={momoType.key}
+                              className={`${momoType.color.bg} ${momoType.color.border} border-2 rounded-xl p-4 transition-all hover:shadow-lg`}
+                            >
+                              <div className="flex flex-col gap-3">
+                                {/* Header */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-10 h-10 ${momoType.color.text} rounded-full flex items-center justify-center bg-white`}>
+                                      <Soup className="w-5 h-5" />
+                                    </div>
+                                    <div className="text-sm font-bold text-gray-800">
+                                      {momoType.label}
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Percentage badge */}
+                                  {comparisonQty > 0 && (
+                                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold ${
+                                      changeDirection === 'up' ? 'bg-green-100 text-green-700' :
+                                      changeDirection === 'down' ? 'bg-red-100 text-red-700' :
+                                      'bg-gray-100 text-gray-700'
+                                    }`}>
+                                      {changeDirection === 'up' && <ArrowUp className="w-3 h-3" />}
+                                      {changeDirection === 'down' && <ArrowDown className="w-3 h-3" />}
+                                      {changeDirection === 'same' && <Minus className="w-3 h-3" />}
+                                      {Math.abs(percentChange).toFixed(0)}%
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {/* Production quantity */}
+                                <div className="bg-white rounded-lg p-3 text-center">
+                                  <div className={`text-3xl font-bold ${momoType.color.text} mb-1`}>
+                                    {currentQty.toLocaleString()}
+                                  </div>
+                                  <div className="text-xs text-gray-600 font-medium">pieces produced</div>
+                                </div>
+                                
+                                {/* Comparison info */}
+                                {comparisonQty > 0 && (
+                                  <div className="text-xs text-gray-500 text-center pt-1 border-t border-gray-200">
+                                    {comparisonLabel}: {comparisonQty.toLocaleString()} pcs
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Wastage Analysis Charts */}

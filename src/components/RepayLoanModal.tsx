@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DollarSign, Calendar, FileText, Save, XCircle, AlertCircle, TrendingDown } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
@@ -20,12 +20,35 @@ export function RepayLoanModal({
   onSaveSuccess
 }: Props) {
   const remainingAmount = loan.loanAmount - loan.repaidAmount;
-  const [repaymentAmount, setRepaymentAmount] = useState<string>(remainingAmount.toString());
+  
+  const [repaymentAmount, setRepaymentAmount] = useState<string>('0');
   const [repaymentDate, setRepaymentDate] = useState(selectedDate || getTodayIST());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  
+  // Calculate interest accrued based on repayment date (not today)
+  const calculateInterest = (toDate: string) => {
+    if (!loan.interestRate || loan.interestRate === 0) return 0;
+    
+    const loanDate = new Date(loan.loanDate);
+    const targetDate = new Date(toDate);
+    const daysDiff = Math.floor((targetDate.getTime() - loanDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Monthly interest: (Principal × Rate × Time in days) / (100 × 30)
+    // Time in months = days / 30
+    const interest = (loan.loanAmount * loan.interestRate * daysDiff) / (100 * 30);
+    return Math.max(0, interest);
+  };
+  
+  const interestAccrued = calculateInterest(repaymentDate);
+  const totalAmountWithInterest = remainingAmount + interestAccrued;
+  
+  // Update repayment amount when interest changes
+  useEffect(() => {
+    setRepaymentAmount(totalAmountWithInterest.toFixed(2));
+  }, [interestAccrued]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,8 +64,8 @@ export function RepayLoanModal({
       return;
     }
 
-    if (repaymentAmountNum > remainingAmount) {
-      setError(`Repayment amount cannot exceed remaining amount (₹${remainingAmount.toLocaleString()})`);
+    if (repaymentAmountNum > totalAmountWithInterest) {
+      setError(`Repayment amount cannot exceed total amount with interest (₹${totalAmountWithInterest.toLocaleString()})`);
       return;
     }
 
@@ -73,7 +96,7 @@ export function RepayLoanModal({
     }
   };
 
-  const isFullRepayment = parseFloat(repaymentAmount) === remainingAmount;
+  const isFullRepayment = parseFloat(repaymentAmount) === totalAmountWithInterest;
 
   return (
     <div 
@@ -130,15 +153,40 @@ export function RepayLoanModal({
               <span className="text-gray-700">Original Loan:</span>
               <span className="font-semibold text-gray-900">₹{loan.loanAmount.toLocaleString()}</span>
             </div>
+            {loan.interestRate && loan.interestRate > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-700">Interest Rate:</span>
+                <span className="font-semibold text-blue-700">{loan.interestRate}% per month</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-700">Already Repaid:</span>
               <span className="font-semibold text-green-700">₹{loan.repaidAmount.toLocaleString()}</span>
             </div>
             <div className="flex justify-between pt-2 border-t border-purple-300">
-              <span className="text-gray-700 font-semibold">Remaining:</span>
-              <span className="font-bold text-purple-900 text-lg">₹{remainingAmount.toLocaleString()}</span>
+              <span className="text-gray-700 font-semibold">Remaining Principal:</span>
+              <span className="font-bold text-purple-900">₹{remainingAmount.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between text-xs">
+            {loan.interestRate && loan.interestRate > 0 && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Interest Accrued (till repayment date):</span>
+                  <span className="font-semibold text-orange-700">₹{interestAccrued.toFixed(2)}</span>
+                </div>
+                {interestAccrued > 0 && (
+                  <div className="flex justify-between pt-2 border-t-2 border-purple-400">
+                    <span className="text-gray-900 font-bold">Total Amount (with interest):</span>
+                    <span className="font-bold text-red-700 text-lg">₹{totalAmountWithInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                {interestAccrued === 0 && (
+                  <p className="text-xs text-gray-600 italic">
+                    💡 Change the repayment date to see interest calculation
+                  </p>
+                )}
+              </>
+            )}
+            <div className="flex justify-between text-xs pt-2 border-t border-purple-200">
               <span className="text-gray-600">Loan Date:</span>
               <span className="text-gray-800">{new Date(loan.loanDate).toLocaleDateString('en-IN')}</span>
             </div>
@@ -159,7 +207,7 @@ export function RepayLoanModal({
                 step="0.01"
                 value={repaymentAmount}
                 onChange={(e) => setRepaymentAmount(e.target.value)}
-                max={remainingAmount}
+                max={totalAmountWithInterest}
                 className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg"
                 placeholder="Enter repayment amount"
                 required
@@ -171,7 +219,7 @@ export function RepayLoanModal({
               </p>
               <button
                 type="button"
-                onClick={() => setRepaymentAmount(remainingAmount.toString())}
+                onClick={() => setRepaymentAmount(totalAmountWithInterest.toString())}
                 className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 Pay Full Amount

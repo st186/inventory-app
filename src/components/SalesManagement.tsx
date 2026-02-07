@@ -46,7 +46,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     employeeSalary: '',
     previousCashInHand: '',
     usedOnlineMoney: '',
-    actualCashInHand: ''
+    actualCashInHand: '',
+    actualPaytmBalance: ''
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -56,19 +57,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const [confirmationChecked, setConfirmationChecked] = useState(false);
   const [pendingSubmitEvent, setPendingSubmitEvent] = useState<React.FormEvent | null>(null);
   const [showPaytmBreakdown, setShowPaytmBreakdown] = useState(false);
-  const [showOnlineCashRecalibration, setShowOnlineCashRecalibration] = useState(false);
-  
-  // Monthly Online Cash Recalibration Prompt State
-  const [needsOnlineRecalibration, setNeedsOnlineRecalibration] = useState(false);
-  const [isCheckingRecalibration, setIsCheckingRecalibration] = useState(false);
-  const [dismissedRecalibrationPrompt, setDismissedRecalibrationPrompt] = useState(false);
   
   // Cash Conversion Modal State
   const [showCashConversion, setShowCashConversion] = useState(false);
   const [conversionAmount, setConversionAmount] = useState('');
   const [isConverting, setIsConverting] = useState(false);
   
-  // Load last online cash recalibration for the current month
+  // Load last online cash recalibration for the current month (kept for backward compatibility with old data)
   const [lastOnlineRecalibration, setLastOnlineRecalibration] = useState<any>(null);
   
   // Loan Management State
@@ -193,51 +188,32 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     }
   }, [showConfirmDialog]);
 
-  // Check if online cash recalibration is needed for the current month
+  // Load last online cash recalibration (kept for backward compatibility with old data)
   useEffect(() => {
-    checkOnlineRecalibrationStatus();
+    loadLastOnlineRecalibration();
   }, [context.user, effectiveStoreId]);
 
-  const checkOnlineRecalibrationStatus = async () => {
-    const today = new Date();
-    const currentDay = today.getDate(); // Day of the month (1-31)
-    const currentMonthKey = today.toISOString().slice(0, 7); // "YYYY-MM"
-    
-    // For "All Stores" view, we don't use recalibration (aggregate from beginning)
+  const loadLastOnlineRecalibration = async () => {
+    // For "All Stores" view, we don't use recalibration
     if (!effectiveStoreId || effectiveStoreId === 'all') {
       setLastOnlineRecalibration(null);
-      setNeedsOnlineRecalibration(false);
       return;
     }
     
-    if (!context.user?.accessToken) return;
+    if (!context.user?.accessToken) {
+      return;
+    }
     
     try {
-      setIsCheckingRecalibration(true);
       const response = await api.getLastOnlineCashRecalibration(
         context.user.accessToken,
         effectiveStoreId
       );
       
-      // Extract the recalibration data from the response
       const lastRecalibration = response?.recalibration || null;
-      
-      // Store the last recalibration for use in balance calculation
       setLastOnlineRecalibration(lastRecalibration);
-      
-      console.log('📊 Loaded recalibration data:', lastRecalibration);
-      
-      // Only show the prompt on the 1st of the month
-      // AND only if recalibration hasn't been done for the current month yet
-      if (currentDay === 1 && (!lastRecalibration || lastRecalibration.month !== currentMonthKey)) {
-        setNeedsOnlineRecalibration(true);
-      } else {
-        setNeedsOnlineRecalibration(false);
-      }
     } catch (error) {
-      console.error('Error checking online recalibration status:', error);
-    } finally {
-      setIsCheckingRecalibration(false);
+      console.error('Error loading online recalibration:', error);
     }
   };
 
@@ -483,10 +459,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   }, [context.overheads, selectedDate, effectiveStoreId]);
 
   // Calculate expected closing cash balance
-  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number) => {
-    // Employee payouts are now deducted from Online Cash in Hand (Paytm), not from Expected Cash
-    // Fixed costs and overhead costs are already included in expenses, so don't subtract them separately
-    return prevCash + paytmAmount + cashReceived - expenses;
+  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number, contractPayouts: number) => {
+    // "Amount Used from Paytm" now INCLUDES contract payouts in the total
+    // Contract payouts are withdrawn from Paytm (included in paytmAmount) and then paid out to employees
+    // So: Expected Cash = prevCash + paytmAmount + cashReceived - expenses - contractPayouts
+    return prevCash + paytmAmount + cashReceived - expenses - contractPayouts;
   };
 
   // Calculate expected cash for current form data
@@ -494,9 +471,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     const prevCash = parseFloat(formData.previousCashInHand) || 0;
     const cashReceived = parseFloat(formData.cashAmount) || 0;
     const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
-    // Note: totalContractPayout is now excluded from expected cash calculation
-    return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount);
-  }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney]);
+    return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount, totalContractPayout);
+  }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney, totalContractPayout]);
 
   // Calculate cash discrepancy
   const cashDiscrepancy = useMemo(() => {
@@ -509,6 +485,50 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   // Calculate cumulative Paytm/Online balance from all days up to selected date
   const calculatePaytmBalance = useMemo(() => {
+    // Check if there's a previous day's sales data with actualPaytmBalance
+    const previousDate = new Date(selectedDate);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const previousDateStr = previousDate.toISOString().split('T')[0];
+    
+    const previousDaySales = effectiveStoreId 
+      ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
+      : context.salesData.find(s => s.date === previousDateStr);
+    
+    // If previous day has actualPaytmBalance, use it as starting point (like offline cash)
+    if (previousDaySales && previousDaySales.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
+      // Start from previous day's actual balance
+      const startingBalance = previousDaySales.actualPaytmBalance;
+      
+      // Add today's Paytm received
+      const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
+      
+      // Add today's Online Payouts (Swiggy + Zomato)
+      const todaysOnlinePayouts = parseFloat(formData.onlineSales) || 0;
+      
+      // Subtract today's used online money
+      const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
+      
+      // Subtract today's employee payouts (contract workers)
+      const todaysEmployeePayouts = totalContractPayout;
+      
+      const finalBalance = startingBalance + todaysPaytm + todaysOnlinePayouts - todaysUsedOnlineMoney - todaysEmployeePayouts;
+      
+      console.log('📊 ONLINE CASH BALANCE (from previous day actual):', {
+        effectiveStoreId,
+        selectedDate,
+        previousDate: previousDateStr,
+        startingBalance,
+        todaysPaytm,
+        todaysOnlinePayouts,
+        todaysUsedOnlineMoney,
+        todaysEmployeePayouts,
+        finalBalance
+      });
+      
+      return finalBalance;
+    }
+    
+    // Otherwise, calculate from recalibration (existing logic)
     // Check if there's a recalibration for the current month
     const selectedMonth = selectedDate.slice(0, 7); // "YYYY-MM"
     const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
@@ -691,12 +711,25 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     return finalBalance;
   }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, onlinePayoutData, onlineLoans, employeePayouts, totalContractPayout, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.onlineSales, formData.usedOnlineMoney]);
 
+  // Calculate Paytm discrepancy (similar to cash discrepancy)
+  const paytmDiscrepancy = useMemo(() => {
+    const actual = parseFloat(formData.actualPaytmBalance) || 0;
+    if (actual === 0) return 0;
+    return actual - calculatePaytmBalance;
+  }, [formData.actualPaytmBalance, calculatePaytmBalance]);
+  
+  const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 500;
+
   // Calculate daily breakdown for Paytm/Online Cash
   const paytmDailyBreakdown = useMemo(() => {
     // Check if there's a recalibration for the current month
     const selectedMonth = selectedDate.slice(0, 7);
     const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
     const recalibrationDate = hasRecalibrationThisMonth ? lastOnlineRecalibration.date : '2000-01-01';
+    
+    // Always show from the 1st of the selected month for better visibility
+    // But use recalibration for balance calculations
+    const displayStartDate = `${selectedMonth}-01`;
     
     // Filter by store
     const storeFilteredSales = effectiveStoreId 
@@ -712,47 +745,67 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       ? context.inventory.filter(i => i.storeId === effectiveStoreId)
       : context.inventory;
     
-    // Get all unique dates FROM recalibration date onwards, up to selected date
+    // Get all unique dates FROM display start date (1st of month) onwards, up to selected date
     const allDates = new Set<string>();
     
     storeFilteredSales
-      .filter(s => s.date >= recalibrationDate && s.date <= selectedDate)
+      .filter(s => s.date >= displayStartDate && s.date <= selectedDate)
       .forEach(s => allDates.add(s.date));
     
     storeFilteredFixed
-      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
+      .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
     storeFilteredOverhead
-      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
+      .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
     storeFilteredInventory
-      .filter(item => item.date >= recalibrationDate && item.date <= selectedDate)
+      .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
     
     // Add commission dates (commission entries identified by description pattern)
     storeFilteredOverhead
-      .filter(item => isCommissionEntry(item) && item.date >= recalibrationDate && item.date <= selectedDate)
+      .filter(item => isCommissionEntry(item) && item.date >= displayStartDate && item.date <= selectedDate)
       .forEach(item => allDates.add(item.date));
+    
+    // Add loan dates (loans taken add money to Paytm)
+    const storeFilteredLoans = effectiveStoreId
+      ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
+      : onlineLoans;
+    
+    storeFilteredLoans
+      .filter(l => l.loanDate >= displayStartDate && l.loanDate <= selectedDate)
+      .forEach(l => allDates.add(l.loanDate));
+    
+    // Add loan repayment dates (repayments deduct money from Paytm)
+    storeFilteredLoans
+      .filter(l => l.repaymentDate && l.repaymentDate >= displayStartDate && l.repaymentDate <= selectedDate)
+      .forEach(l => allDates.add(l.repaymentDate!));
     
     // Sort dates chronologically
     const sortedDates = Array.from(allDates).sort();
     
     // Calculate running balance for each day
-    // Start from recalibration balance if available, otherwise from 0
-    let runningBalance = hasRecalibrationThisMonth ? lastOnlineRecalibration.actualBalance : 0;
+    // If there's a recalibration, we need to handle dates before and after it differently
+    // For dates BEFORE recalibration: work backwards from recalibration balance
+    // For dates ON/AFTER recalibration: work forwards from recalibration balance
     
     console.log('📊 Daily Breakdown Calculation:', {
       hasRecalibration: hasRecalibrationThisMonth,
       recalibrationDate,
-      startingBalance: runningBalance,
+      displayStartDate,
       numberOfDays: sortedDates.length
     });
     
-    return sortedDates.map(date => {
+    // First pass: calculate all daily changes
+    const dailyData = sortedDates.map(date => {
       const salesForDay = storeFilteredSales.find(s => s.date === date);
       const paytmReceived = salesForDay?.paytmAmount ?? 0;
+      
+      // Use the "Amount Used from Paytm" field from sales form if it exists
+      // Otherwise calculate from actual inventory/overhead/fixed cost entries
+      const usedOnlineMoneyFromForm = salesForDay?.usedOnlineMoney ?? 0;
       
       // Calculate all costs paid via online/Paytm for this day
       const fixedCostsForDay = storeFilteredFixed
@@ -802,9 +855,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           return sum;
         }, 0);
       
-      // TOTAL used online money = inventory + overheads + fixed costs (EXCLUDING commission)
+      // TOTAL used online money:
+      // If the sales form has a usedOnlineMoney value, use that (user manually entered it)
+      // Otherwise calculate from inventory + overheads + fixed costs (EXCLUDING commission)
       // Commission is shown separately in its own column, so don't include it here
-      const usedOnlineMoney = inventoryForDay + overheadCostsForDay + fixedCostsForDay;
+      const calculatedUsedOnlineMoney = inventoryForDay + overheadCostsForDay + fixedCostsForDay;
+      const usedOnlineMoney = usedOnlineMoneyFromForm > 0 ? usedOnlineMoneyFromForm : calculatedUsedOnlineMoney;
       
       // Get online payouts for the day (what Swiggy/Zomato actually pay us)
       const storeFilteredPayouts = effectiveStoreId
@@ -825,10 +881,21 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         .filter(p => p.date === date)
         .reduce((sum, p) => sum + (p.amount || 0), 0);
       
-      // Net change = Paytm Received + Online Payouts - Used - Commission - Employee Payouts
-      // Commission and Employee Payouts are deducted separately since they're shown in their own columns
-      const netChange = paytmReceived + onlinePayouts - usedOnlineMoney - commission - employeePayoutsForDay;
-      runningBalance += netChange;
+      // Get loans taken on this day (adds money to Paytm)
+      const loansForDay = storeFilteredLoans
+        .filter(l => l.loanDate === date)
+        .reduce((sum, l) => sum + l.loanAmount, 0);
+      
+      // Get loan repayments made on this day (reduces money from Paytm)
+      // Note: Currently loans only store the total repaidAmount and last repaymentDate
+      // So we show the full repaidAmount on the repaymentDate
+      const repaymentForDay = storeFilteredLoans
+        .filter(l => l.repaymentDate === date && l.repaidAmount > 0)
+        .reduce((sum, l) => sum + l.repaidAmount, 0);
+      
+      // Net change = Paytm Received + Online Payouts + Loans Taken - Used - Commission - Employee Payouts - Loan Repayments
+      // Commission, Employee Payouts, Loans, and Repayments are shown in their own columns
+      const netChange = paytmReceived + onlinePayouts + loansForDay - usedOnlineMoney - commission - employeePayoutsForDay - repaymentForDay;
       
       return {
         date,
@@ -837,14 +904,79 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         usedOnlineMoney,
         commission,
         employeePayouts: employeePayoutsForDay, // Add employee payouts to breakdown
+        loansTaken: loansForDay, // Add loans taken
+        loanRepayments: repaymentForDay, // Add loan repayments
         inventoryCosts: inventoryForDay,
         fixedCosts: fixedCostsForDay,
         overheadCosts: overheadCostsForDay,
         netChange,
-        runningBalance
+        runningBalance: 0 // Will be calculated in second pass
       };
     });
-  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, onlinePayoutData, employeePayouts, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
+    
+    // Second pass: Calculate running balances
+    console.log('💰 ===== CALCULATING RUNNING BALANCES =====');
+    console.log('📊 Has recalibration this month?', hasRecalibrationThisMonth);
+    console.log('📅 Recalibration date:', recalibrationDate);
+    console.log('📊 Number of daily data entries:', dailyData.length);
+    console.log('📊 Daily data dates:', dailyData.map(d => d.date));
+    
+    if (hasRecalibrationThisMonth) {
+      // Find the recalibration date index
+      const recalibrationIndex = dailyData.findIndex(d => d.date === recalibrationDate);
+      
+      console.log('🔍 Recalibration index in daily data:', recalibrationIndex);
+      console.log('💰 Recalibration actual balance:', lastOnlineRecalibration.actualBalance);
+      
+      if (recalibrationIndex >= 0) {
+        // Set the recalibration date's balance
+        dailyData[recalibrationIndex].runningBalance = lastOnlineRecalibration.actualBalance;
+        
+        console.log(`✅ Set ${recalibrationDate} balance to ₹${lastOnlineRecalibration.actualBalance}`);
+        
+        // Calculate forwards from recalibration date
+        console.log('➡️ Calculating FORWARD from recalibration date...');
+        for (let i = recalibrationIndex + 1; i < dailyData.length; i++) {
+          dailyData[i].runningBalance = dailyData[i - 1].runningBalance + dailyData[i].netChange;
+          console.log(`  ${dailyData[i].date}: prev(${dailyData[i-1].runningBalance.toFixed(2)}) + net(${dailyData[i].netChange.toFixed(2)}) = ${dailyData[i].runningBalance.toFixed(2)}`);
+        }
+        
+        // Calculate backwards from recalibration date
+        console.log('⬅️ Calculating BACKWARD from recalibration date...');
+        for (let i = recalibrationIndex - 1; i >= 0; i--) {
+          dailyData[i].runningBalance = dailyData[i + 1].runningBalance - dailyData[i + 1].netChange;
+          console.log(`  ${dailyData[i].date}: next(${dailyData[i+1].runningBalance.toFixed(2)}) - nextNet(${dailyData[i+1].netChange.toFixed(2)}) = ${dailyData[i].runningBalance.toFixed(2)}`);
+        }
+        
+        console.log('✅ Final balances for all dates:');
+        dailyData.forEach(d => {
+          console.log(`  ${d.date}: ₹${d.runningBalance.toFixed(2)} (net change: ₹${d.netChange.toFixed(2)})`);
+        });
+      } else {
+        console.log('⚠️ Recalibration date not found in daily data range!');
+        console.log('⚠️ Starting from zero...');
+        // Recalibration date not in range, start from beginning
+        let balance = 0;
+        dailyData.forEach(day => {
+          balance += day.netChange;
+          day.runningBalance = balance;
+          console.log(`  ${day.date}: ₹${balance.toFixed(2)}`);
+        });
+      }
+    } else {
+      console.log('📊 No recalibration - calculating normally from zero');
+      // No recalibration, calculate normally from start
+      let balance = 0;
+      dailyData.forEach(day => {
+        balance += day.netChange;
+        day.runningBalance = balance;
+        console.log(`  ${day.date}: ₹${balance.toFixed(2)}`);
+      });
+    }
+    console.log('💰 ===== END RUNNING BALANCE CALCULATION =====\n');
+    
+    return dailyData;
+  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, onlinePayoutData, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
 
   // Calculate total inventory purchases paid via online for the selected date
   const inventoryOnlineTotal = useMemo(() => {
@@ -958,17 +1090,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     return total;
   }, [context.fixedCosts, selectedDate]);
 
-  // Calculate total online expenses (all three categories)
+  // Calculate total online expenses (inventory + overhead + fixed costs + contract payouts)
+  // Contract payouts are paid directly from Paytm and must be included in "Amount Used from Paytm"
   const totalOnlineExpenses = useMemo(() => {
-    const total = inventoryOnlineTotal + overheadOnlineTotal + fixedCostOnlineTotal;
+    const total = inventoryOnlineTotal + overheadOnlineTotal + fixedCostOnlineTotal + totalContractPayout;
     console.log(`💳 TOTAL Online Expenses for ${selectedDate}:`, {
       inventory: inventoryOnlineTotal,
       overhead: overheadOnlineTotal,
       fixedCost: fixedCostOnlineTotal,
+      contractPayouts: totalContractPayout,
+      note: 'Contract payouts ARE included in Amount Used from Paytm',
       total: total
     });
     return total;
-  }, [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, selectedDate]);
+  }, [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, totalContractPayout, selectedDate]);
 
   // Daily online expenses breakdown object (for expense breakdown display)
   const dailyOnlineExpenses = useMemo(() => ({
@@ -987,8 +1122,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         cashAmount: (salesForDate.cashAmount ?? 0).toString(),
         employeeSalary: (salesForDate.employeeSalary ?? 0).toString(),
         previousCashInHand: (salesForDate.previousCashInHand ?? 0).toString(),
-        usedOnlineMoney: (salesForDate.usedOnlineMoney ?? 0).toString(),
-        actualCashInHand: (salesForDate.actualCashInHand ?? 0).toString()
+        usedOnlineMoney: totalOnlineExpenses.toString(), // Always use calculated value (includes contract payouts)
+        actualCashInHand: (salesForDate.actualCashInHand ?? 0).toString(),
+        actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString()
       });
       setIsEditing(true);
       setEditingId(salesForDate.id);
@@ -1008,7 +1144,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         employeeSalary: '0',
         previousCashInHand: prevCash.toString(),
         usedOnlineMoney: totalOnlineExpenses.toString(), // Auto-populate from inventory + overhead + fixed costs
-        actualCashInHand: ''
+        actualCashInHand: '',
+        actualPaytmBalance: ''
       });
       setIsEditing(false);
       setEditingId(null);
@@ -1017,14 +1154,90 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🔵 SAVE BUTTON CLICKED - Starting validation checks');
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    console.log('📊 Form Data:', formData);
+    console.log('💰 Financial Values:', {
+      offlineSales: parseFloat(formData.offlineSales) || 0,
+      paytmAmount: parseFloat(formData.paytmAmount) || 0,
+      cashAmount: parseFloat(formData.cashAmount) || 0,
+      previousCashInHand: parseFloat(formData.previousCashInHand) || 0,
+      usedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
+      actualCashInHand: parseFloat(formData.actualCashInHand) || 0,
+      actualPaytmBalance: parseFloat(formData.actualPaytmBalance) || 0,
+      expectedCashInHand,
+      cashDiscrepancy: (parseFloat(formData.actualCashInHand) || 0) - expectedCashInHand,
+      expectedPaytmBalance: calculatePaytmBalance,
+      paytmDiscrepancy,
+      onlineCashBalance: calculatePaytmBalance,
+      totalContractPayout,
+      totalExpenses,
+      totalCombinedCash: expectedCashInHand + calculatePaytmBalance
+    });
+    
+    console.log('🚦 Validation Flags:', {
+      paymentMismatch,
+      isSubmitting,
+      canEditSales,
+      isOperationsManager,
+      isClusterHead,
+      needsApproval,
+      needsPaytmApproval,
+      hasPermission: (canEditSales || isOperationsManager || isClusterHead)
+    });
+    
+    console.log('🏪 Store Context:', {
+      selectedStoreId,
+      effectiveStoreId,
+      userStoreId: context.user?.storeId,
+      userRole: context.user?.role
+    });
+    
+    console.log('👤 User Info:', {
+      userId: context.user?.id,
+      userEmail: context.user?.email,
+      employeeId: context.user?.employeeId,
+      role: context.user?.role
+    });
+    
+    // Check if form is complete
+    const isFormComplete = formData.offlineSales && formData.actualCashInHand && formData.actualPaytmBalance;
+    console.log('📝 Form Completeness:', {
+      hasOfflineSales: !!formData.offlineSales,
+      hasActualCash: !!formData.actualCashInHand,
+      hasActualPaytm: !!formData.actualPaytmBalance,
+      isComplete: isFormComplete
+    });
     
     // Prevent duplicate submissions
     if (isSubmitting) {
-      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      console.log('⚠️⚠️⚠️ BLOCKED: Submission already in progress');
       return;
     }
     
+    // Check permissions
+    if (!canEditSales && !isOperationsManager && !isClusterHead) {
+      console.log('⚠️⚠️⚠️ BLOCKED: User does not have permission to save sales data');
+      alert('You do not have permission to save sales data.');
+      return;
+    }
+    
+    // Check for negative values
+    if (calculatePaytmBalance < 0) {
+      console.log('⚠️ WARNING: Online Cash (Paytm) is NEGATIVE:', calculatePaytmBalance);
+      console.log('💡 This might indicate insufficient funds in Paytm account');
+    }
+    
+    const totalCombinedCash = expectedCashInHand + calculatePaytmBalance;
+    if (totalCombinedCash < 0) {
+      console.log('⚠️ WARNING: Total Combined Cash is NEGATIVE:', totalCombinedCash);
+      console.log('💡 This indicates business is running at a loss or data entry issues');
+    }
+    
     // Show confirmation dialog before proceeding
+    console.log('✅ All validation checks passed - Showing confirmation dialog...');
     setPendingSubmitEvent(e);
     setShowConfirmDialog(true);
     setConfirmationChecked(false);
@@ -1037,16 +1250,37 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   };
 
   const handleConfirmSubmit = async () => {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🟢 CONFIRMATION DIALOG - Submit Confirmed');
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    console.log('✅ Confirmation checkbox checked:', confirmationChecked);
+    
     if (!confirmationChecked) {
+      console.log('⚠️⚠️⚠️ BLOCKED: Confirmation checkbox not checked');
       alert('⚠️ Please confirm that you take responsibility for this sales data.');
       return;
     }
     
+    console.log('🔒 Closing dialog and setting submitting state...');
     setShowConfirmDialog(false);
     setIsSubmitting(true);
 
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
     const offset = actualCash - expectedCashInHand;
+    
+    const actualPaytm = parseFloat(formData.actualPaytmBalance) || 0;
+    const paytmOffset = actualPaytm - calculatePaytmBalance;
+    
+    console.log('💰 Cash calculation:', {
+      actualCash,
+      expectedCashInHand,
+      offset,
+      actualPaytm,
+      expectedPaytmBalance: calculatePaytmBalance,
+      paytmOffset,
+      formData
+    });
 
     // Operations manager entries need approval from cluster head if there's high discrepancy
     // Cluster head can directly approve their own entries
@@ -1065,12 +1299,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       usedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
       actualCashInHand: actualCash,
       cashOffset: offset,
+      actualPaytmBalance: actualPaytm,
+      paytmOffset: paytmOffset,
       // CRITICAL: Preserve the original salesDiscrepancy if it exists (locked at first settlement), otherwise set to current offset
       // This ensures that once a discrepancy is locked (either at initial settlement or after approval), it NEVER changes
       salesDiscrepancy: salesForDate?.salesDiscrepancy !== undefined 
         ? salesForDate.salesDiscrepancy 
         : offset,
-      approvalRequired: needsApproval,
+      approvalRequired: needsApproval || needsPaytmApproval,
       approvalStatus: needsManagerApproval ? 'pending' : 'approved', // Auto-approve for operations manager
       createdBy: context.user?.employeeId || context.user?.email || 'unknown',
       approvedBy: !needsManagerApproval ? (context.user?.employeeId || context.user?.email || 'self') : salesForDate?.approvedBy || null,
@@ -1084,31 +1320,62 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       rejectionReason: salesForDate?.rejectionReason || null,
       storeId: selectedStoreId || context.user?.storeId || undefined
     };
+    
+    console.log('📤 Saving sales data:', salesData);
 
     try {
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log('💾 STARTING SAVE PROCESS');
+      console.log('═══════════════════════════════════════════════════════════════');
+      
       // Save sales data
+      console.log('🔄 Step 1: Calling save API...');
+      console.log('📋 Sales data to save:', salesData);
+      
       if (isEditing && editingId) {
+        console.log('📝 Mode: UPDATING existing sales data');
+        console.log('🆔 Editing ID:', editingId);
+        console.log('⏱️ Calling context.updateSalesData...');
         await context.updateSalesData(editingId, salesData);
+        console.log('✅ Update successful');
       } else {
+        console.log('➕ Mode: ADDING new sales data');
+        console.log('⏱️ Calling context.addSalesData...');
         await context.addSalesData(salesData);
+        console.log('✅ Add successful');
       }
+      
+      console.log('─────────────────────────────────────────────────────────────');
+      console.log('🔄 Step 2: Syncing contract worker payouts...');
+      console.log('👷 Contract payouts count:', contractPayouts.length);
+      console.log('👷 Contract payouts:', contractPayouts);
       
       // Sync contract worker payouts to payroll system
       if (contractPayouts.length > 0) {
+        console.log('⏱️ Fetching all payouts to check for duplicates...');
         // First, get all payouts for this date to find and delete old ones
         const allPayouts = await api.getPayouts();
+        console.log('📦 Total payouts in system:', allPayouts.length);
+        
         const contractWorkerIds = contractWorkers.map(w => w.id);
+        console.log('👤 Contract worker IDs:', contractWorkerIds);
+        
         const existingPayoutsForDate = allPayouts.filter(p => 
           p.date === selectedDate && contractWorkerIds.includes(p.employeeId)
         );
         
+        console.log('🗑️ Existing payouts for this date:', existingPayoutsForDate.length, existingPayoutsForDate);
+        
         // Delete existing contract worker payouts for this date to avoid duplicates
+        console.log('⏱️ Deleting old payouts...');
         for (const payout of existingPayoutsForDate) {
+          console.log('🗑️ Deleting payout:', payout.id, payout);
           await api.deletePayout(payout.id);
-          console.log('Deleted old payout:', payout.id);
+          console.log('✅ Deleted old payout:', payout.id);
         }
         
         // Now save the new payouts
+        console.log('⏱️ Preparing new payouts to save...');
         const payoutsToSave = contractPayouts
           .filter(p => p.employeeId && p.amount) // Only save valid payouts
           .map(payout => {
@@ -1124,32 +1391,54 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             };
           });
         
+        console.log('💾 Payouts to save:', payoutsToSave.length, payoutsToSave);
+        
         if (payoutsToSave.length > 0) {
+          console.log('⏱��� Saving payouts to API...');
           await api.addPayouts(payoutsToSave);
-          console.log('Contract worker payouts synced to payroll:', payoutsToSave);
+          console.log('✅ Contract worker payouts synced to payroll:', payoutsToSave);
+        } else {
+          console.log('⏭️ No valid payouts to save');
         }
       } else {
+        console.log('⏭️ No contract payouts entered, checking for old ones to delete...');
         // If no payouts entered, delete any existing ones for this date
         const allPayouts = await api.getPayouts();
+        console.log('📦 Total payouts in system:', allPayouts.length);
+        
         const contractWorkerIds = contractWorkers.map(w => w.id);
         const existingPayoutsForDate = allPayouts.filter(p => 
           p.date === selectedDate && contractWorkerIds.includes(p.employeeId)
         );
         
+        console.log('🗑️ Existing payouts for this date to delete:', existingPayoutsForDate.length);
+        
         for (const payout of existingPayoutsForDate) {
+          console.log('🗑️ Deleting payout:', payout.id);
           await api.deletePayout(payout.id);
-          console.log('Deleted payout (no workers entered):', payout.id);
+          console.log('✅ Deleted payout (no workers entered):', payout.id);
         }
       }
       
-      // Reload employee payouts to refresh the online cash calculation
+      console.log('─────────────────────────────────────────────────────────────');
+      console.log('🔄 Step 3: Reloading employee payouts...');
       await loadEmployeePayouts();
+      console.log('✅ Employee payouts reloaded');
       
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log('🎉 ALL SAVES COMPLETED SUCCESSFULLY!');
+      console.log('═══════════════════════════════════════════════════════════════');
       alert('Sales data and contract worker payouts saved successfully!');
     } catch (error) {
-      console.error('Error saving sales data:', error);
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log('❌ ERROR DURING SAVE PROCESS');
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.error('💥 Error details:', error);
+      console.error('💥 Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.error('💥 Error message:', error instanceof Error ? error.message : String(error));
       alert('Failed to save sales data. Please try again.');
     } finally {
+      console.log('🔓 Resetting isSubmitting to false');
       setIsSubmitting(false);
     }
   };
@@ -1168,6 +1457,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     if (!editingId) return;
     const actualCash = parseFloat(formData.actualCashInHand) || 0;
     const offset = actualCash - expectedCashInHand;
+    const actualPaytm = parseFloat(formData.actualPaytmBalance) || 0;
+    const paytmOffset = actualPaytm - calculatePaytmBalance;
     
     if (!confirm(`Request approval for cash discrepancy of ₹${Math.abs(offset).toFixed(2)}?\n\nThis will notify the cluster head for approval.`)) {
       return;
@@ -1225,6 +1516,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     setIsConverting(true);
     try {
       await api.convertCashToOnline(
+        context.user!.accessToken,
         effectiveStoreId!,
         selectedDate,
         amount,
@@ -1262,32 +1554,33 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   const paymentMismatch = Math.abs(offlineSalesTotal - offlinePaymentTotal) > 0.01;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Date Selector */}
-      <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/30 to-pink-50/30">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Date Selector */}
+        <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
       
       {/* Tabs for Offline and Online Sales */}
-      <div className="flex gap-2 mb-6 mt-4">
+      <div className="flex gap-3 mb-6 mt-4 bg-white/50 backdrop-blur-sm p-1.5 rounded-2xl border border-purple-200/50">
         <button
           onClick={() => setActiveTab('offline')}
-          className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
+          className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all text-sm ${
             activeTab === 'offline'
-              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-              : 'bg-white/50 text-gray-600 hover:bg-white/80 border border-purple-200'
+              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+              : 'text-gray-600 hover:bg-white/80'
           }`}
         >
-          <ShoppingBag className="inline-block w-5 h-5 mr-2" />
+          <ShoppingBag className="inline-block w-4 h-4 mr-2" />
           Offline Sales
         </button>
         <button
           onClick={() => setActiveTab('online')}
-          className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all ${
+          className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all text-sm ${
             activeTab === 'online'
-              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-              : 'bg-white/50 text-gray-600 hover:bg-white/80 border border-purple-200'
+              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+              : 'text-gray-600 hover:bg-white/80'
           }`}
         >
-          <Smartphone className="inline-block w-5 h-5 mr-2" />
+          <Smartphone className="inline-block w-4 h-4 mr-2" />
           Online Sales (Swiggy/Zomato)
         </button>
       </div>
@@ -1307,82 +1600,19 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       {activeTab === 'offline' && (
         <>
       
-      {/* Monthly Online Cash Recalibration Prompt - Shows throughout the month until completed */}
-      {needsOnlineRecalibration && !dismissedRecalibrationPrompt && !isCheckingRecalibration && (() => {
-        const today = new Date();
-        // Show the prompt from the 1st onwards, but more prominently on the 1st
-        const isFirstOfMonth = today.getDate() === 1;
-        const needsPrompt = isFirstOfMonth || today.getDate() <= 7; // Show for first week of month
-        return needsPrompt;
-      })() && (
-        <div className="mt-6 bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 border-2 border-purple-400 rounded-xl p-6 shadow-lg animate-pulse" style={{animationDuration: '3s'}}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-3">
-                <Smartphone className="w-7 h-7 text-purple-600" />
-                <h2 className="text-xl font-bold text-gray-900">📅 Monthly Online Cash Recalibration Required</h2>
-              </div>
-              <div className="space-y-2 text-gray-700">
-                <p className="font-semibold text-purple-900">
-                  {new Date().getDate() === 1 
-                    ? "It's the 1st of the month! Time to recalibrate your Online Cash in Hand (Paytm) balance."
-                    : "Monthly recalibration reminder: Please recalibrate your Online Cash in Hand (Paytm) balance for this month."}
-                </p>
-                <p className="text-sm">
-                  Monthly recalibration helps you:
-                </p>
-                <ul className="text-sm space-y-1 ml-5 list-disc">
-                  <li>Verify your actual Paytm balance matches system records</li>
-                  <li>Catch any missing transactions, fees, or discrepancies early</li>
-                  <li>Maintain accurate financial tracking for your business</li>
-                  <li>Categorize any differences as mistakes or loans</li>
-                </ul>
-                <p className="text-xs text-purple-800 mt-3 bg-purple-100 rounded-lg p-2">
-                  ⚠️ <strong>Important:</strong> Please complete this recalibration as soon as possible to ensure accurate financial records.
-                </p>
-              </div>
-              <div className="flex gap-3 mt-4">
-                <button
-                  onClick={() => {
-                    setShowOnlineCashRecalibration(true);
-                    setDismissedRecalibrationPrompt(true);
-                  }}
-                  className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all font-semibold shadow-md hover:shadow-lg flex items-center gap-2"
-                >
-                  <Calendar className="w-5 h-5" />
-                  Recalibrate Now
-                </button>
-                <button
-                  onClick={() => setDismissedRecalibrationPrompt(true)}
-                  className="px-5 py-2.5 bg-white text-gray-700 border-2 border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center gap-2"
-                >
-                  <X className="w-4 h-4" />
-                  Remind Me Later
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={() => setDismissedRecalibrationPrompt(true)}
-              className="p-2 hover:bg-purple-100 rounded-lg transition-colors flex-shrink-0"
-              title="Dismiss"
-            >
-              <X className="w-5 h-5 text-gray-500" />
-            </button>
-          </div>
-        </div>
-      )}
-      
       {/* Friday Weekly Reporting Reminder */}
       {isFriday && context.isManager && (
-        <div className="mt-6 bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-xl p-6">
+        <div className="mt-6 bg-gradient-to-br from-blue-50/80 to-blue-100/50 backdrop-blur-sm border border-blue-300/50 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="w-6 h-6 text-blue-600" />
-            <h2 className="text-gray-900">Weekly Cash Reporting - Friday</h2>
+            <div className="p-2 bg-blue-500/10 rounded-lg">
+              <AlertTriangle className="w-5 h-5 text-blue-600" />
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900">Weekly Cash Reporting - Friday</h2>
           </div>
-          <p className="text-gray-700 mb-3">
+          <p className="text-sm text-gray-700 mb-3">
             Today is Friday! Please report the actual cash left with you after entering today's sales data.
           </p>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+          <div className="bg-blue-50/70 border border-blue-200/50 rounded-xl p-3 text-xs">
             <p className="text-gray-700">
               <strong>Important:</strong> If the cash discrepancy exceeds ₹500, cluster head approval will be required before saving.
             </p>
@@ -1395,41 +1625,43 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         <div className="mt-6 space-y-4">
           {/* Discrepancy Approval Requests */}
           {context.salesData.filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy).length > 0 && (
-            <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
+            <div className="bg-gradient-to-br from-orange-50/80 to-orange-100/50 backdrop-blur-sm border border-orange-300/50 rounded-2xl p-6 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
-                <AlertTriangle className="w-6 h-6 text-orange-600" />
-                <h2 className="text-gray-900">Discrepancy Approval Requests</h2>
+                <div className="p-2 bg-orange-500/10 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-orange-600" />
+                </div>
+                <h2 className="text-sm font-semibold text-gray-900">Discrepancy Approval Requests</h2>
               </div>
               
               <div className="space-y-3">
                 {context.salesData
                   .filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy)
                   .map(sale => (
-                    <div key={sale.id} className="bg-white rounded-lg p-4 border border-orange-300">
+                    <div key={sale.id} className="bg-white/80 rounded-xl p-4 border border-orange-300/50 shadow-sm">
                       <div className="mb-3">
-                        <p className="text-gray-900 font-medium">
+                        <p className="text-sm font-semibold text-gray-900">
                           {formatDateIST(sale.date)}
                         </p>
-                        <p className="text-sm text-gray-600 mt-1">
+                        <p className="text-xs text-gray-600 mt-1">
                           Expected Cash: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)}
                         </p>
-                        <p className="text-sm text-gray-600">
+                        <p className="text-xs text-gray-600">
                           Actual Cash: ₹{sale.requestedCashInHand?.toFixed(2)}
                         </p>
-                        <p className="text-sm font-semibold text-orange-600 mt-1">
+                        <p className="text-xs font-semibold text-orange-600 mt-1">
                           Discrepancy: ₹{((sale.requestedCashInHand || 0) - (sale.actualCashInHand - sale.cashOffset)).toFixed(2)}
                         </p>
                       </div>
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleApproveDiscrepancy(sale.id)}
-                          className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-semibold transition-all text-sm shadow-sm"
                         >
                           ✓ Approve
                         </button>
                         <button
                           onClick={() => handleRejectDiscrepancy(sale.id)}
-                          className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-semibold transition-all text-sm shadow-sm"
                         >
                           ✗ Reject
                         </button>
@@ -1490,146 +1722,132 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
       {/* Approved Sales Message */}
       {salesForDate && salesForDate.approvedBy && (
-        <div className="mt-6 bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
+        <div className="mt-6 bg-gradient-to-br from-green-50/80 to-green-100/50 backdrop-blur-sm border border-green-300/50 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
-            <CheckCircle className="w-6 h-6 text-green-600" />
-            <h2 className="text-gray-900">Sales Approved</h2>
+            <div className="p-2 bg-green-500/10 rounded-lg">
+              <CheckCircle className="w-5 h-5 text-green-600" />
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900">Sales Approved</h2>
           </div>
-          <p className="text-gray-700">
+          <p className="text-sm text-gray-700">
             ✓ Your sales entry for {formatDateIST(salesForDate.date)} has been approved by {salesForDate.approvedBy}.
           </p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-6">
         {/* Sales Entry Form */}
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-6">
-            <DollarSign className="w-6 h-6 text-green-600" />
-            <h2 className="text-gray-900">Sales Entry</h2>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="p-2 bg-green-500/10 rounded-lg">
+              <DollarSign className="w-5 h-5 text-green-600" />
+            </div>
+            <h2 className="text-base font-semibold text-gray-800">Sales Entry</h2>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Offline Sales Section */}
-            <div className="bg-gradient-to-br from-[#D4E6F1] to-[#AED6F1] rounded-lg p-4">
-              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-[#5499C7]" />
-                Offline Sales
-              </h3>
+            <div className="bg-gradient-to-br from-blue-50/80 to-blue-100/50 backdrop-blur-sm rounded-2xl p-5 border border-blue-200/50 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-blue-500/10 rounded-lg">
+                  <ShoppingBag className="w-5 h-5 text-blue-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-700">Offline Sales</h3>
+              </div>
               
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Total Offline Sales (₹)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-2">Total Offline Sales (₹)</label>
                 <input
                   type="number"
                   step="0.01"
                   value={formData.offlineSales}
                   onChange={(e) => setFormData({ ...formData, offlineSales: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  className="w-full px-4 py-3 border border-blue-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
                   required
                   disabled={!canEditSales}
+                  placeholder="4155"
                 />
               </div>
             </div>
 
             {/* Payment Mode Distribution */}
-            <div className="bg-gradient-to-br from-[#FFF3E0] to-[#FFE0B2] rounded-lg p-4">
-              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-[#FFB74D]" />
-                Payment Mode Distribution
-              </h3>
+            <div className="bg-gradient-to-br from-amber-50/80 to-orange-100/50 backdrop-blur-sm rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-orange-500/10 rounded-lg">
+                  <CreditCard className="w-5 h-5 text-orange-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-700">Payment Mode Distribution</h3>
+              </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Paytm (₹)</label>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
+                  <label className="block text-xs font-medium text-gray-600 mb-2">Paytm (₹)</label>
                   <input
                     type="number"
                     step="0.01"
                     value={formData.paytmAmount}
                     onChange={(e) => setFormData({ ...formData, paytmAmount: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
                     required
                     disabled={!canEditSales}
+                    placeholder="2025"
                   />
                 </div>
                 
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Cash (₹)</label>
+                <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
+                  <label className="block text-xs font-medium text-gray-600 mb-2">Cash (₹)</label>
                   <input
                     type="number"
                     step="0.01"
                     value={formData.cashAmount}
                     onChange={(e) => setFormData({ ...formData, cashAmount: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
                     required
                     disabled={!canEditSales}
+                    placeholder="2130"
                   />
                 </div>
               </div>
 
               {paymentMismatch && (
-                <div className="bg-red-100 border border-red-300 text-red-700 px-3 py-2 rounded-lg text-sm">
-                  ⚠️ Payment mode total (₹{offlinePaymentTotal.toFixed(2)}) doesn't match offline sales (₹{offlineSalesTotal.toFixed(2)})
+                <div className="bg-red-100/80 border border-red-300/50 text-red-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Payment mode total (₹{offlinePaymentTotal.toFixed(2)}) doesn't match offline sales (₹{offlineSalesTotal.toFixed(2)})
                 </div>
               )}
 
               {!paymentMismatch && offlineSalesTotal > 0 && (
-                <div className="bg-green-100 border border-green-300 text-green-700 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4" />
-                  Payment modes match total sales
+                <div className="bg-green-100/80 border border-green-300/50 text-green-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span className="text-xs">✓ Payment modes match total sales</span>
                 </div>
               )}
             </div>
 
-            {/* Used Online Money Section */}
-            <div className="bg-gradient-to-br from-[#E0F2F7] to-[#B3E5FC] rounded-lg p-4">
-              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                <ArrowDownCircle className="w-5 h-5 text-[#4FC3F7]" />
-                Used Online Money
-              </h3>
-              
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">
-                  Amount Used from Paytm (₹)
-                  {totalOnlineExpenses > 0 && (
-                    <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-                      Auto: ₹{inventoryOnlineTotal.toFixed(2)}(Inv) + ₹{overheadOnlineTotal.toFixed(2)}(OH) + ₹{fixedCostOnlineTotal.toFixed(2)}(FC)
-                    </span>
-                  )}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.usedOnlineMoney}
-                  onChange={(e) => setFormData({ ...formData, usedOnlineMoney: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  required
-                  disabled={!canEditSales}
-                />
-              </div>
-            </div>
-
             {/* Contract Worker Payout Section */}
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
+            <div className="bg-gradient-to-br from-purple-50/80 to-purple-100/50 backdrop-blur-sm rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-gray-900 flex items-center gap-2">
-                  <Users className="w-5 h-5 text-purple-600" />
-                  Contract Worker Payouts
-                </h3>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-purple-500/10 rounded-lg">
+                    <Users className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-700">Contract Worker Payouts</h3>
+                </div>
                 {context.isManager && (
                   <button
                     type="button"
                     onClick={handleAddContractWorker}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-xs font-medium shadow-sm"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-3.5 h-3.5" />
                     Add Worker
                   </button>
                 )}
               </div>
               
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 text-sm text-blue-800">
+              <div className="bg-blue-50/70 border border-blue-200/50 rounded-xl p-3 mb-3 text-xs text-blue-800">
                 <p className="flex items-center gap-2">
-                  <Smartphone className="w-4 h-4" />
+                  <Smartphone className="w-3.5 h-3.5" />
                   <span>💡 Employee payouts are deducted from <strong>Online Cash in Hand (Paytm)</strong>, not from Expected Cash.</span>
                 </p>
               </div>
@@ -1637,28 +1855,28 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               {loadingEmployees ? (
                 <p className="text-sm text-gray-500">Loading workers...</p>
               ) : contractWorkers.length === 0 ? (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-gray-700">
+                <div className="bg-yellow-50/70 border border-yellow-200/50 rounded-xl p-3 text-xs text-gray-700">
                   <p>No contract workers found. Please add contract workers in the Payroll tab first.</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {contractPayouts.length === 0 ? (
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
+                    <div className="bg-white/70 border border-gray-200/50 rounded-xl p-3 text-xs text-gray-600">
                       No payouts entered for today. Click "Add Worker" to record a payout.
                     </div>
                   ) : (
                     contractPayouts.map((payout, index) => {
                       const worker = contractWorkers.find(w => w.id === payout.employeeId);
                       return (
-                        <div key={index} className="bg-white border border-purple-200 rounded-lg p-3 space-y-2">
+                        <div key={index} className="bg-white/70 border border-purple-200/50 rounded-xl p-3 space-y-2">
                           <div className="flex items-start gap-2">
                             <div className="flex-1 space-y-2">
                               <div>
-                                <label className="block text-xs text-gray-600 mb-1">Select Worker</label>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Select Worker</label>
                                 <select
                                   value={payout.employeeId}
                                   onChange={(e) => handleContractPayoutChange(index, 'employeeId', e.target.value)}
-                                  className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+                                  className="w-full px-3 py-2 border border-purple-200 bg-white rounded-lg text-sm focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
                                   disabled={!context.isManager}
                                   required
                                 >
@@ -1672,13 +1890,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                               </div>
                               
                               <div>
-                                <label className="block text-xs text-gray-600 mb-1">Amount Paid (₹)</label>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Amount Paid (₹)</label>
                                 <input
                                   type="number"
                                   step="0.01"
                                   value={payout.amount}
                                   onChange={(e) => handleContractPayoutChange(index, 'amount', e.target.value)}
-                                  className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+                                  className="w-full px-3 py-2 border border-purple-200 bg-white rounded-lg text-sm focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
                                   placeholder={worker?.dailyRate ? `Suggested: ₹${worker.dailyRate}` : 'Enter amount'}
                                   disabled={!context.isManager}
                                   required
@@ -1707,44 +1925,76 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   )}
                   
                   {contractPayouts.length > 0 && (
-                    <div className="bg-purple-600 text-white rounded-lg p-3 flex justify-between items-center">
-                      <span className="text-sm">Total Contract Payouts:</span>
-                      <span className="text-lg">₹{totalContractPayout.toFixed(2)}</span>
+                    <div className="bg-purple-600 text-white rounded-xl p-3 flex justify-between items-center shadow-sm">
+                      <span className="text-xs font-medium">Total Contract Payouts:</span>
+                      <span className="text-lg font-bold">₹{totalContractPayout.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
               )}
               
-              <p className="text-xs text-gray-500 mt-3 bg-purple-50 p-2 rounded border border-purple-200">
+              <p className="text-xs text-gray-500 mt-3 bg-purple-50/70 p-2 rounded-xl border border-purple-200/50">
                 💡 <strong>Note:</strong> Payouts entered here will automatically sync with the Payroll page. For permanent employees, use the Payroll tab.
               </p>
               
               {totalContractPayout > 0 && (
-                <p className="text-xs text-purple-700 mt-2 bg-purple-100 p-2 rounded border border-purple-300 flex items-center gap-1">
+                <p className="text-xs text-purple-700 mt-2 bg-purple-100/70 p-2 rounded-xl border border-purple-300/50 flex items-center gap-1">
                   💰 <strong>Cash Impact:</strong> ₹{totalContractPayout.toFixed(2)} will be deducted from Online Cash in Hand (Paytm).
                 </p>
               )}
             </div>
 
+            {/* Used Online Money Section */}
+            <div className="bg-gradient-to-br from-cyan-50/80 to-cyan-100/50 backdrop-blur-sm rounded-2xl p-5 border border-cyan-200/50 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-cyan-500/10 rounded-lg">
+                  <ArrowDownCircle className="w-5 h-5 text-cyan-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-700">Used Online Money</h3>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Amount Used from Paytm (₹)
+                  {totalOnlineExpenses > 0 && (
+                    <span className="ml-2 text-xs bg-blue-100/70 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200/50">
+                      Auto: ₹{inventoryOnlineTotal.toFixed(2)}(Inv) + ₹{overheadOnlineTotal.toFixed(2)}(OH) + ₹{fixedCostOnlineTotal.toFixed(2)}(FC) + ₹{totalContractPayout.toFixed(2)}(CP)
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={formData.usedOnlineMoney}
+                  onChange={(e) => setFormData({ ...formData, usedOnlineMoney: e.target.value })}
+                  className="w-full px-4 py-3 border border-cyan-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-cyan-400 focus:border-transparent transition-all"
+                  required
+                  disabled={!canEditSales}
+                />
+              </div>
+            </div>
+
             {/* Previous Cash Balance - Only show on day 1 or 1st of month */}
             {(isFirstDay || isFirstOfMonth) && (
-              <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-lg p-4">
-                <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-amber-600" />
-                  {isFirstDay ? 'Opening Cash Balance (Day 1)' : 'Cash Left from Previous Month'}
-                </h3>
+              <div className="bg-gradient-to-br from-amber-50/80 to-amber-100/50 backdrop-blur-sm rounded-2xl p-5 border border-amber-200/50 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-2 bg-amber-500/10 rounded-lg">
+                    <Wallet className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-700">{isFirstDay ? 'Opening Cash Balance (Day 1)' : 'Cash Left from Previous Month'}</h3>
+                </div>
                 <div>
-                  <label className="block text-sm text-gray-700 mb-1">Cash Left (₹)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-2">Cash Left (₹)</label>
                   <input
                     type="number"
                     step="0.01"
                     value={formData.previousCashInHand}
                     onChange={(e) => setFormData({ ...formData, previousCashInHand: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-4 py-3 border border-amber-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
                     disabled={!canEditSales}
                     required
                   />
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 mt-2">
                     {isFirstDay 
                       ? 'Enter starting cash for the first day' 
                       : 'Enter cash left from previous month (after deducting all expenses and salaries)'}
@@ -1755,45 +2005,96 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
             {/* Display auto-calculated cash left for other days */}
             {!isFirstDay && !isFirstOfMonth && (
-              <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4 border-2 border-gray-300">
-                <h3 className="text-gray-900 mb-2 flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-gray-600" />
-                  Cash Left from Previous Day (Auto-Calculated)
-                </h3>
-                <div className="bg-white rounded-lg p-3 border border-gray-200">
-                  <p className="text-2xl text-gray-900">₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    💡 This is automatically calculated from previous day's cash left after deducting expenses (not including employee payouts).
-                    {isFirstOfMonth && " You can edit this only on the 1st of the month."}
-                  </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Offline Cash Left */}
+                <div className="bg-gradient-to-br from-gray-50/80 to-gray-100/50 backdrop-blur-sm rounded-2xl p-5 border border-gray-200/50 shadow-sm hover:shadow-md transition-all">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 bg-gray-500/10 rounded-lg">
+                      <Wallet className="w-5 h-5 text-gray-600" />
+                    </div>
+                    <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Offline Cash Left from Previous Day</h3>
+                  </div>
+                  <div className="bg-white/70 rounded-xl p-4 border border-gray-200/50">
+                    <p className="text-3xl font-bold text-gray-900">₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)}</p>
+                    <p className="text-xs text-gray-500 mt-2 flex items-start gap-1">
+                      <span className="text-yellow-500">💡</span>
+                      <span>Auto-calculated from previous day's offline cash left after deducting expenses (not including employee payouts).</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Online Cash (Paytm) Left */}
+                <div className="bg-gradient-to-br from-purple-50/80 to-pink-100/50 backdrop-blur-sm rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 bg-purple-500/10 rounded-lg">
+                      <Wallet className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <h3 className="text-xs font-semibold text-purple-700 uppercase tracking-wide">Online Cash (Paytm) Left from Previous Day</h3>
+                  </div>
+                  <div className="bg-white/70 rounded-xl p-4 border border-purple-200/50">
+                    <p className="text-3xl font-bold text-gray-900">₹{(() => {
+                      const previousDate = new Date(selectedDate);
+                      previousDate.setDate(previousDate.getDate() - 1);
+                      const previousDateStr = previousDate.toISOString().split('T')[0];
+                      
+                      const previousDaySales = effectiveStoreId 
+                        ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
+                        : context.salesData.find(s => s.date === previousDateStr);
+                      
+                      if (previousDaySales && previousDaySales.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
+                        return previousDaySales.actualPaytmBalance.toFixed(2);
+                      }
+                      
+                      const latestRecalibration = context.onlineCashRecalibrations
+                        .filter(r => r.storeId === effectiveStoreId && r.date < selectedDate)
+                        .sort((a, b) => b.date.localeCompare(a.date))[0];
+                      
+                      if (!latestRecalibration) return '0.00';
+                      
+                      const startDate = latestRecalibration.date;
+                      
+                      const relevantSales = context.salesData.filter(s => 
+                        (effectiveStoreId ? s.storeId === effectiveStoreId : true) &&
+                        s.date > startDate && s.date < selectedDate
+                      );
+                      
+                      const totalPaytm = relevantSales.reduce((sum, s) => sum + (s.paytmAmount || 0), 0);
+                      const totalOnline = relevantSales.reduce((sum, s) => sum + (s.onlineSales || 0), 0);
+                      const totalUsedOnline = relevantSales.reduce((sum, s) => sum + (s.usedOnlineMoney || 0), 0);
+                      const totalEmployeePayouts = relevantSales.reduce((sum, s) => sum + (s.contractPayouts?.reduce((pSum, p) => pSum + p.amount, 0) || 0), 0);
+                      
+                      return (latestRecalibration.balance + totalPaytm + totalOnline - totalUsedOnline - totalEmployeePayouts).toFixed(2);
+                    })()}</p>
+                    <p className="text-xs text-gray-500 mt-2 flex items-start gap-1">
+                      <span className="text-yellow-500">💡</span>
+                      <span>Auto-calculated from previous day's Paytm balance after accounting for online sales, expenses, and payouts.</span>
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Cash Reconciliation Section */}
-            <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-lg p-4">
-              <h3 className="text-gray-900 mb-4 flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-teal-600" />
-                Cash Reconciliation
-              </h3>
+            <div className="bg-gradient-to-br from-teal-50/80 to-teal-100/50 backdrop-blur-sm rounded-2xl p-5 border border-teal-200/50 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-teal-500/10 rounded-lg">
+                  <Wallet className="w-5 h-5 text-teal-600" />
+                </div>
+                <h3 className="text-xs font-semibold text-teal-700 uppercase tracking-wide">Cash Status</h3>
+              </div>
               
-              <div className="space-y-3">
-                <div className="bg-white rounded-lg p-3 border border-teal-200">
-                  <p className="text-sm text-gray-600">Expected Cash in Hand</p>
-                  <p className="text-2xl text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
-                    Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
-                    Cash Received: ₹{cash.toFixed(2)} - 
-                    Expenses: ₹{totalExpenses.toFixed(2)} - 
-                    Contract Payouts: ₹{totalContractPayout.toFixed(2)}
-                  </p>
-                  <details className="mt-2">
-                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
-                      View expense breakdown (all expenses incl. commission)
-                    </summary>
-                    <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
-                      <p>Inventory Cost: ₹{(() => {
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-2">Expected Cash</label>
+                  <div className="bg-white/70 rounded-xl p-4 border border-teal-200/50">
+                    <p className="text-4xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
+                    <details className="mt-2">
+                      <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
+                        ▸ View expense breakdown (all expenses incl. commission)
+                      </summary>
+                    <div className="mt-2 text-xs text-gray-600 bg-white p-2 rounded border border-teal-200">
+                      <p className="font-semibold text-teal-700 mb-1">Inventory Cost:</p>
+                      <p className="ml-2">₹{(() => {
                         // Only count CASH inventory items, not ALL inventory
                         const cashInventory = context.inventory.filter(item => {
                           const dateMatch = item.date === selectedDate;
@@ -1823,7 +2124,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                         }, 0);
                         return cashInventory.toFixed(2);
                       })()}, online: ₹{dailyOnlineExpenses.inventory.toFixed(2)})</p>
-                      <p>Overhead Cost: ₹{(() => {
+                      
+                      <p className="font-semibold text-teal-700 mt-2 mb-1">Overhead Cost:</p>
+                      <p className="ml-2">₹{(() => {
                         // Only count CASH overheads, not ALL overheads
                         const cashOverheads = context.overheads.filter(item => {
                           const dateMatch = item.date === selectedDate;
@@ -1853,7 +2156,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                         }, 0);
                         return cashOverheads.toFixed(2);
                       })()}, online: ₹{dailyOnlineExpenses.overhead.toFixed(2)})</p>
-                      <p>Fixed Costs: ₹{(() => {
+                      
+                      <p className="font-semibold text-teal-700 mt-2 mb-1">Fixed Costs:</p>
+                      <p className="ml-2">₹{(() => {
                         // Only count CASH fixed costs, not ALL fixed costs
                         const cashFixed = context.fixedCosts.filter(item => {
                           const dateMatch = item.date === selectedDate;
@@ -1869,21 +2174,27 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                         }, 0);
                         return (cashFixed + dailyOnlineExpenses.fixedCost).toFixed(2);
                       })()} (cash + online)</p>
-                      <p className="font-medium mt-1">Total: ₹{totalExpenses.toFixed(2)}</p>
-                    </div>
-                  </details>
+                      
+                      <p className="font-semibold text-teal-700 mt-2 mb-1">Total Expenses:</p>
+                      <p className="ml-2 font-medium">₹{totalExpenses.toFixed(2)}</p>
+                      </div>
+                    </details>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-700 mb-1">Actual Cash in Hand (₹)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-2">
+                    Actual Cash in Hand (₹) <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     value={formData.actualCashInHand}
                     onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-4 py-3 border border-teal-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all"
                     required
                     disabled={!canEditSales}
+                    placeholder="Count and enter actual physical cash"
                   />
                   <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
                 </div>
@@ -1907,6 +2218,99 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     </p>
                   </div>
                 )}
+
+                {/* Online Cash (Paytm) Reconciliation */}
+                <div className="col-span-2 mt-4">
+                  <div className="bg-gradient-to-br from-purple-50/80 to-purple-100/50 backdrop-blur-sm rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="p-2 bg-purple-500/10 rounded-lg">
+                        <Smartphone className="w-5 h-5 text-purple-600" />
+                      </div>
+                      <h3 className="text-xs font-semibold text-purple-700 uppercase tracking-wide">Online Cash (Paytm) Reconciliation</h3>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Expected Paytm Balance (₹)</label>
+                        <div className="bg-white/70 rounded-xl p-4 border border-purple-200/50">
+                          <p className="text-3xl font-bold text-gray-900">₹{calculatePaytmBalance.toFixed(2)}</p>
+                          <p className="text-xs text-gray-600 mt-2">
+                            Previous Paytm: ₹{(() => {
+                              const previousDate = new Date(selectedDate);
+                              previousDate.setDate(previousDate.getDate() - 1);
+                              const previousDateStr = previousDate.toISOString().split('T')[0];
+                              const previousDaySales = effectiveStoreId 
+                                ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
+                                : context.salesData.find(s => s.date === previousDateStr);
+                              return (previousDaySales?.actualPaytmBalance || 0).toFixed(2);
+                            })()} + 
+                            Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)} + 
+                            Online Payouts: ₹{(parseFloat(formData.onlineSales) || 0).toFixed(2)} - 
+                            Used for Expenses: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} - 
+                            Employee Payouts: ₹{totalContractPayout.toFixed(2)}
+                          </p>
+                          <details className="mt-2">
+                            <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
+                              ▸ View Paytm usage breakdown
+                            </summary>
+                            <div className="mt-2 text-xs text-gray-600 bg-white p-2 rounded border border-purple-200">
+                              <p className="font-semibold text-purple-700 mb-1">Paytm Used for Expenses (from sales form):</p>
+                              <p className="ml-2">Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)}</p>
+                              
+                              <p className="font-semibold text-purple-700 mt-2 mb-1">Employee Payouts (all from Paytm):</p>
+                              <p className="ml-2">Contract Workers: ₹{totalContractPayout.toFixed(2)}</p>
+                              
+                              <p className="font-semibold text-purple-700 mt-2 mb-1">Total Paytm Deductions:</p>
+                              <p className="ml-2 font-medium">₹{((parseFloat(formData.usedOnlineMoney) || 0) + totalContractPayout).toFixed(2)}</p>
+                              
+                              <p className="font-semibold text-purple-700 mt-2 mb-1">Paytm Additions:</p>
+                              <p className="ml-2">Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)}</p>
+                              <p className="ml-2">Online Payouts (Swiggy+Zomato): ₹{(parseFloat(formData.onlineSales) || 0).toFixed(2)}</p>
+                              <p className="ml-2 font-medium">Total Additions: ₹{((parseFloat(formData.paytmAmount) || 0) + (parseFloat(formData.onlineSales) || 0)).toFixed(2)}</p>
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">
+                          Actual Paytm Balance (₹) <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={formData.actualPaytmBalance}
+                          onChange={(e) => setFormData({ ...formData, actualPaytmBalance: e.target.value })}
+                          className="w-full px-4 py-3 border border-purple-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
+                          required
+                          disabled={!canEditSales}
+                          placeholder="3236"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">📱 Check your Paytm wallet balance</p>
+                      </div>
+
+                      {/* Paytm discrepancy display */}
+                      {paytmDiscrepancy !== 0 && parseFloat(formData.actualPaytmBalance) > 0 && (
+                        <div className={`p-3 rounded-lg border-2 ${
+                          paytmDiscrepancy > 0 
+                            ? 'bg-green-50 border-green-300' 
+                            : 'bg-red-50 border-red-300'
+                        }`}>
+                          <p className={`font-semibold ${
+                            paytmDiscrepancy > 0 ? 'text-green-700' : 'text-red-700'
+                          }`}>
+                            {paytmDiscrepancy > 0 ? 'Paytm Excess' : 'Paytm Shortage'}: ₹{Math.abs(paytmDiscrepancy).toFixed(2)}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {Math.abs(paytmDiscrepancy) > 500 
+                              ? '⚠️ High discrepancy - requires approval from cluster head' 
+                              : 'Discrepancy will be noted in records'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1914,9 +2318,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             {isEditing && salesForDate && (
               <div className="bg-white border border-gray-300 rounded-lg p-4">
                 <div className="space-y-3">
-                  {needsApproval && salesForDate.approvalRequested && !salesForDate.approvedBy && (
-                    <div className="bg-yellow-50 border-2 border-yellow-300 text-yellow-800 px-4 py-3 rounded-lg">\n                      <p className="font-semibold">⏳ Pending Approval</p>
-                      <p className="mt-1">This entry is waiting for cluster head approval due to high cash discrepancy.</p>
+                  {(needsApproval || needsPaytmApproval) && salesForDate.approvalRequested && !salesForDate.approvedBy && (
+                    <div className="bg-yellow-50 border-2 border-yellow-300 text-yellow-800 px-4 py-3 rounded-lg">
+                      <p className="font-semibold">⏳ Pending Approval</p>
+                      <p className="mt-1">This entry is waiting for cluster head approval due to high {needsApproval && needsPaytmApproval ? 'cash and Paytm discrepancy' : needsApproval ? 'cash discrepancy' : 'Paytm discrepancy'}.</p>
                     </div>
                   )}
                   
@@ -1951,21 +2356,33 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
             {canEditSales && (
               <div className="space-y-3">
+                {paymentMismatch && (
+                  <div className="bg-red-100/80 border border-red-400/50 text-red-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold">Cannot Save: Payment Mismatch</div>
+                      <div className="text-xs mt-1">
+                        Payment total (₹{offlinePaymentTotal.toFixed(2)}) must match offline sales (₹{offlineSalesTotal.toFixed(2)})
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 <button
                   type="submit"
                   disabled={paymentMismatch || isSubmitting}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full px-6 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
                 >
                   {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
                   {isSubmitting ? 'Saving...' : isEditing ? 'Update Sales Data' : 'Save Sales Data'}
                 </button>
                 
                 {/* Request Approval Button - Only show when editing with high discrepancy */}
-                {isEditing && editingId && needsApproval && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+                {isEditing && editingId && (needsApproval || needsPaytmApproval) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
                   <button
                     type="button"
                     onClick={handleRequestApproval}
-                    className="w-full px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all shadow-lg flex items-center justify-center gap-2"
+                    className="w-full px-6 py-3.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-semibold text-sm"
                   >
                     <AlertTriangle className="w-5 h-5" />
                     Request Approval from Cluster Head
@@ -1974,7 +2391,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 
                 {/* Show if approval is pending */}
                 {isEditing && salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
-                  <div className="w-full px-6 py-3 bg-orange-100 border-2 border-orange-300 text-orange-800 rounded-lg text-center">
+                  <div className="w-full px-6 py-3 bg-orange-100/80 border border-orange-300/50 text-orange-800 rounded-xl text-center text-sm font-medium shadow-sm">
                     ⏳ Approval request sent - Waiting for cluster head response
                   </div>
                 )}
@@ -1984,58 +2401,64 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         </div>
 
         {/* Summary Cards */}
-        <div className="space-y-6">
-          <div className="bg-gradient-to-br from-[#B8E6B8] to-[#A3D9A5] rounded-xl shadow-lg p-6 text-gray-800">
+        <div className="space-y-4">
+          <div className="bg-gradient-to-br from-green-50/80 to-green-100/50 backdrop-blur-sm rounded-2xl p-5 border border-green-200/50 shadow-sm hover:shadow-md transition-all">
             <div className="flex items-center gap-2 mb-2">
-              <DollarSign className="w-6 h-6" />
-              <p className="text-sm uppercase tracking-wide">Total Sales</p>
-            </div>
-            <p className="text-4xl">₹{(offlineSalesTotal + onlineSalesTotal).toLocaleString()}</p>
-            <div className="mt-4 pt-4 border-t border-gray-700/20 space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span>Offline Sales:</span>
-                <span>₹{offlineSalesTotal.toLocaleString()}</span>
+              <div className="p-1.5 bg-green-500/10 rounded-lg">
+                <DollarSign className="w-5 h-5 text-green-600" />
               </div>
-              <div className="flex justify-between">
-                <span>Online Sales:</span>
-                <span>₹{onlineSalesTotal.toLocaleString()}</span>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Total Sales</p>
+            </div>
+            <p className="text-4xl font-bold text-gray-900">₹{(offlineSalesTotal + onlineSalesTotal).toLocaleString()}</p>
+            <div className="mt-4 pt-3 border-t border-green-200/50 space-y-2 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Offline Sales:</span>
+                <span className="font-semibold text-gray-900">₹{offlineSalesTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Online Sales:</span>
+                <span className="font-semibold text-gray-900">₹{onlineSalesTotal.toLocaleString()}</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-[#A8D8EA] to-[#93C5FD] rounded-xl shadow-lg p-6 text-gray-800">
+          <div className="bg-gradient-to-br from-blue-50/80 to-blue-100/50 backdrop-blur-sm rounded-2xl p-5 border border-blue-200/50 shadow-sm hover:shadow-md transition-all">
             <div className="flex items-center gap-2 mb-2">
-              <Wallet className="w-6 h-6" />
-              <p className="text-sm uppercase tracking-wide">Payment Breakdown</p>
+              <div className="p-1.5 bg-blue-500/10 rounded-lg">
+                <Wallet className="w-5 h-5 text-blue-600" />
+              </div>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Payment Breakdown</p>
             </div>
             <div className="space-y-3 mt-4">
               <div className="flex justify-between items-center">
-                <span>Cash Received:</span>
-                <span className="text-2xl">₹{cash.toLocaleString()}</span>
+                <span className="text-sm text-gray-600">Cash Received:</span>
+                <span className="text-2xl font-bold text-gray-900">₹{cash.toLocaleString()}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span>Paytm Received:</span>
-                <span className="text-2xl">₹{paytm.toLocaleString()}</span>
+                <span className="text-sm text-gray-600">Paytm Received:</span>
+                <span className="text-2xl font-bold text-gray-900">₹{paytm.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between items-center pt-3 border-t border-gray-700/20">
-                <span>Online Sales:</span>
-                <span className="text-xl">₹{onlineSalesTotal.toLocaleString()}</span>
+              <div className="flex justify-between items-center pt-3 border-t border-blue-200/50">
+                <span className="text-sm text-gray-600">Online Sales:</span>
+                <span className="text-xl font-bold text-gray-900">₹{onlineSalesTotal.toLocaleString()}</span>
               </div>
             </div>
           </div>
 
           {/* Expected vs Actual Cash */}
           {!isFirstDay && (
-            <div className="bg-gradient-to-br from-[#D8B5FF] to-[#C7A7FF] rounded-xl shadow-lg p-6 text-gray-800">
+            <div className="bg-gradient-to-br from-violet-50/80 to-purple-100/50 backdrop-blur-sm rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <Wallet className="w-6 h-6" />
-                  <p className="text-sm uppercase tracking-wide">Cash Status</p>
+                  <div className="p-1.5 bg-purple-500/10 rounded-lg">
+                    <Wallet className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Cash Status</p>
                 </div>
                 {expectedCashInHand > 0 && (
                   <button
                     onClick={() => setShowCashConversion(true)}
-                    className="flex items-center gap-1 px-3 py-1 bg-white/30 hover:bg-white/50 rounded-lg text-xs font-semibold transition-colors"
+                    className="flex items-center gap-1 px-2.5 py-1 bg-purple-600/10 hover:bg-purple-600/20 rounded-lg text-xs font-semibold transition-colors text-purple-700"
                     title="Convert Offline Cash to Online Cash (Paytm)"
                   >
                     <ArrowRightLeft className="w-3 h-3" />
@@ -2045,30 +2468,26 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               </div>
               <div className="space-y-3">
                 <div>
-                  <p className="text-sm">Expected Cash</p>
-                  <p className="text-3xl">₹{expectedCashInHand.toFixed(2)}</p>
+                  <p className="text-xs text-gray-600 mb-1">Expected Cash</p>
+                  <p className="text-3xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
                   <p className="text-xs text-gray-600 mt-1">
-                    ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
-                    ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
-                    ₹{cash.toFixed(2)} - 
-                    ₹{totalExpenses.toFixed(2)} - 
-                    ₹{fixedCostsCash.toFixed(2)} - 
-                    ₹{overheadCostsCash.toFixed(2)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1 italic">
-                    Note: Employee payouts are deducted from Online Cash (Paytm)
+                    Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
+                    Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
+                    Cash Received: ₹{cash.toFixed(2)} - 
+                    Expenses: ₹{totalExpenses.toFixed(2)} - 
+                    Contract Payouts: ₹{totalContractPayout.toFixed(2)}
                   </p>
                 </div>
                 {formData.actualCashInHand && (
                   <>
-                    <div className="pt-3 border-t border-gray-700/20">
-                      <p className="text-sm">Actual Cash</p>
-                      <p className="text-3xl">₹{(parseFloat(formData.actualCashInHand) || 0).toFixed(2)}</p>
+                    <div className="pt-3 border-t border-purple-200/50">
+                      <p className="text-xs text-gray-600 mb-1">Actual Cash</p>
+                      <p className="text-3xl font-bold text-gray-900">₹{(parseFloat(formData.actualCashInHand) || 0).toFixed(2)}</p>
                     </div>
                     {Math.abs(cashDiscrepancy) > 0 && (
-                      <div className="pt-3 border-t border-gray-700/20">
-                        <p className="text-sm">Difference</p>
-                        <p className={`text-2xl ${cashDiscrepancy > 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      <div className="pt-3 border-t border-purple-200/50">
+                        <p className="text-xs text-gray-600 mb-1">Difference</p>
+                        <p className={`text-2xl font-bold ${cashDiscrepancy > 0 ? 'text-green-600' : 'text-red-600'}`}>
                           {cashDiscrepancy > 0 ? '+' : ''}₹{cashDiscrepancy.toFixed(2)}
                         </p>
                       </div>
@@ -2080,12 +2499,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           )}
 
           {/* Online Cash in Hand (Paytm) */}
-          <div className="bg-gradient-to-br from-[#C7A7FF] to-[#B794F4] rounded-xl shadow-lg p-6 text-gray-800">
+          <div className="bg-gradient-to-br from-purple-50/80 to-violet-100/50 backdrop-blur-sm rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
             <div className="flex items-center gap-2 mb-2">
-              <Smartphone className="w-6 h-6" />
-              <p className="text-sm uppercase tracking-wide">Online Cash in Hand (Paytm)</p>
+              <div className="p-1.5 bg-purple-500/10 rounded-lg">
+                <Smartphone className="w-5 h-5 text-purple-600" />
+              </div>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Online Cash in Hand (Paytm)</p>
             </div>
-            <p className="text-4xl mb-4">₹{calculatePaytmBalance.toLocaleString()}</p>
+            <p className="text-4xl font-bold text-gray-900 mb-4">₹{calculatePaytmBalance.toLocaleString()}</p>
             <div className="space-y-2 text-sm bg-gray-800/10 rounded-lg p-3">
               <div className="flex justify-between text-green-700">
                 <span>+ Paytm In:</span>
@@ -2185,41 +2606,36 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
               )}
             </div>
             
-            <div className="grid grid-cols-2 gap-2 mt-4">
+            <div className="mt-4">
               <button
                 onClick={() => setShowPaytmBreakdown(true)}
-                className="px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                className="w-full px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
               >
                 <TrendingUp className="w-4 h-4" />
                 Daily Breakdown
-              </button>
-              <button
-                onClick={() => setShowOnlineCashRecalibration(true)}
-                className="px-4 py-2 bg-white/30 hover:bg-white/40 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
-              >
-                <Calendar className="w-4 h-4" />
-                Recalibrate
               </button>
             </div>
           </div>
 
           {/* Total Cash (Offline + Paytm) */}
-          <div className="bg-gradient-to-br from-[#FFD700] to-[#FFA500] rounded-xl shadow-lg p-6 text-gray-800">
+          <div className="bg-gradient-to-br from-yellow-50/80 to-orange-100/50 backdrop-blur-sm rounded-2xl p-5 border border-yellow-300/50 shadow-sm hover:shadow-md transition-all">
             <div className="flex items-center gap-2 mb-2">
-              <Wallet className="w-6 h-6" />
-              <p className="text-sm uppercase tracking-wide font-semibold">Total Cash (Offline + Paytm)</p>
+              <div className="p-1.5 bg-yellow-500/10 rounded-lg">
+                <Wallet className="w-5 h-5 text-yellow-700" />
+              </div>
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Total Cash (Offline + Paytm)</p>
             </div>
-            <p className="text-4xl font-bold mb-4">
+            <p className="text-4xl font-bold text-gray-900 mb-4">
               ₹{(expectedCashInHand + calculatePaytmBalance).toLocaleString()}
             </p>
-            <div className="space-y-2 text-sm bg-gray-800/10 rounded-lg p-3">
+            <div className="space-y-2 text-sm bg-white/70 rounded-xl p-3 border border-yellow-200/50">
               <div className="flex justify-between items-center">
-                <span className="font-medium">Expected Cash (Offline):</span>
-                <span className="text-xl font-semibold">₹{expectedCashInHand.toLocaleString()}</span>
+                <span className="font-medium text-gray-600">Expected Cash (Offline):</span>
+                <span className="text-xl font-semibold text-gray-900">₹{expectedCashInHand.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t border-gray-700/20">
-                <span className="font-medium">Online Cash (Paytm):</span>
-                <span className="text-xl font-semibold">₹{calculatePaytmBalance.toLocaleString()}</span>
+              <div className="flex justify-between items-center pt-2 border-t border-yellow-200/50">
+                <span className="font-medium text-gray-600">Online Cash (Paytm):</span>
+                <span className="text-xl font-semibold text-gray-900">₹{calculatePaytmBalance.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -2228,14 +2644,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
       {/* Loan Management Section */}
       <div className="mt-6">
-        <div className="bg-white rounded-xl shadow-lg p-6">
+        <div className="bg-gradient-to-br from-white/80 to-gray-50/50 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-200/50 p-6">
           <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-500/10 rounded-lg">
                 <DollarSign className="w-6 h-6 text-purple-600" />
-                Loan Management
-              </h2>
-              <p className="text-sm text-gray-600 mt-1">Track loans taken and repayments made</p>
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Loan Management</h2>
+                <p className="text-xs text-gray-600 mt-0.5">Track loans taken and repayments made</p>
+              </div>
             </div>
             <button
               onClick={() => setShowApplyLoanModal(true)}
@@ -2395,13 +2813,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <p className="text-sm text-green-600 font-medium">Total Received</p>
                   <p className="text-2xl font-bold text-green-700">
-                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.paytmReceived + day.onlinePayouts, 0)).toLocaleString()}
+                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.paytmReceived + day.onlinePayouts + (day.loansTaken || 0), 0)).toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                   <p className="text-sm text-red-600 font-medium">Total Used</p>
                   <p className="text-2xl font-bold text-red-700">
-                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.usedOnlineMoney + day.commission, 0)).toLocaleString()}
+                    ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.usedOnlineMoney + day.commission + (day.employeePayouts || 0) + (day.loanRepayments || 0), 0)).toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
@@ -2467,6 +2885,18 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                           <div className="flex justify-between items-center bg-orange-50 px-3 py-2 rounded">
                             <span className="text-orange-700">- Employee Payouts:</span>
                             <span className="font-semibold text-orange-800">₹{day.employeePayouts.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.loansTaken > 0 && (
+                          <div className="flex justify-between items-center bg-blue-50 px-3 py-2 rounded">
+                            <span className="text-blue-700">+ Loan Received:</span>
+                            <span className="font-semibold text-blue-800">₹{day.loansTaken.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {day.loanRepayments > 0 && (
+                          <div className="flex justify-between items-center bg-amber-50 px-3 py-2 rounded">
+                            <span className="text-amber-700">- Loan Repayment:</span>
+                            <span className="font-semibold text-amber-800">₹{day.loanRepayments.toLocaleString()}</span>
                           </div>
                         )}
                       </div>
@@ -2562,25 +2992,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       </>
       )}
       
-      {/* Online Cash Recalibration Modal */}
-      {showOnlineCashRecalibration && (
-        <OnlineCashRecalibration
-          context={context}
-          selectedStoreId={effectiveStoreId}
-          selectedDate={selectedDate}
-          systemBalance={calculatePaytmBalance}
-          onClose={() => setShowOnlineCashRecalibration(false)}
-          onSaveSuccess={async () => {
-            // Wait a moment for the server to save
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Reload all recalibrations into context by refreshing the page
-            // This ensures the breakdown calculations pick up the new recalibration
-            window.location.reload();
-          }}
-        />
-      )}
-
       {/* Apply Loan Modal */}
       {showApplyLoanModal && (
         <ApplyLoanModal
@@ -2722,6 +3133,123 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 rounded-t-2xl">
+              <div className="flex items-center justify-between text-white">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="w-6 h-6" />
+                  <h2 className="text-xl font-bold">Confirm Sales Data</h2>
+                </div>
+                <button
+                  onClick={handleCancelDialog}
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 border border-yellow-200">
+                <p className="text-sm text-gray-700 mb-3 font-semibold">
+                  You are about to save sales data with the following values:
+                </p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Offline Sales:</span>
+                    <span className="font-semibold">₹{parseFloat(formData.offlineSales) || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Expected Cash:</span>
+                    <span className="font-semibold">₹{expectedCashInHand.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Actual Cash:</span>
+                    <span className="font-semibold">₹{parseFloat(formData.actualCashInHand) || 0}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2">
+                    <span className="text-gray-600">Cash Discrepancy:</span>
+                    <span className={`font-bold ${cashDiscrepancy === 0 ? 'text-green-600' : cashDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                      ₹{cashDiscrepancy.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2 mt-2">
+                    <span className="text-gray-600">Expected Paytm:</span>
+                    <span className="font-semibold">₹{calculatePaytmBalance.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Actual Paytm:</span>
+                    <span className="font-semibold">₹{parseFloat(formData.actualPaytmBalance) || 0}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2">
+                    <span className="text-gray-600">Paytm Discrepancy:</span>
+                    <span className={`font-bold ${paytmDiscrepancy === 0 ? 'text-green-600' : paytmDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                      ₹{paytmDiscrepancy.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {(calculatePaytmBalance < 0 || (expectedCashInHand + calculatePaytmBalance) < 0) && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-red-800">
+                      <p className="font-semibold mb-1">⚠️ Warning: Negative Balance Detected</p>
+                      {calculatePaytmBalance < 0 && (
+                        <p className="mb-1">• Online Cash (Paytm) is negative: ₹{calculatePaytmBalance.toFixed(2)}</p>
+                      )}
+                      {(expectedCashInHand + calculatePaytmBalance) < 0 && (
+                        <p>• Total Combined Cash is negative: ₹{(expectedCashInHand + calculatePaytmBalance).toFixed(2)}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-start gap-3 bg-gray-50 rounded-lg p-4">
+                <input
+                  type="checkbox"
+                  id="confirm-responsibility"
+                  checked={confirmationChecked}
+                  onChange={(e) => setConfirmationChecked(e.target.checked)}
+                  className="mt-1 w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                />
+                <label htmlFor="confirm-responsibility" className="text-sm text-gray-700 cursor-pointer">
+                  I confirm that I have verified this sales data and take responsibility for its accuracy. I understand that this data will be used for financial reporting and analysis.
+                </label>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleCancelDialog}
+                  className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSubmit}
+                  disabled={!confirmationChecked}
+                  className={`flex-1 px-4 py-3 rounded-lg font-semibold transition-colors ${
+                    confirmationChecked
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Save Sales Data
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }

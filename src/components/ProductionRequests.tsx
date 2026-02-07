@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
@@ -23,9 +23,18 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [chartTimeFilter, setChartTimeFilter] = useState<'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'>('daily');
+  
+  // Helper function to get local date string without timezone conversion
+  const getLocalDateString = (date: Date = new Date()) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
   const [chartCustomRange, setChartCustomRange] = useState({
-    from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0],
+    from: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
+    to: getLocalDateString(),
   });
   const [salesData, setSalesData] = useState<any[]>([]);
   
@@ -34,7 +43,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [notes, setNotes] = useState('');
   // Always default to today (no time restriction)
   const getDefaultRequestDate = () => {
-    return new Date().toISOString().split('T')[0];
+    return getLocalDateString();
   };
   const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
   const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
@@ -1991,20 +2000,22 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         </div>
       )}
 
-      {/* Momo Orders Chart */}
+      {/* Stock Requests by Momo Type - Card View */}
       <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
         <div className="flex flex-col gap-3 sm:gap-4 mb-4 sm:mb-6">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-purple-600" />
-            <h2 className="text-lg sm:text-xl text-gray-900">Momo Orders by Type</h2>
+            <h2 className="text-lg sm:text-xl text-gray-900">Stock Requests by Momo Type</h2>
           </div>
           
           <div className="flex flex-wrap gap-2">
             {[
-              { filter: 'daily', label: '5 Days' },
-              { filter: 'weekly', label: '5 Weeks' },
-              { filter: 'monthly', label: '5 Months' },
-              { filter: 'yearly', label: '5 Years' },
+              { filter: 'today', label: 'Today' },
+              { filter: 'yesterday', label: 'Yesterday' },
+              { filter: 'thisWeek', label: 'This Week' },
+              { filter: 'lastWeek', label: 'Last Week' },
+              { filter: 'thisMonth', label: 'This Month' },
+              { filter: 'lastMonth', label: 'Last Month' },
               { filter: 'custom', label: 'Custom' }
             ].map(({ filter, label }) => (
               <button
@@ -2037,26 +2048,333 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           </div>
         )}
 
-        <ResponsiveContainer width="100%" height={400}>
-          <BarChart data={getChartData()}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            {finishedProducts.map((product, index) => {
-              const colors = ['#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#3b82f6', '#14b8a6', '#ef4444', '#f97316'];
-              return (
-                <Bar 
-                  key={product.label} 
-                  dataKey={product.label} 
-                  name={product.label} 
-                  fill={colors[index % colors.length]} 
-                />
-              );
-            })}
-          </BarChart>
-        </ResponsiveContainer>
+        {/* Card-based view */}
+        {(() => {
+          const now = new Date();
+          const today = now.toISOString().split('T')[0];
+          const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          
+          // Get start of this week (Sunday)
+          const thisWeekStart = new Date(now);
+          thisWeekStart.setDate(now.getDate() - now.getDay());
+          thisWeekStart.setHours(0, 0, 0, 0);
+          
+          // Get start of last week
+          const lastWeekStart = new Date(thisWeekStart);
+          lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+          const lastWeekEnd = new Date(thisWeekStart);
+          lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
+          
+          // Get start of this month
+          const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          
+          // Get start and end of last month
+          const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+          
+          // Filter requests based on selected time period
+          let filteredForCards = requests;
+          let periodLabel = '';
+          
+          if (chartTimeFilter === 'today') {
+            filteredForCards = requests.filter(r => r.requestDate === today);
+            periodLabel = 'Today';
+          } else if (chartTimeFilter === 'yesterday') {
+            filteredForCards = requests.filter(r => r.requestDate === yesterday);
+            periodLabel = 'Yesterday';
+          } else if (chartTimeFilter === 'thisWeek') {
+            filteredForCards = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= thisWeekStart && reqDate <= now;
+            });
+            periodLabel = 'This Week';
+          } else if (chartTimeFilter === 'lastWeek') {
+            filteredForCards = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= lastWeekStart && reqDate <= lastWeekEnd;
+            });
+            periodLabel = 'Last Week';
+          } else if (chartTimeFilter === 'thisMonth') {
+            filteredForCards = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= thisMonthStart && reqDate <= now;
+            });
+            periodLabel = 'This Month';
+          } else if (chartTimeFilter === 'lastMonth') {
+            filteredForCards = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= lastMonthStart && reqDate <= lastMonthEnd;
+            });
+            periodLabel = 'Last Month';
+          } else if (chartTimeFilter === 'custom') {
+            const customStart = new Date(chartCustomRange.from);
+            const customEnd = new Date(chartCustomRange.to);
+            filteredForCards = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= customStart && reqDate <= customEnd;
+            });
+            periodLabel = `${chartCustomRange.from} to ${chartCustomRange.to}`;
+          }
+          
+          // Get comparison period (previous period) for percentage calculation
+          let comparisonFilteredRequests = [];
+          let comparisonLabel = '';
+          
+          if (chartTimeFilter === 'today') {
+            const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            comparisonFilteredRequests = requests.filter(r => r.requestDate === yesterday);
+            comparisonLabel = 'vs Yesterday';
+          } else if (chartTimeFilter === 'yesterday') {
+            const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            comparisonFilteredRequests = requests.filter(r => r.requestDate === dayBeforeYesterday);
+            comparisonLabel = 'vs Day Before';
+          } else if (chartTimeFilter === 'thisWeek') {
+            const prevWeekStart = new Date(thisWeekStart);
+            prevWeekStart.setDate(thisWeekStart.getDate() - 7);
+            const prevWeekEnd = new Date(thisWeekStart);
+            prevWeekEnd.setDate(thisWeekStart.getDate() - 1);
+            comparisonFilteredRequests = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= prevWeekStart && reqDate <= prevWeekEnd;
+            });
+            comparisonLabel = 'vs Last Week';
+          } else if (chartTimeFilter === 'lastWeek') {
+            const weekBefore = new Date(lastWeekStart);
+            weekBefore.setDate(lastWeekStart.getDate() - 7);
+            const weekBeforeEnd = new Date(lastWeekStart);
+            weekBeforeEnd.setDate(lastWeekStart.getDate() - 1);
+            comparisonFilteredRequests = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= weekBefore && reqDate <= weekBeforeEnd;
+            });
+            comparisonLabel = 'vs Week Before';
+          } else if (chartTimeFilter === 'thisMonth') {
+            // Compare same number of days from last month
+            const currentDayOfMonth = now.getDate();
+            const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const prevMonthSameDay = new Date(now.getFullYear(), now.getMonth() - 1, currentDayOfMonth);
+            comparisonFilteredRequests = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= prevMonthStart && reqDate <= prevMonthSameDay;
+            });
+            comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
+          } else if (chartTimeFilter === 'lastMonth') {
+            // Get the number of days in last month
+            const lastMonthDays = lastMonthEnd.getDate();
+            const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+            const monthBeforeSameDay = new Date(now.getFullYear(), now.getMonth() - 2, lastMonthDays);
+            comparisonFilteredRequests = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= monthBeforeStart && reqDate <= monthBeforeSameDay;
+            });
+            comparisonLabel = `vs Month Before (Day 1-${lastMonthDays})`;
+          } else if (chartTimeFilter === 'custom') {
+            const customStart = new Date(chartCustomRange.from);
+            const customEnd = new Date(chartCustomRange.to);
+            const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));
+            const comparisonStart = new Date(customStart);
+            comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
+            const comparisonEnd = new Date(customStart);
+            comparisonEnd.setDate(customStart.getDate() - 1);
+            comparisonFilteredRequests = requests.filter(r => {
+              const reqDate = new Date(r.requestDate);
+              return reqDate >= comparisonStart && reqDate <= comparisonEnd;
+            });
+            comparisonLabel = 'vs Previous Period';
+          }
+          
+          // Calculate totals for current period: requested vs delivered
+          const totalsRequested: Record<string, number> = {};
+          const totalsDelivered: Record<string, number> = {};
+          finishedProducts.forEach(({ camelKey }) => {
+            totalsRequested[camelKey] = 0;
+            totalsDelivered[camelKey] = 0;
+          });
+          
+          filteredForCards.forEach(req => {
+            const isDelivered = req.status === 'delivered' || req.status === 'partially-delivered';
+            finishedProducts.forEach(({ camelKey }) => {
+              const newFormat = (req as any)[camelKey] || 0;
+              const oldFormat = (req as any)[camelKey + 's'] || 0;
+              const qty = newFormat + oldFormat;
+              
+              // All requests count as "requested"
+              totalsRequested[camelKey] += qty;
+              
+              // Only delivered/partially-delivered count as "delivered"
+              if (isDelivered) {
+                totalsDelivered[camelKey] += qty;
+              }
+            });
+          });
+          
+          // Calculate totals for comparison period (for percentage)
+          const comparisonTotals: Record<string, number> = {};
+          finishedProducts.forEach(({ camelKey }) => {
+            comparisonTotals[camelKey] = 0;
+          });
+          
+          comparisonFilteredRequests.forEach(req => {
+            finishedProducts.forEach(({ camelKey }) => {
+              const newFormat = (req as any)[camelKey] || 0;
+              const oldFormat = (req as any)[camelKey + 's'] || 0;
+              comparisonTotals[camelKey] += newFormat + oldFormat;
+            });
+          });
+          
+          const colors = [
+            { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300', solid: '#8b5cf6' },
+            { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', solid: '#ec4899' },
+            { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300', solid: '#10b981' },
+            { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', solid: '#f59e0b' },
+            { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', solid: '#3b82f6' },
+            { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300', solid: '#14b8a6' },
+            { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', solid: '#ef4444' },
+            { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-300', solid: '#6366f1' },
+          ];
+          
+          return (
+            <div>
+              <div className="mb-4 text-sm text-gray-600">
+                <span className="font-medium">Period:</span> {periodLabel} • <span className="font-medium">Total Requests:</span> {filteredForCards.length}
+              </div>
+              
+              {finishedProducts.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
+                  <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>No momo types configured yet</p>
+                </div>
+              ) : filteredForCards.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
+                  <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>No stock requests for this period</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {finishedProducts.map((product, index) => {
+                    const requested = totalsRequested[product.camelKey] || 0;
+                    const delivered = totalsDelivered[product.camelKey] || 0;
+                    const comparison = comparisonTotals[product.camelKey] || 0;
+                    const color = colors[index % colors.length];
+                    
+                    // Calculate percentage change
+                    let percentChange = 0;
+                    let changeDirection: 'up' | 'down' | 'same' = 'same';
+                    if (comparison > 0) {
+                      percentChange = ((requested - comparison) / comparison) * 100;
+                      if (percentChange > 0) changeDirection = 'up';
+                      else if (percentChange < 0) changeDirection = 'down';
+                    } else if (requested > 0) {
+                      percentChange = 100;
+                      changeDirection = 'up';
+                    }
+                    
+                    // Calculate max for bar chart
+                    const maxQty = Math.max(requested, delivered, 1);
+                    const requestedPercent = (requested / maxQty) * 100;
+                    const deliveredPercent = (delivered / maxQty) * 100;
+                    
+                    return (
+                      <div
+                        key={product.camelKey}
+                        className={`${color.bg} ${color.border} border-2 rounded-xl p-4 transition-all hover:shadow-lg`}
+                      >
+                        <div className="flex flex-col gap-3">
+                          {/* Header with icon and name */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-10 h-10 ${color.text} rounded-full flex items-center justify-center bg-white`}>
+                                <Package className="w-5 h-5" />
+                              </div>
+                              <div className="text-sm font-bold text-gray-800">
+                                {product.label}
+                              </div>
+                            </div>
+                            
+                            {/* Percentage badge */}
+                            {comparison > 0 && (
+                              <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold ${
+                                changeDirection === 'up' ? 'bg-green-100 text-green-700' :
+                                changeDirection === 'down' ? 'bg-red-100 text-red-700' :
+                                'bg-gray-100 text-gray-700'
+                              }`}>
+                                {changeDirection === 'up' && <ArrowUp className="w-3 h-3" />}
+                                {changeDirection === 'down' && <ArrowDown className="w-3 h-3" />}
+                                {changeDirection === 'same' && <Minus className="w-3 h-3" />}
+                                {Math.abs(percentChange).toFixed(0)}%
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Requested vs Delivered numbers */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="bg-white rounded-lg p-2 text-center">
+                              <div className={`text-2xl font-bold ${color.text}`}>
+                                {requested.toLocaleString()}
+                              </div>
+                              <div className="text-xs text-gray-600 font-medium">Requested</div>
+                            </div>
+                            <div className="bg-white rounded-lg p-2 text-center">
+                              <div className={`text-2xl font-bold ${color.text}`}>
+                                {delivered.toLocaleString()}
+                              </div>
+                              <div className="text-xs text-gray-600 font-medium">Delivered</div>
+                            </div>
+                          </div>
+                          
+                          {/* Bar chart visualization */}
+                          <div className="space-y-2">
+                            {/* Requested bar */}
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-gray-600">Requested</span>
+                                <span className={`font-semibold ${color.text}`}>{requested}</span>
+                              </div>
+                              <div className="h-2 bg-white rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full rounded-full transition-all"
+                                  style={{ 
+                                    width: `${requestedPercent}%`,
+                                    backgroundColor: color.solid
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            
+                            {/* Delivered bar */}
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-gray-600">Delivered</span>
+                                <span className={`font-semibold ${color.text}`}>{delivered}</span>
+                              </div>
+                              <div className="h-2 bg-white rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full rounded-full transition-all"
+                                  style={{ 
+                                    width: `${deliveredPercent}%`,
+                                    backgroundColor: color.solid,
+                                    opacity: 0.6
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Comparison label */}
+                          {comparison > 0 && (
+                            <div className="text-xs text-gray-500 text-center pt-1 border-t border-gray-200">
+                              {comparisonLabel}: {comparison.toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Requests List - Grouped by Date */}
@@ -2099,12 +2417,17 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                     <Calendar className="w-6 h-6 text-purple-600 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base sm:text-lg text-gray-900 truncate">
-                        {new Date(date).toLocaleDateString('en-US', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                        })}
+                        {(() => {
+                          // Parse date as local to avoid timezone issues
+                          const [year, month, day] = date.split('-').map(Number);
+                          const localDate = new Date(year, month - 1, day);
+                          return localDate.toLocaleDateString('en-US', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          });
+                        })()}
                       </h3>
                       <p className="text-xs sm:text-sm text-gray-600">
                         {dateRequests.length} Request{dateRequests.length !== 1 ? 's' : ''} from{' '}

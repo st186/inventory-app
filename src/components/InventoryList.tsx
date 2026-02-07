@@ -167,6 +167,11 @@ export function InventoryList({
                           Employee: {item.employeeName} (ID: {item.employeeId})
                         </p>
                       )}
+                      {item.category === 'personal_expense' && item.expenseMonth && (
+                        <p className="text-sm text-purple-600 mt-1 font-medium">
+                          📅 Mapped to: {new Date(item.expenseMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                        </p>
+                      )}
                       <p className="text-sm text-gray-500">{item.description}</p>
                       {item.paymentMethod && (
                         <div className="flex items-center gap-2 mt-2">
