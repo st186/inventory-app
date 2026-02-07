@@ -1,14 +1,22 @@
-// Bhandar-IMS - Fixed recalibration date comparison logic
-import { useState, useEffect } from 'react';
+// Bhandar-IMS - Performance optimized with lazy loading
+import { useState, useEffect, lazy, Suspense, memo } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
 import { InventoryView } from './components/InventoryView';
 import { ClusterDashboard } from './components/ClusterDashboard';
-import { SalesManagement } from './components/SalesManagement';
-import { PayrollManagement } from './components/PayrollManagement';
-import { Analytics } from './components/Analytics';
-import { ExportData } from './components/ExportData';
-import { EmployeeDashboard } from './components/EmployeeDashboard';
-import { AuditDashboard } from './components/AuditDashboard';
+// Lazy load heavy components for better performance
+const SalesManagement = lazy(() => import('./components/SalesManagement').then(module => ({ default: module.SalesManagement })));
+const PayrollManagement = lazy(() => import('./components/PayrollManagement').then(module => ({ default: module.PayrollManagement })));
+const Analytics = lazy(() => import('./components/Analytics').then(module => ({ default: module.Analytics })));
+const ExportData = lazy(() => import('./components/ExportData').then(module => ({ default: module.ExportData })));
+const EmployeeDashboard = lazy(() => import('./components/EmployeeDashboard').then(module => ({ default: module.EmployeeDashboard })));
+const AuditDashboard = lazy(() => import('./components/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
+const ProductionManagement = lazy(() => import('./components/ProductionManagement').then(module => ({ default: module.ProductionManagement })));
+const ProductionHouseManagement = lazy(() => import('./components/ProductionHouseManagement').then(module => ({ default: module.ProductionHouseManagement })));
+const AssetsManagement = lazy(() => import('./components/AssetsManagement').then(module => ({ default: module.AssetsManagement })));
+const StockRequestManagement = lazy(() => import('./components/StockRequestManagement').then(module => ({ default: module.StockRequestManagement })));
+const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInventoryManagement').then(module => ({ default: module.AdvancedInventoryManagement })));
+const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
+const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
 import { AuthPage } from './components/AuthPage';
 import { EmployeeTimesheet } from './components/EmployeeTimesheet';
 import { EmployeeLeave } from './components/EmployeeLeave';
@@ -23,15 +31,9 @@ import { EmployeePayroll } from './components/EmployeePayroll';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { SetupClusterHead } from './components/SetupClusterHead';
-import { ProductionManagement } from './components/ProductionManagement';
-import { ProductionHouseManagement } from './components/ProductionHouseManagement';
-import { AssetsManagement } from './components/AssetsManagement';
-import { StockRequestManagement } from './components/StockRequestManagement';
-import { AdvancedInventoryManagement } from './components/AdvancedInventoryManagement';
-import { InventoryItemsManagement } from './components/InventoryItemsManagement';
-import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
-import { BackupRestore } from './components/BackupRestore';
+import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
+import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
@@ -1841,6 +1843,7 @@ export default function App() {
 
         {/* Employee Main Content */}
         <main className="pb-6">
+          <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
           {activeView === 'analytics' ? (
             <Analytics 
               context={contextValue} 
@@ -1906,6 +1909,7 @@ export default function App() {
               return <EmployeeDashboard employeeId={user.employeeId || ''} />;
             })()
           )}
+          </Suspense>
         </main>
       </div>
       </>
@@ -1920,12 +1924,12 @@ export default function App() {
       <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
       <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-3">
-            <div className="flex items-center gap-4">
-              <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/30">
-                <h1 className="text-xl sm:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
-                <p className="text-xs text-white/90">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8">
+          <div className="flex justify-between items-center py-2 sm:py-3">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="bg-white/20 backdrop-blur-sm rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-2 border border-white/30">
+                <h1 className="text-base sm:text-xl lg:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
+                <p className="text-[10px] sm:text-xs text-white/90 truncate max-w-[160px] sm:max-w-none">
                   {user.name} • {user.designation === 'store_incharge' ? 'Store Incharge' : user.designation === 'production_incharge' ? 'Production Incharge' : (user.role === 'manager' ? 'Operations Manager' : 'Cluster Head')}
                 </p>
               </div>
@@ -2171,7 +2175,7 @@ export default function App() {
           
           {/* Mobile Menu */}
           {isMobileMenuOpen && (
-            <div className="lg:hidden border-t border-gray-200 py-4 space-y-2">
+            <div className="lg:hidden border-t border-white/20 py-3 space-y-1.5 max-h-[70vh] overflow-y-auto">
               {isClusterHead ? (
                 <>
                   <button
@@ -2179,13 +2183,13 @@ export default function App() {
                       setActiveView('analytics');
                       setIsMobileMenuOpen(false);
                     }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
                       activeView === 'analytics'
-                        ? 'bg-[#D4A5FF] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                        ? 'bg-white text-purple-600 font-semibold shadow-sm'
+                        : 'bg-white/10 text-white hover:bg-white/20'
                     }`}
                   >
-                    <TrendingUp className="w-5 h-5" />
+                    <TrendingUp className="w-4 h-4" />
                     <span>Analytics</span>
                   </button>
                   <button
@@ -2458,6 +2462,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="pb-6">
+        <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
         {activeView === 'sales' ? (
           <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
         ) : activeView === 'inventory' ? (
@@ -2525,6 +2530,7 @@ export default function App() {
         ) : (
           <ClusterDashboard context={contextValue} />
         )}
+        </Suspense>
       </main>
     </div>
 

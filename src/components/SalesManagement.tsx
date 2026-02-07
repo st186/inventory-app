@@ -1781,7 +1781,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                   className="w-full px-4 py-3 border border-blue-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
                   required
                   disabled={!canEditSales}
-                  placeholder="4155"
+                  placeholder="Enter total offline sales"
                 />
               </div>
             </div>
@@ -1806,7 +1806,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
                     required
                     disabled={!canEditSales}
-                    placeholder="2025"
+                    placeholder="Enter Paytm amount"
                   />
                 </div>
                 
@@ -1820,7 +1820,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
                     required
                     disabled={!canEditSales}
-                    placeholder="2130"
+                    placeholder="Enter cash amount"
                   />
                 </div>
               </div>

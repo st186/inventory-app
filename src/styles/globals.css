@@ -99,6 +99,19 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Mobile optimizations - better touch targets and spacing */
+  @media (max-width: 768px) {
+    button, a[role="button"] {
+      min-height: 44px; /* Apple's recommended touch target size */
+      min-width: 44px;
+    }
+    
+    /* Reduce font size slightly on mobile for better density */
+    html {
+      font-size: 15px;
+    }
+  }
+
   button, a, input, select, textarea {
     -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
   }
@@ -191,4 +204,58 @@ html {
 .animate-gradient-x {
   animation: gradient-x 3s ease infinite;
   background-size: 200% 200%;
+}
+
+/* Performance optimizations */
+@layer utilities {
+  /* Hardware acceleration for smooth animations */
+  .gpu-accelerate {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+  
+  /* Optimize scrolling performance */
+  .smooth-scroll {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+  
+  /* Reduce motion for users who prefer it */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+  
+  /* Mobile-optimized cards */
+  .mobile-card {
+    @apply rounded-lg p-4;
+  }
+  
+  @media (min-width: 768px) {
+    .mobile-card {
+      @apply rounded-xl p-6;
+    }
+  }
+}
+
+/* Loading states - prevent layout shift */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
