@@ -37,61 +37,72 @@ async function getSession() {
 let isHandlingUnauthorized = false;
 
 async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-      ...options?.headers,
-    },
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        ...options?.headers,
+      },
+    });
 
-  if (!response.ok) {
-    let errorMessage = 'Request failed';
-    let isWarning = false;
-    try {
-      const error = await response.json();
-      errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
-      // Check if this is a warning (non-critical error)
-      isWarning = !!error.warning;
-    } catch (e) {
-      errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-    }
-    console.error(`API Error [${url}]:`, errorMessage);
-    
-    // If unauthorized, force logout (but only once to prevent reload loops)
-    if (response.status === 401 && !isHandlingUnauthorized) {
-      isHandlingUnauthorized = true;
-      console.error('Session expired or invalid. Please log in again.');
-      
-      // Clear the session
-      const supabase = createBrowserSupabase();
-      await supabase.auth.signOut();
-      
-      // Use a flag to ensure we only reload once
-      if (!sessionStorage.getItem('logout_redirect_in_progress')) {
-        sessionStorage.setItem('logout_redirect_in_progress', 'true');
-        
-        // Small delay to allow other pending requests to fail gracefully
-        setTimeout(() => {
-          sessionStorage.removeItem('logout_redirect_in_progress');
-          window.location.reload();
-        }, 100);
+    if (!response.ok) {
+      let errorMessage = 'Request failed';
+      let isWarning = false;
+      try {
+        const error = await response.json();
+        errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
+        // Check if this is a warning (non-critical error)
+        isWarning = !!error.warning;
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       }
+      console.error(`API Error [${url}]:`, errorMessage);
+      
+      // If unauthorized, force logout (but only once to prevent reload loops)
+      if (response.status === 401 && !isHandlingUnauthorized) {
+        isHandlingUnauthorized = true;
+        console.error('Session expired or invalid. Please log in again.');
+        
+        // Clear the session
+        const supabase = createBrowserSupabase();
+        await supabase.auth.signOut();
+        
+        // Use a flag to ensure we only reload once
+        if (!sessionStorage.getItem('logout_redirect_in_progress')) {
+          sessionStorage.setItem('logout_redirect_in_progress', 'true');
+          
+          // Small delay to allow other pending requests to fail gracefully
+          setTimeout(() => {
+            sessionStorage.removeItem('logout_redirect_in_progress');
+            window.location.reload();
+          }, 100);
+        }
+      }
+      
+      throw new Error(errorMessage);
+    }
+
+    const jsonData = await response.json();
+    
+    // Check for database unavailability warnings in successful responses
+    if (jsonData.warning) {
+      console.warn(`API Warning [${url}]:`, jsonData.warning);
+      // You could emit a toast notification here if needed
     }
     
-    throw new Error(errorMessage);
+    return jsonData;
+  } catch (error) {
+    // Catch network errors like "Failed to fetch"
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      console.error(`Network Error [${url}]:`, 'Failed to fetch - possible CORS or network issue');
+      console.error('Request details:', { url, method: options?.method || 'GET' });
+      throw new Error('Network error: Unable to connect to server. Please check your internet connection.');
+    }
+    // Re-throw other errors
+    throw error;
   }
-
-  const jsonData = await response.json();
-  
-  // Check for database unavailability warnings in successful responses
-  if (jsonData.warning) {
-    console.warn(`API Warning [${url}]:`, jsonData.warning);
-    // You could emit a toast notification here if needed
-  }
-  
-  return jsonData;
 }
 
 export async function fetchInventory(accessToken: string): Promise<InventoryItem[]> {

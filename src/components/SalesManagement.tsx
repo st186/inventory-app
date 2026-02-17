@@ -518,8 +518,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       // Add today's Paytm received
       const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
       
-      // Add today's Online Payouts (Swiggy + Zomato)
-      const todaysOnlinePayouts = parseFloat(formData.onlineSales) || 0;
+      // Add today's Online Payouts (Swiggy + Zomato) - Get actual payout data
+      const storeFilteredPayouts = effectiveStoreId 
+        ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
+        : onlinePayoutData;
+      const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
+      const todaysOnlinePayouts = todaysPayoutData 
+        ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
+        : 0;
       
       // Subtract today's used online money
       const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
@@ -605,8 +611,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     
     const historicalOnlinePayoutTransactions = storeFilteredPayouts.filter(p => p.date >= startDate && p.date < selectedDate);
     const historicalOnlinePayouts = historicalOnlinePayoutTransactions.reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
-    // Add today's form value
-    const todaysOnlinePayouts = parseFloat(formData.onlineSales) || 0;
+    
+    // Add today's actual payout data (not sales)
+    const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
+    const todaysOnlinePayouts = todaysPayoutData 
+      ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
+      : 0;
     const allOnlinePayouts = historicalOnlinePayouts + todaysOnlinePayouts;
     
     console.log('💰 Online payout transactions included:', {
@@ -735,6 +745,17 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
   }, [formData.actualPaytmBalance, calculatePaytmBalance]);
   
   const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 500;
+
+  // Calculate today's actual online payout (Swiggy + Zomato)
+  const todaysActualOnlinePayout = useMemo(() => {
+    const storeFilteredPayouts = effectiveStoreId 
+      ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
+      : onlinePayoutData;
+    const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
+    return todaysPayoutData 
+      ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
+      : 0;
+  }, [onlinePayoutData, selectedDate, effectiveStoreId]);
 
   // Calculate daily breakdown for Paytm/Online Cash
   const paytmDailyBreakdown = useMemo(() => {
@@ -2241,7 +2262,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     </p>
                     <p className="text-xs text-gray-600 mt-1">
                       {Math.abs(cashDiscrepancy) > 500 
-                        ? '⚠️ High discrepancy - requires approval from cluster head' 
+                        ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
                         : 'Discrepancy will be noted in records'}
                     </p>
                   </div>
@@ -2273,7 +2294,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                               return (previousDaySales?.actualPaytmBalance || 0).toFixed(2);
                             })()} + 
                             Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)} + 
-                            Online Payouts: ₹{(parseFloat(formData.onlineSales) || 0).toFixed(2)} - 
+                            Online Payouts: ₹{todaysActualOnlinePayout.toFixed(2)} - 
                             Used for Expenses: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} - 
                             Employee Payouts: ₹{totalContractPayout.toFixed(2)}
                           </p>
@@ -2293,8 +2314,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                               
                               <p className="font-semibold text-purple-700 mt-2 mb-1">Paytm Additions:</p>
                               <p className="ml-2">Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)}</p>
-                              <p className="ml-2">Online Payouts (Swiggy+Zomato): ₹{(parseFloat(formData.onlineSales) || 0).toFixed(2)}</p>
-                              <p className="ml-2 font-medium">Total Additions: ₹{((parseFloat(formData.paytmAmount) || 0) + (parseFloat(formData.onlineSales) || 0)).toFixed(2)}</p>
+                              <p className="ml-2">Online Payouts (Swiggy+Zomato): ₹{todaysActualOnlinePayout.toFixed(2)}</p>
+                              <p className="ml-2 font-medium">Total Additions: ₹{((parseFloat(formData.paytmAmount) || 0) + todaysActualOnlinePayout).toFixed(2)}</p>
                             </div>
                           </details>
                         </div>
@@ -2331,7 +2352,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                           </p>
                           <p className="text-xs text-gray-600 mt-1">
                             {Math.abs(paytmDiscrepancy) > 500 
-                              ? '⚠️ High discrepancy - requires approval from cluster head' 
+                              ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
                               : 'Discrepancy will be noted in records'}
                           </p>
                         </div>
@@ -2385,12 +2406,36 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
             {canEditSales && (
               <div className="space-y-3">
                 {paymentMismatch && (
-                  <div className="bg-red-100/80 border border-red-400/50 text-red-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
+                  <div className="bg-yellow-100/80 border border-yellow-400/50 text-yellow-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
                     <AlertTriangle className="w-5 h-5 flex-shrink-0" />
                     <div>
-                      <div className="font-semibold">Cannot Save: Payment Mismatch</div>
+                      <div className="font-semibold">Payment Mismatch Warning</div>
                       <div className="text-xs mt-1">
-                        Payment total (₹{offlinePaymentTotal.toFixed(2)}) must match offline sales (₹{offlineSalesTotal.toFixed(2)})
+                        Payment total (₹{offlinePaymentTotal.toFixed(2)}) does not match offline sales (₹{offlineSalesTotal.toFixed(2)})
+                      </div>
+                      <div className="text-xs mt-1 font-medium">
+                        You can still save, but please verify the amounts.
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Warning for high discrepancies that need approval */}
+                {(needsApproval || needsPaytmApproval) && !isEditing && (
+                  <div className="bg-orange-100/80 border border-orange-400/50 text-orange-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold">High Discrepancy - Approval Required</div>
+                      <div className="text-xs mt-1">
+                        {needsApproval && needsPaytmApproval 
+                          ? `Cash discrepancy of ₹${Math.abs(cashDiscrepancy).toFixed(2)} and Paytm discrepancy of ₹${Math.abs(paytmDiscrepancy).toFixed(2)} exceed ₹500`
+                          : needsApproval 
+                          ? `Cash discrepancy of ₹${Math.abs(cashDiscrepancy).toFixed(2)} exceeds ₹500`
+                          : `Paytm discrepancy of ₹${Math.abs(paytmDiscrepancy).toFixed(2)} exceeds ₹500`
+                        }
+                      </div>
+                      <div className="text-xs mt-1 font-medium">
+                        You can save, but cluster head approval will be required.
                       </div>
                     </div>
                   </div>
@@ -2398,7 +2443,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                 
                 <button
                   type="submit"
-                  disabled={paymentMismatch || isSubmitting}
+                  disabled={isSubmitting}
                   className="w-full px-6 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
                 >
                   {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}

@@ -77,66 +77,76 @@ export function InventoryList({
             </p>
           ) : (
             <div className="space-y-6">
-              {Object.entries(groupedInventory).map(([category, items]) => (
-                <div key={category}>
-                  <h4 className="text-sm text-gray-700 mb-3">
-                    {INVENTORY_CATEGORIES[category as keyof typeof INVENTORY_CATEGORIES]}
-                  </h4>
-                  <div className="space-y-2">
-                    {items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group"
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <p className="text-gray-900">{item.itemName}</p>
+              {Object.entries(groupedInventory).map(([category, items]) => {
+                // Calculate category total
+                const categoryTotal = items.reduce((sum, item) => sum + item.totalCost, 0);
+                
+                return (
+                  <div key={category}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm text-gray-700">
+                        {INVENTORY_CATEGORIES[category as keyof typeof INVENTORY_CATEGORIES]}
+                      </h4>
+                      <span className="text-sm font-semibold text-blue-600">
+                        ₹{categoryTotal.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group"
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex-1">
+                              <p className="text-gray-900">{item.itemName}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-blue-600">₹{item.totalCost.toLocaleString()}</span>
+                              {isManager && (
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => onEditInventory(item)}
+                                    className="p-1.5 hover:bg-blue-50 rounded text-blue-600 transition-colors"
+                                    title="Edit"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteConfirm({ type: 'inventory', id: item.id })}
+                                    className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-blue-600">₹{item.totalCost.toLocaleString()}</span>
-                            {isManager && (
-                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => onEditInventory(item)}
-                                  className="p-1.5 hover:bg-blue-50 rounded text-blue-600 transition-colors"
-                                  title="Edit"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => setDeleteConfirm({ type: 'inventory', id: item.id })}
-                                  className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
+                          <div className="flex gap-4 text-sm text-gray-600">
+                            <span>
+                              {formatNumber(item.quantity || 0)} {item.unit}
+                            </span>
+                            <span>₹{formatNumber(item.costPerUnit || 0)}/{item.unit}</span>
+                            {/* Payment Method Badge */}
+                            {item.paymentMethod && (
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                item.paymentMethod === 'cash' ? 'bg-green-100 text-green-800' :
+                                item.paymentMethod === 'online' ? 'bg-blue-100 text-blue-800' :
+                                'bg-purple-100 text-purple-800'
+                              }`}>
+                                {item.paymentMethod === 'cash' ? '💵 Cash' :
+                                 item.paymentMethod === 'online' ? '📱 Online' :
+                                 `💰 Split (₹${formatNumber(item.cashAmount || 0)} + ₹${formatNumber(item.onlineAmount || 0)})`}
+                              </span>
                             )}
                           </div>
                         </div>
-                        <div className="flex gap-4 text-sm text-gray-600">
-                          <span>
-                            {formatNumber(item.quantity || 0)} {item.unit}
-                          </span>
-                          <span>₹{formatNumber(item.costPerUnit || 0)}/{item.unit}</span>
-                          {/* Payment Method Badge */}
-                          {item.paymentMethod && (
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                              item.paymentMethod === 'cash' ? 'bg-green-100 text-green-800' :
-                              item.paymentMethod === 'online' ? 'bg-blue-100 text-blue-800' :
-                              'bg-purple-100 text-purple-800'
-                            }`}>
-                              {item.paymentMethod === 'cash' ? '💵 Cash' :
-                               item.paymentMethod === 'online' ? '📱 Online' :
-                               `💰 Split (₹${formatNumber(item.cashAmount || 0)} + ₹${formatNumber(item.onlineAmount || 0)})`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

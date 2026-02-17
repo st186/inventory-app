@@ -13,6 +13,13 @@ type Props = {
 };
 
 export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, onSuccess }: Props) {
+  // Get last used payment method from localStorage, default to 'cash' if not found
+  const getLastPaymentMethod = (): 'cash' | 'online' | 'both' => {
+    if (editingItem?.paymentMethod) return editingItem.paymentMethod;
+    const stored = localStorage.getItem('lastInventoryPaymentMethod');
+    return (stored as 'cash' | 'online' | 'both') || 'cash';
+  };
+
   const [formData, setFormData] = useState({
     category: (editingItem?.category || 'fresh_produce') as InventoryItem['category'],
     itemName: editingItem?.itemName || '',
@@ -20,7 +27,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     quantity: editingItem?.quantity.toString() || '',
     unit: editingItem?.unit || 'kg',
     totalCost: editingItem?.totalCost.toString() || '',
-    paymentMethod: (editingItem?.paymentMethod || 'cash') as 'cash' | 'online' | 'both',
+    paymentMethod: getLastPaymentMethod(),
     cashAmount: editingItem?.cashAmount?.toString() || '',
     onlineAmount: editingItem?.onlineAmount?.toString() || ''
   });
@@ -76,6 +83,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
 
   // Reset form to initial state (for adding multiple items)
   const resetForm = () => {
+    const lastPaymentMethod = localStorage.getItem('lastInventoryPaymentMethod') as 'cash' | 'online' | 'both' || 'cash';
     setFormData({
       category: formData.category, // Persist the category selection
       itemName: '',
@@ -83,7 +91,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       quantity: '',
       unit: 'kg',
       totalCost: '',
-      paymentMethod: 'cash', // Default to cash
+      paymentMethod: lastPaymentMethod, // Persist the last used payment method
       cashAmount: '',
       onlineAmount: ''
     });
@@ -411,6 +419,8 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
               value={formData.paymentMethod}
               onChange={(e) => {
                 const method = e.target.value as 'cash' | 'online' | 'both';
+                // Save to localStorage to remember for next time
+                localStorage.setItem('lastInventoryPaymentMethod', method);
                 setFormData({ 
                   ...formData, 
                   paymentMethod: method,

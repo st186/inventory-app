@@ -649,24 +649,31 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
 
 // Add overhead item
 app.post('/make-server-c2dd9b9d/overheads', async (c) => {
+  console.log('🔵 POST /overheads - Request received');
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) {
+    console.log('❌ Auth failed for overhead creation:', authResult.error);
     return c.json({ error: authResult.error }, authResult.status);
   }
 
   try {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
+    console.log(`👤 User ${userId} with role ${role} is creating overhead`);
 
     if (role !== 'manager' && role !== 'cluster_head') {
+      console.log('⛔ Unauthorized: User is not a manager or cluster head');
       return c.json({ error: 'Only managers and cluster heads can add overhead items' }, 403);
     }
 
     const item = await c.req.json();
+    console.log('📦 Overhead item data received:', JSON.stringify(item, null, 2));
+    
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
     
     const storeId = authResult.user.user_metadata?.storeId;
+    console.log(`🏪 StoreId: ${storeId || 'null'}`);
     
     const overheadItem = {
       ...item,
@@ -675,11 +682,15 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       storeId: storeId || null
     };
 
+    console.log('💾 Saving overhead item to KV store:', key);
     await kv.set(key, overheadItem);
+    console.log('✅ Overhead item saved successfully');
     
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
-    console.log('Error adding overhead item:', error);
+    console.log('❌ Error adding overhead item:', error);
+    console.log('Error details:', error instanceof Error ? error.message : String(error));
+    console.log('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     return c.json({ error: 'Failed to add overhead item' }, 500);
   }
 });

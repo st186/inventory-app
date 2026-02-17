@@ -207,7 +207,9 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
               setEditingOverhead(null);
               toast.success('Overhead cost saved successfully!');
             } catch (error) {
-              alert('Failed to save overhead cost. Please try again.');
+              console.error('Error saving overhead:', error);
+              const errorMessage = error instanceof Error ? error.message : 'Failed to save overhead cost. Please try again.';
+              toast.error(errorMessage);
             }
           }}
           onClose={() => {
