@@ -43,17 +43,66 @@ function formatDateTimeIST(timestamp: string): string {
 const app = new Hono();
 
 // Server version for debugging
-console.log('=== Bhandar-IMS Server v1.4 - IST Timezone Support (GMT+5:30) ===');
+console.log('=== Bhandar-IMS Server v1.9 - Paginated getByPrefix Fix ===');
 console.log('Server UTC Time:', new Date().toISOString());
 console.log('Server IST Time:', getNowIST());
+console.log('Environment check:', {
+  hasSupabaseUrl: !!Deno.env.get('SUPABASE_URL'),
+  hasServiceRoleKey: !!Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+  hasVapidKeys: !!Deno.env.get('VAPID_PUBLIC_KEY')
+});
+console.log('About to configure CORS and middleware...');
 
-app.use('*', cors());
+app.use('*', cors({
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['Content-Length'],
+  maxAge: 86400,
+}));
+console.log('✅ CORS configured successfully');
+
 app.use('*', logger(console.log));
+console.log('✅ Logger middleware configured');
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
+console.log('✅ Supabase client initialized');
+
+// Paginated getByPrefix to bypass Supabase's default 1000-row limit
+async function getAllByPrefix(prefix: string): Promise<any[]> {
+  const pageSize = 1000;
+  let allResults: any[] = [];
+  let from = 0;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value')
+      .like('key', prefix + '%')
+      .range(from, from + pageSize - 1);
+    
+    if (error) {
+      throw new Error(error.message);
+    }
+    
+    if (!data || data.length === 0) break;
+    
+    allResults = allResults.concat(data.map(d => d.value));
+    
+    if (data.length < pageSize) break; // Last page
+    from += pageSize;
+  }
+  
+  return allResults;
+}
+
+// Paginated version with retry
+async function getAllByPrefixWithRetry(prefix: string): Promise<any[]> {
+  return retryWithBackoff(() => getAllByPrefix(prefix), `getAllByPrefix(${prefix})`);
+}
 
 // Generic retry wrapper for database operations
 async function retryWithBackoff<T>(
@@ -429,46 +478,6 @@ app.post('/make-server-c2dd9b9d/auth/reset-all-accounts', async (c) => {
   }
 });
 
-// Server-side signup with email auto-confirm
-app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
-  try {
-    const { email, password, name, role, employeeId } = await c.req.json();
-    
-    if (!email || !password || !name || !role) {
-      return c.json({ error: 'Missing required fields' }, 400);
-    }
-
-    // Create user with admin API - this bypasses email confirmation
-    const { data, error } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      user_metadata: {
-        name,
-        role,
-        employeeId: role === 'cluster_head' ? 'BM001' : employeeId
-      },
-      email_confirm: true // Auto-confirm email since we don't have email server
-    });
-
-    if (error) {
-      console.log('Signup error:', error);
-      return c.json({ error: error.message }, 400);
-    }
-
-    return c.json({
-      success: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        user_metadata: data.user.user_metadata
-      }
-    });
-  } catch (error) {
-    console.log('Server signup error:', error);
-    return c.json({ error: 'Failed to create account' }, 500);
-  }
-});
-
 // Get all inventory items for user
 app.get('/make-server-c2dd9b9d/inventory', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -477,13 +486,17 @@ app.get('/make-server-c2dd9b9d/inventory', async (c) => {
   }
 
   try {
+    console.log('🔍 [INVENTORY GET] Fetching inventory items (paginated)...');
     // All users (cluster heads, employees, and managers) see all inventory
     // Filtering by storeId happens in the frontend
-    const items = await kvWithRetry.getByPrefix('inventory:');
+    // Use paginated query to avoid Supabase's default 1000-row limit
+    const items = await getAllByPrefixWithRetry('inventory:');
+    console.log('🔍 [INVENTORY GET] Found items:', items.length);
+    console.log('🔍 [INVENTORY GET] Sample items:', items.slice(0, 3).map(i => ({ id: i.id, date: i.date, itemName: i.itemName })));
     
     return c.json({ inventory: items || [] });
   } catch (error: any) {
-    console.log('Error fetching inventory:', error);
+    console.error('❌ [INVENTORY GET] Error fetching inventory:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
       return c.json({ inventory: [], warning: 'Database temporarily unavailable' });
     }
@@ -502,11 +515,18 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
+    console.log('💾 [INVENTORY POST] Starting inventory save...');
+    console.log('💾 [INVENTORY POST] User ID:', userId);
+    console.log('💾 [INVENTORY POST] User role:', role);
+
     if (role !== 'manager') {
+      console.log('❌ [INVENTORY POST] Access denied - user is not a manager');
       return c.json({ error: 'Only managers can add inventory items' }, 403);
     }
 
     const item = await c.req.json();
+    console.log('💾 [INVENTORY POST] Item data received:', { date: item.date, itemName: item.itemName, amount: item.amount });
+    
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `inventory:${userId}:${itemId}`;
     
@@ -525,15 +545,28 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
       createdByEmail: userEmail
     };
 
-    await kv.set(key, inventoryItem);
+    console.log('💾 [INVENTORY POST] Saving to key:', key);
+    console.log('💾 [INVENTORY POST] Full item:', inventoryItem);
+    
+    await kvWithRetry.set(key, inventoryItem);
+    console.log('✅ [INVENTORY POST] Inventory Purchase Record saved successfully!');
+    
+    // Verify it was saved by reading it back
+    const verifyItem = await kvWithRetry.get(key);
+    console.log('🔍 [INVENTORY POST] Verification read:', verifyItem ? 'SUCCESS - Item found' : 'FAILED - Item not found!');
+    if (verifyItem) {
+      console.log('🔍 [INVENTORY POST] Verified item data:', { id: verifyItem.id, date: verifyItem.date, itemName: verifyItem.itemName });
+    }
     
     // Notify cluster heads about inventory data entry
+    console.log('📢 [INVENTORY POST] Creating notifications for cluster heads...');
     const clusterHeads = await getAllClusterHeads();
+    console.log('📢 [INVENTORY POST] Found cluster heads:', clusterHeads.length);
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
     
     for (const clusterHead of clusterHeads) {
       if (clusterHead.authUserId) {
-        await createNotification(
+        const notificationResult = await createNotification(
           clusterHead.authUserId,
           'inventory_logged',
           'Inventory Data Logged',
@@ -541,12 +574,15 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
           itemId,
           item.date
         );
+        console.log('📢 [INVENTORY POST] Notification result for', clusterHead.name, ':', notificationResult ? 'success' : 'failed (non-critical)');
       }
     }
     
+    console.log('✅ [INVENTORY POST] Complete! Returning success response');
     return c.json({ success: true, item: inventoryItem });
   } catch (error) {
-    console.log('Error adding inventory item:', error);
+    console.error('❌ [INVENTORY POST] Error adding inventory item:', error);
+    console.error('❌ [INVENTORY POST] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     return c.json({ error: 'Failed to add inventory item' }, 500);
   }
 });
@@ -576,7 +612,8 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
       userId
     };
 
-    await kv.set(key, inventoryItem);
+    await kvWithRetry.set(key, inventoryItem);
+    console.log('✅ Inventory Purchase Record updated successfully:', key);
     
     return c.json({ success: true, item: inventoryItem });
   } catch (error) {
@@ -603,7 +640,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the inventory item by searching all inventory items with this ID
-    const allInventory = await kvWithRetry.getByPrefix('inventory:');
+    const allInventory = await getAllByPrefixWithRetry('inventory:');
     const targetInventory = allInventory?.find((item: any) => item.id === itemId);
     
     if (!targetInventory) {
@@ -635,7 +672,8 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
   try {
     // All users (cluster heads, employees, and managers) see all overheads
     // Filtering by storeId happens in the frontend
-    const items = await kvWithRetry.getByPrefix('overhead:');
+    // Use paginated query to avoid Supabase's default 1000-row limit
+    const items = await getAllByPrefixWithRetry('overhead:');
     
     return c.json({ overheads: items || [] });
   } catch (error: any) {
@@ -649,7 +687,7 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
 
 // Add overhead item
 app.post('/make-server-c2dd9b9d/overheads', async (c) => {
-  console.log('🔵 POST /overheads - Request received');
+  console.log('🔵 POST /overheads - Adding Expense/Overhead Request received');
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) {
     console.log('❌ Auth failed for overhead creation:', authResult.error);
@@ -659,7 +697,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
   try {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
-    console.log(`👤 User ${userId} with role ${role} is creating overhead`);
+    console.log(`👤 User ${userId} with role ${role} is creating expense/overhead`);
 
     if (role !== 'manager' && role !== 'cluster_head') {
       console.log('⛔ Unauthorized: User is not a manager or cluster head');
@@ -667,7 +705,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     }
 
     const item = await c.req.json();
-    console.log('📦 Overhead item data received:', JSON.stringify(item, null, 2));
+    console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
@@ -682,9 +720,9 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       storeId: storeId || null
     };
 
-    console.log('💾 Saving overhead item to KV store:', key);
-    await kv.set(key, overheadItem);
-    console.log('✅ Overhead item saved successfully');
+    console.log('💾 Saving expense/overhead item to KV store:', key);
+    await kvWithRetry.set(key, overheadItem);
+    console.log('✅ Expense/Overhead item saved successfully');
     
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -720,7 +758,8 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
       userId
     };
 
-    await kv.set(key, overheadItem);
+    await kvWithRetry.set(key, overheadItem);
+    console.log('✅ Expense/Overhead item updated successfully:', key);
     
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -747,7 +786,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the overhead item by searching all overhead items with this ID
-    const allOverheads = await kvWithRetry.getByPrefix('overhead:');
+    const allOverheads = await getAllByPrefixWithRetry('overhead:');
     const targetOverhead = allOverheads?.find((item: any) => item.id === itemId);
     
     if (!targetOverhead) {
@@ -783,7 +822,7 @@ app.get('/make-server-c2dd9b9d/fixed-costs', async (c) => {
   try {
     // All users (cluster heads, employees, and managers) see all fixed costs
     // Filtering by storeId happens in the frontend
-    const items = await kv.getByPrefix('fixedcost:');
+    const items = await getAllByPrefixWithRetry('fixedcost:');
     
     return c.json({ fixedCosts: items || [] });
   } catch (error) {
@@ -819,7 +858,8 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
       storeId: storeId || null
     };
 
-    await kv.set(key, fixedCostItem);
+    await kvWithRetry.set(key, fixedCostItem);
+    console.log('✅ Fixed Cost item saved successfully:', key);
     
     return c.json({ success: true, item: fixedCostItem });
   } catch (error) {
@@ -853,7 +893,8 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
       userId
     };
 
-    await kv.set(key, fixedCostItem);
+    await kvWithRetry.set(key, fixedCostItem);
+    console.log('✅ Fixed Cost item updated successfully:', key);
     
     return c.json({ success: true, item: fixedCostItem });
   } catch (error) {
@@ -911,7 +952,8 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
 
   try {
     // Get all sales data (not scoped by userId since everyone needs to see all sales)
-    const items = await kvWithRetry.getByPrefix(`sales:`);
+    // Use paginated query to avoid Supabase's default 1000-row limit
+    const items = await getAllByPrefixWithRetry('sales:');
     
     return c.json({ sales: items || [] });
   } catch (error: any) {
@@ -1000,8 +1042,8 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       createdByEmail: userEmail
     };
 
-    await kv.set(key, salesItem);
-    console.log('Sales data saved successfully:', itemId);
+    await kvWithRetry.set(key, salesItem);
+    console.log('✅ Sales data saved successfully:', itemId);
     
     // Notify cluster heads about sales data entry
     const clusterHeads = await getAllClusterHeads();
@@ -1068,7 +1110,8 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
       userId: existingSale.userId
     };
 
-    await kv.set(key, salesItem);
+    await kvWithRetry.set(key, salesItem);
+    console.log('✅ Sales data updated successfully:', key);
     
     return c.json({ success: true, item: salesItem });
   } catch (error) {
@@ -1378,7 +1421,7 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
   }
 
   try {
-    const allProduction = await kvWithRetry.getByPrefix('production:');
+    const allProduction = await getAllByPrefixWithRetry('production:');
     return c.json({ production: allProduction });
   } catch (error: any) {
     console.log('Error fetching production data:', error);
@@ -4969,8 +5012,8 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
     // Optimize: Use direct database query with sorting and limit with retry logic
     // This avoids loading all notifications into memory
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
     
     // Query with prefix pattern, order by key (which includes timestamp), and limit results
@@ -4997,8 +5040,11 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
     );
     
     return c.json({ notifications: sortedNotifications });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error fetching notifications:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ notifications: [], warning: 'Database temporarily unavailable' });
+    }
     return c.json({ error: 'Failed to fetch notifications' }, 500);
   }
 });
@@ -5030,8 +5076,11 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
     await kvWithRetry.set(key, updatedNotification);
     
     return c.json({ success: true, notification: updatedNotification });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error marking notification as read:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
     return c.json({ error: 'Failed to mark notification as read' }, 500);
   }
 });
@@ -5048,8 +5097,8 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
     
     // Optimize: Use direct database query with limit to avoid memory issues
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
     
     // Fetch only unread notifications (limit 100 for safety) with retry logic
@@ -5081,8 +5130,11 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
     await kvWithRetry.mset(keys, values);
     
     return c.json({ success: true, updated: unreadNotifications.length });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error marking all notifications as read:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
     return c.json({ error: 'Failed to mark all notifications as read' }, 500);
   }
 });
@@ -5102,8 +5154,8 @@ app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
     
     // Fetch all user notifications with retry logic
@@ -5139,8 +5191,11 @@ app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
       deleted: oldNotifications.length,
       message: `Deleted ${oldNotifications.length} notifications older than 30 days`
     });
-  } catch (error) {
+  } catch (error: any) {
     console.log('Error cleaning up old notifications:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
     return c.json({ error: 'Failed to cleanup notifications' }, 500);
   }
 });
@@ -5160,8 +5215,14 @@ async function createNotification(userId: string, type: string, title: string, m
     createdAt: new Date().toISOString()
   };
   
-  await kv.set(`notification:${userId}:${notificationId}`, notification);
-  return notification;
+  try {
+    await kvWithRetry.set(`notification:${userId}:${notificationId}`, notification);
+    return notification;
+  } catch (error: any) {
+    console.error(`Failed to create notification for user ${userId}:`, error);
+    // Don't throw - notifications are non-critical, don't fail the main operation
+    return null;
+  }
 }
 
 // Helper to get all cluster heads
@@ -8019,6 +8080,7 @@ app.post('/make-server-c2dd9b9d/production/cleanup-duplicates', async (c) => {
 
 // Mount inventory items routes
 app.route('/', inventoryItemsRoutes);
+console.log('✅ Inventory items routes mounted');
 
 // ============================================
 // ONLINE CASH RECALIBRATION
@@ -8627,4 +8689,124 @@ app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
   }
 });
 
-Deno.serve(app.fetch);
+// DIAGNOSTIC: Check inventory database status (NO AUTH REQUIRED FOR DEBUGGING)
+app.get('/make-server-c2dd9b9d/diagnostic/inventory-status', async (c) => {
+  try {
+    console.log('🔍 [DIAGNOSTIC] Checking inventory database status...');
+    
+    // Search all inventory keys
+    const allInventory = await kvWithRetry.getByPrefix('inventory:');
+    console.log('🔍 [DIAGNOSTIC] Total inventory items in DB:', allInventory.length);
+    
+    const march17Items = allInventory.filter((i: any) => i.date === '2026-03-17');
+    const latestItems = allInventory.slice(-10); // Last 10 items
+    
+    console.log('🔍 [DIAGNOSTIC] March 17 items:', march17Items.length);
+    console.log('🔍 [DIAGNOSTIC] Latest items:', latestItems.map((i: any) => i.id));
+    
+    return c.json({ 
+      totalInventoryCount: allInventory.length,
+      march17Count: march17Items.length,
+      march17Items: march17Items.map((i: any) => ({ id: i.id, itemName: i.itemName, totalCost: i.totalCost })),
+      latestItemIds: latestItems.map((i: any) => ({ id: i.id, date: i.date, itemName: i.itemName }))
+    });
+  } catch (error) {
+    console.error('❌ [DIAGNOSTIC] Error:', error);
+    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// DIAGNOSTIC: Show all key prefixes in database to find where data is hiding
+app.get('/make-server-c2dd9b9d/diagnostic/all-keys', async (c) => {
+  try {
+    console.log('🔍 [DIAGNOSTIC] Fetching ALL database keys...');
+    
+    // Query the database directly to see ALL keys
+    const { data, error } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key')
+      .limit(100); // Get first 100 keys as sample
+    
+    if (error) {
+      console.error('❌ [DIAGNOSTIC] Database error:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    console.log('🔍 [DIAGNOSTIC] Found', data?.length, 'keys (sample)');
+    
+    // Extract unique prefixes
+    const prefixes = new Map<string, number>();
+    data?.forEach((row: any) => {
+      const key = row.key;
+      const prefix = key.split(':')[0];
+      prefixes.set(prefix, (prefixes.get(prefix) || 0) + 1);
+    });
+    
+    const prefixSummary = Array.from(prefixes.entries()).map(([prefix, count]) => ({
+      prefix,
+      count,
+      example: data?.find((row: any) => row.key.startsWith(prefix))?.key
+    }));
+    
+    console.log('📊 [DIAGNOSTIC] Prefix summary:', prefixSummary);
+    
+    return c.json({ 
+      totalSampled: data?.length || 0,
+      sampleKeys: data?.slice(0, 20).map((row: any) => row.key),
+      prefixSummary
+    });
+  } catch (error) {
+    console.error('❌ [DIAGNOSTIC] Error:', error);
+    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// DIAGNOSTIC: Search for backup data
+app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
+  try {
+    console.log('🔍 [DIAGNOSTIC] Searching for backup keys...');
+    
+    // Search for backup keys
+    const { data, error } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, created_at')
+      .like('key', 'backup:%')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) {
+      console.error('❌ [DIAGNOSTIC] Database error:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    console.log('🔍 [DIAGNOSTIC] Found', data?.length, 'backup keys');
+    
+    const backups = data?.map((row: any) => ({
+      key: row.key,
+      createdAt: row.created_at,
+      // Extract backup info from key pattern: backup:YYYY-MM-DD_HH-MM-SS:type
+      timestamp: row.key.split(':')[1],
+      type: row.key.split(':')[2]
+    })) || [];
+    
+    return c.json({ 
+      totalBackups: backups.length,
+      backups: backups
+    });
+  } catch (error) {
+    console.error('❌ [DIAGNOSTIC] Error:', error);
+    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+console.log('✅ Server initialization complete - all routes registered successfully');
+console.log('🚀 Starting Deno server...');
+
+try {
+  Deno.serve(app.fetch);
+  console.log('✅ Deno server started successfully');
+} catch (serverError) {
+  console.error('❌ CRITICAL: Failed to start Deno server:', serverError);
+  console.error('Error details:', serverError instanceof Error ? serverError.stack : String(serverError));
+  throw serverError;
+}

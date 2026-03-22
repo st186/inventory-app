@@ -1,0 +1,1156 @@
+ Running frontend commit 32ef91ca99d6b35ac0578ba9760ac3ed8662fc95
+ Statsig is not ready to log exposures, will retry in 1 seconds
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+(index):1  Failed to load resource: net::ERR_BLOCKED_BY_CLIENT
+ [import] git: 3770c57991a4d004c7a784e099bebdb6e519bed7, stamp: 509A0B01448335C6
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: <URL>
+ Loaded 92 scripts (8222262b), 29 from cache (1121502b)
+/files/team/1303996662418956027/recents-and-sharing?fuid=1178007348130142446:1 Specifying 'overflow: visible' on img, video and canvas tags may cause them to produce visual content outside of the element bounds. See https://github.com/WICG/view-transitions/blob/main/debugging_overflow_on_images.md for details.
+ Failed to scroll to index 0 after 10 attempts.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ Autosave Changes not available or already claimed by another tab undefined
+ The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127
+initialize @ 3871-2b089bedd40bcd41.min.js.br:7
+ [Fullscreen] Booting... (emscripten version 4.0.21)
+ [GPU] graphicsAPI:"WebGPU", vendor:"Google Inc. (Intel)" renderer:"ANGLE (Intel, Intel(R) UHD Graphics (0x00009B41) Direct3D11 vs_5_0 ps_5_0, D3D11)" deviceArchitecture:"gen-9" deviceDescription:"" webGPUDevice:"" webGPUVendor:"intel" bindings:"emdawnwebgpu"
+ [Fullscreen] Ready in 309.9ms
+ [FullscreenApp] calling setEditorTheme and setting preference dark
+ [MultiplayerSession] connecting to wss://www.figma.com/api/multiplayer/X7Zh8dpmRoV7MGqDIDT4f7?role=editor&tracking_session_id=bQKW1ZkDQe1ZoeAE&version=151&recentReload=0&file-load-streaming-compression&user-id=1178007348130142446&client_release=32ef91ca99d6b35ac0578ba9760ac3ed8662fc95
+ [FullscreenApp] calling setEditorTheme and setting preference dark
+ [Violation] Permissions policy violation: unload is not allowed in this document.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:63
+ [MultiplayerSession] Joining file version 106 (initial load)
+ Migration succeeded: context: fullscreen_migrate_SceneGraphManager, version: 106, duration: 0ms.
+Bhandar-IMS?p=f&t=bLT94XzEmfaM6n1r-0:1 Access to image at 'https://www.gravatar.com/avatar/94f290dbbbda1fe9de3df4fee6e8d641?size=240&default=https%3A%2F%2Fs3-alpha.figma.com%2Fstatic%2Fuser_s_v2.png?c=1' from origin 'https://www.figma.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+www.gravatar.com/avatar/94f290dbbbda1fe9de3df4fee6e8d641?size=240&default=https%3A%2F%2Fs3-alpha.figma.com%2Fstatic%2Fuser_s_v2.png?c=1:1  Failed to load resource: net::ERR_FAILED
+ [devtools] Initialized LS
+ [Fullscreen] loadtime=8.40s maxmem=271917224
+/api/make/fetch_ds_code_gen_status:1  Failed to load resource: the server responded with a status of 400 ()
+ [devtools] Initialized LS
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ Too many elapsed hits of react since last report
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+/api/rev/X7Zh8dpmRoV7MGqDIDT4f7/code_snapshot/e1eaad05c7053b19babf1ca93aa6884d9c32c40c6199198b6ee52fd7254d04ac:1  Failed to load resource: the server responded with a status of 404 ()
+ Failed to fetch snapshot files: 
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265…588e9e.min.js.br:54
+ 🧹 Cleared 0 old cache entries
+ 🔍 Starting loadData - fetching from API...
+ 📦 /sw.js not found, using inline service worker
+ ℹ️ Service worker registration failed - push notifications unavailable
+ 🔍 Stock Requests API Response: Array(0)
+ 🔍 Stock Requests count: 0
+ 🔍 Sample stock request: undefined
+ 📦 Loaded Inventory Purchase Records (Raw Materials): 1000
+ 🔧 Loaded Overhead/Expense Items: 368
+ 🔧 Loaded Fixed Cost Items: 15
+ ✅ After deduplication:
+ Inventory Purchase Records: Before: 1000 → After: 1000
+ Overhead/Expense Items: Before: 368 → After: 368
+ Fixed Costs: Before: 15 → After: 14
+ Sales: Before: 74 → After: 74
+ 📦 Loaded Stock Requests from API: 0 Array(0)
+ 💾 Data cached for instant future loads
+ 👤 User Permissions: Object
+ 📍 Current activeView: analytics
+ 👤 User Permissions: Object
+ 📍 Current activeView: analytics
+ 🏪 Analytics effectiveStoreId: null
+ 🏪 Analytics mode: store
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: Array(2)
+ 🏪 Number of stores: 2
+ 📊 Production Data Debug:
+ 📊   - Total production records: 70
+ 📊   - Production data records: Array(70)
+ 📊   - Selected production house ID: null
+ 📊   - Analytics mode: store
+ 📊   - User storeId: STORE-1766938921191-9LCH05
+ 📊   - User designation: operations_incharge
+ 📊   - Is Production Incharge: false
+ 📊   - Available production houses: Array(1)
+ 📊   - Available stores: Array(2)
+ 📊   - Production Incharge Specific:
+ 📊      - User storeId (should be production house ID): STORE-1766938921191-9LCH05
+ 📊      - Does user storeId match any production house? undefined
+ 📊      - Production data storeIds: Array(1)
+ 📊      - Production data productionHouseIds: Array(1)
+ 📊      - Stores that map to user production house: Array(0)
+ 💰 Before time filtering - payoutsData: 0 payouts
+ 💰 Payouts before filtering: Array(0)
+ 💰 Sample payout object: undefined
+ 💰 All payout dates as strings: 
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T19:26:09.641Z
+ 💰 === SALES DATA FILTERING ===
+ 💰 Total sales records (time-filtered): 17
+ 💰 effectiveStoreId: null
+ User role: manager
+ All sales storeIds: Array(17)
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 17 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 172
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 172 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 81
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 81 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 17
+ Filtered inventory data count: 172
+ Filtered overhead data count: 81
+ Filtered fixed costs data count: 3
+ Total revenue calculated: 69515
+ Inventory expenses: 29426
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+ 🔍 DEBUG COMMISSION - Total online sales: 0
+ 🔍 DEBUG COMMISSION - Total online payouts: 0
+ 🔍 DEBUG COMMISSION - Commission expenses: 0
+ 💼 === CONTRACT WORKER SALARY DEBUG ===
+ Total filteredSalesData: 17
+ Sales with employee salary: 0
+ Sales with salary data: Array(0)
+ Total contract worker expenses: 0
+ 💼 === END CONTRACT WORKER SALARY DEBUG ===
+ 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+ Time filter: thisMonth
+ Total filteredPayoutsData: 0
+ Payouts data: Array(0)
+ Filtered employees: 0
+ Relevant payouts for calculation: Array(0)
+ Total permanent employee expenses calculated: 0
+ 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+ 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 0.00
+ 💸 Interest expense for period: 0.00
+ Total expenses: 50439
+ Commission expenses: 0
+ Net profit: 19076
+ 💰 === END METRICS DEBUG ===
+ 📊 === CHART DATA PREPARATION DEBUG ===
+ Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+ Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+ Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+ Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+ Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+ Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+ Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+ Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+ Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+ Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+ Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+ Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+ Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+ Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+ Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+ Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+ Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+ Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+ Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+ 📊 === END CHART DATA DEBUG ===
+ 📅 Stock Request Reminder Scheduler initialized
+ 📊 activeView changed to: profit
+ 🔄 Carry-Forward useEffect triggered: Object
+ ❌ Conditions not met for carry-forward
+ 💰 === LOADING PAYOUTS AND EMPLOYEES ===
+ 🔧 Store Loading Check: Object
+ 📊 Analytics - highlightRequestId changed: null
+ 🏪 Analytics effectiveStoreId: null
+ 🏪 Analytics mode: store
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: Array(2)
+ 🏪 Number of stores: 2
+ 📊 Production Data Debug:
+ 📊   - Total production records: 70
+ 📊   - Production data records: Array(70)
+ 📊   - Selected production house ID: null
+ 📊   - Analytics mode: store
+ 📊   - User storeId: STORE-1766938921191-9LCH05
+ 📊   - User designation: operations_incharge
+ 📊   - Is Production Incharge: false
+ 📊   - Available production houses: Array(1)
+ 📊   - Available stores: Array(2)
+ 📊   - Production Incharge Specific:
+ 📊      - User storeId (should be production house ID): STORE-1766938921191-9LCH05
+ 📊      - Does user storeId match any production house? undefined
+ 📊      - Production data storeIds: Array(1)
+ 📊      - Production data productionHouseIds: Array(1)
+ 📊      - Stores that map to user production house: Array(0)
+ 💰 Before time filtering - payoutsData: 0 payouts
+ 💰 Payouts before filtering: Array(0)
+ 💰 Sample payout object: undefined
+ 💰 All payout dates as strings: 
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T19:26:09.717Z
+ 💰 === SALES DATA FILTERING ===
+ 💰 Total sales records (time-filtered): 17
+ 💰 effectiveStoreId: null
+ User role: manager
+ All sales storeIds: Array(17)
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 17 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 172
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 172 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 81
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 81 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 17
+ Filtered inventory data count: 172
+ Filtered overhead data count: 81
+ Filtered fixed costs data count: 3
+ Total revenue calculated: 69515
+ Inventory expenses: 29426
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+ 🔍 DEBUG COMMISSION - Total online sales: 0
+ 🔍 DEBUG COMMISSION - Total online payouts: 0
+ 🔍 DEBUG COMMISSION - Commission expenses: 0
+ 💼 === CONTRACT WORKER SALARY DEBUG ===
+ Total filteredSalesData: 17
+ Sales with employee salary: 0
+ Sales with salary data: Array(0)
+ Total contract worker expenses: 0
+ 💼 === END CONTRACT WORKER SALARY DEBUG ===
+ 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+ Time filter: thisMonth
+ Total filteredPayoutsData: 0
+ Payouts data: Array(0)
+ Filtered employees: 0
+ Relevant payouts for calculation: Array(0)
+ Total permanent employee expenses calculated: 0
+ 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+ 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 0.00
+ 💸 Interest expense for period: 0.00
+ Total expenses: 50439
+ Commission expenses: 0
+ Net profit: 19076
+ 💰 === END METRICS DEBUG ===
+ 📊 === CHART DATA PREPARATION DEBUG ===
+ Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+ Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+ Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+ Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+ Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+ Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+ Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+ Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+ Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+ Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+ Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+ Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+ Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+ Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+ Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+ Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+ Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+ Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+ Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+ 📊 === END CHART DATA DEBUG ===
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ 🏪 Analytics effectiveStoreId: null
+ 🏪 Analytics mode: store
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: Array(2)
+ 🏪 Number of stores: 2
+ 📊 Production Data Debug:
+ 📊   - Total production records: 70
+ 📊   - Production data records: Array(70)
+ 📊   - Selected production house ID: null
+ 📊   - Analytics mode: store
+ 📊   - User storeId: STORE-1766938921191-9LCH05
+ 📊   - User designation: operations_incharge
+ 📊   - Is Production Incharge: false
+ 📊   - Available production houses: Array(1)
+ 📊   - Available stores: Array(2)
+ 📊   - Production Incharge Specific:
+ 📊      - User storeId (should be production house ID): STORE-1766938921191-9LCH05
+ 📊      - Does user storeId match any production house? undefined
+ 📊      - Production data storeIds: Array(1)
+ 📊      - Production data productionHouseIds: Array(1)
+ 📊      - Stores that map to user production house: Array(0)
+ 💰 Before time filtering - payoutsData: 0 payouts
+ 💰 Payouts before filtering: Array(0)
+ 💰 Sample payout object: undefined
+ 💰 All payout dates as strings: 
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T19:26:10.886Z
+ 💰 === SALES DATA FILTERING ===
+ 💰 Total sales records (time-filtered): 17
+ 💰 effectiveStoreId: null
+ User role: manager
+ All sales storeIds: Array(17)
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 17 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 172
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 172 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 81
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 81 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 17
+ Filtered inventory data count: 172
+ Filtered overhead data count: 81
+ Filtered fixed costs data count: 3
+ Total revenue calculated: 69515
+ Inventory expenses: 29426
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+ 🔍 DEBUG COMMISSION - Total online sales: 0
+ 🔍 DEBUG COMMISSION - Total online payouts: 0
+ 🔍 DEBUG COMMISSION - Commission expenses: 0
+ 💼 === CONTRACT WORKER SALARY DEBUG ===
+ Total filteredSalesData: 17
+ Sales with employee salary: 0
+ Sales with salary data: Array(0)
+ Total contract worker expenses: 0
+ 💼 === END CONTRACT WORKER SALARY DEBUG ===
+ 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+ Time filter: thisMonth
+ Total filteredPayoutsData: 0
+ Payouts data: Array(0)
+ Filtered employees: 0
+ Relevant payouts for calculation: Array(0)
+ Total permanent employee expenses calculated: 0
+ 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+ 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: Object
+ 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+ 💸 Interest expense for period: 264.00
+ Total expenses: 50703
+ Commission expenses: 0
+ Net profit: 18812
+ 💰 === END METRICS DEBUG ===
+ 📊 === CHART DATA PREPARATION DEBUG ===
+ Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+ Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+ Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+ Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+ Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+ Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+ Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+ Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+ Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+ Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+ Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+ Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+ Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+ Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+ Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+ Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+ Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+ Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+ Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+ 📊 === END CHART DATA DEBUG ===
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ 🏪 Analytics effectiveStoreId: null
+ 🏪 Analytics mode: store
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: Array(2)
+ 🏪 Number of stores: 2
+ 📊 Production Data Debug:
+ 📊   - Total production records: 70
+ 📊   - Production data records: Array(70)
+ 📊   - Selected production house ID: null
+ 📊   - Analytics mode: store
+ 📊   - User storeId: STORE-1766938921191-9LCH05
+ 📊   - User designation: operations_incharge
+ 📊   - Is Production Incharge: false
+ 📊   - Available production houses: Array(1)
+ 📊   - Available stores: Array(2)
+ 📊   - Production Incharge Specific:
+ 📊      - User storeId (should be production house ID): STORE-1766938921191-9LCH05
+ 📊      - Does user storeId match any production house? undefined
+ 📊      - Production data storeIds: Array(1)
+ 📊      - Production data productionHouseIds: Array(1)
+ 📊      - Stores that map to user production house: Array(0)
+ 💰 Before time filtering - payoutsData: 0 payouts
+ 💰 Payouts before filtering: Array(0)
+ 💰 Sample payout object: undefined
+ 💰 All payout dates as strings: 
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T19:26:11.082Z
+ 💰 === SALES DATA FILTERING ===
+ 💰 Total sales records (time-filtered): 17
+ 💰 effectiveStoreId: null
+ User role: manager
+ All sales storeIds: Array(17)
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 17 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 172
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 172 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 81
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 81 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 17
+ Filtered inventory data count: 172
+ Filtered overhead data count: 81
+ Filtered fixed costs data count: 3
+ Total revenue calculated: 69515
+ Inventory expenses: 29426
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+ 🔍 DEBUG COMMISSION - Total online sales: 0
+ 🔍 DEBUG COMMISSION - Total online payouts: 0
+ 🔍 DEBUG COMMISSION - Commission expenses: 0
+ 💼 === CONTRACT WORKER SALARY DEBUG ===
+ Total filteredSalesData: 17
+ Sales with employee salary: 0
+ Sales with salary data: Array(0)
+ Total contract worker expenses: 0
+ 💼 === END CONTRACT WORKER SALARY DEBUG ===
+ 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+ Time filter: thisMonth
+ Total filteredPayoutsData: 0
+ Payouts data: Array(0)
+ Filtered employees: 0
+ Relevant payouts for calculation: Array(0)
+ Total permanent employee expenses calculated: 0
+ 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+ 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: Object
+ 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+ 💸 Interest expense for period: 264.00
+ Total expenses: 50703
+ Commission expenses: 0
+ Net profit: 18812
+ 💰 === END METRICS DEBUG ===
+ 📊 === CHART DATA PREPARATION DEBUG ===
+ Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+ Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+ Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+ Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+ Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+ Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+ Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+ Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+ Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+ Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+ Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+ Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+ Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+ Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+ Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+ Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+ Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+ Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+ Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+ 📊 === END CHART DATA DEBUG ===
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. 
+r @ code_components_prev…1fada2.min.js.br:17
+ 💰 Raw payouts from API: Array(29)
+ 💰 Number of payouts: 29
+ 💰 Payout dates: Array(29)
+ 👥 Number of employees: 9
+ 💰 === END LOADING PAYOUTS AND EMPLOYEES ===
+ 🏪 Analytics effectiveStoreId: null
+ 🏪 Analytics mode: store
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: Array(2)
+ 🏪 Number of stores: 2
+ 📊 Production Data Debug:
+ 📊   - Total production records: 70
+ 📊   - Production data records: Array(70)
+ 📊   - Selected production house ID: null
+ 📊   - Analytics mode: store
+ 📊   - User storeId: STORE-1766938921191-9LCH05
+ 📊   - User designation: operations_incharge
+ 📊   - Is Production Incharge: false
+ 📊   - Available production houses: Array(1)
+ 📊   - Available stores: Array(2)
+ 📊   - Production Incharge Specific:
+ 📊      - User storeId (should be production house ID): STORE-1766938921191-9LCH05
+ 📊      - Does user storeId match any production house? undefined
+ 📊      - Production data storeIds: Array(1)
+ 📊      - Production data productionHouseIds: Array(1)
+ 📊      - Stores that map to user production house: Array(0)
+ 💰 Before time filtering - payoutsData: 29 payouts
+ 💰 Payouts before filtering: Array(29)
+ 💰 Sample payout object: Object
+ 💰 All payout dates as strings: 2025-12-31, 2025-12-26, 2025-12-25, 2025-12-25, 2025-12-28, 2025-12-25, 2026-01-03, 2025-12-28, 2025-12-26, 2025-12-29, 2025-12-29, 2025-12-29, 2026-01-04, 2025-12-30, 2025-12-31, 2025-12-31, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-05, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-06, 2026-01-31, 2026-01-21, 2026-01-22, 2026-01-28, 2026-02-07
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T19:26:12.111Z
+ 💰 === SALES DATA FILTERING ===
+ 💰 Total sales records (time-filtered): 17
+ 💰 effectiveStoreId: null
+ User role: manager
+ All sales storeIds: Array(17)
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 17 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 172
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 172 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 81
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 81 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 17
+ Filtered inventory data count: 172
+ Filtered overhead data count: 81
+ Filtered fixed costs data count: 3
+ Total revenue calculated: 69515
+ Inventory expenses: 29426
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+ 🔍 DEBUG COMMISSION - Total online sales: 0
+ 🔍 DEBUG COMMISSION - Total online payouts: 0
+ 🔍 DEBUG COMMISSION - Commission expenses: 0
+ 💼 === CONTRACT WORKER SALARY DEBUG ===
+ Total filteredSalesData: 17
+ Sales with employee salary: 0
+ Sales with salary data: Array(0)
+ Total contract worker expenses: 0
+ 💼 === END CONTRACT WORKER SALARY DEBUG ===
+ 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+ Time filter: thisMonth
+ Total filteredPayoutsData: 0
+ Payouts data: Array(0)
+ Filtered employees: 9
+ Relevant payouts for calculation: Array(0)
+ Total permanent employee expenses calculated: 0
+ 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+ 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: Object
+ 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+ 💸 Interest expense for period: 264.00
+ Total expenses: 50703
+ Commission expenses: 0
+ Net profit: 18812
+ 💰 === END METRICS DEBUG ===
+ 📊 === CHART DATA PREPARATION DEBUG ===
+ Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+ Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+ Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+ Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+ Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+ Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+ Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+ Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+ Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+ Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+ Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+ Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+ Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+ Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+ Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+ Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+ Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+ Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+ Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+ Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+ 📊 === END CHART DATA DEBUG ===
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ Warning: Encountered two children with the same key, `null`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. Component Stack
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/svg
+    at Surface (recharts.js:6048:25)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at ChartLayoutContextProvider2 (recharts.js:25504:28)
+    at CategoricalChartWrapper2 (recharts.js:30786:7)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/CategoricalChart2
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at recharts.js:9262:21
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at Analytics (Analytics.tsx:142:29)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/main
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at code_components_preview_iframe-1f2144f4d81fada2.min.js.br:290:12522
+    at FGCmp (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/@id/fginspector:3:55)
+    at App (app-tjkfhk7w3z3yc7hqcp4owa64gcjhc3eorzj2mnm345i23vohu7sa.makeproxy-c.figma.site/src/App.tsx?t=1774119870747:66:39)
+    at o5 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:4420)
+    at N (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:572:13259)
+    at n3 (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:626:13925)
+    at bH (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:643:10316)
+    at d7005b05-9338-44af-8127-73f0e12e4f98-v2-figmaiframepreview.figma.site/div
+    at aa (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:117:14058)
+    at Tz (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:235156)
+    at ym (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:633:246294)
+    at iO (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:102:146212)
+    at ho (code_components_preview_iframe-1f2144f4d81fada2.min.js.br:436:8433)
+r @ code_components_prev…1fada2.min.js.br:17
+ 👤 User Permissions: Object
+ 📍 Current activeView: inventory
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 📝 Submitting inventory item: Object
+ 💳 Payment data being sent: Object
+ 📤 Sending inventory item to backend: Object
+ ✅ Received inventory item from backend: Object
+ 👤 User Permissions: Object
+ 📍 Current activeView: inventory
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+ 🏪 InventoryManagement - selectedStoreId prop: null
+ 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05

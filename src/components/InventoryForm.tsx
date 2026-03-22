@@ -101,16 +101,18 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('🚀 [INVENTORY FORM] handleSubmit called');
+    
     // Prevent duplicate submissions
     if (isSubmitting) {
-      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      console.log('⚠️ [INVENTORY FORM] Submission already in progress, ignoring duplicate request');
       return;
     }
     
     // CRITICAL: Validate itemName is not empty
     if (!formData.itemName || formData.itemName.trim() === '') {
       alert('⚠️ Please select an item name before submitting!');
-      console.error('❌ Attempted to submit inventory item without itemName:', formData);
+      console.error('❌ [INVENTORY FORM] Attempted to submit inventory item without itemName:', formData);
       return;
     }
     
@@ -126,6 +128,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       }
     }
     
+    console.log('📝 [INVENTORY FORM] Form data validated, setting isSubmitting=true');
     setIsSubmitting(true);
     
     const quantity = parseFloat(formData.quantity);
@@ -137,7 +140,8 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     const roundedTotalCost = Math.round(totalCost * 100) / 100; // Round to 2 decimal places
     const roundedCostPerUnit = Math.round(costPerUnit * 100) / 100; // Round to 2 decimal places
     
-    console.log('📝 Submitting inventory item:', {
+    console.log('📝 [INVENTORY FORM] Submitting inventory item:', {
+      date: selectedDate,
       itemName: formData.itemName,
       quantity: roundedQuantity,
       totalCost: roundedTotalCost,
@@ -177,27 +181,39 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       paymentData.onlineAmount = 0;
     }
     
-    console.log('💳 Payment data being sent:', paymentData);
+    console.log('💳 [INVENTORY FORM] Payment data being sent:', paymentData);
     
-    await onSubmit({
-      date: selectedDate,
-      category: formData.category,
-      itemName: formData.itemName,
-      quantity: roundedQuantity,
-      unit: formData.unit,
-      costPerUnit: roundedCostPerUnit,
-      totalCost: roundedTotalCost,
-      ...paymentData
-    });
+    try {
+      console.log('📤 [INVENTORY FORM] Calling onSubmit with data...');
+      await onSubmit({
+        date: selectedDate,
+        category: formData.category,
+        itemName: formData.itemName,
+        quantity: roundedQuantity,
+        unit: formData.unit,
+        costPerUnit: roundedCostPerUnit,
+        totalCost: roundedTotalCost,
+        ...paymentData
+      });
+      console.log('✅ [INVENTORY FORM] onSubmit completed successfully');
+    } catch (error) {
+      console.error('❌ [INVENTORY FORM] onSubmit failed:', error);
+      setIsSubmitting(false);
+      return; // Don't continue if submission failed
+    }
     
+    console.log('🔧 [INVENTORY FORM] Setting isSubmitting=false');
     setIsSubmitting(false);
     
     // Only reset form if this is a new item (not editing)
     if (!editingItem) {
+      console.log('🔄 [INVENTORY FORM] Resetting form for next entry');
       resetForm();
     }
     
     if (onSuccess) {
+      console.log('🎉 [INVENTORY FORM] Calling onSuccess callback');
+
       onSuccess();
     }
   };

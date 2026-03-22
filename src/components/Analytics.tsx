@@ -1556,14 +1556,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     console.log('Filtered overhead data count:', filteredOverheadData.length);
     console.log('Filtered fixed costs data count:', filteredFixedCostsData.length);
     
-    // Calculate revenue from sales
-    const totalRevenue = filteredSalesData.reduce((sum, sale) => {
+    // Calculate revenue from main sales table (Swiggy/Zomato added below after filtering)
+    const mainSalesRevenue = filteredSalesData.reduce((sum, sale) => {
       return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0);
     }, 0);
     
-    console.log('Total revenue calculated:', totalRevenue);
+    console.log('Main sales revenue calculated:', mainSalesRevenue);
 
-    const onlineRevenue = filteredSalesData.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
+    // Online revenue from main sales table only (Swiggy/Zomato added below after filtering)
+    const onlineRevenueFromMainSales = filteredSalesData.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
     const offlineRevenue = filteredSalesData.reduce((sum, sale) => {
       return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0);
     }, 0);
@@ -1573,8 +1574,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     console.log('Inventory expenses:', inventoryExpenses);
     
     // Calculate overhead expenses (EXCLUDING legacy commission entries)
+    // Separate personal_expense items (employee salary-related) from other overhead
+    const personalExpenseItems = filteredOverheadData.filter(item => item.category === 'personal_expense');
+    const personalExpenseTotal = personalExpenseItems.reduce((sum, item) => sum + (item.amount || 0), 0);
+    console.log('💼 Personal expense overhead items:', personalExpenseItems.length, 'Total:', personalExpenseTotal);
+    
     const overheadExpenses = filteredOverheadData
       .filter(item => !isCommissionEntry(item)) // Exclude legacy commission entries
+      .filter(item => item.category !== 'personal_expense') // Exclude personal expenses (counted under salaries)
       .reduce((sum, item) => sum + (item.amount || 0), 0);
     
     // Calculate commission expenses from online sales and payout data
@@ -1667,6 +1674,16 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     
     const commissionExpenses = totalOnlineSales - totalOnlinePayouts;
     
+    // Combine online revenue from both sources:
+    // 1. Main sales table's onlineSales field (manual entry)
+    // 2. Separate online sales table (Swiggy + Zomato from Online Sales Management)
+    const onlineRevenue = onlineRevenueFromMainSales + totalOnlineSales;
+    
+    // Total revenue = main sales + Swiggy/Zomato platform sales
+    const totalRevenue = mainSalesRevenue + totalOnlineSales;
+    console.log('🔍 Online Revenue: mainSales=', onlineRevenueFromMainSales, 'swiggy+zomato=', totalOnlineSales, 'TOTAL=', onlineRevenue);
+    console.log('🔍 Total Revenue: mainSales=', mainSalesRevenue, '+ platforms=', totalOnlineSales, '= TOTAL=', totalRevenue);
+    
     console.log('🔍 DEBUG COMMISSION - Filtered online sales:', filteredOnlineSales.length);
     console.log('🔍 DEBUG COMMISSION - Filtered online payouts:', filteredOnlinePayouts.length);
     console.log('🔍 DEBUG COMMISSION - Total online sales:', totalOnlineSales);
@@ -1702,8 +1719,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     console.log('💵 === PERMANENT EMPLOYEE SALARY DEBUG ===');
     console.log('Time filter:', timeFilter);
     console.log('Total filteredPayoutsData:', filteredPayoutsData.length);
-    console.log('Payouts data:', filteredPayoutsData);
+    console.log('Raw employeesData count:', employeesData.length);
     console.log('Filtered employees:', filteredEmployeesData.length);
+    console.log('All employee types:', employeesData.map((e: any) => ({ id: e.id, employeeId: e.employeeId, name: e.name, type: e.type, employmentType: e.employmentType })));
+    console.log('All payout data:', filteredPayoutsData.map((p: any) => ({ id: p.id, employeeId: p.employeeId, amount: p.amount, date: p.date })));
     
     if (timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') {
       // For month/custom view: Use DATE-FILTERED payouts to respect the selected time range
@@ -1711,24 +1730,26 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       let relevantPayouts = filteredPayoutsData;
       
       if (effectiveStoreId) {
-        // Use filteredEmployeesData to include employees with null storeIds
+        // When store is selected, filter payouts to employees of that store
         const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
         relevantPayouts = relevantPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
         console.log('Store filtered payouts:', relevantPayouts.length);
       }
       
-      console.log('Relevant payouts for calculation:', relevantPayouts);
+      console.log('Relevant payouts for calculation:', relevantPayouts.length);
       
       permanentEmployeeExpenses = relevantPayouts.reduce((sum, payout) => {
-        // Find the employee for this payout
-        const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
-        console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, 'employee found:', employee ? `${employee.name} (${employee.type})` : 'NOT FOUND');
-        // Only include if employee is fulltime (permanent)
-        if (employee && employee.type === 'fulltime') {
-          console.log('  ✓ Including permanent employee payout:', payout.amount);
+        // IMPORTANT: Use raw employeesData (not store-filtered) for type lookup
+        // This ensures we can identify employee type even if store filtering is active
+        const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
+        const empType = employee?.type || employee?.employmentType;
+        console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, 'employee found:', employee ? `${employee.name} (type=${employee.type}, employmentType=${employee.employmentType}, resolved=${empType})` : 'NOT FOUND');
+        // Include ALL employee payouts as expenses (fulltime, parttime, contract, etc.)
+        if (employee) {
+          console.log('  ✓ Including employee payout:', payout.amount, 'type:', empType);
           return sum + (payout.amount || 0);
         }
-        console.log('  ✗ Skipping (not fulltime or employee not found)');
+        console.log('  ✗ Skipping (employee not found in database)');
         return sum;
       }, 0);
       
@@ -1739,11 +1760,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     console.log('💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===');
     // For daily/weekly view, permanentEmployeeExpenses stays 0
 
-    // Total salary expenses = contract workers + permanent employees
-    const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses;
+    // Total salary expenses = contract workers + permanent employee payouts + personal expenses (employee-mapped overhead)
+    const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses + personalExpenseTotal;
+    console.log('💰 Salary breakdown: contract=', contractWorkerExpenses, 'permanent payouts=', permanentEmployeeExpenses, 'personal expenses=', personalExpenseTotal, 'TOTAL=', salaryExpenses);
 
-    // Total fixed costs = electricity + rent + salaries
-    const fixedCostsTotal = electricityExpenses + rentExpenses + salaryExpenses;
+    // Total fixed costs = electricity + rent (salary is tracked separately as its own expense category)
+    const fixedCostsTotal = electricityExpenses + rentExpenses;
     
     // Calculate interest expense (accrual basis)
     // Get the date range for the current filter
@@ -1809,15 +1831,26 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     
     console.log('💸 Interest expense for period:', interestExpenses.toFixed(2));
 
-    // Total costs now includes commission and interest as separate categories
-    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses + interestExpenses;
+    // Total costs now includes commission, interest, and salary as separate categories
+    const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses + interestExpenses + salaryExpenses;
     
     // Net profit calculation (commission is now separate)
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
 
-    console.log('Total expenses:', totalCosts);
-    console.log('Commission expenses:', commissionExpenses);
+    console.log('🔴🔴🔴 TOTAL EXPENSE BREAKDOWN 🔴🔴🔴');
+    console.log('inventoryExpenses:', inventoryExpenses);
+    console.log('overheadExpenses:', overheadExpenses);
+    console.log('fixedCostsTotal:', fixedCostsTotal, 'elec:', electricityExpenses, 'rent:', rentExpenses);
+    console.log('commissionExpenses:', commissionExpenses);
+    console.log('interestExpenses:', interestExpenses);
+    console.log('salaryExpenses:', salaryExpenses, 'contract:', contractWorkerExpenses, 'permanent:', permanentEmployeeExpenses, 'personal:', personalExpenseTotal);
+    console.log('TOTAL:', totalCosts);
+    console.log('Gap from 198K:', 198000 - totalCosts);
+    console.log('Overhead items count:', filteredOverheadData.length);
+    console.log('Commission entries excluded:', filteredOverheadData.filter(item => isCommissionEntry(item)).length, 'total:', filteredOverheadData.filter(item => isCommissionEntry(item)).reduce((s, i) => s + (i.amount || 0), 0));
+    console.log('Personal expense excluded:', personalExpenseItems.length, 'total:', personalExpenseTotal);
+    console.log('Raw overhead (no filter):', filteredOverheadData.reduce((s, i) => s + (i.amount || 0), 0));
     console.log('Net profit:', netProfit);
     console.log('💰 === END METRICS DEBUG ===');
 
@@ -1836,6 +1869,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       salaryExpenses,
       contractWorkerExpenses,
       permanentEmployeeExpenses,
+      personalExpenseTotal,
       netProfit,
       profitMargin
     };
@@ -1847,9 +1881,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     filteredOverheadData, 
     filteredFixedCostsData, 
     filteredPayoutsData,
+    filteredEmployeesData,
+    employeesData,
     onlineLoans,
+    onlineSalesData,
+    onlinePayoutData,
     timeFilter,
-    dateRange
+    dateRange,
+    effectiveStoreId
   ]);
 
   // Prepare chart data - group by month
@@ -2229,10 +2268,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       if (!dailyData[date]) {
         dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
       }
-      // Find the employee for this payout
-      const employee = filteredEmployeesData.find(emp => emp.id === payout.employeeId);
+      // Find the employee for this payout - use raw employeesData for type lookup
+      const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
+      const empType = employee?.type || employee?.employmentType;
       // Only include if employee is fulltime (permanent) - contract workers are in sales.employeeSalary
-      if (employee && employee.type === 'fulltime') {
+      if (employee && empType === 'fulltime') {
         dailyData[date].expenses += (payout.amount || 0);
       }
     });
@@ -2245,6 +2285,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         const profit = data.revenue - data.expenses;
         console.log(`Chart data for ${date}: revenue=${data.revenue}, expenses=${data.expenses}, profit=${profit}`);
         return {
+          date: date, // Add unique date identifier for React key
           period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
           revenue: Math.round(data.revenue),
           expenses: Math.round(data.expenses),
@@ -2298,6 +2339,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     filteredOverheadData.forEach(item => {
       // Skip legacy commission entries - they're now calculated from online sales/payout data
       if (isCommissionEntry(item)) return;
+      // Skip personal_expense items - they're counted under Salaries
+      if (item.category === 'personal_expense') return;
       
       const category = item.category || 'Other';
       const displayName = OVERHEAD_CATEGORIES[category] || category;
@@ -3062,15 +3105,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </h3>
                 <div className="min-w-[300px]">
                   <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={profitChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 11 }} />
-                      <YAxis stroke="#666" tick={{ fontSize: 11 }} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Legend wrapperStyle={{ fontSize: '12px' }} />
-                      <Line type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#8b5cf6', r: 4 }} />
-                      <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} name="Expenses" dot={{ fill: '#ef4444', r: 4 }} />
-                      <Line type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.5} name="Profit" dot={{ fill: '#10b981', r: 4 }} />
+                    <LineChart data={profitChartData.map((item, index) => ({ ...item, id: `profit-${item.date}-${index}`, key: `data-${index}` }))}>
+                      <CartesianGrid key="profit-line-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis 
+                        key="profit-line-xaxis"
+                        dataKey="date" 
+                        stroke="#666" 
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(value) => new Date(value).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                      />
+                      <YAxis key="profit-line-yaxis" stroke="#666" tick={{ fontSize: 11 }} />
+                      <Tooltip key="profit-line-tooltip" content={<CustomTooltip />} />
+                      <Legend key="profit-line-legend" wrapperStyle={{ fontSize: '12px' }} />
+                      <Line key="revenue-line" type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#8b5cf6', r: 4 }} />
+                      <Line key="expenses-line" type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} name="Expenses" dot={{ fill: '#ef4444', r: 4 }} />
+                      <Line key="profit-line" type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.5} name="Profit" dot={{ fill: '#10b981', r: 4 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -3087,12 +3136,18 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   {profitChartData.length > 0 ? (
                     <>
                       <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={profitChartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 10 }} />
-                          <YAxis stroke="#666" tick={{ fontSize: 10 }} />
-                          <Tooltip content={<CustomTooltip />} />
-                          <Bar dataKey="profit" fill="#10b981" name="Daily Profit" radius={[4, 4, 0, 0]} />
+                        <BarChart data={profitChartData.map((item, index) => ({ ...item, uniqueKey: `profit-bar-${item.date}-${index}` }))}>
+                          <CartesianGrid key="daily-profit-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis 
+                            key="daily-profit-xaxis"
+                            dataKey="date" 
+                            stroke="#666" 
+                            tick={{ fontSize: 10 }}
+                            tickFormatter={(value) => new Date(value).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                          />
+                          <YAxis key="daily-profit-yaxis" stroke="#666" tick={{ fontSize: 10 }} />
+                          <Tooltip key="daily-profit-tooltip" content={<CustomTooltip />} />
+                          <Bar key="profit-bar" dataKey="profit" fill="#10b981" name="Daily Profit" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -3297,16 +3352,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="absolute inset-0 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl blur-xl opacity-50"></div>
                   <div className="relative bg-white rounded-2xl p-8 shadow-lg">
                     <ResponsiveContainer width="100%" height={500}>
-                      <PieChart>
-                        <defs>
+                      <PieChart key="expense-breakdown-pie-chart">
+                        <defs key="expense-pie-defs">
                           {COLORS.map((color, index) => (
-                            <linearGradient key={`gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
+                            <linearGradient key={`expense-gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
                               <stop offset="0%" stopColor={color} stopOpacity={0.9} />
                               <stop offset="100%" stopColor={color} stopOpacity={0.7} />
                             </linearGradient>
                           ))}
                         </defs>
                         <Pie
+                          key="expense-pie"
                           data={expenseBreakdown}
                           cx="50%"
                           cy="50%"
@@ -3327,14 +3383,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         >
                           {expenseBreakdown.map((entry, index) => (
                             <Cell 
-                              key={`cell-${index}`} 
+                              key={`expense-cell-${entry.name}-${index}`} 
                               fill={`url(#gradient-${index % COLORS.length})`}
                               stroke="#fff"
                               strokeWidth={4}
                             />
                           ))}
                         </Pie>
-                        <Tooltip content={<CustomPieTooltip />} />
+                        <Tooltip key="expense-pie-tooltip" content={<CustomPieTooltip />} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -3639,17 +3695,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         ]}
                         barCategoryGap="30%"
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis dataKey="name" stroke="#666" tick={{ fontSize: 12 }} />
-                        <YAxis stroke="#666" tick={{ fontSize: 12 }} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Bar dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} maxBarSize={80}>
+                        <CartesianGrid key="fixed-costs-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis key="fixed-costs-xaxis" dataKey="name" stroke="#666" tick={{ fontSize: 12 }} />
+                        <YAxis key="fixed-costs-yaxis" stroke="#666" tick={{ fontSize: 12 }} />
+                        <Tooltip key="fixed-costs-tooltip" content={<CustomTooltip />} />
+                        <Bar key="fixed-costs-bar" dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} maxBarSize={80}>
                           {[
                             { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
                             { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
                             { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#a78bfa' }
                           ].map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                            <Cell key={`fixed-costs-cell-${entry.name}-${index}`} fill={entry.fill} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -3788,15 +3844,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <div className="overflow-x-auto">
                   <div className="min-w-[300px]">
                     <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={salesChartData} barCategoryGap="25%">
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis dataKey="period" stroke="#666" tick={{ fontSize: 12 }} />
-                        <YAxis stroke="#666" tick={{ fontSize: 12 }} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Legend wrapperStyle={{ fontSize: '12px' }} />
-                        <Bar dataKey="online" stackId="a" fill="#60a5fa" name="Online Sales" radius={[0, 0, 0, 0]} maxBarSize={80} />
-                        <Bar dataKey="offline" stackId="a" fill="#a78bfa" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
-                        <Line type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} dot={{ fill: '#f59e0b', r: 5 }} name="Total Sales Trend" />
+                      <BarChart data={salesChartData.map((item, index) => ({ ...item, uniqueKey: `sales-${item.period}-${index}` }))} barCategoryGap="25%">
+                        <CartesianGrid key="sales-channel-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis key="sales-channel-xaxis" dataKey="period" stroke="#666" tick={{ fontSize: 12 }} />
+                        <YAxis key="sales-channel-yaxis" stroke="#666" tick={{ fontSize: 12 }} />
+                        <Tooltip key="sales-channel-tooltip" content={<CustomTooltip />} />
+                        <Legend key="sales-channel-legend" wrapperStyle={{ fontSize: '12px' }} />
+                        <Bar key="online-bar" dataKey="online" stackId="a" fill="#60a5fa" name="Online Sales" radius={[0, 0, 0, 0]} maxBarSize={80} />
+                        <Bar key="offline-bar" dataKey="offline" stackId="a" fill="#a78bfa" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
+                        <Line key="total-line" type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} dot={{ fill: '#f59e0b', r: 5 }} name="Total Sales Trend" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -5495,16 +5551,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                         last5Days.push({
                           date: dateStr.substring(5),
-                          wastage: totalWastage
+                          wastage: totalWastage,
+                          uniqueKey: `daily-${dateStr}`
                         });
                       }
                       return last5Days;
                     })()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#fca5a5" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="wastage" stroke="#dc2626" strokeWidth={2} />
+                      <CartesianGrid key="daily-wastage-grid" strokeDasharray="3 3" stroke="#fca5a5" />
+                      <XAxis key="daily-wastage-xaxis" dataKey="date" tick={{ fontSize: 10 }} />
+                      <YAxis key="daily-wastage-yaxis" tick={{ fontSize: 10 }} />
+                      <Tooltip key="daily-wastage-tooltip" />
+                      <Line key="daily-wastage-line" type="monotone" dataKey="wastage" stroke="#dc2626" strokeWidth={2} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -5539,16 +5596,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                         last5Weeks.push({
                           week: `W${5-i}`,
-                          wastage: totalWastage
+                          wastage: totalWastage,
+                          uniqueKey: `week-${i}`
                         });
                       }
                       return last5Weeks;
                     })()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#fed7aa" />
-                      <XAxis dataKey="week" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="wastage" stroke="#ea580c" strokeWidth={2} />
+                      <CartesianGrid key="weekly-wastage-grid" strokeDasharray="3 3" stroke="#fed7aa" />
+                      <XAxis key="weekly-wastage-xaxis" dataKey="week" tick={{ fontSize: 10 }} />
+                      <YAxis key="weekly-wastage-yaxis" tick={{ fontSize: 10 }} />
+                      <Tooltip key="weekly-wastage-tooltip" />
+                      <Line key="weekly-wastage-line" type="monotone" dataKey="wastage" stroke="#ea580c" strokeWidth={2} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -5579,16 +5637,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                         last5Months.push({
                           month: monthStr.substring(5),
-                          wastage: totalWastage
+                          wastage: totalWastage,
+                          uniqueKey: `month-${i}`
                         });
                       }
                       return last5Months;
                     })()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#fde68a" />
-                      <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="wastage" stroke="#ca8a04" strokeWidth={2} />
+                      <CartesianGrid key="monthly-wastage-grid" strokeDasharray="3 3" stroke="#fde68a" />
+                      <XAxis key="monthly-wastage-xaxis" dataKey="month" tick={{ fontSize: 10 }} />
+                      <YAxis key="monthly-wastage-yaxis" tick={{ fontSize: 10 }} />
+                      <Tooltip key="monthly-wastage-tooltip" />
+                      <Line key="monthly-wastage-line" type="monotone" dataKey="wastage" stroke="#ca8a04" strokeWidth={2} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -5697,23 +5756,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                     return Array.from(grouped.values()).sort((a, b) => 
                       a.period.localeCompare(b.period)
-                    );
+                    ).map((item, index) => ({ ...item, uniqueKey: `wastage-breakdown-${index}` }));
                   })()}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <CartesianGrid key="wastage-breakdown-grid" strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis 
+                      key="wastage-breakdown-xaxis"
                       dataKey="period" 
                       tick={{ fontSize: 12 }} 
                       angle={wastageTimeFilter === 'weekly' ? -15 : 0}
                       textAnchor={wastageTimeFilter === 'weekly' ? 'end' : 'middle'}
                       height={wastageTimeFilter === 'weekly' ? 60 : 30}
                     />
-                    <YAxis tick={{ fontSize: 12 }} label={{ value: 'kg', angle: -90, position: 'insideLeft' }} />
-                    <Tooltip content={<WastageTooltip />} />
-                    <Legend />
-                    <Bar dataKey="dough" name="Dough" fill="#dc2626" />
-                    <Bar dataKey="stuffing" name="Stuffing" fill="#f97316" />
-                    <Bar dataKey="batter" name="Batter" fill="#fbbf24" />
-                    <Bar dataKey="coating" name="Coating" fill="#a855f7" />
+                    <YAxis key="wastage-breakdown-yaxis" tick={{ fontSize: 12 }} label={{ value: 'kg', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip key="wastage-breakdown-tooltip" content={<WastageTooltip />} />
+                    <Legend key="wastage-breakdown-legend" />
+                    <Bar key="dough-bar" dataKey="dough" name="Dough" fill="#dc2626" />
+                    <Bar key="stuffing-bar" dataKey="stuffing" name="Stuffing" fill="#f97316" />
+                    <Bar key="batter-bar" dataKey="batter" name="Batter" fill="#fbbf24" />
+                    <Bar key="coating-bar" dataKey="coating" name="Coating" fill="#a855f7" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

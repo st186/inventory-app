@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
-import { Package, Receipt, Wallet, Edit2, Trash2, Loader2 } from 'lucide-react';
+import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle } from 'lucide-react';
 
 type Props = {
   inventory: InventoryItem[];
@@ -38,6 +38,24 @@ export function InventoryList({
     // If it's a whole number, don't show decimals
     return rounded % 1 === 0 ? rounded.toString() : rounded.toFixed(2);
   };
+
+  // Detect potential duplicate inventory items (same name, quantity, unit, costPerUnit, totalCost)
+  const duplicateIds = new Set<string>();
+  for (let i = 0; i < inventory.length; i++) {
+    for (let j = i + 1; j < inventory.length; j++) {
+      const a = inventory[i], b = inventory[j];
+      if (
+        a.itemName.toLowerCase().trim() === b.itemName.toLowerCase().trim() &&
+        a.quantity === b.quantity &&
+        a.unit === b.unit &&
+        a.costPerUnit === b.costPerUnit &&
+        a.totalCost === b.totalCost
+      ) {
+        duplicateIds.add(a.id);
+        duplicateIds.add(b.id);
+      }
+    }
+  }
 
   // Group inventory by category
   const groupedInventory = inventory.reduce((acc, item) => {
@@ -95,11 +113,23 @@ export function InventoryList({
                       {items.map((item) => (
                         <div
                           key={item.id}
-                          className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors group"
+                          className={`border rounded-lg p-4 transition-colors group ${
+                            duplicateIds.has(item.id)
+                              ? 'border-amber-400 bg-amber-50 hover:border-amber-500'
+                              : 'border-gray-200 hover:border-blue-300'
+                          }`}
                         >
                           <div className="flex justify-between items-start mb-2">
                             <div className="flex-1">
-                              <p className="text-gray-900">{item.itemName}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-gray-900">{item.itemName}</p>
+                                {duplicateIds.has(item.id) && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-200 text-amber-800 text-xs font-medium rounded-full">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Potential Duplicate
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="text-blue-600">₹{item.totalCost.toLocaleString()}</span>

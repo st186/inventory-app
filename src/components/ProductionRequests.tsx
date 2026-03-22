@@ -111,7 +111,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Sauces list
   const sauceItems = [
     'Pan-Fried Sauce', 'Butter Makhani Sauce', 'Chilli Chicken Sauce',
-    'Korean Sauce', 'Red Sauce', 'Green Sauce', 'Soup Premix', 'Tandoori Sauce'
+    'Korean Sauce', 'Red Sauce', 'Green Sauce', 'Soup Premix', 'Tandoori Sauce',
+    'Jhol Momo Gravy'
   ];
 
   // Utilities list

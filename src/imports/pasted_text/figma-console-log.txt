@@ -1,0 +1,906 @@
+Bhandar-IMS?p=f&t=pu3q3X3jhELHdpqk-0:533 Running frontend commit 32ef91ca99d6b35ac0578ba9760ac3ed8662fc95
+vendor-core-83c17265f2588e9e.min.js.br:54 Statsig is not ready to log exposures, will retry in 1 seconds
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1279
+u @ vendor-core-83c17265f2588e9e.min.js.br:54
+setTimeout
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:63
+logExposureForFeatureGateCheck @ 7295-2317093baadd87fb.min.js.br:1279
+getFeatureGateFromInitialOptions @ 7295-2317093baadd87fb.min.js.br:1279
+getFeatureGate @ 7295-2317093baadd87fb.min.js.br:1279
+getFeatureGate @ 7295-2317093baadd87fb.min.js.br:1618
+230842 @ figma_app-c223861aff36f040.min.js.br:229
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+687977 @ figma_app-c223861aff36f040.min.js.br:41
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+980300 @ figma_app-c223861aff36f040.min.js.br:227
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+124903 @ figma_app-c223861aff36f040.min.js.br:4
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+68570 @ 7295-2317093baadd87fb.min.js.br:78
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+482414 @ figma_app-c223861aff36f040.min.js.br:305
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+570084 @ 7192-8ff7080c41aaf877.min.js.br:3
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+666932 @ 7643-9ebc9cdfe879a0fb.min.js.br:3
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+21390 @ 7643-9ebc9cdfe879a0fb.min.js.br:3
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+485416 @ figma_app-c223861aff36f040.min.js.br:4
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+756587 @ 7887-f3590ff09e0ac742.min.js.br:3
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+409566 @ 64-095519e6195ab67c.min.js.br:3
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+847133 @ figma_app-c223861aff36f040.min.js.br:4
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:494
+(anonymous) @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:494
+b @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:3
+vendor-core-83c17265f2588e9e.min.js.br:54 [Livegraph] Connected 2026-03-21T20:51:42.515Z.
+chrome-extension://invalid/:1  GET chrome-extension://invalid/ net::ERR_BLOCKED_BY_CLIENT
+Image
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:6
+aB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oD @ vendor-core-83c17265f2588e9e.min.js.br:11
+oL @ vendor-core-83c17265f2588e9e.min.js.br:11
+f5 @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+oB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oE @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+S @ vendor-core-83c17265f2588e9e.min.js.br:54
+O @ vendor-core-83c17265f2588e9e.min.js.br:54
+vendor-core-83c17265f2588e9e.min.js.br:54 Autosave Changes not available or already claimed by another tab undefined
+vendor-core-83c17265f2588e9e.min.js.br:54 [import] git: 3770c57991a4d004c7a784e099bebdb6e519bed7, stamp: 509A0B01448335C6
+3871-2b089bedd40bcd41.min.js.br:7 The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127
+initialize @ 3871-2b089bedd40bcd41.min.js.br:7
+g @ 3871-2b089bedd40bcd41.min.js.br:7
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+await in (anonymous)
+r @ figma_app-c223861aff36f040.min.js.br:461
+gS @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+await in (anonymous)
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1918
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+dispatch @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1918
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+dispatch @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1918
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+dispatch @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:165
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+dispatch @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:41
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:165
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+d @ 7295-2317093baadd87fb.min.js.br:1281
+v @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+time @ 7295-2317093baadd87fb.min.js.br:384
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+await in (anonymous)
+tH @ 7295-2317093baadd87fb.min.js.br:165
+S9 @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:6
+r @ 7295-2317093baadd87fb.min.js.br:1248
+847133 @ figma_app-c223861aff36f040.min.js.br:6
+i @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:494
+(anonymous) @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:494
+b @ runtime~figma_app-0e0ff0ccf885a88e.min.js.br:3
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:3
+vendor-core-83c17265f2588e9e.min.js.br:54 Loaded 0 scripts (0b), 0 from cache (0b)
+vendor-core-83c17265f2588e9e.min.js.br:54 [Fullscreen] Booting... (emscripten version 4.0.21)
+vendor-core-83c17265f2588e9e.min.js.br:54 [GPU] graphicsAPI:"WebGPU", vendor:"Google Inc. (Intel)" renderer:"ANGLE (Intel, Intel(R) UHD Graphics (0x00009B41) Direct3D11 vs_5_0 ps_5_0, D3D11)" deviceArchitecture:"gen-9" deviceDescription:"" webGPUDevice:"" webGPUVendor:"intel" bindings:"emdawnwebgpu"
+vendor-core-83c17265f2588e9e.min.js.br:54 [Fullscreen] Ready in 8452.7ms
+vendor-core-83c17265f2588e9e.min.js.br:54 [FullscreenApp] calling setEditorTheme and setting preference dark
+vendor-core-83c17265f2588e9e.min.js.br:54 [MultiplayerSession] connecting to wss://www.figma.com/api/multiplayer/X7Zh8dpmRoV7MGqDIDT4f7?role=editor&tracking_session_id=C9JiWVfBPuFfJYWO&version=151&recentReload=0&file-load-streaming-compression&user-id=1178007348130142446&client_release=32ef91ca99d6b35ac0578ba9760ac3ed8662fc95
+vendor-core-83c17265f2588e9e.min.js.br:54 [FullscreenApp] calling setEditorTheme and setting preference dark
+vendor-core-83c17265f2588e9e.min.js.br:63 [Violation] Permissions policy violation: unload is not allowed in this document.
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:63
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+(anonymous) @ 8805-4816aff983809294.min.js.br:3
+aB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oD @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+S @ vendor-core-83c17265f2588e9e.min.js.br:54
+O @ vendor-core-83c17265f2588e9e.min.js.br:54
+vendor-core-83c17265f2588e9e.min.js.br:54 [MultiplayerSession] Joining file version 106 (initial load)
+vendor-core-83c17265f2588e9e.min.js.br:54 Migration succeeded: context: fullscreen_migrate_SceneGraphManager, version: 106, duration: 0ms.
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'message' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+[Violation] 'requestAnimationFrame' handler took <N>ms
+/make/X7Zh8dpmRoV7MGqDIDT4f7/Bhandar-IMS?p=f&t=wVjv93mll2aG49VM-0:1 Access to image at 'https://www.gravatar.com/avatar/94f290dbbbda1fe9de3df4fee6e8d641?size=240&default=https%3A%2F%2Fs3-alpha.figma.com%2Fstatic%2Fuser_s_v2.png?c=1' from origin 'https://www.figma.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+www.gravatar.com/avatar/94f290dbbbda1fe9de3df4fee6e8d641?size=240&default=https%3A%2F%2Fs3-alpha.figma.com%2Fstatic%2Fuser_s_v2.png?c=1:1  GET https://www.gravatar.com/avatar/94f290dbbbda1fe9de3df4fee6e8d641?size=240&default=https%3A%2F%2Fs3-alpha.figma.com%2Fstatic%2Fuser_s_v2.png?c=1 net::ERR_FAILED
+Image
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:41
+U @ figma_app-c223861aff36f040.min.js.br:41
+g @ figma_app-c223861aff36f040.min.js.br:222
+y @ figma_app-c223861aff36f040.min.js.br:222
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:222
+aB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oD @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+oB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oL @ vendor-core-83c17265f2588e9e.min.js.br:11
+f5 @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+requestAnimationFrame
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:63
+_o @ 7295-2317093baadd87fb.min.js.br:186
+s @ 7295-2317093baadd87fb.min.js.br:384
+requestAnimationFrame @ 7295-2317093baadd87fb.min.js.br:189
+_Async_requestAnimationFrame @ compiled_wasm.js.br:2
+$wasm-function[1879] @ compiled_wasm.wasm.br:0x3fc03
+$wasm-function[2244] @ compiled_wasm.wasm.br:0x6876d
+$wasm-function[5038] @ compiled_wasm.wasm.br:0x282d99
+$wasm-function[23495] @ compiled_wasm.wasm.br:0x1533f04
+$wasm-function[40732] @ compiled_wasm.wasm.br:0x212ce7a
+$wasm-function[16940] @ compiled_wasm.wasm.br:0xe795da
+$wasm-function[38447] @ compiled_wasm.wasm.br:0x1edf46b
+(anonymous) @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+_wrapCppCall @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+R @ 3871-2b089bedd40bcd41.min.js.br:3
+p.onmessage @ 3871-2b089bedd40bcd41.min.js.br:3
+vendor-core-83c17265f2588e9e.min.js.br:54 [devtools] Initialized LS
+vendor-core-83c17265f2588e9e.min.js.br:54 [Fullscreen] loadtime=31.32s maxmem=281713952
+vendor-core-83c17265f2588e9e.min.js.br:63  POST https://www.figma.com/api/make/fetch_ds_code_gen_status 400 (Bad Request)
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:63
+h @ vendor-b38af67a2c6fcb29.min.js.br:3
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1318
+T @ 7295-2317093baadd87fb.min.js.br:1318
+w @ 7295-2317093baadd87fb.min.js.br:1318
+n @ 7295-2317093baadd87fb.min.js.br:1318
+o @ figma_app-c223861aff36f040.min.js.br:222
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:227
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:227
+aB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oD @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+oB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oL @ vendor-core-83c17265f2588e9e.min.js.br:11
+f5 @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+requestAnimationFrame
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:63
+_o @ 7295-2317093baadd87fb.min.js.br:186
+s @ 7295-2317093baadd87fb.min.js.br:384
+requestAnimationFrame @ 7295-2317093baadd87fb.min.js.br:189
+_Async_requestAnimationFrame @ compiled_wasm.js.br:2
+$wasm-function[3233] @ compiled_wasm.wasm.br:0x114370
+$wasm-function[38465] @ compiled_wasm.wasm.br:0x1ee3358
+(anonymous) @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+_wrapCppCall @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+xt @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+d @ vendor-b38af67a2c6fcb29.min.js.br:123
+(anonymous) @ vendor-b38af67a2c6fcb29.min.js.br:123
+g @ vendor-core-83c17265f2588e9e.min.js.br:46
+dispatch @ 7295-2317093baadd87fb.min.js.br:1278
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:984
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:41
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:165
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+dispatch @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:165
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:1918
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:46
+(anonymous) @ 7295-2317093baadd87fb.min.js.br:186
+push.635502.gc.constructor.dispatch @ 7295-2317093baadd87fb.min.js.br:186
+_documentIsLoaded @ 7295-2317093baadd87fb.min.js.br:186
+await in _documentIsLoaded
+documentIsLoaded @ 7295-2317093baadd87fb.min.js.br:186
+_FigmaApp_documentIsLoaded @ compiled_wasm.js.br:2
+$wasm-function[27685] @ compiled_wasm.wasm.br:0x1935829
+$wasm-function[26371] @ compiled_wasm.wasm.br:0x1830b00
+$wasm-function[23495] @ compiled_wasm.wasm.br:0x15348dc
+$wasm-function[40732] @ compiled_wasm.wasm.br:0x212ce7a
+$wasm-function[16940] @ compiled_wasm.wasm.br:0xe795da
+$wasm-function[38447] @ compiled_wasm.wasm.br:0x1edf46b
+(anonymous) @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+_wrapCppCall @ compiled_wasm.js.br:2
+(anonymous) @ compiled_wasm.js.br:2
+R @ 3871-2b089bedd40bcd41.min.js.br:3
+p.onmessage @ 3871-2b089bedd40bcd41.min.js.br:3
+[Violation] Forced reflow while executing JavaScript took 54ms
+vendor-core-83c17265f2588e9e.min.js.br:54 [devtools] Initialized LS
+vendor-core-83c17265f2588e9e.min.js.br:54 [Violation] 'setTimeout' handler took 106ms
+vendor-core-83c17265f2588e9e.min.js.br:54 sites getPaintAssetData: Unable to find image resource.
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+o.JZ.<computed> @ vendor-b38af67a2c6fcb29.min.js.br:3
+f @ 7295-2317093baadd87fb.min.js.br:1318
+await in f
+_ @ 7295-2317093baadd87fb.min.js.br:1318
+getAssetData @ 7295-2317093baadd87fb.min.js.br:1318
+await in getAssetData
+getAssetData @ 7295-2317093baadd87fb.min.js.br:1318
+(anonymous) @ figma_app-c223861aff36f040.min.js.br:230
+o @ figma_app-c223861aff36f040.min.js.br:230
+a @ figma_app-c223861aff36f040.min.js.br:230
+Q @ 8805-4816aff983809294.min.js.br:220
+await in Q
+(anonymous) @ 8805-4816aff983809294.min.js.br:220
+aB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oD @ vendor-core-83c17265f2588e9e.min.js.br:11
+oL @ vendor-core-83c17265f2588e9e.min.js.br:11
+f5 @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:11
+oB @ vendor-core-83c17265f2588e9e.min.js.br:11
+oE @ vendor-core-83c17265f2588e9e.min.js.br:11
+(anonymous) @ vendor-core-83c17265f2588e9e.min.js.br:54
+S @ vendor-core-83c17265f2588e9e.min.js.br:54
+O @ vendor-core-83c17265f2588e9e.min.js.br:54
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🧹 Cleared 0 old cache entries
+(index):1 [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) <input type=​"password" class=​"w-full px-3 sm:​px-4 py-2 sm:​py-2.5 border border-gray-300 rounded-lg focus:​ring-2 focus:​ring-blue-500 focus:​border-transparent text-base" placeholder=​"Enter your password" required minlength=​"6" value>​
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 [vite] connecting...
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 [vite] connected.
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🧹 Cleared 0 old cache entries
+(index):1 [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) <input type=​"password" class=​"w-full px-3 sm:​px-4 py-2 sm:​py-2.5 border border-gray-300 rounded-lg focus:​ring-2 focus:​ring-blue-500 focus:​border-transparent text-base" placeholder=​"Enter your password" required minlength=​"6" data-fg-dbwz49=​"15.5:​113.377:​/​components/​AuthPage.tsx:​128:​13:​5359:​440:​e:​input" data-fgid-dbwz49=​":​rh:​" value>​
+index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:10611  POST https://xssxnhrzxvtejavoqgwg.supabase.co/auth/v1/token?grant_type=password 400 (Bad Request)
+(anonymous) @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:10611
+u$ @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:10828
+Mt @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:10818
+signInWithPassword @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:12544
+dt @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:45350
+onSubmit @ index.js?Expires=1774828800&Key-Pair-Id=APKAQ4GOSFWCW27IBOMQ&Signature=PaNcKR8624hVCsy9MzEigKRQov2m2rj3I6Ie9GzfrPhxa-DDA35g3OD8CFiEMfXeEtzFvfvaABm4ZIQJlCEPdxZR3b96abtzyK6k5JSm-DEoRCW5QNqoyZ4wlE~nxtzYnrcUh2rVWyQ65AVDVgDFJxwRaFWxQIUkiwyJcvAzXnPVyZs3T-3sc62KZ390qUF09ZsETSGpEQG9MGSTtLJp7I2iwbGWA01A~0m6dlLUBRrWba1OIejv-TR9f9QHArwlC-XtfL-YyLXxAIK6AkPybD6CRi-dKGC4CEL6OfV0B9oKxpV36IUd9msQWGH0whgFHLC1WDcr1R6-org9mKKPEA__:38011
+y @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+ik @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+iz @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+i$ @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+dP @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+dM @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+dG @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+dk @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+(anonymous) @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+SR @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+iR @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+dj @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:37
+lO @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+lN @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+lv @ code_components_preview_iframe-1f2144f4d81fada2.min.js.br:25
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 Starting loadData - fetching from API...
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📍 Current activeView: analytics
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📅 Stock Request Reminder Scheduler initialized
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Local selected store ID: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 All stores in context: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Number of stores: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Before time filtering - payoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Payouts before filtering: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Sample payout object: undefined
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 All payout dates as strings: 
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Current date for reference: 2026-03-21T20:52:59.900Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔄 Carry-Forward useEffect triggered: {analyticsMode: 'store', selectedProductionHouseId: null, hasProductionData: false, hasProductionRequests: false}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 ❌ Conditions not met for carry-forward
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === LOADING PAYOUTS AND EMPLOYEES ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔧 Store Loading Check: {isClusterHead: false, analyticsMode: 'store', shouldLoad: false}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 Analytics - highlightRequestId changed: null
+[Violation] Forced reflow while executing JavaScript took 66ms
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Local selected store ID: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 All stores in context: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Number of stores: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Before time filtering - payoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Payouts before filtering: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Sample payout object: undefined
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 All payout dates as strings: 
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Current date for reference: 2026-03-21T20:53:00.056Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+The script has an unsupported MIME type ('text/html').
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📦 /sw.js not found, using inline service worker
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 ℹ️ Service worker registration failed - push notifications unavailable
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📍 Current activeView: analytics
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: []
+ 🏪 Number of stores: 0
+ 💰 Before time filtering - payoutsData: 0 payouts
+ 💰 Payouts before filtering: []
+ 💰 Sample payout object: undefined
+ 💰 All payout dates as strings: 
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T20:53:02.026Z
+ User role: manager
+ All sales storeIds: []
+ User storeId: STORE-1766938921191-9LCH05
+ December 28th sales found: 0
+ No store filter - returning all 0 sales
+ 🔍 === INVENTORY DATA FILTERING DEBUG ===
+ Total inventory records (time-filtered): 0
+ effectiveStoreId: null
+ December 28th inventory found: 0
+ No store filter - returning all 0 inventory items
+ 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+ Total overhead records (time-filtered): 0
+ effectiveStoreId: null
+ December 28th overhead found: 0
+ No store filter - returning all 0 overhead items
+ 💰 === METRICS CALCULATION DEBUG ===
+ Time filter: thisMonth
+ Filtered sales data count: 0
+ Filtered inventory data count: 0
+ Filtered overhead data count: 0
+ Filtered fixed costs data count: 0
+ Total revenue calculated: 0
+ Inventory expenses: 0
+ 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+ 🔍 DEBUG COMMISSION - Filtered online sales: 0
+ 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 0.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Local selected store ID: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 All stores in context: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Number of stores: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Before time filtering - payoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Payouts before filtering: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Sample payout object: undefined
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 All payout dates as strings: 
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Current date for reference: 2026-03-21T20:53:02.093Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: {storeName: 'Bunny Momos 1', principal: 6000, rate: 6, loanDate: '2026-02-05', repaymentDate: null, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 264
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: -264
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Raw payouts from API: (29) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+ 💰 Number of payouts: 29
+ 💰 Payout dates: (29) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👥 Number of employees: 9
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END LOADING PAYOUTS AND EMPLOYEES ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Local selected store ID: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 All stores in context: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 Number of stores: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Before time filtering - payoutsData: 29 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Payouts before filtering: (29) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Sample payout object: {id: 'bbc6801e-5f7b-426e-8db1-f9574853380a', date: '2025-12-31', amount: 7500, createdAt: '2026-01-01T18:27:52.718Z', employeeId: 'BM003', …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 All payout dates as strings: 2025-12-31, 2025-12-26, 2025-12-25, 2025-12-25, 2025-12-28, 2025-12-25, 2026-01-03, 2025-12-28, 2025-12-26, 2025-12-29, 2025-12-29, 2025-12-29, 2026-01-04, 2025-12-30, 2025-12-31, 2025-12-31, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-05, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-06, 2026-01-31, 2026-01-21, 2026-01-22, 2026-01-28, 2026-02-07
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Current date for reference: 2026-03-21T20:53:02.590Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 0 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 9
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: {storeName: 'Bunny Momos 1', principal: 6000, rate: 6, loanDate: '2026-02-05', repaymentDate: null, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 264
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: -264
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 Stock Requests API Response: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 Stock Requests count: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 Sample stock request: undefined
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📦 Loaded Inventory Purchase Records (Raw Materials): 1000
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔧 Loaded Overhead/Expense Items: 368
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔧 Loaded Fixed Cost Items: 15
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 ✅ After deduplication:
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory Purchase Records: Before: 1000 → After: 1000
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Overhead/Expense Items: Before: 368 → After: 368
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Fixed Costs: Before: 15 → After: 14
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales: Before: 74 → After: 74
+ 📦 Loaded Stock Requests from API: 0 []
+ 💾 Data cached for instant future loads
+ 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+ 📍 Current activeView: analytics
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: []
+ 🏪 Number of stores: 0
+ 💰 Before time filtering - payoutsData: 29 payouts
+ 💰 Payouts before filtering: (29) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+ 💰 Sample payout object: {id: 'bbc6801e-5f7b-426e-8db1-f9574853380a', date: '2025-12-31', amount: 7500, createdAt: '2026-01-01T18:27:52.718Z', employeeId: 'BM003', …}
+ 💰 All payout dates as strings: 2025-12-31, 2025-12-26, 2025-12-25, 2025-12-25, 2025-12-28, 2025-12-25, 2026-01-03, 2025-12-28, 2025-12-26, 2025-12-29, 2025-12-29, 2025-12-29, 2026-01-04, 2025-12-30, 2025-12-31, 2025-12-31, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-05, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-06, 2026-01-31, 2026-01-21, 2026-01-22, 2026-01-28, 2026-02-07
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+ 💰 Time filter: thisMonth
+ 💰 Current date for reference: 2026-03-21T20:53:02.860Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: (17) ['STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05']
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 17 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 172
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 172 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 81
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 81 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 17
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 172
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 81
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 3
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 69515
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 29426
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 17
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 9
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: {storeName: 'Bunny Momos 1', principal: 6000, rate: 6, loanDate: '2026-02-05', repaymentDate: null, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 50703
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: 18812
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔄 Carry-Forward useEffect triggered: {analyticsMode: 'store', selectedProductionHouseId: null, hasProductionData: true, hasProductionRequests: true}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 ❌ Conditions not met for carry-forward
+code_components_prev…1fada2.min.js.br:61 [Violation] 'message' handler took 334ms
+[Violation] Forced reflow while executing JavaScript took 170ms
+ 🏪 Local selected store ID: null
+ 🏪 All stores in context: []
+ 🏪 Number of stores: 0
+ 💰 Before time filtering - payoutsData: 29 payouts
+ 💰 Payouts before filtering: (29) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+ 💰 Sample payout object: {id: 'bbc6801e-5f7b-426e-8db1-f9574853380a', date: '2025-12-31', amount: 7500, createdAt: '2026-01-01T18:27:52.718Z', employeeId: 'BM003', …}
+ 💰 All payout dates as strings: 2025-12-31, 2025-12-26, 2025-12-25, 2025-12-25, 2025-12-28, 2025-12-25, 2026-01-03, 2025-12-28, 2025-12-26, 2025-12-29, 2025-12-29, 2025-12-29, 2026-01-04, 2025-12-30, 2025-12-31, 2025-12-31, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-05, 2025-12-31, 2025-12-31, 2026-01-31, 2026-01-06, 2026-01-31, 2026-01-21, 2026-01-22, 2026-01-28, 2026-02-07
+ 💰 After time filtering - timeFilteredPayoutsData: 0 payouts
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Current date for reference: 2026-03-21T20:53:03.209Z
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User role: manager
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 All sales storeIds: (17) ['STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05', 'STORE-1766938921191-9LCH05']
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 User storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th sales found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 17 sales
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === INVENTORY DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total inventory records (time-filtered): 172
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th inventory found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 172 inventory items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 === OVERHEAD DATA FILTERING DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total overhead records (time-filtered): 81
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 effectiveStoreId: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 December 28th overhead found: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 No store filter - returning all 81 overhead items
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === METRICS CALCULATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered sales data count: 17
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered inventory data count: 172
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered overhead data count: 81
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered fixed costs data count: 3
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total revenue calculated: 69515
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Inventory expenses: 29426
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Calculating from online sales/payout data
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Filtered online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online sales: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Total online payouts: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🔍 DEBUG COMMISSION - Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredSalesData: 17
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with employee salary: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Sales with salary data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total contract worker expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💼 === END CONTRACT WORKER SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Time filter: thisMonth
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total filteredPayoutsData: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Payouts data: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Filtered employees: 9
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Relevant payouts for calculation: []
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total permanent employee expenses calculated: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 Interest for loan ONLINE-LOAN-STORE-1766938921191-9LCH05-1770293868712-6AIP3W: {storeName: 'Bunny Momos 1', principal: 6000, rate: 6, loanDate: '2026-02-05', repaymentDate: null, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 Total accrued interest for period 2026-03-01 to 2026-03-22: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💸 Interest expense for period: 264.00
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Total expenses: 50703
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Commission expenses: 0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Net profit: 18812
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 💰 === END METRICS DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === CHART DATA PREPARATION DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-06: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-11: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-15: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-14: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-07: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-08: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-13: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-10: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-16: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-09: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-01: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-02: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-03: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-12: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-05: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-04: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Date 2026-03-17: onlineSales=0, onlinePayouts=0, commission=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-01: revenue=4905, expenses=600, profit=4305
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-02: revenue=4632, expenses=3291, profit=1341
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-03: revenue=4210, expenses=1713, profit=2497
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-04: revenue=0, expenses=0, profit=0
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-05: revenue=4943, expenses=1577, profit=3366
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-06: revenue=4970, expenses=1072, profit=3898
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-07: revenue=4465, expenses=4085, profit=380
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-08: revenue=4898, expenses=679, profit=4219
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-09: revenue=2605, expenses=2727, profit=-122
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-10: revenue=3795, expenses=2972, profit=823
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-11: revenue=3502, expenses=4641, profit=-1139
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-12: revenue=4984, expenses=14300, profit=-9316
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-13: revenue=5663, expenses=8313, profit=-2650
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-14: revenue=3923, expenses=1387, profit=2536
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-15: revenue=5260, expenses=5568, profit=-308
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-16: revenue=3620, expenses=4684, profit=-1064
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-17: revenue=3140, expenses=334, profit=2806
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 Chart data for 2026-03-18: revenue=0, expenses=188, profit=-188
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📊 === END CHART DATA DEBUG ===
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:61 [Violation] 'message' handler took 280ms
+[Violation] Forced reflow while executing JavaScript took 130ms
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📍 Current activeView: inventory
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - selectedStoreId prop: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📍 Current activeView: inventory
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - selectedStoreId prop: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - selectedStoreId prop: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 👤 User Permissions: {role: 'manager', designation: 'operations_incharge', isClusterHead: false, isEmployee: false, isManager: true, …}
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 📍 Current activeView: inventory
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - selectedStoreId prop: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - effectiveStoreId: STORE-1766938921191-9LCH05
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - selectedStoreId prop: null
+code_components_preview_iframe-1f2144f4d81fada2.min.js.br:90 🏪 InventoryManagement - user storeId: STORE-1766938921191-9LCH05
+Warning: Don’t paste code into the DevTools Console that you don’t understand or haven’t reviewed yourself. This could allow attackers to steal your identity or take control of your computer. Please type ‘allow pasting’ below and press Enter to allow pasting.
+allow pasting
+checkInventoryStatus()
+
+VM8306:1 Uncaught ReferenceError: checkInventoryStatus is not defined
+    at <anonymous>:1:1
+(anonymous) @ VM8306:1

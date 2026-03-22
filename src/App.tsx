@@ -1,5 +1,5 @@
 // Bhandar-IMS - Performance optimized with lazy loading
-import { useState, useEffect, lazy, Suspense, memo } from 'react';
+import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
 import { InventoryView } from './components/InventoryView';
 import { ClusterDashboard } from './components/ClusterDashboard';
@@ -63,7 +63,7 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'evening_snacks';
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
@@ -276,7 +276,11 @@ export type InventoryContextType = {
 
 export default function App() {
   // All useState hooks must be at the top, before any conditional returns
-  const [activeView, setActiveView] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup'>('analytics');
+  const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup'>('analytics');
+  // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
+  const setActiveView = useCallback((view: typeof activeView) => {
+    startTransition(() => { setActiveViewRaw(view); });
+  }, []);
   const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -424,8 +428,8 @@ export default function App() {
       console.log('🔍 Sample stock request:', stockRequestsData?.[0]);
       
       // Debug logging to check for duplicates
-      console.log('📦 Loaded Inventory Items:', inventoryData.length);
-      console.log('🔧 Loaded Overhead Items:', overheadsData.length);
+      console.log('📦 Loaded Inventory Purchase Records (Raw Materials):', inventoryData.length);
+      console.log('🔧 Loaded Overhead/Expense Items:', overheadsData.length);
       console.log('🔧 Loaded Fixed Cost Items:', fixedCostsData.length);
       
       // Deduplicate by ID using Map (keeps the first occurrence of each ID)
@@ -457,8 +461,8 @@ export default function App() {
       const totalDupes = inventoryDupes + overheadDupes + fixedCostDupes + salesDupes + productionDupes;
       
       console.log('✅ After deduplication:');
-      console.log('Inventory: Before:', inventoryData.length, '→ After:', uniqueInventory.length);
-      console.log('Overheads: Before:', overheadsData.length, '→ After:', uniqueOverheads.length);
+      console.log('Inventory Purchase Records: Before:', inventoryData.length, '→ After:', uniqueInventory.length);
+      console.log('Overhead/Expense Items: Before:', overheadsData.length, '→ After:', uniqueOverheads.length);
       console.log('Fixed Costs: Before:', fixedCostsData.length, '→ After:', uniqueFixedCosts.length);
       console.log('Sales: Before:', salesData.length, '→ After:', uniqueSalesData.length);
       
@@ -922,21 +926,133 @@ export default function App() {
     await loadData(user.accessToken, true); // Force refresh bypasses cache
   };
 
-  const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
-    if (!user) return;
+  // DIAGNOSTIC: Check inventory database status
+  const checkInventoryStatus = async () => {
     try {
+      console.log('🔍 [DIAGNOSTIC] Checking inventory database status...');
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/diagnostic/inventory-status`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+          }
+        }
+      );
+      
+      const data = await response.json();
+      console.log('📊 [DIAGNOSTIC] Database status:', data);
+      console.log(`📊 [DIAGNOSTIC] Total items in DB: ${data.totalInventoryCount}`);
+      console.log(`📊 [DIAGNOSTIC] March 17 items: ${data.march17Count}`);
+      if (data.march17Items && data.march17Items.length > 0) {
+        console.table(data.march17Items);
+      }
+      console.log('📊 [DIAGNOSTIC] Latest 10 items:', data.latestItemIds);
+      return data;
+    } catch (error) {
+      console.error('❌ [DIAGNOSTIC] Error:', error);
+    }
+  };
+
+  // DIAGNOSTIC: Check all database key prefixes
+  const checkAllKeys = async () => {
+    try {
+      console.log('🔍 [DIAGNOSTIC] Checking all database keys...');
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/diagnostic/all-keys`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+          }
+        }
+      );
+      
+      const data = await response.json();
+      console.log('📊 [DIAGNOSTIC] All keys result:', data);
+      console.log('📊 [DIAGNOSTIC] Total sampled:', data.totalSampled);
+      console.log('📊 [DIAGNOSTIC] Prefix summary:');
+      console.table(data.prefixSummary);
+      console.log('📊 [DIAGNOSTIC] Sample keys:', data.sampleKeys);
+      return data;
+    } catch (error) {
+      console.error('❌ [DIAGNOSTIC] Error:', error);
+    }
+  };
+
+  // DIAGNOSTIC: Search for backup keys
+  const checkBackups = async () => {
+    try {
+      console.log('🔍 [DIAGNOSTIC] Searching for backup data...');
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/diagnostic/search-backups`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+          }
+        }
+      );
+      
+      const data = await response.json();
+      console.log('📊 [DIAGNOSTIC] Backup search result:', data);
+      if (data.backups && data.backups.length > 0) {
+        console.log('✅ Found backups:');
+        console.table(data.backups);
+      } else {
+        console.log('❌ No backups found');
+      }
+      return data;
+    } catch (error) {
+      console.error('❌ [DIAGNOSTIC] Error:', error);
+    }
+  };
+
+  // Expose diagnostic function globally for debugging
+  (window as any).checkInventoryStatus = checkInventoryStatus;
+  (window as any).checkAllKeys = checkAllKeys;
+  (window as any).checkBackups = checkBackups;
+
+  const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
+    if (!user) {
+      console.error('❌ [ADD INVENTORY] No user found');
+      return;
+    }
+    
+    try {
+      console.log('🚀 [ADD INVENTORY] Starting addInventoryItem...');
+      console.log('📊 [ADD INVENTORY] Current inventory count:', inventory.length);
+      
       // Auto-add storeId if user has one
       const itemWithStore = {
         ...item,
         storeId: user.storeId || item.storeId
       };
-      console.log('📤 Sending inventory item to backend:', itemWithStore);
+      console.log('📤 [ADD INVENTORY] Sending inventory item to backend:', {
+        date: itemWithStore.date,
+        itemName: itemWithStore.itemName,
+        totalCost: itemWithStore.totalCost,
+        storeId: itemWithStore.storeId
+      });
+      
       const newItem = await api.addInventory(user.accessToken, itemWithStore);
-      console.log('✅ Received inventory item from backend:', newItem);
-      setInventory([...inventory, newItem]);
+      console.log('✅ [ADD INVENTORY] Received inventory item from backend:', {
+        id: newItem.id,
+        date: newItem.date,
+        itemName: newItem.itemName
+      });
+      
+      const updatedInventory = [...inventory, newItem];
+      console.log('📊 [ADD INVENTORY] Setting inventory state, new count:', updatedInventory.length);
+      setInventory(updatedInventory);
+      
+      console.log('🗑️ [ADD INVENTORY] Invalidating inventory cache');
       dataCache.invalidateCache('inventory'); // Invalidate cache on data change
+      
+      console.log('🎉 [ADD INVENTORY] Success! Item added to state');
     } catch (error) {
-      console.error('Error adding inventory item:', error);
+      console.error('❌ [ADD INVENTORY] Error adding inventory item:', error);
+      console.error('❌ [ADD INVENTORY] Error details:', error instanceof Error ? error.message : 'Unknown error');
       throw error;
     }
   };
@@ -944,6 +1060,7 @@ export default function App() {
   const addOverheadItem = async (item: Omit<OverheadItem, 'id'>) => {
     if (!user) return;
     try {
+      console.log('💰 Adding Expense/Overhead item:', item.category, item.description);
       // Auto-add storeId if user has one
       const itemWithStore = {
         ...item,
@@ -952,8 +1069,9 @@ export default function App() {
       const newItem = await api.addOverhead(user.accessToken, itemWithStore);
       setOverheads([...overheads, newItem]);
       dataCache.invalidateCache('overheads');
+      console.log('✅ Expense/Overhead item added successfully');
     } catch (error) {
-      console.error('Error adding overhead item:', error);
+      console.error('❌ Error adding expense/overhead item:', error);
       throw error;
     }
   };
@@ -995,6 +1113,7 @@ export default function App() {
   const updateOverheadItem = async (id: string, item: Omit<OverheadItem, 'id'>) => {
     if (!user) return;
     try {
+      console.log('💰 Updating Expense/Overhead item:', id, item.category);
       // Auto-add storeId if user has one (for consistency)
       const itemWithStore = {
         ...item,
@@ -1003,8 +1122,9 @@ export default function App() {
       const updatedItem = await api.updateOverhead(user.accessToken, id, itemWithStore);
       setOverheads(overheads.map(ovh => ovh.id === id ? updatedItem : ovh));
       dataCache.invalidateCache('overheads');
+      console.log('✅ Expense/Overhead item updated successfully');
     } catch (error) {
-      console.error('Error updating overhead item:', error);
+      console.error('❌ Error updating expense/overhead item:', error);
       throw error;
     }
   };
@@ -1049,18 +1169,19 @@ export default function App() {
   const deleteOverheadItem = async (id: string) => {
     if (!user) return;
     try {
+      console.log('🗑️ Deleting Expense/Overhead item:', id);
       await api.deleteOverhead(user.accessToken, id);
       setOverheads(overheads.filter(ovh => ovh.id !== id));
       dataCache.invalidateCache('overheads');
-      console.log('✅ Overhead item deleted successfully');
+      console.log('✅ Expense/Overhead item deleted successfully');
     } catch (error: any) {
       // If item not found, it was already deleted - update UI anyway
       if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
-        console.log('⚠️ Item was already deleted, updating UI');
+        console.log('⚠️ Expense/Overhead item was already deleted, updating UI');
         setOverheads(overheads.filter(ovh => ovh.id !== id));
         dataCache.invalidateCache('overheads');
       } else {
-        console.error('Error deleting overhead item:', error);
+        console.error('❌ Error deleting expense/overhead item:', error);
         throw error;
       }
     }

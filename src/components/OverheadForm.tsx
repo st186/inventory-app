@@ -26,6 +26,7 @@ const overheadCategories = [
   { value: 'equipments', label: '🔨 Equipments' },
   { value: 'license', label: '📜 License Cost' },
   { value: 'water_jar', label: '💧 Water Jar' },
+  { value: 'evening_snacks', label: '🍿 Evening Snacks' },
   { value: 'miscellaneous', label: '📝 Miscellaneous Cost' }
 ] as const;
 

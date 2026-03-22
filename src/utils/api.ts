@@ -36,7 +36,9 @@ async function getSession() {
 // Global flag to prevent multiple logout redirects
 let isHandlingUnauthorized = false;
 
-async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit) {
+async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0): Promise<any> {
+  const MAX_RETRIES = 2;
+  
   try {
     const response = await fetch(url, {
       ...options,
@@ -58,6 +60,13 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
       } catch (e) {
         errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       }
+      // Retry on 5xx server errors (cold start, temporary unavailability)
+      if (response.status >= 500 && _retryCount < MAX_RETRIES) {
+        console.warn(`Server error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}):`, errorMessage, '- retrying...');
+        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
+        return fetchWithAuth(url, accessToken, options, _retryCount + 1);
+      }
+      
       console.error(`API Error [${url}]:`, errorMessage);
       
       // If unauthorized, force logout (but only once to prevent reload loops)
@@ -94,9 +103,14 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
     
     return jsonData;
   } catch (error) {
-    // Catch network errors like "Failed to fetch"
+    // Catch network errors like "Failed to fetch" and retry
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      console.error(`Network Error [${url}]:`, 'Failed to fetch - possible CORS or network issue');
+      if (_retryCount < MAX_RETRIES) {
+        console.warn(`Network error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}) - retrying in ${(_retryCount + 1)}s...`);
+        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
+        return fetchWithAuth(url, accessToken, options, _retryCount + 1);
+      }
+      console.error(`Network Error [${url}]: Failed to fetch after ${MAX_RETRIES + 1} attempts`);
       console.error('Request details:', { url, method: options?.method || 'GET' });
       throw new Error('Network error: Unable to connect to server. Please check your internet connection.');
     }
@@ -111,11 +125,27 @@ export async function fetchInventory(accessToken: string): Promise<InventoryItem
 }
 
 export async function addInventory(accessToken: string, item: Omit<InventoryItem, 'id'>): Promise<InventoryItem> {
-  const data = await fetchWithAuth(`${API_BASE}/inventory`, accessToken, {
-    method: 'POST',
-    body: JSON.stringify(item),
-  });
-  return data.item;
+  console.log('🌐 [API] addInventory called with:', { date: item.date, itemName: item.itemName, totalCost: item.totalCost });
+  console.log('🌐 [API] Making POST request to:', `${API_BASE}/inventory`);
+  
+  try {
+    const data = await fetchWithAuth(`${API_BASE}/inventory`, accessToken, {
+      method: 'POST',
+      body: JSON.stringify(item),
+    });
+    console.log('🌐 [API] Response received:', data);
+    
+    if (!data || !data.item) {
+      console.error('❌ [API] Invalid response from server:', data);
+      throw new Error('Invalid response from server');
+    }
+    
+    console.log('✅ [API] Successfully added inventory item:', { id: data.item.id, itemName: data.item.itemName });
+    return data.item;
+  } catch (error) {
+    console.error('❌ [API] Error in addInventory:', error);
+    throw error;
+  }
 }
 
 export async function updateInventory(accessToken: string, id: string, item: Omit<InventoryItem, 'id'>): Promise<InventoryItem> {

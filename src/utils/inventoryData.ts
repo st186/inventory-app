@@ -60,6 +60,7 @@ export const OVERHEAD_CATEGORIES = {
   equipments: '🔨 Equipments',
   license: '📜 License Cost',
   water_jar: '💧 Water Jar',
+  evening_snacks: '🍿 Evening Snacks',
   miscellaneous: '📝 Miscellaneous Cost'
 } as const;
 
