@@ -788,17 +788,25 @@ export default function App() {
   //   1. Tab already open: service worker postMessages this window directly.
   //   2. No tab open: service worker opens a new window with ?view=&tab=&highlightRequestId= params.
   useEffect(() => {
+    console.log('🔔 [nav] Registering service worker message listener');
+
     const applyNavigationTarget = (target: { view: string; tab?: string; highlightRequestId?: string }) => {
-      if (!target?.view) return;
+      console.log('🔔 [nav] applyNavigationTarget called with:', target);
+      if (!target?.view) {
+        console.log('🔔 [nav] No view on target, bailing out');
+        return;
+      }
       setActiveView(target.view as typeof activeView);
       setHighlightTab(target.tab || null);
       if (target.highlightRequestId) {
         setHighlightRequestId(target.highlightRequestId);
       }
+      console.log('🔔 [nav] Applied: view=', target.view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
     };
 
     // Case 1: tab was already open, service worker messages us directly
     const handleServiceWorkerMessage = (event: MessageEvent) => {
+      console.log('🔔 [nav] Received message from service worker:', event.data);
       if (event.data?.type === 'notification-navigate' && event.data.target) {
         applyNavigationTarget(event.data.target);
       }
@@ -811,6 +819,7 @@ export default function App() {
     const tabParam = params.get('tab');
     const highlightParam = params.get('highlightRequestId');
     if (viewParam) {
+      console.log('🔔 [nav] Found navigation params in URL:', { viewParam, tabParam, highlightParam });
       applyNavigationTarget({ view: viewParam, tab: tabParam || undefined, highlightRequestId: highlightParam || undefined });
       // Clean the URL so refreshing doesn't re-trigger the same navigation
       window.history.replaceState({}, '', window.location.pathname);
