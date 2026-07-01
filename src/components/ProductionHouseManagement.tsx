@@ -283,7 +283,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
       );
       
       // Refresh production houses
-      const houses = await api.getProductionHouses(context.user.accessToken);
+      const houses = await api.getProductionHouses();
       context.setProductionHouses(houses);
 
       alert('Inventory transferred successfully!');

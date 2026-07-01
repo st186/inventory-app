@@ -204,10 +204,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         const tomorrowDate = tomorrow.toISOString().split('T')[0];
         
         // Check if user has already submitted a request for tomorrow
-        const hasTomorrowRequest = requests.some(req => 
-          req.storeId === context.user?.storeId && 
-          req.requestDate === tomorrowDate &&
-          req.status !== 'cancelled'
+        const hasTomorrowRequest = requests.some(req =>
+          req.storeId === context.user?.storeId &&
+          req.requestDate === tomorrowDate
         );
         
         if (!hasTomorrowRequest) {
@@ -306,10 +305,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         filteredRequests = data.filter(req => req.storeId === effectiveStoreId);
       } else if (isStoreIncharge && context.user.storeId) {
         // Store In-Charge sees only their store's requests (fallback)
-        filteredRequests = data.filter(req => req.storeId === context.user.storeId);
+        filteredRequests = data.filter(req => req.storeId === context.user!.storeId);
       } else if (isOperationsHead && context.user.storeId && !isClusterHead) {
         // Operations Managers see their store's requests (unless they're also cluster head)
-        filteredRequests = data.filter(req => req.storeId === context.user.storeId);
+        filteredRequests = data.filter(req => req.storeId === context.user!.storeId);
       }
       // Cluster heads and Production heads see all requests (when no store is selected)
       
@@ -611,7 +610,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     
     try {
       const prevRecalResponse = await api.getLastRecalibration(
-        context.user.accessToken,
+        context.user?.accessToken || '',
         storeId,
         'store'
       );
@@ -657,7 +656,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       .filter(req => {
         if (req.status !== 'delivered') return false;
         if (req.storeId !== storeId) return false;
-        const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+        const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
         return requestDate && requestDate.startsWith(previousMonthStr);
       })
       .reduce((acc, req) => {
@@ -770,7 +769,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         sauces: Object.keys(sauces).length > 0 ? sauces : undefined,
         utilities: Object.keys(utilities).length > 0 ? utilities : undefined,
         notes,
-      });
+      } as Omit<api.ProductionRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>);
 
       console.log('✅ Request submitted successfully');
       toast.success('Production request submitted successfully');
@@ -1084,7 +1083,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     // Aggregate requests into periods
     requests.forEach(req => {
       const reqDate = new Date(req.requestDate);
-      let periodKey: string;
+      let periodKey: string = '';
       
       if (chartTimeFilter === 'daily' || chartTimeFilter === 'custom') {
         periodKey = getPeriodKey(reqDate, 'day');
@@ -1119,7 +1118,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     const chartData = periods.map(period => {
       const data = periodData[period];
       const date = new Date(period);
-      let label: string;
+      let label: string = '';
       
       if (chartTimeFilter === 'daily' || chartTimeFilter === 'custom') {
         label = formatDate(date, 'day');
@@ -1285,7 +1284,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             if (req.status !== 'delivered' && req.status !== 'pending') return false;
             
             // Filter by current month
-            const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
+            const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
             const matchesMonth = deliveryDate && deliveryDate.startsWith(currentMonth);
             
             // Debug log for chicken momo discrepancies
@@ -1414,7 +1413,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             
             // Filter received requests to only count those AFTER recalibration
             deliveredRequests.forEach(req => {
-              const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
+              const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
               // Compare only the date portion (YYYY-MM-DD)
               const deliveryDateOnly = deliveryDate ? deliveryDate.substring(0, 10) : '';
               if (deliveryDateOnly && deliveryDateOnly > recalDateOnly) {
@@ -1467,8 +1466,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           // Color palette for momo cards
           const colorPalette = ['purple', 'pink', 'green', 'yellow', 'blue', 'teal', 'red', 'indigo', 'orange', 'cyan'];
           
-          const totalReceivedSum = Object.values(totalReceived).reduce((sum, val) => sum + val, 0);
-          const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum, val) => sum + val, 0);
+          const totalReceivedSum = Object.values(totalReceived).reduce((sum: number, val: any) => sum + val, 0);
+          const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum: number, val: any) => sum + val, 0);
           const totalStockSum = totalReceivedSum + totalOpeningBalanceSum;
           
           console.log('  totalReceivedSum:', totalReceivedSum);
@@ -2077,37 +2076,38 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           let filteredForCards = requests;
           let periodLabel = '';
           
-          if (chartTimeFilter === 'today') {
+          const chartTimeFilterAny = chartTimeFilter as string;
+          if (chartTimeFilterAny === 'today') {
             filteredForCards = requests.filter(r => r.requestDate === today);
             periodLabel = 'Today';
-          } else if (chartTimeFilter === 'yesterday') {
+          } else if (chartTimeFilterAny === 'yesterday') {
             filteredForCards = requests.filter(r => r.requestDate === yesterday);
             periodLabel = 'Yesterday';
-          } else if (chartTimeFilter === 'thisWeek') {
+          } else if (chartTimeFilterAny === 'thisWeek') {
             filteredForCards = requests.filter(r => {
               const reqDate = new Date(r.requestDate);
               return reqDate >= thisWeekStart && reqDate <= now;
             });
             periodLabel = 'This Week';
-          } else if (chartTimeFilter === 'lastWeek') {
+          } else if (chartTimeFilterAny === 'lastWeek') {
             filteredForCards = requests.filter(r => {
               const reqDate = new Date(r.requestDate);
               return reqDate >= lastWeekStart && reqDate <= lastWeekEnd;
             });
             periodLabel = 'Last Week';
-          } else if (chartTimeFilter === 'thisMonth') {
+          } else if (chartTimeFilterAny === 'thisMonth') {
             filteredForCards = requests.filter(r => {
               const reqDate = new Date(r.requestDate);
               return reqDate >= thisMonthStart && reqDate <= now;
             });
             periodLabel = 'This Month';
-          } else if (chartTimeFilter === 'lastMonth') {
+          } else if (chartTimeFilterAny === 'lastMonth') {
             filteredForCards = requests.filter(r => {
               const reqDate = new Date(r.requestDate);
               return reqDate >= lastMonthStart && reqDate <= lastMonthEnd;
             });
             periodLabel = 'Last Month';
-          } else if (chartTimeFilter === 'custom') {
+          } else if (chartTimeFilterAny === 'custom') {
             const customStart = new Date(chartCustomRange.from);
             const customEnd = new Date(chartCustomRange.to);
             filteredForCards = requests.filter(r => {
@@ -2118,18 +2118,18 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           }
           
           // Get comparison period (previous period) for percentage calculation
-          let comparisonFilteredRequests = [];
+          let comparisonFilteredRequests: typeof requests = [];
           let comparisonLabel = '';
           
-          if (chartTimeFilter === 'today') {
+          if (chartTimeFilterAny === 'today') {
             const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             comparisonFilteredRequests = requests.filter(r => r.requestDate === yesterday);
             comparisonLabel = 'vs Yesterday';
-          } else if (chartTimeFilter === 'yesterday') {
+          } else if (chartTimeFilterAny === 'yesterday') {
             const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             comparisonFilteredRequests = requests.filter(r => r.requestDate === dayBeforeYesterday);
             comparisonLabel = 'vs Day Before';
-          } else if (chartTimeFilter === 'thisWeek') {
+          } else if (chartTimeFilterAny === 'thisWeek') {
             const prevWeekStart = new Date(thisWeekStart);
             prevWeekStart.setDate(thisWeekStart.getDate() - 7);
             const prevWeekEnd = new Date(thisWeekStart);
@@ -2139,7 +2139,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               return reqDate >= prevWeekStart && reqDate <= prevWeekEnd;
             });
             comparisonLabel = 'vs Last Week';
-          } else if (chartTimeFilter === 'lastWeek') {
+          } else if (chartTimeFilterAny === 'lastWeek') {
             const weekBefore = new Date(lastWeekStart);
             weekBefore.setDate(lastWeekStart.getDate() - 7);
             const weekBeforeEnd = new Date(lastWeekStart);
@@ -2149,7 +2149,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               return reqDate >= weekBefore && reqDate <= weekBeforeEnd;
             });
             comparisonLabel = 'vs Week Before';
-          } else if (chartTimeFilter === 'thisMonth') {
+          } else if (chartTimeFilterAny === 'thisMonth') {
             // Compare same number of days from last month
             const currentDayOfMonth = now.getDate();
             const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -2159,7 +2159,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               return reqDate >= prevMonthStart && reqDate <= prevMonthSameDay;
             });
             comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
-          } else if (chartTimeFilter === 'lastMonth') {
+          } else if (chartTimeFilterAny === 'lastMonth') {
             // Get the number of days in last month
             const lastMonthDays = lastMonthEnd.getDate();
             const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
@@ -2169,7 +2169,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               return reqDate >= monthBeforeStart && reqDate <= monthBeforeSameDay;
             });
             comparisonLabel = `vs Month Before (Day 1-${lastMonthDays})`;
-          } else if (chartTimeFilter === 'custom') {
+          } else if (chartTimeFilterAny === 'custom') {
             const customStart = new Date(chartCustomRange.from);
             const customEnd = new Date(chartCustomRange.to);
             const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Download, Upload, Database, AlertCircle, CheckCircle, Loader2, Calendar, HardDrive } from 'lucide-react';
-import { AppContext } from '../App';
+import { InventoryContextType } from '../App';
 import { getTodayIST, formatDateTimeIST } from '../utils/timezone';
 import * as api from '../utils/api';
 
 type Props = {
-  context: AppContext;
+  context: InventoryContextType;
 };
 
 export function BackupRestore({ context }: Props) {
@@ -246,7 +246,7 @@ export function BackupRestore({ context }: Props) {
       if (backupData.data.stores) {
         for (const item of backupData.data.stores) {
           try {
-            await api.createStore(context.user.accessToken, item);
+            await api.createStore(item.name, item.location);
             importedCounts.stores++;
           } catch (error) {
             console.error('Error importing store:', error);

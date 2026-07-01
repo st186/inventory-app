@@ -461,8 +461,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       console.log('Loaded payouts:', payoutsData);
       console.log('Loaded salary advances:', advancesData);
       console.log('Loaded overheads:', overheadsData);
-      setEmployees(employeesData || []);
-      setPayouts(payoutsData || []);
+      setEmployees((employeesData as any) || []);
+      setPayouts((payoutsData as any) || []);
       setSalaryAdvances(advancesData || []);
       setOverheads(overheadsData || []);
     } catch (error) {
@@ -552,7 +552,24 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       }
 
       const monthlyDeduction = amount / 4;
-      const newAdvance = {
+      const now = new Date();
+      const startMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const deductions: api.SalaryAdvanceDeduction[] = [];
+      for (let i = 0; i < 4; i++) {
+        const deductionDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const monthStr = `${deductionDate.getFullYear()}-${String(deductionDate.getMonth() + 1).padStart(2, '0')}`;
+        deductions.push({
+          month: monthStr,
+          amount: monthlyDeduction,
+          deducted: false
+        });
+      }
+
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 3, 1);
+      const endMonth = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}`;
+
+      const newAdvance: Omit<api.SalaryAdvance, 'id' | 'createdAt'> = {
         employeeId: currentEmployee.id,
         employeeName: currentEmployee.name,
         employeeEmployeeId: currentEmployee.employeeId,
@@ -561,6 +578,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         remainingAmount: amount,
         status: 'pending',
         requestDate: new Date().toISOString(),
+        installments: 4,
+        startMonth,
+        endMonth,
+        deductions
       };
 
       await api.createSalaryAdvance(newAdvance);
@@ -2024,7 +2045,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           <div className="bg-white border border-green-200 rounded-lg p-4">
                             <p className="text-sm font-semibold text-gray-900 mb-3">Deduction Progress</p>
                             <div className="space-y-2">
-                              {advance.deductions.map((deduction, idx) => (
+                              {advance.deductions.map((deduction: api.SalaryAdvanceDeduction, idx: number) => (
                                 <div 
                                   key={idx}
                                   className={`flex items-center justify-between p-2 rounded-lg ${

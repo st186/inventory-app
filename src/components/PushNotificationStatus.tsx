@@ -119,13 +119,13 @@ export function PushNotificationStatus({ userId }: PushNotificationStatusProps) 
         throw new Error('VAPID keys not configured on server');
       }
 
-      // Initialize push notifications
-      const success = await pushNotifications.initializePushNotifications(userId, vapidData.publicKey);
-      
-      if (success) {
+      // Request permission and subscribe (user-triggered, so this is allowed to prompt)
+      const result = await pushNotifications.enablePushNotifications(userId, vapidData.publicKey);
+
+      if (result.success) {
         await checkStatus();
       } else {
-        throw new Error('Failed to enable push notifications');
+        throw new Error(result.message || 'Failed to enable push notifications');
       }
     } catch (err) {
       console.error('Error enabling push notifications:', err);

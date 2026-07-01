@@ -1,12 +1,5 @@
 import { ChevronRight, UserCog, User } from 'lucide-react';
-
-interface Employee {
-  employeeId: string;
-  name: string;
-  email: string;
-  role: 'cluster_head' | 'manager' | 'employee';
-  designation?: string;
-}
+import type { Employee } from '../utils/api';
 
 interface ManagerNode extends Employee {
   employees?: Employee[];
@@ -22,7 +15,7 @@ export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
   const hasSubordinates = (manager.managers && manager.managers.length > 0) || (manager.employees && manager.employees.length > 0);
   
   // Format designation for display
-  const formatDesignation = (designation?: string) => {
+  const formatDesignation = (designation?: string | null) => {
     if (!designation) return 'Manager';
     
     const designationMap: Record<string, string> = {

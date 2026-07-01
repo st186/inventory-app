@@ -60,7 +60,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
         joiningDate: new Date().toISOString().split('T')[0]
       };
 
-      await api.createEmployee(employeeData);
+      await api.createUnifiedEmployee(employeeData);
       
       setGeneratedEmployeeId(employeeId);
       

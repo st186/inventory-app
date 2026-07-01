@@ -290,7 +290,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
           creatorName = (prod as any).createdByEmail;
         } else if (prod.createdBy) {
           // Try to find employee name from employee list
-          const employee = context.employees?.find(emp => emp.employeeId === prod.createdBy);
+          const employee = (context as any).employees?.find((emp: any) => emp.employeeId === prod.createdBy);
           if (employee) {
             creatorName = employee.name;
           } else {
@@ -310,11 +310,11 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
         log.productionLoggedBy = creatorName;
         
         // Get production logged timestamp - use createdAt if available
-        if (prod.createdAt) {
-          log.productionLoggedAt = prod.createdAt;
-          
+        if ((prod as any).createdAt) {
+          log.productionLoggedAt = (prod as any).createdAt;
+
           // Check if logged late
-          const entryDate = new Date(prod.createdAt);
+          const entryDate = new Date((prod as any).createdAt);
           const targetDate = new Date(prod.date + 'T23:59:59');
           if (entryDate > targetDate) {
             log.lateEntry = true;
@@ -712,7 +712,9 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         {log.lateEntry && (
-                          <AlertTriangle className="w-4 h-4 text-orange-500" title="Late Entry" />
+                          <span title="Late Entry">
+                            <AlertTriangle className="w-4 h-4 text-orange-500" />
+                          </span>
                         )}
                         <span className="text-sm text-gray-900">{formatDate(log.date)}</span>
                       </div>

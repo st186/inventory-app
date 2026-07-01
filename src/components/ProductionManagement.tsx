@@ -188,7 +188,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
         Object.entries(oldFieldMapping).forEach(([oldKey, inventoryKey]) => {
           const finalQty = productionObj[oldKey]?.final || 0;
           if (finalQty > 0) {
-            newInventory[inventoryKey] = (newInventory[inventoryKey] || 0) + finalQty;
+            (newInventory as any)[inventoryKey] = ((newInventory as any)[inventoryKey] || 0) + finalQty;
             console.log(`  📦 Added ${finalQty} ${inventoryKey} from ${oldKey}`);
           }
         });
@@ -198,7 +198,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
           Object.entries(productionObj.items).forEach(([itemKey, itemData]: [string, any]) => {
             const finalQty = itemData?.final || 0;
             if (finalQty > 0) {
-              newInventory[itemKey] = (newInventory[itemKey] || 0) + finalQty;
+              (newInventory as any)[itemKey] = ((newInventory as any)[itemKey] || 0) + finalQty;
               console.log(`  📦 Added ${finalQty} ${itemKey} from dynamic items`);
             }
           });

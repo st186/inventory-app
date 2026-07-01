@@ -201,7 +201,7 @@ export function InventoryList({
                 >
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex-1">
-                      <p className="text-gray-900">{OVERHEAD_CATEGORIES[item.category]}</p>
+                      <p className="text-gray-900">{(OVERHEAD_CATEGORIES as Record<string, string>)[item.category]}</p>
                       {item.category === 'personal_expense' && item.employeeId && item.employeeName && (
                         <p className="text-sm text-gray-600 mt-1">
                           Employee: {item.employeeName} (ID: {item.employeeId})

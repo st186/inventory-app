@@ -252,7 +252,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
       const payoutMap = new Map<string, typeof contractPayoutsOnly[0]>();
       contractPayoutsOnly.forEach(payout => {
         const existing = payoutMap.get(payout.employeeId);
-        if (!existing || new Date(payout.createdAt) > new Date(existing.createdAt)) {
+        if (!existing || new Date(payout.createdAt || 0) > new Date(existing.createdAt || 0)) {
           payoutMap.set(payout.employeeId, payout);
         }
       });
@@ -735,7 +735,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     });
     
     return finalBalance;
-  }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, onlinePayoutData, onlineLoans, employeePayouts, totalContractPayout, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.onlineSales, formData.usedOnlineMoney]);
+  }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, onlinePayoutData, onlineLoans, employeePayouts, totalContractPayout, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.offlineSales, formData.usedOnlineMoney]);
 
   // Calculate Paytm discrepancy (similar to cash discrepancy)
   const paytmDiscrepancy = useMemo(() => {
@@ -1233,7 +1233,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
     });
     
     console.log('👤 User Info:', {
-      userId: context.user?.id,
       userEmail: context.user?.email,
       employeeId: context.user?.employeeId,
       role: context.user?.role
@@ -1418,12 +1417,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
           .map(payout => {
             const worker = contractWorkers.find(w => w.id === payout.employeeId);
             return {
-              id: crypto.randomUUID(),
               employeeId: payout.employeeId,
               employeeName: worker?.name || '',
               amount: parseFloat(payout.amount),
               date: selectedDate,
-              storeId: effectiveStoreId, // Add storeId for proper filtering in online cash calculation
+              storeId: effectiveStoreId || undefined, // Add storeId for proper filtering in online cash calculation
               createdAt: new Date().toISOString()
             };
           });
@@ -1559,9 +1557,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
         amount,
         context.user?.name || context.user?.email || 'Unknown User'
       );
-      
-      // Refresh the data
-      await context.loadSalesData();
       
       setShowCashConversion(false);
       setConversionAmount('');
@@ -2110,9 +2105,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       const totalPaytm = relevantSales.reduce((sum, s) => sum + (s.paytmAmount || 0), 0);
                       const totalOnline = relevantSales.reduce((sum, s) => sum + (s.onlineSales || 0), 0);
                       const totalUsedOnline = relevantSales.reduce((sum, s) => sum + (s.usedOnlineMoney || 0), 0);
-                      const totalEmployeePayouts = relevantSales.reduce((sum, s) => sum + (s.contractPayouts?.reduce((pSum, p) => pSum + p.amount, 0) || 0), 0);
-                      
-                      return (latestRecalibration.balance + totalPaytm + totalOnline - totalUsedOnline - totalEmployeePayouts).toFixed(2);
+                      const totalEmployeePayouts = relevantSales.reduce((sum, s) => sum + ((s as any).contractPayouts?.reduce((pSum: number, p: any) => pSum + p.amount, 0) || 0), 0);
+
+                      return (latestRecalibration.actualBalance + totalPaytm + totalOnline - totalUsedOnline - totalEmployeePayouts).toFixed(2);
                     })()}</p>
                     <p className="text-xs text-gray-500 mt-2 flex items-start gap-1">
                       <span className="text-yellow-500">💡</span>
@@ -2378,8 +2373,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                     <div className="bg-green-50 border-2 border-green-300 text-green-700 px-4 py-3 rounded-lg">
                       <p className="font-semibold">✅ Approved</p>
                       <p className="mt-1">Approved by: {salesForDate.approvedBy}</p>
-                      {salesForDate.approvalDate && (
-                        <p className="text-sm">Date: {new Date(salesForDate.approvalDate).toLocaleString()}</p>
+                      {salesForDate.approvedAt && (
+                        <p className="text-sm">Date: {new Date(salesForDate.approvedAt).toLocaleString()}</p>
                       )}
                     </div>
                   )}
@@ -2389,8 +2384,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                       <div>
                         <p className="font-semibold">❌ Rejected</p>
                         <p className="mt-1">Rejected by: {salesForDate.rejectedBy}</p>
-                        {salesForDate.rejectionDate && (
-                          <p className="text-sm">Date: {new Date(salesForDate.rejectionDate).toLocaleString()}</p>
+                        {salesForDate.rejectedAt && (
+                          <p className="text-sm">Date: {new Date(salesForDate.rejectedAt).toLocaleString()}</p>
                         )}
                         {salesForDate.rejectionReason && (
                           <p className="mt-1 italic">Reason: {salesForDate.rejectionReason}</p>
@@ -3033,7 +3028,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
                         <button
                           onClick={async () => {
                             try {
-                              await context.rejectSalesData(sale.id);
+                              await (context as any).rejectSalesData(sale.id);
                               alert('Sales rejected successfully!');
                             } catch (error) {
                               alert('Failed to reject sales');

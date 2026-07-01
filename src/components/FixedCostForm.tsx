@@ -99,7 +99,7 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
     });
 
     setIsSubmitting(true);
-    onSubmit(baseData).finally(() => setIsSubmitting(false));
+    Promise.resolve(onSubmit(baseData)).finally(() => setIsSubmitting(false));
   };
 
   return (

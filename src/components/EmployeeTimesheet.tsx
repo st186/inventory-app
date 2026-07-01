@@ -53,7 +53,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
     try {
       setLoading(true);
       const data = await api.getTimesheets(user.employeeId);
-      setTimesheetData(data);
+      setTimesheetData(data as any);
     } catch (error) {
       console.error('Error loading timesheet:', error);
     } finally {
@@ -214,7 +214,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
       // Filter for previous week's approved or filled entries
       const previousWeekData = previousWeekDates.map(date => {
         const dateStr = date.toISOString().split('T')[0];
-        return allTimesheets.find((t: TimesheetEntry) => t.date === dateStr);
+        return allTimesheets.find((t) => t.date === dateStr);
       }).filter(Boolean);
       
       if (previousWeekData.length === 0) {

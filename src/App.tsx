@@ -27,12 +27,12 @@ import { EmployeeHierarchy } from './components/EmployeeHierarchy';
 import { AttendancePortal } from './components/AttendancePortal';
 import { EmployeeManagement } from './components/EmployeeManagement';
 import { Notifications } from './components/Notifications';
-import { EmployeePayroll } from './components/EmployeePayroll';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { SetupClusterHead } from './components/SetupClusterHead';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
 import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
+import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
@@ -63,7 +63,7 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'evening_snacks';
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'evening_snacks' | 'commission'; // 'commission' is a legacy category kept for backwards compatibility with old records
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
@@ -256,9 +256,6 @@ export type InventoryContextType = {
   requestSalesApproval: (id: string, requestedCashInHand: number, requestedOffset: number) => Promise<void>;
   approveDiscrepancy: (id: string) => Promise<void>;
   rejectDiscrepancy: (id: string, reason: string) => Promise<void>;
-  addMonthlyCommission: (item: Omit<MonthlyCommission, 'id'>) => Promise<void>;
-  updateMonthlyCommission: (id: string, item: Omit<MonthlyCommission, 'id'>) => Promise<void>;
-  deleteMonthlyCommission: (id: string) => Promise<void>;
   addProductionData: (item: Omit<ProductionData, 'id'>) => Promise<void>;
   updateProductionData: (id: string, item: Omit<ProductionData, 'id'>) => Promise<void>;
   approveProductionData: (id: string) => Promise<void>;
@@ -295,6 +292,7 @@ export default function App() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showPushNotificationPanel, setShowPushNotificationPanel] = useState(false);
   const [stores, setStores] = useState<api.Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
@@ -416,7 +414,7 @@ export default function App() {
         api.fetchSalesData(accessToken),
         api.getSalesData(accessToken), // NEW: Detailed category sales data
         api.fetchProductionData(),
-        api.getProductionHouses(accessToken),
+        api.getProductionHouses(),
         api.getStockRequests(accessToken),
         api.fetchProductionRequests(accessToken),
         api.fetchInventoryItems(), // NEW: Dynamic inventory items metadata
@@ -1427,7 +1425,7 @@ export default function App() {
       const updated = await api.fulfillStockRequest(user.accessToken, id, fulfilledQuantities, fulfilledBy, fulfilledByName, notes);
       setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
       // Reload production houses to get updated inventory
-      const houses = await api.getProductionHouses(user.accessToken);
+      const houses = await api.getProductionHouses();
       setProductionHouses(houses);
       dataCache.invalidateCache('stockRequests');
       dataCache.invalidateCache('productionHouses');
@@ -1523,6 +1521,32 @@ export default function App() {
     );
   }
 
+  // Floating button + panel to let any logged-in user enable/check push notifications
+  const pushNotificationWidget = (
+    <>
+      <button
+        onClick={() => setShowPushNotificationPanel(true)}
+        className="fixed bottom-6 right-6 z-40 bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
+        title="Push Notifications"
+      >
+        <Bell className="w-5 h-5" />
+      </button>
+      {showPushNotificationPanel && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">
+            <button
+              onClick={() => setShowPushNotificationPanel(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <PushNotificationStatus userId={user.employeeId || user.email} />
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   // Cluster heads should only see the dashboard
   const isClusterHead = user.role === 'cluster_head';
   const isEmployee = user.role === 'employee';
@@ -1555,8 +1579,10 @@ export default function App() {
   // If audit user, show audit dashboard
   if (isAudit) {
     return (
-      <AuditDashboard
-        user={user}
+      <>
+        {pushNotificationWidget}
+        <AuditDashboard
+          user={user}
         inventory={inventory}
         overheads={overheads}
         fixedCosts={fixedCosts}
@@ -1571,7 +1597,8 @@ export default function App() {
         inventoryItems={inventoryItems}
         onLogout={handleLogout}
         onDataUpdate={loadData}
-      />
+        />
+      </>
     );
   }
 
@@ -1581,7 +1608,8 @@ export default function App() {
       <>
         {/* Stock Request Reminder Scheduler - runs in background */}
         <StockRequestReminderScheduler />
-        
+        {pushNotificationWidget}
+
         <div className="min-h-screen bg-gray-50">
           {/* Employee Navigation */}
           <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
@@ -2041,7 +2069,8 @@ export default function App() {
     <>
       {/* Stock Request Reminder Scheduler - runs in background */}
       <StockRequestReminderScheduler />
-      
+      {pushNotificationWidget}
+
       <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
       <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
@@ -2616,9 +2645,9 @@ export default function App() {
             user={{
               role: user.role,
               email: user.email,
-              employeeId: user.employeeId,
+              employeeId: user.employeeId || undefined,
               name: user.name,
-              storeId: user.storeId,
+              storeId: user.storeId || undefined,
               accessToken: user.accessToken
             }}
             selectedStoreId={selectedStoreId}

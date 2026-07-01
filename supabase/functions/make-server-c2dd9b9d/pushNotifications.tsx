@@ -1,14 +1,8 @@
 // Push Notification Handler for Supabase Edge Function
 // This file handles sending push notifications to subscribed users
 
+import webpush from 'npm:web-push';
 import * as kv from './kv_store.tsx';
-
-// VAPID key type
-interface VapidKeys {
-  publicKey: string;
-  privateKey: string;
-  subject: string; // mailto:your-email@example.com or your website URL
-}
 
 // Push subscription type
 interface PushSubscription {
@@ -57,10 +51,11 @@ export async function getAllSubscriptions(): Promise<StoredSubscription[]> {
   return subscriptions as StoredSubscription[];
 }
 
-// Generate VAPID keys (call this once and store the keys securely)
-// You need to install web-push: npm install web-push
-// For now, we'll use a simplified version with environment variables
-function getVapidKeys(): VapidKeys {
+let vapidConfigured = false;
+
+function ensureVapidConfigured(): void {
+  if (vapidConfigured) return;
+
   const publicKey = Deno.env.get('VAPID_PUBLIC_KEY');
   const privateKey = Deno.env.get('VAPID_PRIVATE_KEY');
   const subject = Deno.env.get('VAPID_SUBJECT') || 'mailto:support@bhandar-ims.com';
@@ -69,42 +64,8 @@ function getVapidKeys(): VapidKeys {
     throw new Error('VAPID keys not configured. Please set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables.');
   }
 
-  return { publicKey, privateKey, subject };
-}
-
-// JWT token generation for VAPID
-function base64UrlEncode(buffer: Uint8Array): string {
-  const base64 = btoa(String.fromCharCode(...buffer));
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function generateVapidAuthHeader(
-  subscription: PushSubscription,
-  vapidKeys: VapidKeys
-): Promise<string> {
-  const url = new URL(subscription.endpoint);
-  const audience = `${url.protocol}//${url.host}`;
-
-  // Create JWT header
-  const header = {
-    typ: 'JWT',
-    alg: 'ES256',
-  };
-
-  // Create JWT payload
-  const payload = {
-    aud: audience,
-    exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, // 12 hours
-    sub: vapidKeys.subject,
-  };
-
-  // For simplicity, we'll use a library approach
-  // In production, you'd use proper JWT signing with the VAPID private key
-  
-  const headerEncoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
-  const payloadEncoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
-
-  return `vapid t=${headerEncoded}.${payloadEncoded}.signature, k=${vapidKeys.publicKey}`;
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  vapidConfigured = true;
 }
 
 // Send push notification to a user
@@ -125,10 +86,8 @@ export async function sendPushNotification(
       return false;
     }
 
-    const vapidKeys = getVapidKeys();
-    const subscription = storedSub.subscription;
+    ensureVapidConfigured();
 
-    // Prepare notification payload
     const notificationPayload = JSON.stringify({
       title: payload.title,
       body: payload.message,
@@ -138,36 +97,21 @@ export async function sendPushNotification(
       data: payload.data,
     });
 
-    // Generate VAPID auth header
-    const authHeader = await generateVapidAuthHeader(subscription, vapidKeys);
-
-    // Send push notification using Web Push Protocol
-    const response = await fetch(subscription.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': authHeader,
-        'TTL': '86400', // 24 hours
-      },
-      body: notificationPayload,
+    await webpush.sendNotification(storedSub.subscription, notificationPayload, {
+      TTL: 86400, // 24 hours
     });
 
-    if (response.ok || response.status === 201) {
-      console.log(`Push notification sent successfully to user: ${userId}`);
-      return true;
-    } else {
-      console.error(`Failed to send push notification: ${response.status} ${response.statusText}`);
-      
-      // If subscription is invalid (410 Gone), remove it
-      if (response.status === 410) {
-        await removeSubscription(userId);
-        console.log(`Removed invalid subscription for user: ${userId}`);
-      }
-      
-      return false;
-    }
-  } catch (error) {
+    console.log(`Push notification sent successfully to user: ${userId}`);
+    return true;
+  } catch (error: any) {
     console.error(`Error sending push notification to user ${userId}:`, error);
+
+    // If subscription is gone/invalid, remove it so we stop retrying
+    if (error?.statusCode === 404 || error?.statusCode === 410) {
+      await removeSubscription(userId);
+      console.log(`Removed invalid subscription for user: ${userId}`);
+    }
+
     return false;
   }
 }

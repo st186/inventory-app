@@ -14,7 +14,7 @@ self.addEventListener('activate', (event) => {
 // Handle push notifications
 self.addEventListener('push', (event) => {
   console.log('Push notification received:', event);
-  
+
   let notificationData = {
     title: 'Bhandar-IMS',
     body: 'You have a new notification',
@@ -56,7 +56,7 @@ self.addEventListener('push', (event) => {
 // Handle notification clicks
 self.addEventListener('notificationclick', (event) => {
   console.log('Notification clicked:', event);
-  
+
   event.notification.close();
 
   // Open or focus the app

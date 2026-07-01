@@ -88,13 +88,12 @@ export function downloadJSON(filename: string, data: any) {
 export function exportSalesData(salesData: SalesData[], storeName?: string) {
   const formatted = salesData.map(sale => ({
     Date: sale.date,
-    Store: sale.storeName || storeName || 'N/A',
+    Store: storeName || 'N/A',
     'Cash Amount': sale.cashAmount || 0,
     'Paytm Amount': sale.paytmAmount || 0,
     'Online Sales': sale.onlineSales || 0,
     'Total Revenue': (sale.cashAmount || 0) + (sale.paytmAmount || 0) + (sale.onlineSales || 0),
-    'Created By': sale.createdBy || 'N/A',
-    'Created At': sale.createdAt ? new Date(sale.createdAt).toLocaleString() : 'N/A'
+    'Created By': sale.createdByName || sale.createdBy || 'N/A'
   }));
   
   downloadCSV('sales_report', formatted);
@@ -106,16 +105,14 @@ export function exportSalesData(salesData: SalesData[], storeName?: string) {
 export function exportInventoryData(inventoryData: InventoryItem[], storeName?: string) {
   const formatted = inventoryData.map(item => ({
     Date: item.date,
-    Store: item.storeName || storeName || 'N/A',
+    Store: storeName || 'N/A',
     Category: item.category,
     Item: item.itemName,
     Quantity: item.quantity,
     Unit: item.unit || 'N/A',
-    'Unit Cost': item.unitCost || 0,
+    'Unit Cost': item.costPerUnit || 0,
     'Total Cost': item.totalCost || 0,
-    Vendor: item.vendor || 'N/A',
-    'Created By': item.createdBy || 'N/A',
-    'Created At': item.createdAt ? new Date(item.createdAt).toLocaleString() : 'N/A'
+    'Created By': item.createdByName || item.createdBy || 'N/A'
   }));
   
   downloadCSV('inventory_report', formatted);
@@ -127,13 +124,11 @@ export function exportInventoryData(inventoryData: InventoryItem[], storeName?: 
 export function exportOverheadData(overheadData: OverheadItem[], storeName?: string) {
   const formatted = overheadData.map(item => ({
     Date: item.date,
-    Store: item.storeName || storeName || 'N/A',
+    Store: storeName || 'N/A',
     Category: item.category,
     Description: item.description || 'N/A',
     Amount: item.amount,
-    'Payment Mode': item.paymentMode || 'N/A',
-    'Created By': item.createdBy || 'N/A',
-    'Created At': item.createdAt ? new Date(item.createdAt).toLocaleString() : 'N/A'
+    'Payment Mode': item.paymentMethod || 'N/A'
   }));
   
   downloadCSV('overhead_report', formatted);
@@ -145,7 +140,7 @@ export function exportOverheadData(overheadData: OverheadItem[], storeName?: str
 export function exportProductionData(productionData: ProductionData[], storeName?: string) {
   const formatted = productionData.map(prod => ({
     Date: prod.date,
-    Store: prod.storeName || storeName || 'N/A',
+    Store: storeName || 'N/A',
     'Approval Status': prod.approvalStatus || 'pending',
     'Chicken Momos': prod.chickenMomos?.final || 0,
     'Chicken Cheese Momos': prod.chickenCheeseMomos?.final || 0,
@@ -231,7 +226,7 @@ export function exportAllData(data: {
   }
   
   if (data.productionData && data.productionData.length > 0) {
-    setTimeout(() => exportProductionData(data.productionData, data.storeName), 300);
+    setTimeout(() => exportProductionData(data.productionData!, data.storeName), 300);
   }
 }
 

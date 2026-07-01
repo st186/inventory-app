@@ -132,7 +132,7 @@ export function MonthlyCommissionEntry({
         createdBy: userEmail,
         createdByName: userName,
         createdByEmail: userEmail,
-        paymentMethod: paymentMethod as const
+        paymentMethod: paymentMethod as 'cash' | 'online' | 'both'
       };
 
       if (paymentMethod === 'both') {

@@ -127,7 +127,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
       const response = await api.getMonthlyWastageReport(
         context.user?.accessToken || '',
         selectedMonth,
-        effectiveStoreId,
+        effectiveStoreId || undefined,
         locationType
       );
       

@@ -46,7 +46,24 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
       }
 
       const monthlyDeduction = amount / 4;
-      const newAdvance = {
+      const now = new Date();
+      const startMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const deductions: api.SalaryAdvanceDeduction[] = [];
+      for (let i = 0; i < 4; i++) {
+        const deductionDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        const monthStr = `${deductionDate.getFullYear()}-${String(deductionDate.getMonth() + 1).padStart(2, '0')}`;
+        deductions.push({
+          month: monthStr,
+          amount: monthlyDeduction,
+          deducted: false
+        });
+      }
+
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 3, 1);
+      const endMonth = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}`;
+
+      const newAdvance: Omit<api.SalaryAdvance, 'id' | 'createdAt'> = {
         employeeId: currentEmployee.id,
         employeeName: currentEmployee.name,
         employeeEmployeeId: currentEmployee.employeeId,
@@ -55,6 +72,10 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
         remainingAmount: amount,
         status: 'pending',
         requestDate: new Date().toISOString(),
+        installments: 4,
+        startMonth,
+        endMonth,
+        deductions
       };
 
       await api.createSalaryAdvance(newAdvance);

@@ -21,7 +21,7 @@ export function DebugPanel({ user, productionData }: Props) {
     setMigrationResult(null);
     
     try {
-      const result = await api.migrateProductionNotifications(user.accessToken);
+      const result = await api.migrateProductionNotifications();
       setMigrationResult(`✅ ${result.message}`);
       console.log('Migration successful:', result);
     } catch (error) {

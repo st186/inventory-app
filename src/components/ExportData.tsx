@@ -677,7 +677,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                       
                       // Reload the page to refresh all data
                       window.location.reload();
-                    } catch (error) {
+                    } catch (error: any) {
                       console.error('Error during cleanup:', error);
                       alert(`❌ Failed to cleanup production data: ${error.message}`);
                     } finally {

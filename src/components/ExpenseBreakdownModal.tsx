@@ -1,9 +1,10 @@
 import { X, TrendingUp, TrendingDown, Package, DollarSign, BarChart3 } from 'lucide-react';
-import { InventoryItem } from '../types';
 
 type Props = {
   category: string;
-  items: InventoryItem[];
+  // Accepts a mix of inventory items (itemName/costPerUnit/totalCost) and
+  // overhead items (description/amount) — see field fallbacks below.
+  items: any[];
   totalAmount: number;
   onClose: () => void;
 };
@@ -64,7 +65,7 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
       
       return acc;
     }, {} as Record<string, any>)
-  ).map(item => {
+  ).map((item: any) => {
     const avgUnitPrice = item.quantity > 0 ? item.totalSpent / item.quantity : 0;
     const priceChange = item.lastUnitPrice - item.firstUnitPrice;
     const priceChangePercent = item.firstUnitPrice > 0 

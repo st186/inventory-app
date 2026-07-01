@@ -2,18 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Save, User, Mail, Briefcase, Building2, Users as UsersIcon } from 'lucide-react';
 import * as api from '../utils/api';
 
-interface Employee {
-  employeeId: string;
-  name: string;
-  email: string;
-  role: 'employee' | 'manager' | 'cluster_head';
-  managerId?: string;
-  clusterHeadId?: string;
-  designation?: 'operations_incharge' | 'store_incharge' | 'production_incharge' | 'store_ops' | 'production_ops' | null;
-  department?: 'store_operations' | 'production' | null;
-  inchargeId?: string;
-  storeId?: string;
-}
+type Employee = api.Employee;
 
 interface EmployeeDetailsModalProps {
   employee: Employee;

@@ -566,7 +566,7 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     
     for (const clusterHead of clusterHeads) {
       if (clusterHead.authUserId) {
-        const notificationResult = await createNotification(
+        const notificationResult = await notifyUser(
           clusterHead.authUserId,
           'inventory_logged',
           'Inventory Data Logged',
@@ -1051,7 +1051,7 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     
     for (const clusterHead of clusterHeads) {
       if (clusterHead.authUserId) {
-        await createNotification(
+        await notifyUser(
           clusterHead.authUserId,
           'sales_logged',
           'Sales Data Logged',
@@ -1217,7 +1217,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
     
     for (const clusterHead of clusterHeads) {
       if (clusterHead.authUserId) {
-        await createNotification(
+        await notifyUser(
           clusterHead.authUserId,
           'discrepancy_request',
           'Cash Discrepancy Approval Needed',
@@ -1285,7 +1285,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
     
     // Notify the manager who submitted the sale
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await createNotification(
+    await notifyUser(
       existingSale.userId,
       'discrepancy_approved',
       'Discrepancy Approved ✓',
@@ -1348,7 +1348,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
     
     // Notify the manager who submitted the sale
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await createNotification(
+    await notifyUser(
       existingSale.userId,
       'discrepancy_rejected',
       'Discrepancy Rejected ✗',
@@ -1465,7 +1465,7 @@ app.post('/make-server-c2dd9b9d/production', async (c) => {
     for (const approver of approvers) {
       if (approver.authUserId) {
         console.log('Creating notification for approver:', approver.email || approver.authUserId);
-        await createNotification(
+        await notifyUser(
           approver.authUserId,
           'production_pending',
           'Production Data Awaiting Approval',
@@ -1556,7 +1556,7 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
     // Notify the production head who submitted the data
     if (existingProduction.userId) {
       console.log('Creating approval notification for production head:', existingProduction.userId);
-      await createNotification(
+      await notifyUser(
         existingProduction.userId,
         'production_approved',
         'Production Data Approved',
@@ -1621,7 +1621,7 @@ app.post('/make-server-c2dd9b9d/production/migrate-notifications', async (c) => 
       for (const approver of approvers) {
         console.log('Checking approver:', approver.email, 'authUserId:', approver.authUserId);
         if (approver.authUserId) {
-          await createNotification(
+          await notifyUser(
             approver.authUserId,
             'production_pending',
             'Production Data Awaiting Approval',
@@ -2964,7 +2964,7 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
       
       for (const clusterHead of clusterHeads) {
         if (clusterHead.authUserId) {
-          await createNotification(
+          await notifyUser(
             clusterHead.authUserId,
             'timesheet_pending',
             'Timesheet Approval Needed',
@@ -3038,7 +3038,7 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/approve', async (c) => {
     const employees = await kv.getByPrefix('attendance-employee:');
     const employee = employees.find((e: any) => e.id === timesheet.employeeId);
     if (employee?.authUserId) {
-      await createNotification(
+      await notifyUser(
         employee.authUserId,
         'timesheet_approved',
         'Timesheet Approved ��',
@@ -3083,7 +3083,7 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/reject', async (c) => {
     const employees = await kv.getByPrefix('attendance-employee:');
     const employee = employees.find((e: any) => e.id === timesheet.employeeId);
     if (employee?.authUserId) {
-      await createNotification(
+      await notifyUser(
         employee.authUserId,
         'timesheet_rejected',
         'Timesheet Rejected ✗',
@@ -3175,7 +3175,7 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
       
       for (const clusterHead of clusterHeads) {
         if (clusterHead.authUserId) {
-          await createNotification(
+          await notifyUser(
             clusterHead.authUserId,
             'leave_pending',
             'Leave Approval Needed',
@@ -3221,7 +3221,7 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/approve', async (c) => {
     const employees = await kv.getByPrefix('attendance-employee:');
     const employee = employees.find((e: any) => e.id === leave.employeeId);
     if (employee?.authUserId) {
-      await createNotification(
+      await notifyUser(
         employee.authUserId,
         'leave_approved',
         'Leave Approved ✓',
@@ -3266,7 +3266,7 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/reject', async (c) => {
     const employees = await kv.getByPrefix('attendance-employee:');
     const employee = employees.find((e: any) => e.id === leave.employeeId);
     if (employee?.authUserId) {
-      await createNotification(
+      await notifyUser(
         employee.authUserId,
         'leave_rejected',
         'Leave Rejected ✗',
@@ -5225,6 +5225,43 @@ async function createNotification(userId: string, type: string, title: string, m
   }
 }
 
+// Push subscriptions are keyed by employeeId, but most notification call sites only
+// have the Supabase authUserId on hand. Reverse-lookup employeeId from authUserId so
+// existing call sites can gain push notifications without restructuring.
+async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | null> {
+  try {
+    const allUsers = await kv.getByPrefix('unified-employee:');
+    const match = allUsers.find((u: any) => u.authUserId === authUserId);
+    return match?.employeeId || null;
+  } catch (error) {
+    console.log('Error looking up employeeId for push notification:', error);
+    return null;
+  }
+}
+
+// Create both the in-app (bell) notification and a push notification for the same event.
+// Push failures (no subscription, VAPID not configured, etc.) are non-fatal and swallowed,
+// matching the existing non-critical error handling of createNotification.
+async function notifyUser(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
+  const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
+
+  try {
+    const employeeId = await getEmployeeIdByAuthUserId(userId);
+    if (employeeId) {
+      await push.sendPushNotification(employeeId, {
+        title,
+        message,
+        tag: type,
+        data: { type, relatedId: relatedId || null, relatedDate: relatedDate || null },
+      });
+    }
+  } catch (pushError) {
+    console.log(`Push notification failed for user ${userId}:`, pushError);
+  }
+
+  return notificationResult;
+}
+
 // Helper to get all cluster heads
 async function getAllClusterHeads() {
   const allUsers = await kv.getByPrefix('unified-employee:');
@@ -5331,7 +5368,7 @@ app.post('/make-server-c2dd9b9d/production-requests', async (c) => {
     
     for (const prodHead of productionHeads) {
       if (prodHead.authUserId) {
-        await createNotification(
+        await notifyUser(
           prodHead.authUserId,
           'production_request_new',
           'New Production Request',
@@ -5341,7 +5378,7 @@ app.post('/make-server-c2dd9b9d/production-requests', async (c) => {
         );
       }
     }
-    
+
     return c.json({ request });
   } catch (error: any) {
     console.error('Error creating production request:', error);
@@ -5553,7 +5590,7 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     // Send notifications to all stakeholders
     console.log('Sending status update notifications to', stakeholders.length, 'stakeholders');
     for (const stakeholder of stakeholders) {
-      await createNotification(
+      await notifyUser(
         stakeholder.authUserId,
         `production_request_${status}`,
         notificationTitle,
@@ -5666,7 +5703,7 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
       : `Production request from ${storeName} for ${requestDate} has been shipped and is on the way`;
     
     for (const stakeholder of stakeholders) {
-      await createNotification(
+      await notifyUser(
         stakeholder.authUserId,
         `production_request_${updates.status}`,
         notificationTitle,
@@ -5753,7 +5790,7 @@ app.post('/make-server-c2dd9b9d/production-requests/check-pending', async (c) =>
       // Send notifications to all recipients
       for (const recipient of recipients) {
         if (recipient.authUserId) {
-          await createNotification(
+          await notifyUser(
             recipient.authUserId,
             'stock_request_delayed',
             '⏰ Stock Request Delayed',
@@ -6521,7 +6558,7 @@ app.post('/make-server-c2dd9b9d/stock-requests', async (c) => {
     
     for (const prodHead of relevantProductionHeads) {
       if (prodHead.authUserId) {
-        await createNotification(
+        await notifyUser(
           prodHead.authUserId,
           'stock_request_new',
           'New Stock Request',
@@ -6538,7 +6575,7 @@ app.post('/make-server-c2dd9b9d/stock-requests', async (c) => {
       console.log('No production heads found for house', productionHouseId, ', notifying all production heads');
       for (const prodHead of productionHeads) {
         if (prodHead.authUserId) {
-          await createNotification(
+          await notifyUser(
             prodHead.authUserId,
             'stock_request_new',
             'New Stock Request',
@@ -6948,7 +6985,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration', async (c) => {
       // Create notifications for all cluster heads and operations managers
       for (const recipient of allRecipients) {
         if (recipient.authUserId) {
-          await createNotification(
+          await notifyUser(
             recipient.authUserId,
             'stock_recalibration',
             'Stock Recalibration Performed',

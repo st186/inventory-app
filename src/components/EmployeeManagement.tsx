@@ -7,28 +7,7 @@ import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 import { PayrollManagement } from './PayrollManagement';
 import { AttendancePortal } from './AttendancePortal';
 
-interface Employee {
-  id: string;
-  employeeId: string; // BM001, BM002, etc.
-  name: string;
-  email: string;
-  role: 'manager' | 'employee' | 'cluster_head';
-  employmentType: 'fulltime' | 'contract';
-  joiningDate: string;
-  dob?: string;
-  phone?: string;
-  aadharFront?: string;
-  aadharBack?: string;
-  managerId?: string; // For employees under a manager
-  clusterHeadId?: string; // For managers under cluster head
-  createdBy: string;
-  createdAt: string;
-  status: 'active' | 'inactive';
-  storeId?: string; // Store assignment
-  designation?: 'store_incharge' | 'production_incharge' | null; // Department head designation
-  department?: 'store_operations' | 'production' | null; // Which department
-  inchargeId?: string; // For employees under an incharge
-}
+type Employee = api.Employee;
 
 interface EmployeeManagementProps {
   user: {
@@ -739,9 +718,9 @@ New Password: ${result.credentials.password}
             selectedStoreId={selectedStoreId}
           />
         ) : activeTab === 'attendance' ? (
-          <AttendancePortal 
+          <AttendancePortal
             user={{
-              employeeId: user.employeeId,
+              employeeId: user.employeeId || null,
               name: user.name,
               email: user.email,
               role: user.role
@@ -1292,7 +1271,7 @@ New Password: ${result.credentials.password}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-600">
-                        {new Date(emp.joiningDate).toLocaleDateString()}
+                        {emp.joiningDate ? new Date(emp.joiningDate).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-3 py-1 rounded-full text-sm ${
@@ -1529,7 +1508,7 @@ New Password: ${result.credentials.password}
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Joining Date</p>
-                    <p className="text-gray-900">{new Date(selectedEmployee.joiningDate).toLocaleDateString()}</p>
+                    <p className="text-gray-900">{selectedEmployee.joiningDate ? new Date(selectedEmployee.joiningDate).toLocaleDateString() : 'N/A'}</p>
                   </div>
                   {selectedEmployee.dob && (
                     <div>
@@ -1618,7 +1597,7 @@ New Password: ${result.credentials.password}
         {showAccountSetup && (
           <EmployeeAccountSetup
             onClose={() => setShowAccountSetup(false)}
-            employees={employees.filter(emp => emp.status === 'active')}
+            employees={employees.filter(emp => emp.status === 'active') as any}
           />
         )}
 

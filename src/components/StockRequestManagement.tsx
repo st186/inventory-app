@@ -120,7 +120,7 @@ export function StockRequestManagement({ context, stores }: Props) {
     try {
       await context.fulfillStockRequest(
         fulfillmentForm.requestId,
-        fulfillmentForm.quantities,
+        fulfillmentForm.quantities as any,
         context.user?.employeeId || '',
         context.user?.name || '',
         fulfillmentForm.notes || undefined
@@ -445,7 +445,7 @@ export function StockRequestManagement({ context, stores }: Props) {
                       {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
                     </div>
                     <div className="text-lg text-gray-900">
-                      {request.fulfilledQuantities ? `${request.fulfilledQuantities[key]} / ${value}` : value}
+                      {request.fulfilledQuantities ? `${(request.fulfilledQuantities as any)[key]} / ${value}` : value}
                     </div>
                   </div>
                 )

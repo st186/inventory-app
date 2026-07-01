@@ -118,7 +118,7 @@ export function MonthlyStockRecalibration({
     // instead of using context.productionData which may be date-filtered
     let productionData: any[] = [];
     try {
-      productionData = await api.fetchProductionData(context.user?.accessToken || '');
+      productionData = await api.fetchProductionData();
       console.log('🔄 Fetched raw production data for recalibration:', {
         totalRecords: productionData.length,
         sampleRecord: productionData[0]
@@ -140,7 +140,7 @@ export function MonthlyStockRecalibration({
     // Check if effectiveStoreId is a UUID (doesn't start with 'STORE-')
     if (effectiveStoreId && !effectiveStoreId.startsWith('STORE-')) {
       // It's a UUID, find the production house with this UUID
-      const productionHouse = context.productionHouses?.find(ph => ph.uuid === effectiveStoreId);
+      const productionHouse = context.productionHouses?.find(ph => ph.id === effectiveStoreId);
       if (productionHouse) {
         console.log('🔄 Resolved UUID to production house:', {
           uuid: effectiveStoreId,
@@ -165,7 +165,7 @@ export function MonthlyStockRecalibration({
       const productionHouse = context.productionHouses?.find(ph => ph.id === actualStoreId);
       if (productionHouse) {
         // It's a production house, use its UUID for filtering production requests
-        productionHouseUUID = productionHouse.uuid;
+        productionHouseUUID = productionHouse.id;
         // But keep the store ID for filtering production data
         originalStoreId = actualStoreId; // This is the actual storeId in production records
         // But use the store ID for recalibration lookups (backend uses store ID)
@@ -193,18 +193,18 @@ export function MonthlyStockRecalibration({
         if (req.status !== 'delivered') return false;
         if (req.storeId !== effectiveStoreId) return false;
         
-        const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+        const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
         return requestDate && requestDate.startsWith(currentMonth);
       });
       
       totalProduced = receivedRequests.reduce((acc, req) => ({
-        chicken: acc.chicken + (req.chicken || 0),
-        chickenCheese: acc.chickenCheese + (req.chickenCheese || 0),
-        veg: acc.veg + (req.veg || 0),
-        cheeseCorn: acc.cheeseCorn + (req.cheeseCorn || 0),
-        paneer: acc.paneer + (req.paneer || 0),
-        vegKurkure: acc.vegKurkure + (req.vegKurkure || 0),
-        chickenKurkure: acc.chickenKurkure + (req.chickenKurkure || 0),
+        chicken: acc.chicken + (req.chickenMomos || 0),
+        chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
+        veg: acc.veg + (req.vegMomos || 0),
+        cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
+        paneer: acc.paneer + (req.paneerMomos || 0),
+        vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
+        chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
       }), {
         chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
         paneer: 0, vegKurkure: 0, chickenKurkure: 0
@@ -323,7 +323,7 @@ export function MonthlyStockRecalibration({
       const fulfilledRequests = (context.productionRequests || []).filter(req => {
         if (req.status !== 'delivered') return false;
         
-        const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+        const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
         if (!requestDate || !requestDate.startsWith(currentMonth)) return false;
         
         // Filter by production house - check both UUID and original ID
@@ -332,12 +332,12 @@ export function MonthlyStockRecalibration({
                        requestingStore?.productionHouseId === effectiveStoreId;
         
         if (req.status === 'delivered' && requestDate?.startsWith(currentMonth)) {
-          console.log(`🔍 Request ${req.requestId}: storeId=${req.storeId}, store.productionHouseId=${requestingStore?.productionHouseId}, comparing to UUID=${productionHouseUUID} or storeId=${effectiveStoreId}, matches=${matches}`);
-          
+          console.log(`🔍 Request ${req.id}: storeId=${req.storeId}, store.productionHouseId=${requestingStore?.productionHouseId}, comparing to UUID=${productionHouseUUID} or storeId=${effectiveStoreId}, matches=${matches}`);
+
           // Log the first matching request to see its structure
           if (matches && !firstMatchLogged) {
             console.log(`📦 First matching request structure:`, {
-              requestId: req.requestId,
+              requestId: req.id,
               chickenMomos: req.chickenMomos,
               cheeseCornMomos: req.cheeseCornMomos,
               allKeys: Object.keys(req)
@@ -350,13 +350,13 @@ export function MonthlyStockRecalibration({
       });
       
       totalSent = fulfilledRequests.reduce((acc, req) => ({
-        chicken: acc.chicken + (req.chicken || 0),
-        chickenCheese: acc.chickenCheese + (req.chickenCheese || 0),
-        veg: acc.veg + (req.veg || 0),
-        cheeseCorn: acc.cheeseCorn + (req.cheeseCorn || 0),
-        paneer: acc.paneer + (req.paneer || 0),
-        vegKurkure: acc.vegKurkure + (req.vegKurkure || 0),
-        chickenKurkure: acc.chickenKurkure + (req.chickenKurkure || 0),
+        chicken: acc.chicken + (req.chickenMomos || 0),
+        chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
+        veg: acc.veg + (req.vegMomos || 0),
+        cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
+        paneer: acc.paneer + (req.paneerMomos || 0),
+        vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
+        chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
       }), {
         chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
         paneer: 0, vegKurkure: 0, chickenKurkure: 0
@@ -365,7 +365,7 @@ export function MonthlyStockRecalibration({
     
     // Get previous month's closing stock or last recalibration as opening balance
     // For stores: fetch opening balance from last recalibration or calculate from previous month
-    const openingBalance = await fetchOpeningBalance(locationIdForRecalibration, currentMonth, isStoreFinishedProducts);
+    const openingBalance = await fetchOpeningBalance(locationIdForRecalibration ?? null, currentMonth, isStoreFinishedProducts);
     
     // CRITICAL FIX: Check for MID-MONTH recalibration in the current month
     // If there's a recent recalibration (not on the 1st), use it as the baseline instead of opening balance
@@ -376,7 +376,7 @@ export function MonthlyStockRecalibration({
       const locationType = isStoreFinishedProducts ? 'store' : 'production_house';
       const latestRecal = await api.getLastRecalibration(
         context.user?.accessToken || '',
-        locationIdForRecalibration,
+        locationIdForRecalibration || '',
         locationType
       );
       
@@ -468,7 +468,7 @@ export function MonthlyStockRecalibration({
       // Recalculate deliveries AFTER recalibration date
       const requestsAfterRecal = (context.productionRequests || []).filter(req => {
         if (req.status !== 'delivered') return false;
-        const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+        const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
         if (!requestDate || requestDate < recalibrationDate) return false;
         const requestingStore = context.stores?.find(s => s.id === req.storeId);
         return requestingStore?.productionHouseId === productionHouseUUID || 
@@ -476,13 +476,13 @@ export function MonthlyStockRecalibration({
       });
       
       totalSent = requestsAfterRecal.reduce((acc, req) => ({
-        chicken: acc.chicken + (req.chicken || 0),
-        chickenCheese: acc.chickenCheese + (req.chickenCheese || 0),
-        veg: acc.veg + (req.veg || 0),
-        cheeseCorn: acc.cheeseCorn + (req.cheeseCorn || 0),
-        paneer: acc.paneer + (req.paneer || 0),
-        vegKurkure: acc.vegKurkure + (req.vegKurkure || 0),
-        chickenKurkure: acc.chickenKurkure + (req.chickenKurkure || 0),
+        chicken: acc.chicken + (req.chickenMomos || 0),
+        chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
+        veg: acc.veg + (req.vegMomos || 0),
+        cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
+        paneer: acc.paneer + (req.paneerMomos || 0),
+        vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
+        chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
       }), {
         chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
         paneer: 0, vegKurkure: 0, chickenKurkure: 0
@@ -715,7 +715,7 @@ export function MonthlyStockRecalibration({
         .filter(req => {
           if (req.status !== 'delivered') return false;
           if (req.storeId !== locationUUID) return false;
-          const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+          const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
           return requestDate && requestDate.startsWith(previousMonthStr);
         })
         .reduce((acc, req) => ({
@@ -797,7 +797,7 @@ export function MonthlyStockRecalibration({
       const prevDeliveries = (context.productionRequests || [])
         .filter(req => {
           if (req.status !== 'delivered') return false;
-          const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+          const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
           if (!requestDate || !requestDate.startsWith(previousMonthStr)) return false;
           const requestingStore = context.stores?.find(s => s.id === req.storeId);
           // Check both UUID and original ID for production house matching
@@ -807,8 +807,8 @@ export function MonthlyStockRecalibration({
         .reduce((acc, req) => ({
           chicken: acc.chicken + (req.chickenMomos || 0),
           chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
-          veg: acc.veg + (req.veg || 0),
-          cheeseCorn: acc.cheeseCorn + (req.cheeseCorn || 0),
+          veg: acc.veg + (req.vegMomos || 0),
+          cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
           paneer: acc.paneer + (req.paneerMomos || 0),
           vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
           chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
@@ -909,8 +909,8 @@ export function MonthlyStockRecalibration({
         - isProductionHouse: ${isProductionHouse}`);
 
       const recalibrationData = {
-        locationId: effectiveLocationId,
-        locationType: isProductionHouse ? 'production_house' : 'store',
+        locationId: effectiveLocationId || '',
+        locationType: (isProductionHouse ? 'production_house' : 'store') as 'store' | 'production_house',
         locationName: locationName,
         items: items.map(item => ({
           itemId: item.itemId,

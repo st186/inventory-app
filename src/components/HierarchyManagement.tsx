@@ -3,18 +3,7 @@ import { Users, UserPlus, ChevronRight, Building2, UserCog, User, Network } from
 import * as api from '../utils/api';
 import { ManagerCard } from './ManagerCard';
 
-interface Employee {
-  employeeId: string;
-  name: string;
-  email: string;
-  role: 'cluster_head' | 'manager' | 'employee';
-  joiningDate: string;
-  managerId?: string;
-  clusterHeadId?: string;
-  designation?: 'store_incharge' | 'production_incharge' | null;
-  department?: 'store_operations' | 'production' | null;
-  inchargeId?: string;
-}
+type Employee = api.Employee;
 
 interface InchargeNode extends Employee {
   employees?: Employee[];
@@ -77,7 +66,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
         selectedStoreId: selectedStoreId
       });
       
-      setHierarchy(data.hierarchy || []);
+      setHierarchy((data.hierarchy as any) || []);
       setUnassignedManagers(data.unassignedManagers || []);
       setUnassignedEmployees(data.unassignedEmployees || []);
       setStats(data.stats || { totalClusterHeads: 0, totalManagers: 0, totalEmployees: 0 });

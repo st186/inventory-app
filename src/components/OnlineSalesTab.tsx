@@ -143,7 +143,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
         date: selectedDate,
         swiggySales: totalSwiggySales,
         zomatoSales: totalZomatoSales,
-        storeId: effectiveStoreId,
+        storeId: effectiveStoreId || undefined,
         createdAt: salesForDate?.createdAt || new Date().toISOString()
       };
 
@@ -155,7 +155,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
         date: selectedDate,
         swiggyPayout: totalSwiggyPayout,
         zomatoPayout: totalZomatoPayout,
-        storeId: effectiveStoreId,
+        storeId: effectiveStoreId || undefined,
         createdAt: payoutsForDate?.createdAt || new Date().toISOString()
       };
 

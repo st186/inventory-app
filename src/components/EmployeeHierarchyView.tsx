@@ -2,17 +2,7 @@ import { useState, useEffect } from 'react';
 import { Users, Building2, ChevronDown } from 'lucide-react';
 import * as api from '../utils/api';
 
-interface Employee {
-  id: string;
-  employeeId: string;
-  name: string;
-  email: string;
-  role: 'manager' | 'employee' | 'cluster_head';
-  designation?: string;
-  managerId?: string;
-  clusterHeadId?: string;
-  inchargeId?: string;
-}
+type Employee = api.Employee;
 
 interface EmployeeHierarchyViewProps {
   currentUser: {
@@ -111,7 +101,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
   };
 
   // Helper function to format designation for display
-  const formatDesignation = (designation?: string, role?: string) => {
+  const formatDesignation = (designation?: string | null, role?: string) => {
     if (!designation && !role) return 'N/A';
     
     if (designation) {

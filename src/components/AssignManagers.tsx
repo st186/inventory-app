@@ -3,17 +3,7 @@ import { Users, CheckCircle, AlertCircle, Save, ArrowUpCircle, Edit, X } from 'l
 import * as api from '../utils/api';
 import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 
-interface Employee {
-  employeeId: string;
-  name: string;
-  email: string;
-  role: string;
-  managerId?: string;
-  clusterHeadId?: string;
-  designation?: string;
-  department?: string;
-  inchargeId?: string;
-}
+type Employee = api.Employee;
 
 interface Manager {
   employeeId: string;
@@ -50,8 +40,8 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
       console.log('Current cluster head ID:', clusterHeadId);
       
       // Filter employees AND managers (both can be assigned to managers for multi-level hierarchy)
-      const employeesList = allEmployees.filter((emp: Employee) => 
-        (emp.role === 'employee' || emp.role === 'manager') && emp.role !== 'cluster_head'
+      const employeesList = allEmployees.filter((emp: Employee) =>
+        emp.role === 'employee' || emp.role === 'manager'
       );
       setEmployees(employeesList);
       
@@ -185,7 +175,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
   };
 
   // Format designation for display
-  const formatDesignation = (designation?: string) => {
+  const formatDesignation = (designation?: string | null) => {
     if (!designation) return <span className="text-gray-400 italic">No designation</span>;
     
     const designationMap: Record<string, string> = {

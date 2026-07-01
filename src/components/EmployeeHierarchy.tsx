@@ -52,7 +52,7 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
           const employees = await api.getEmployeesByManager(mgr.employeeId);
           statsData[mgr.employeeId] = {
             employeeCount: employees.length,
-            ...mgr.stats
+            ...(mgr as any).stats
           };
         }
         setStats(statsData);

@@ -2,7 +2,7 @@ import { projectId, publicAnonKey } from './supabase/info';
 import { getSupabaseClient } from './supabase/client';
 import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData } from '../App';
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
+export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
 // Helper to create Supabase client for browser
 function createBrowserSupabase() {
@@ -10,7 +10,7 @@ function createBrowserSupabase() {
 }
 
 // Helper to get current session with automatic token refresh
-async function getSession() {
+export async function getSession() {
   const supabase = createBrowserSupabase();
   
   // First check if there's an existing session
@@ -693,7 +693,7 @@ export async function migrateProductionHouseSystem(accessToken: string): Promise
 // ============================================
 
 export interface Employee {
-  id: string;
+  id?: string;
   employeeId: string;
   name: string;
   email: string;
@@ -701,11 +701,18 @@ export interface Employee {
   managerId?: string;
   clusterHeadId?: string;
   type?: 'full_time' | 'contract';
+  employmentType?: 'fulltime' | 'contract';
   joiningDate?: string;
+  dob?: string;
+  phone?: string;
+  aadharFront?: string;
+  aadharBack?: string;
   authUserId?: string;
+  createdBy?: string;
   createdAt?: string;
+  status?: 'active' | 'inactive';
   storeId?: string | null;
-  designation?: 'store_incharge' | 'production_incharge' | null;
+  designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
   department?: 'store_operations' | 'production' | null;
   inchargeId?: string;
 }
@@ -1059,6 +1066,32 @@ export async function syncDesignations() {
 }
 
 // Update unified employee (role, managerId, clusterHeadId, etc.)
+// Alias for updateUnifiedEmployee to match callers expecting a generic name
+export async function updateEmployee(employeeId: string, updates: any) {
+  return updateUnifiedEmployee(employeeId, updates);
+}
+
+export async function assignClusterHeadToManager(managerId: string, clusterHeadId: string) {
+  const session = await getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const response = await fetch(`${API_BASE}/unified-employees/${managerId}/assign-cluster-head`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ clusterHeadId })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to assign cluster head');
+  }
+
+  return await response.json();
+}
+
 export async function updateUnifiedEmployee(employeeId: string, updates: any) {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
@@ -1368,6 +1401,16 @@ export async function addInventoryItem(
   return data.item;
 }
 
+// Alias matching (accessToken, item) call order, used by backup/restore.
+// The endpoint itself doesn't require a user token (uses the public anon key),
+// so accessToken is accepted for signature compatibility but unused.
+export async function createInventoryItem(
+  _accessToken: string,
+  item: Omit<DynamicInventoryItem, 'id' | 'createdAt' | 'isActive'>
+): Promise<DynamicInventoryItem> {
+  return addInventoryItem(item);
+}
+
 export async function updateInventoryItem(
   id: string,
   updates: Partial<DynamicInventoryItem>
@@ -1536,6 +1579,62 @@ export async function getTimesheets(employeeId: string): Promise<Timesheet[]> {
   
   const data = await fetchWithAuth(`${API_BASE}/timesheets/${employeeId}`, session.access_token);
   return data.timesheets || [];
+}
+
+export async function saveTimesheet(entry: Timesheet): Promise<{ success: boolean; id: string }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  return fetchWithAuth(`${API_BASE}/timesheets`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
+}
+
+export async function saveTimesheetBulk(entries: Timesheet[]): Promise<{ success: boolean; count: number }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  return fetchWithAuth(`${API_BASE}/timesheets/bulk`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ timesheets: entries }),
+  });
+}
+
+export async function approveTimesheet(timesheetId: string, managerId: string): Promise<void> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  await fetchWithAuth(`${API_BASE}/timesheets/${timesheetId}/approve`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ managerId }),
+  });
+}
+
+export async function rejectTimesheet(timesheetId: string, managerId: string, reason?: string): Promise<void> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  await fetchWithAuth(`${API_BASE}/timesheets/${timesheetId}/reject`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ managerId, reason }),
+  });
 }
 
 export async function getLeaves(employeeId: string, accessToken?: string): Promise<LeaveApplication[]> {
@@ -1812,6 +1911,11 @@ export async function deleteSalesData(recordId: string, accessToken: string): Pr
   });
 }
 
+// Alias matching (accessToken, record) call order, used by backup/restore
+export async function addCategorySalesData(accessToken: string, record: SalesDataRecord): Promise<SalesDataRecord> {
+  return saveSalesData(record, accessToken);
+}
+
 // ============================================
 // PRODUCTION HOUSE API FUNCTIONS
 // ============================================
@@ -2022,6 +2126,7 @@ export async function getLastRecalibration(accessToken: string, locationId: stri
 
 // Alias for convenience
 export const fetchLatestRecalibration = getLastRecalibration;
+export const getRecalibrationByLocation = getLastRecalibration;
 
 export async function getRecalibrationHistory(accessToken: string, locationId: string, locationType?: string) {
   const url = locationType 

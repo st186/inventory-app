@@ -274,7 +274,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         cumulativeProduction.paneer += prod.paneerMomos?.final || 0;
         cumulativeProduction.vegKurkure += prod.vegKurkureMomos?.final || 0;
         cumulativeProduction.chickenKurkure += prod.chickenKurkureMomos?.final || 0;
-        cumulativeProduction.schezwan += prod.schezwanMomos?.final || 0;
+        cumulativeProduction.schezwan += (prod as any).schezwanMomos?.final || 0;
       });
 
       // Calculate cumulative sent up to selected date
@@ -297,7 +297,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         cumulativeSent.paneer += req.paneerMomos || 0;
         cumulativeSent.vegKurkure += req.vegKurkureMomos || 0;
         cumulativeSent.chickenKurkure += req.chickenKurkureMomos || 0;
-        cumulativeSent.schezwan += req.schezwanMomos || 0;
+        cumulativeSent.schezwan += (req as any).schezwanMomos || 0;
       });
 
       // Production for today (selected date)
@@ -309,7 +309,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         paneer: todayProduction?.paneerMomos?.final || 0,
         vegKurkure: todayProduction?.vegKurkureMomos?.final || 0,
         chickenKurkure: todayProduction?.chickenKurkureMomos?.final || 0,
-        schezwan: todayProduction?.schezwanMomos?.final || 0,
+        schezwan: (todayProduction as any)?.schezwanMomos?.final || 0,
       };
 
       // Sent today (selected date)
@@ -332,7 +332,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         todaySentQuantities.paneer += req.paneerMomos || 0;
         todaySentQuantities.vegKurkure += req.vegKurkureMomos || 0;
         todaySentQuantities.chickenKurkure += req.chickenKurkureMomos || 0;
-        todaySentQuantities.schezwan += req.schezwanMomos || 0;
+        todaySentQuantities.schezwan += (req as any).schezwanMomos || 0;
       });
 
       // Calculate available stock (cumulative approach with carry-forward)

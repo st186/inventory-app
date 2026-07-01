@@ -2,6 +2,8 @@
 // PUSH NOTIFICATION API
 // ============================================
 
+import { API_BASE, getSession } from './api';
+
 // Get VAPID public key
 export async function getVapidPublicKey(): Promise<string> {
   const response = await fetch(`${API_BASE}/push/vapid-public-key`);

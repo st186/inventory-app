@@ -138,6 +138,7 @@ const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
 };
 
 type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastWeek' | 'lastMonth' | 'custom';
+type WastageTimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
   // Load online sales and payout data for commission calculation
@@ -264,7 +265,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
   
   const [salesSubView, setSalesSubView] = useState<'revenue' | 'category'>('revenue');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('thisMonth');
-  const [wastageTimeFilter, setWastageTimeFilter] = useState<TimeFilter>('thisMonth');
+  const [wastageTimeFilter, setWastageTimeFilter] = useState<WastageTimeFilter>('monthly');
   
   // Initialize date range to current month (from 1st to today)
   const getDateRangeDefaults = () => {
@@ -886,7 +887,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         // Use local stores state (loaded in useEffect) or fallback to context.stores
         const allStores = stores.length > 0 ? stores : (context.stores || []);
         const store = allStores.find(s => s.id === p.storeId);
-        recordProductionHouseId = store?.productionHouseId || null;
+        recordProductionHouseId = store?.productionHouseId || undefined;
       }
       
       const resolvedPhId = recordProductionHouseId || p.storeId;
@@ -933,7 +934,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     const fulfilledRequests = (context.productionRequests || []).filter(req => {
       if (req.status !== 'delivered') return false;
       
-      const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+      const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
       if (!requestDate || !requestDate.startsWith(monthStr)) return false;
       
       const requestingStore = allStores.find(s => s.id === req.storeId);
@@ -1307,7 +1308,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         ]);
         console.log('💰 Raw payouts from API:', payouts);
         console.log('💰 Number of payouts:', payouts?.length || 0);
-        console.log('💰 Payout dates:', payouts?.map(p => ({ id: p.id, date: p.payoutDate, amount: p.amount })));
+        console.log('💰 Payout dates:', payouts?.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
         console.log('👥 Number of employees:', employees?.length || 0);
         setPayoutsData(payouts || []);
         setEmployeesData(employees || []);
@@ -1397,7 +1398,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
           if (context.user.storeId) {
             const storeEmployeeIds = employees
               .filter(emp => 
-                emp.storeId === context.user.storeId || 
+                emp.storeId === context.user!.storeId ||
                 emp.storeId === null || 
                 emp.storeId === undefined
               )
@@ -1412,7 +1413,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               ...leave,
               employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
               storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
-              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+              storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
             }));
             
             setTodayLeaveCount(storeLeaves.length);
@@ -1423,7 +1424,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               ...leave,
               employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
               storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
-              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+              storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
             }));
             
             setTodayLeaveCount(todayApprovedLeaves.length);
@@ -1446,7 +1447,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               ...leave,
               employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
               storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
-              storeName: employeeMap.get(leave.employeeId)?.storeName || 'N/A'
+              storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
             }));
             
             managerLeaveDetails.push(...enrichedLeaves);
@@ -2319,7 +2320,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
     filteredInventoryData.forEach(item => {
       const category = item.category || 'Other';
-      let displayName = INVENTORY_CATEGORIES[category] || category;
+      let displayName = (INVENTORY_CATEGORIES as Record<string, string>)[category] || category;
       
       // Combine Meat and Dairy into a single display category for Analytics
       if (category === 'meat' || category === 'dairy') {
@@ -2343,7 +2344,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
       if (item.category === 'personal_expense') return;
       
       const category = item.category || 'Other';
-      const displayName = OVERHEAD_CATEGORIES[category] || category;
+      const displayName = (OVERHEAD_CATEGORIES as Record<string, string>)[category] || category;
       if (!categoryExpenses[displayName]) {
         categoryExpenses[displayName] = 0;
         categoryItems[displayName] = [];
@@ -2953,7 +2954,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                           overheadData: filteredOverheadData,
                           metrics,
                           storeName,
-                          dateRange: timeFilter === 'custom' ? dateRange : undefined
+                          dateRange: timeFilter === 'custom' ? { start: dateRange.from, end: dateRange.to } : undefined
                         });
                         toast.success('Analytics report exported!');
                       }}
@@ -4121,7 +4122,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       allStoresCount: allStores.length,
                       foundStore: store ? { id: store.id, name: store.name, productionHouseId: store.productionHouseId } : null
                     });
-                    recordProductionHouseId = store?.productionHouseId || null;
+                    recordProductionHouseId = store?.productionHouseId || undefined;
                   }
                   
                   const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
@@ -4185,7 +4186,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
                     const allStores = stores.length > 0 ? stores : (context.stores || []);
                     const store = allStores.find(s => s.id === p.storeId);
-                    recordProductionHouseId = store?.productionHouseId || null;
+                    recordProductionHouseId = store?.productionHouseId || undefined;
                   }
                   
                   const phId = recordProductionHouseId || p.storeId;
@@ -4530,7 +4531,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     // Use local stores state (loaded in useEffect) or fallback to context.stores
                     const allStores = stores.length > 0 ? stores : (context.stores || []);
                     const store = allStores.find(s => s.id === p.storeId);
-                    recordProductionHouseId = store?.productionHouseId || null;
+                    recordProductionHouseId = store?.productionHouseId || undefined;
                   }
                   
                   const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
@@ -4596,7 +4597,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       
                       // CRITICAL FIX: Production data is stored in p.data object
                       // Read from p.data[item.name] (e.g., p.data.chicken_momo)
-                      const dataValue = (p.data as any)?.[item.name];
+                      const dataValue = ((p as any).data as any)?.[item.name];
                       
                       // If not found in data object, fallback to old format for backwards compatibility
                       let fieldValue = 0;
@@ -4646,7 +4647,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   
                   // Filter by current month only (monthly reset)
                   // Check what date field exists on production requests
-                  const requestDate = req.deliveredDate || req.requestDate || req.createdAt;
+                  const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
                   
                   if (!requestDate || !requestDate.startsWith(currentMonth)) {
                     console.log('❌ Filtered out request - wrong month:', {
@@ -4672,7 +4673,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       storeName: requestingStore?.name,
                       storeProductionHouseId: requestingStore?.productionHouseId,
                       productionHouseUUID,
-                      deliveredDate: req.deliveredDate,
+                      deliveredDate: req.deliveredAt,
                       availableStores: allStores.length,
                       matches
                     });
@@ -4754,9 +4755,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   id: p.id.slice(0, 8),
                   date: p.date,
                   approvalStatus: p.approvalStatus,
-                  hasData: !!p.data,
-                  dataKeys: p.data ? Object.keys(p.data) : [],
-                  sampleValue: p.data ? p.data[Object.keys(p.data)[0]] : null
+                  hasData: !!(p as any).data,
+                  dataKeys: (p as any).data ? Object.keys((p as any).data) : [],
+                  sampleValue: (p as any).data ? (p as any).data[Object.keys((p as any).data)[0]] : null
                 })));
                 
                 // NEW: Check if we have mid-month recalibration data
@@ -4797,8 +4798,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         date: prod.date,
                         recalDateOnly: recalDateOnly,
                         isAfter: isAfterRecalDate,
-                        hasData: !!prod.data,
-                        dataKeys: prod.data ? Object.keys(prod.data) : [],
+                        hasData: !!(prod as any).data,
+                        dataKeys: (prod as any).data ? Object.keys((prod as any).data) : [],
                         approvalStatus: prod.approvalStatus
                       });
                       
@@ -4810,7 +4811,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                           const stockKey = getStockKey(item.name);
                           
                           // CRITICAL FIX: Use same logic as totalProduced - check both p.data and old format
-                          const dataValue = (prod.data as any)?.[item.name];
+                          const dataValue = ((prod as any).data as any)?.[item.name];
                           let value = 0;
                           
                           if (dataValue !== undefined && dataValue !== null) {
@@ -4844,7 +4845,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   });
                   
                   fulfilledRequests.forEach(req => {
-                    const deliveryDate = req.deliveredDate || req.requestDate || req.createdAt;
+                    const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
                     // Compare full timestamps, not just dates
                     if (deliveryDate && deliveryDate > recalTimestamp) {
                       finishedProductsForCalc.forEach(item => {
@@ -5228,7 +5229,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     
                     if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
                       const store = context.stores?.find(s => s.id === p.storeId);
-                      recordProductionHouseId = store?.productionHouseId || null;
+                      recordProductionHouseId = store?.productionHouseId || undefined;
                     }
                     
                     const phId = recordProductionHouseId || p.storeId;
@@ -5239,8 +5240,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 });
                 
                 // Further filter by time period
-                let currentPeriodProduction = [];
-                let comparisonPeriodProduction = [];
+                let currentPeriodProduction: typeof filteredProduction = [];
+                let comparisonPeriodProduction: typeof filteredProduction = [];
                 let periodLabel = '';
                 let comparisonLabel = '';
                 
@@ -5463,7 +5464,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 };
                 
                 // Expose helper to parent scope for charts to use
-                window.wastageFilterHelper = { matchesProductionHouse, mappedStoreIds, filterById };
+                (window as any).wastageFilterHelper = { matchesProductionHouse, mappedStoreIds, filterById };
                 
                 const filteredProduction = productionData.filter(matchesProductionHouse);
 
@@ -5663,7 +5664,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
                       <button
                         key={filter}
-                        onClick={() => setWastageTimeFilter(filter as TimeFilter)}
+                        onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
                         className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
                           wastageTimeFilter === filter
                             ? 'bg-red-600 text-white'
@@ -6068,7 +6069,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       dayProduction.forEach(p => {
                         // Process regular momos (with dough and stuffing)
                         ['chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos'].forEach(field => {
-                          const momoData = p[field];
+                          const momoData = (p as any)[field];
                           if (momoData && momoData.final > 0) {
                             const sopKey = fieldMapping[field];
                             if (!usageByType[sopKey]) {
@@ -6088,7 +6089,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                         // Process kurkure momos (with batter and coating)
                         ['vegKurkureMomos', 'chickenKurkureMomos'].forEach(field => {
-                          const momoData = p[field];
+                          const momoData = (p as any)[field];
                           if (momoData && momoData.final > 0) {
                             const sopKey = fieldMapping[field];
                             if (!usageByType[sopKey]) {

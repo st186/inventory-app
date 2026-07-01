@@ -23,7 +23,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   const [formData, setFormData] = useState({
     category: (editingItem?.category || 'fresh_produce') as InventoryItem['category'],
     itemName: editingItem?.itemName || '',
-    customItem: editingItem ? !CATEGORY_ITEMS[editingItem.category].includes(editingItem.itemName) : false,
+    customItem: editingItem ? !(CATEGORY_ITEMS[editingItem.category] as readonly string[]).includes(editingItem.itemName) : false,
     quantity: editingItem?.quantity.toString() || '',
     unit: editingItem?.unit || 'kg',
     totalCost: editingItem?.totalCost.toString() || '',

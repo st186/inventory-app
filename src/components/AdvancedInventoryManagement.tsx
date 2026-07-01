@@ -1,3 +1,11 @@
+import { useState } from 'react';
+import { InventoryContextType } from '../App';
+import * as api from '../utils/api';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { InventoryDashboard } from './InventoryDashboard';
+import { InventoryAlerts } from './InventoryAlerts';
+import { EnhancedProductionRequests } from './EnhancedProductionRequests';
+import { ReportsVisualization } from './ReportsVisualization';
 import { PredictiveAnalytics } from './PredictiveAnalytics';
 import { StorePerformanceComparison } from './StorePerformanceComparison';
 import { ProductionHouseStockStatus } from './ProductionHouseStockStatus';

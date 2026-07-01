@@ -57,7 +57,7 @@ export function AuditDashboard({
     productionHouses,
     stockRequests,
     productionRequests,
-    employees,
+    onlineCashRecalibrations: [],
     stores,
     managedStoreIds: [],
     managedProductionHouseIds: [],
@@ -314,9 +314,6 @@ export function AuditDashboard({
               userRole="audit"
               selectedDate={selectedDate}
               userName={user.name}
-              userEmail={user.email}
-              employees={employees}
-              stores={stores}
             />
           </div>
         )}
