@@ -1811,6 +1811,7 @@ export interface ProductionRequest {
   preparedAt?: string;
   shippedAt?: string;
   shippedQuantities?: Record<string, number>; // Actual quantities shipped
+  shippedSauces?: Record<string, boolean>; // Which requested sauces were actually included
   shippingNotes?: Record<string, string>; // Notes for items with different quantities
   deliveredAt?: string;
   deliveredBy?: string; // Store In-Charge employee ID
@@ -1852,11 +1853,12 @@ export async function shipProductionRequest(
   id: string,
   shippedQuantities: Record<string, number>,
   shippingNotes: Record<string, string>,
-  shippedBy: string
+  shippedBy: string,
+  shippedSauces?: Record<string, boolean>
 ): Promise<ProductionRequest> {
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy }),
+    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces }),
   });
   return data.request;
 }

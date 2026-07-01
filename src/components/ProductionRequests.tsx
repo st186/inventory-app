@@ -77,6 +77,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [showShippingDialog, setShowShippingDialog] = useState(false);
   const [shippingRequest, setShippingRequest] = useState<api.ProductionRequest | null>(null);
   const [shippedQuantities, setShippedQuantities] = useState<Record<string, number>>({});
+  const [shippedSauces, setShippedSauces] = useState<Record<string, boolean>>({});
   const [shippingNotes, setShippingNotes] = useState<Record<string, string>>({});
   const [shippingResponsibility, setShippingResponsibility] = useState(false);
 
@@ -105,7 +106,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     { name: 'Tandoori Masala', unit: 'pkt' },
     { name: 'Sesame Seeds (Til)', unit: 'pkt' },
     { name: 'Chilli Flakes', unit: 'pkt' },
-    { name: 'Tomato Ketchup', unit: 'pkt' }
+    { name: 'Tomato Ketchup', unit: 'pkt' },
+    { name: 'Coke', unit: 'cartons' }
   ];
 
   // Sauces list
@@ -842,8 +844,17 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         initialQuantities[`utility_${name}`] = qty;
       });
     }
-    
+
+    // Sauces default to "shipped" (checked) unless the production head unchecks them
+    const initialSauces: Record<string, boolean> = {};
+    if (request.sauces) {
+      Object.keys(request.sauces).forEach(name => {
+        initialSauces[name] = true;
+      });
+    }
+
     setShippedQuantities(initialQuantities);
+    setShippedSauces(initialSauces);
     setShippingNotes({});
     setShippingResponsibility(false);
     setShowShippingDialog(true);
@@ -894,7 +905,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         shippingRequest.id,
         shippedQuantities,
         shippingNotes,
-        context.user.employeeId
+        context.user.employeeId,
+        shippedSauces
       );
       
       toast.success('Request marked as shipped with quantities recorded');
@@ -2632,6 +2644,103 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                               <span>Requested by: {request.requestedByName || request.requestedBy}</span>
                             </div>
 
+                            {/* Fulfillment Details - shows once shipped: requested vs actually shipped, highlighting shortfalls */}
+                            {request.shippedQuantities && (
+                              <div className={`rounded-xl p-5 mb-4 border-2 shadow-lg ${
+                                request.status === 'partially-shipped' || request.status === 'partially-delivered'
+                                  ? 'bg-gradient-to-br from-red-50 to-orange-50 border-red-300'
+                                  : 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300'
+                              }`}>
+                                <h5 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                  <Truck className="w-5 h-5" />
+                                  Fulfillment Details
+                                  {(request.status === 'partially-shipped' || request.status === 'partially-delivered') && (
+                                    <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-1 rounded-full">Items Missing</span>
+                                  )}
+                                </h5>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                  {finishedProducts.map(({ camelKey, label }) => {
+                                    const requestedQty = (request as any)[camelKey] || 0;
+                                    if (requestedQty === 0) return null;
+                                    const shippedQty = request.shippedQuantities?.[camelKey] || 0;
+                                    const isShort = shippedQty < requestedQty;
+                                    return (
+                                      <div key={camelKey} className={`rounded-lg p-3 border-2 ${isShort ? 'bg-red-100 border-red-400' : 'bg-white border-green-200'}`}>
+                                        <p className={`text-xs font-semibold ${isShort ? 'text-red-700' : 'text-gray-600'}`}>{label.replace(' Momos', '').replace(' Momo', '')}</p>
+                                        <p className={`text-lg font-bold ${isShort ? 'text-red-700' : 'text-green-700'}`}>
+                                          {shippedQty} <span className="text-xs font-normal text-gray-500">/ {requestedQty} requested</span>
+                                        </p>
+                                        {isShort && <p className="text-xs text-red-600 font-medium">Short by {requestedQty - shippedQty}</p>}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {request.kitchenUtilities && Object.entries(request.kitchenUtilities).map(([name, data]) => {
+                                    const shippedQty = request.shippedQuantities?.[`kitchenUtility_${name}`] || 0;
+                                    const isShort = shippedQty < data.quantity;
+                                    return (
+                                      <div key={`ku_${name}`} className={`rounded-lg p-3 border-2 ${isShort ? 'bg-red-100 border-red-400' : 'bg-white border-green-200'}`}>
+                                        <p className={`text-xs font-semibold ${isShort ? 'text-red-700' : 'text-gray-600'}`}>{name}</p>
+                                        <p className={`text-lg font-bold ${isShort ? 'text-red-700' : 'text-green-700'}`}>
+                                          {shippedQty} <span className="text-xs font-normal text-gray-500">/ {data.quantity} {data.unit}</span>
+                                        </p>
+                                        {isShort && <p className="text-xs text-red-600 font-medium">Short by {data.quantity - shippedQty} {data.unit}</p>}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {request.utilities && Object.entries(request.utilities).map(([name, requestedQty]) => {
+                                    const shippedQty = request.shippedQuantities?.[`utility_${name}`] || 0;
+                                    const isShort = shippedQty < requestedQty;
+                                    return (
+                                      <div key={`u_${name}`} className={`rounded-lg p-3 border-2 ${isShort ? 'bg-red-100 border-red-400' : 'bg-white border-green-200'}`}>
+                                        <p className={`text-xs font-semibold ${isShort ? 'text-red-700' : 'text-gray-600'}`}>{name}</p>
+                                        <p className={`text-lg font-bold ${isShort ? 'text-red-700' : 'text-green-700'}`}>
+                                          {shippedQty} <span className="text-xs font-normal text-gray-500">/ {requestedQty} pcs</span>
+                                        </p>
+                                        {isShort && <p className="text-xs text-red-600 font-medium">Short by {requestedQty - shippedQty}</p>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {request.sauces && Object.keys(request.sauces).length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-gray-200">
+                                    <p className="text-xs font-semibold text-gray-600 mb-2">Sauces</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {Object.keys(request.sauces).map((sauce) => {
+                                        const wasShipped = request.shippedSauces ? request.shippedSauces[sauce] : true;
+                                        return (
+                                          <span
+                                            key={sauce}
+                                            className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 ${
+                                              wasShipped
+                                                ? 'bg-white border-green-200 text-gray-700'
+                                                : 'bg-red-100 border-red-400 text-red-700'
+                                            }`}
+                                          >
+                                            {sauce} {!wasShipped && '— Missing'}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {request.shippingNotes && Object.keys(request.shippingNotes).length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-gray-200 space-y-1">
+                                    <p className="text-xs font-semibold text-gray-600 mb-1">Notes</p>
+                                    {Object.entries(request.shippingNotes).map(([key, note]) => (
+                                      <p key={key} className="text-sm text-gray-700">
+                                        <span className="font-medium">{key.replace(/_/g, ' ')}:</span> {note}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {/* Momos Quantities - DYNAMIC */}
                             <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-xl p-4 mb-4 border-2 border-indigo-200 shadow-md">
                               <h5 className="text-base font-bold text-indigo-800 mb-4 flex items-center gap-2">
@@ -3024,6 +3133,40 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             </div>
                           );
                         })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sauces Section */}
+                {shippingRequest.sauces && Object.keys(shippingRequest.sauces).length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-900 mb-3">Sauces</h3>
+                    <p className="text-sm text-gray-500 mb-3">Untick any sauce that could not be included in this shipment.</p>
+                    <div className="flex flex-wrap gap-3">
+                      {Object.keys(shippingRequest.sauces).map((sauce) => {
+                        const isIncluded = shippedSauces[sauce] ?? true;
+                        return (
+                          <label
+                            key={sauce}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                              isIncluded ? 'border-gray-200 bg-white' : 'border-red-300 bg-red-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isIncluded}
+                              onChange={(e) => setShippedSauces({
+                                ...shippedSauces,
+                                [sauce]: e.target.checked
+                              })}
+                              className="w-4 h-4 text-pink-600 rounded"
+                            />
+                            <span className={`text-sm font-medium ${isIncluded ? 'text-gray-700' : 'text-red-700'}`}>
+                              {sauce}
+                            </span>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

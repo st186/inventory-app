@@ -5616,8 +5616,8 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
 
   try {
     const id = c.req.param('id');
-    const { shippedQuantities, shippingNotes, shippedBy } = await c.req.json();
-    
+    const { shippedQuantities, shippingNotes, shippedBy, shippedSauces } = await c.req.json();
+
     const existingRequest = await kv.get(`production_request_${id}`);
     if (!existingRequest) {
       return c.json({ error: 'Production request not found' }, 404);
@@ -5664,11 +5664,24 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
         }
       }
     }
-    
+
+    // Check sauces (boolean requested/included, not quantity-based)
+    if (existingRequest.sauces && !isPartialShipment) {
+      for (const name of Object.keys(existingRequest.sauces as Record<string, boolean>)) {
+        const wasRequested = existingRequest.sauces[name];
+        const wasShipped = shippedSauces ? shippedSauces[name] : true;
+        if (wasRequested && !wasShipped) {
+          isPartialShipment = true;
+          break;
+        }
+      }
+    }
+
     const updates: any = {
       status: isPartialShipment ? 'partially-shipped' : 'shipped',
       shippedAt: now,
       shippedQuantities,
+      shippedSauces: shippedSauces || null,
       shippingNotes,
       updatedAt: now,
     };
@@ -7851,6 +7864,243 @@ app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
     });
   } catch (error: any) {
     console.error('Error sending stock request reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// ATTENDANCE (TIMESHEET) REMINDERS
+// ============================================
+// Checks each employee/manager for missing timesheet entries over the
+// trailing 5 days (excluding today, since today isn't over yet) and sends
+// a reminder notification (in-app + push) once per day if anything is
+// missing. A day is NOT considered missing if the employee has an approved
+// leave for that date, or if the date is before they joined.
+app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
+  try {
+    console.log('=== ATTENDANCE REMINDER CHECK ===');
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+
+    // Trailing window: the 5 days before today (today itself is still in progress)
+    const windowDates: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      windowDates.push(d.toISOString().split('T')[0]);
+    }
+
+    const allEmployees = await kv.getByPrefix('unified-employee:');
+    const attendees = allEmployees.filter((e: any) =>
+      (e.role === 'employee' || e.role === 'manager') && e.employeeId && e.authUserId
+    );
+
+    console.log(`Checking attendance for ${attendees.length} employees/managers`);
+
+    let sent = 0;
+    let skippedAlreadyNotified = 0;
+    let skippedComplete = 0;
+
+    for (const employee of attendees) {
+      // Ignore days before the employee joined
+      const joiningDate = employee.joiningDate || '0000-00-00';
+      const relevantDates = windowDates.filter(d => d >= joiningDate);
+      if (relevantDates.length === 0) continue;
+
+      const timesheets = await kv.getByPrefix(`timesheet:${employee.employeeId}:`);
+      const filledDates = new Set(timesheets.map((t: any) => t.date));
+
+      const leaves = await kv.getByPrefix(`leave:${employee.employeeId}:`);
+      const leaveDates = new Set(
+        leaves.filter((l: any) => l.status === 'approved').map((l: any) => l.leaveDate)
+      );
+
+      const missingDates = relevantDates.filter(d => !filledDates.has(d) && !leaveDates.has(d));
+
+      if (missingDates.length === 0) {
+        skippedComplete++;
+        continue;
+      }
+
+      // Only send one reminder per employee per day
+      const dedupeKey = `attendance_reminder_sent:${employee.employeeId}:${today}`;
+      const alreadySent = await kv.get(dedupeKey);
+      if (alreadySent) {
+        skippedAlreadyNotified++;
+        continue;
+      }
+
+      missingDates.sort();
+      const title = '⏰ Attendance Not Filled';
+      const message = missingDates.length === 1
+        ? `Hi ${employee.name}, you haven't filled your attendance/timesheet for ${missingDates[0]}. Please fill it as soon as possible.`
+        : `Hi ${employee.name}, you haven't filled your attendance/timesheet for ${missingDates.length} days (${missingDates[0]} to ${missingDates[missingDates.length - 1]}). Please catch up as soon as possible.`;
+
+      try {
+        await notifyUser(employee.authUserId, 'attendance_reminder', title, message, undefined, today);
+        await kv.set(dedupeKey, { sentAt: now.toISOString(), missingDates });
+        sent++;
+        console.log(`✓ Sent attendance reminder to ${employee.name} (${missingDates.length} day(s) missing)`);
+      } catch (error) {
+        console.error(`Error sending attendance reminder to ${employee.name}:`, error);
+      }
+    }
+
+    console.log(`=== ATTENDANCE REMINDER SUMMARY: ${sent} sent, ${skippedComplete} complete, ${skippedAlreadyNotified} already notified today ===`);
+
+    return c.json({
+      success: true,
+      message: 'Attendance reminders processed',
+      summary: {
+        totalChecked: attendees.length,
+        remindersSent: sent,
+        alreadyComplete: skippedComplete,
+        alreadyNotifiedToday: skippedAlreadyNotified,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error sending attendance reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// FULFILLMENT REMINDERS (Production Heads, 1PM)
+// ============================================
+// Reminds Production Heads about stock requests (raw stock, StockRequestManagement)
+// and production requests (momo requests, ProductionRequests) that are still
+// awaiting fulfillment/shipment. Stock requests are scoped to the Production Head's
+// own production house; production requests aren't scoped by production house in
+// the data model, so (matching how "New Production Request" already notifies
+// everyone) all pending production requests are included for every Production Head.
+app.post('/make-server-c2dd9b9d/send-fulfillment-reminders', async (c) => {
+  try {
+    console.log('=== FULFILLMENT REMINDER CHECK (1PM) ===');
+    const today = new Date().toISOString().split('T')[0];
+
+    const productionHeads = await getAllProductionHeads();
+
+    const allStockRequests = await kv.getByPrefix('stock_request_');
+    const pendingStockRequests = allStockRequests.filter((r: any) => r.status === 'pending');
+
+    const notYetSentStatuses = ['pending', 'accepted', 'in-preparation', 'prepared'];
+    const allProductionRequests = await kv.getByPrefix('production_request_');
+    const pendingProductionRequests = allProductionRequests.filter((r: any) => notYetSentStatuses.includes(r.status));
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const prodHead of productionHeads) {
+      if (!prodHead.authUserId || !prodHead.employeeId) continue;
+
+      const myStockRequests = pendingStockRequests.filter((r: any) => r.productionHouseId === prodHead.productionHouseId);
+      const myProductionRequests = pendingProductionRequests;
+
+      const totalPending = myStockRequests.length + myProductionRequests.length;
+      if (totalPending === 0) {
+        skipped++;
+        continue;
+      }
+
+      const dedupeKey = `fulfillment_reminder_sent:${prodHead.employeeId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        continue;
+      }
+
+      const parts: string[] = [];
+      if (myStockRequests.length > 0) parts.push(`${myStockRequests.length} stock request${myStockRequests.length > 1 ? 's' : ''}`);
+      if (myProductionRequests.length > 0) parts.push(`${myProductionRequests.length} production request${myProductionRequests.length > 1 ? 's' : ''}`);
+
+      const message = `Hi ${prodHead.name}, you have ${parts.join(' and ')} awaiting fulfillment. Please send stock to the requesting store(s) as soon as possible.`;
+
+      try {
+        await notifyUser(prodHead.authUserId, 'fulfillment_reminder', '📦 Requests Awaiting Fulfillment', message, undefined, today);
+        await kv.set(dedupeKey, {
+          sentAt: new Date().toISOString(),
+          stockRequestCount: myStockRequests.length,
+          productionRequestCount: myProductionRequests.length,
+        });
+        sent++;
+        console.log(`✓ Sent fulfillment reminder to ${prodHead.name} (${totalPending} pending)`);
+      } catch (error) {
+        console.error(`Error sending fulfillment reminder to ${prodHead.name}:`, error);
+      }
+    }
+
+    console.log(`=== FULFILLMENT REMINDER SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'Fulfillment reminders processed',
+      summary: { totalChecked: productionHeads.length, remindersSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending fulfillment reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// DAILY DATA ENTRY REMINDERS (Operations Managers, 8PM)
+// ============================================
+// Reminds Operations Managers who haven't logged inventory and/or sales data
+// for today yet. Fires once per person per day.
+app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
+  try {
+    console.log('=== DATA ENTRY REMINDER CHECK (8PM) ===');
+    const today = new Date().toISOString().split('T')[0];
+
+    const operationsManagers = await getOperationsManagers();
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const manager of operationsManagers) {
+      if (!manager.authUserId) continue;
+
+      const inventoryEntries = await kv.getByPrefix(`inventory:${manager.authUserId}:`);
+      const hasInventoryToday = inventoryEntries.some((e: any) => e.date === today);
+
+      const salesEntries = await kv.getByPrefix(`sales:${manager.authUserId}:`);
+      const hasSalesToday = salesEntries.some((e: any) => e.date === today);
+
+      if (hasInventoryToday && hasSalesToday) {
+        skipped++;
+        continue;
+      }
+
+      const dedupeKey = `data_entry_reminder_sent:${manager.authUserId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        continue;
+      }
+
+      const missing: string[] = [];
+      if (!hasInventoryToday) missing.push('inventory data');
+      if (!hasSalesToday) missing.push('sales data');
+
+      const message = `Hi ${manager.name}, you haven't logged ${missing.join(' or ')} for today (${today}). Please update it before the day ends.`;
+
+      try {
+        await notifyUser(manager.authUserId, 'data_entry_reminder', '📝 Daily Update Reminder', message, undefined, today);
+        await kv.set(dedupeKey, { sentAt: new Date().toISOString(), missing });
+        sent++;
+        console.log(`✓ Sent data entry reminder to ${manager.name} (missing: ${missing.join(', ')})`);
+      } catch (error) {
+        console.error(`Error sending data entry reminder to ${manager.name}:`, error);
+      }
+    }
+
+    console.log(`=== DATA ENTRY REMINDER SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'Data entry reminders processed',
+      summary: { totalChecked: operationsManagers.length, remindersSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending data entry reminders:', error);
     return c.json({ error: error.message }, 500);
   }
 });

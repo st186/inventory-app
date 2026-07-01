@@ -422,7 +422,10 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                                 Pending
                               </span>
                             ) : (
-                              <span className="text-gray-400 text-sm">Not filled</span>
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-sm">
+                                <AlertCircle className="w-4 h-4" />
+                                Unknown
+                              </span>
                             )}
                           </td>
                           <td className="px-6 py-4">

@@ -31,7 +31,11 @@ import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { SetupClusterHead } from './components/SetupClusterHead';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
-import { StockRequestReminderScheduler } from './components/StockRequestReminderScheduler';
+// Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
+// from the render tree — reminders now run server-side via pg_cron (see
+// supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
+// polling is needed. The component files are kept in case a client-side fallback
+// is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
@@ -282,6 +286,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [highlightRequestId, setHighlightRequestId] = useState<string | null>(null);
+  const [highlightTab, setHighlightTab] = useState<string | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [overheads, setOverheads] = useState<OverheadItem[]>([]);
   const [fixedCosts, setFixedCosts] = useState<FixedCostItem[]>([]);
@@ -777,6 +782,44 @@ export default function App() {
       setupPushNotifications();
     }
   }, [user]); // Run when user changes
+
+  // Deep-link handling for push notification clicks (see public/sw.js).
+  // Two delivery paths depending on whether a tab was already open when clicked:
+  //   1. Tab already open: service worker postMessages this window directly.
+  //   2. No tab open: service worker opens a new window with ?view=&tab=&highlightRequestId= params.
+  useEffect(() => {
+    const applyNavigationTarget = (target: { view: string; tab?: string; highlightRequestId?: string }) => {
+      if (!target?.view) return;
+      setActiveView(target.view as typeof activeView);
+      setHighlightTab(target.tab || null);
+      if (target.highlightRequestId) {
+        setHighlightRequestId(target.highlightRequestId);
+      }
+    };
+
+    // Case 1: tab was already open, service worker messages us directly
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'notification-navigate' && event.data.target) {
+        applyNavigationTarget(event.data.target);
+      }
+    };
+    navigator.serviceWorker?.addEventListener?.('message', handleServiceWorkerMessage);
+
+    // Case 2: a new window was opened with the target encoded in the URL
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    const tabParam = params.get('tab');
+    const highlightParam = params.get('highlightRequestId');
+    if (viewParam) {
+      applyNavigationTarget({ view: viewParam, tab: tabParam || undefined, highlightRequestId: highlightParam || undefined });
+      // Clean the URL so refreshing doesn't re-trigger the same navigation
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    return () => {
+      navigator.serviceWorker?.removeEventListener?.('message', handleServiceWorkerMessage);
+    };
+  }, []);
 
   const handleLogin = async (email: string, password: string) => {
     setAuthError(null);
@@ -1606,8 +1649,6 @@ export default function App() {
   if (isEmployee) {
     return (
       <>
-        {/* Stock Request Reminder Scheduler - runs in background */}
-        <StockRequestReminderScheduler />
         {pushNotificationWidget}
 
         <div className="min-h-screen bg-gray-50">
@@ -2023,7 +2064,7 @@ export default function App() {
               <EmployeeDashboard employeeId={user.employeeId || ''} />
             )
           ) : activeView === 'attendance' ? (
-            <AttendancePortal 
+            <AttendancePortal
               user={{
                 employeeId: user.employeeId,
                 name: user.name,
@@ -2032,6 +2073,7 @@ export default function App() {
               }}
               isIncharge={isAnyIncharge}
               inchargeDesignation={user.designation}
+              initialTab={highlightTab}
             />
           ) : activeView === 'export' && isAnyIncharge ? (
             <ExportData 
@@ -2067,8 +2109,6 @@ export default function App() {
 
   return (
     <>
-      {/* Stock Request Reminder Scheduler - runs in background */}
-      <StockRequestReminderScheduler />
       {pushNotificationWidget}
 
       <div className="min-h-screen bg-gray-50">

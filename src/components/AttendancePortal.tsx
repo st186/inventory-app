@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Clock, Calendar, CheckSquare, Users, UserCheck, Network } from 'lucide-react';
 import { EmployeeTimesheet } from './EmployeeTimesheet';
 import { EmployeeLeave } from './EmployeeLeave';
@@ -19,16 +19,26 @@ interface AttendancePortalProps {
   selectedStoreId?: string | null;
   isIncharge?: boolean;
   inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
+  initialTab?: string | null;
 }
 
-export function AttendancePortal({ user, selectedStoreId, isIncharge = false, inchargeDesignation = null }: AttendancePortalProps) {
+export function AttendancePortal({ user, selectedStoreId, isIncharge = false, inchargeDesignation = null, initialTab = null }: AttendancePortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => {
+    // A notification deep-link takes priority over the role-based default
+    if (initialTab) return initialTab;
     // Set default tab based on role
     if (user.role === 'employee') return 'timesheet';
     if (user.role === 'manager') return 'timesheet';
     if (user.role === 'cluster_head') return 'approve-timesheet';
     return 'timesheet';
   });
+
+  // If a new notification click arrives while this component is already mounted, switch tabs
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
 
