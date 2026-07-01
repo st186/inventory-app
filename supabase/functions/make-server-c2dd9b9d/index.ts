@@ -5627,14 +5627,20 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
     
     // Determine if this is a partial shipment
     let isPartialShipment = false;
-    
-    // Check momos
-    const momoFields = [
-      'chickenMomos', 'chickenCheeseMomos', 'vegMomos', 
-      'cheeseCornMomos', 'paneerMomos', 'vegKurkureMomos', 'chickenKurkureMomos'
-    ];
-    for (const field of momoFields) {
-      const requested = existingRequest[field] || 0;
+
+    // Check momos — momo item names are dynamic (configured via "Finished
+    // Product" inventory items), not a fixed set, so treat any numeric field
+    // on the request that isn't one of the known non-momo fields as a momo
+    // quantity to compare, rather than a hardcoded field list (which silently
+    // skipped this check entirely whenever item names didn't match exactly).
+    const nonMomoFields = new Set([
+      'id', 'requestDate', 'storeId', 'storeName', 'requestedBy', 'requestedByName',
+      'status', 'kitchenUtilities', 'sauces', 'utilities', 'notes', 'acceptedAt',
+      'acceptedBy', 'preparedAt', 'shippedAt', 'shippedQuantities', 'shippedSauces',
+      'shippingNotes', 'deliveredAt', 'deliveredBy', 'createdAt', 'updatedAt',
+    ]);
+    for (const [field, requested] of Object.entries(existingRequest)) {
+      if (nonMomoFields.has(field) || typeof requested !== 'number') continue;
       const shipped = shippedQuantities[field] || 0;
       if (requested > 0 && shipped < requested) {
         isPartialShipment = true;

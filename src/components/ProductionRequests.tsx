@@ -19,6 +19,7 @@ interface ProductionRequestsProps {
 export function ProductionRequests({ context, highlightRequestId, selectedStoreId, onNavigateToManageItems }: ProductionRequestsProps) {
   const [requests, setRequests] = useState<api.ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -284,9 +285,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
   const loadRequests = async () => {
     if (!context.user) return;
-    
+
     try {
-      setLoading(true);
+      // Only show the full-page spinner on the very first load. Subsequent
+      // refreshes (after accepting/shipping/etc.) update the list in place so
+      // the page doesn't collapse and reset the user's scroll position.
+      if (!hasLoadedOnce) {
+        setLoading(true);
+      }
       // Get fresh access token
       const accessToken = await getFreshAccessToken();
       if (!accessToken) {
@@ -327,6 +333,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       toast.error('Failed to load production requests');
     } finally {
       setLoading(false);
+      setHasLoadedOnce(true);
     }
   };
 
@@ -818,19 +825,17 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     
     // Initialize shipped quantities with requested quantities
     const initialQuantities: Record<string, number> = {};
-    
-    // Add momos
-    const momoFields = [
-      'chickenMomos', 'chickenCheeseMomos', 'vegMomos', 
-      'cheeseCornMomos', 'paneerMomos', 'vegKurkureMomos', 'chickenKurkureMomos'
-    ];
-    momoFields.forEach(field => {
-      const qty = (request as any)[field];
+
+    // Add momos — use the same dynamic finished-product list (from configured
+    // inventory items) that the request form and request card use, instead of
+    // a hardcoded field list, so newly added/renamed momo types aren't missed.
+    finishedProducts.forEach(({ camelKey }) => {
+      const qty = (request as any)[camelKey];
       if (qty > 0) {
-        initialQuantities[field] = qty;
+        initialQuantities[camelKey] = qty;
       }
     });
-    
+
     // Add kitchen utilities
     if (request.kitchenUtilities) {
       Object.entries(request.kitchenUtilities).forEach(([name, data]) => {
