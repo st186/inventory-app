@@ -21,6 +21,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [updatingRequestId, setUpdatingRequestId] = useState<string | null>(null);
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [chartTimeFilter, setChartTimeFilter] = useState<'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'>('daily');
@@ -803,7 +804,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
   const handleStatusUpdate = async (requestId: string, newStatus: api.ProductionRequest['status']) => {
     if (!context.user?.accessToken || !context.user?.employeeId) return;
+    if (updatingRequestId) return; // already processing a click somewhere, avoid double-submits
 
+    setUpdatingRequestId(requestId);
     try {
       await api.updateProductionRequestStatus(
         context.user.accessToken,
@@ -811,12 +814,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         newStatus,
         context.user.employeeId
       );
-      
+
       toast.success(`Request marked as ${newStatus.replace('-', ' ')}`);
       await loadRequests();
     } catch (error: any) {
       console.error('Error updating status:', error);
       toast.error('Failed to update status');
+    } finally {
+      setUpdatingRequestId(null);
     }
   };
 
@@ -1158,17 +1163,22 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     return chartData;
   };
 
-  // Auto-scroll to highlighted request when loaded
+  // Auto-scroll to highlighted request when loaded. Prefer scrolling straight
+  // to the Fulfillment Details subsection (what a store manager clicking a
+  // "shipped"/"partially-shipped" notification actually wants to see) if it
+  // exists on this request; fall back to the request card itself otherwise.
   useEffect(() => {
     if (highlightRequestId && !loading) {
-      const element = document.getElementById(`request-${highlightRequestId}`);
+      const element =
+        document.getElementById(`fulfillment-${highlightRequestId}`) ||
+        document.getElementById(`request-${highlightRequestId}`);
       if (element) {
         setTimeout(() => {
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 300);
       }
     }
-  }, [highlightRequestId, loading]);
+  }, [highlightRequestId, loading, requests]);
 
   // Auto-expand the first (most recent) date
   useEffect(() => {
@@ -2599,30 +2609,42 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   {isProductionHead && request.status === 'pending' && (
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'accepted')}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors text-sm font-medium"
+                                    disabled={updatingRequestId === request.id}
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
-                                    Accept Request
+                                    {updatingRequestId === request.id && (
+                                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                    {updatingRequestId === request.id ? 'Accepting...' : 'Accept Request'}
                                   </button>
                                 )}
-                                
+
                                 {isProductionHead && request.status === 'accepted' && (
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'in-preparation')}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors text-sm font-medium"
+                                    disabled={updatingRequestId === request.id}
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
-                                    Start Preparation
+                                    {updatingRequestId === request.id && (
+                                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                    {updatingRequestId === request.id ? 'Starting...' : 'Start Preparation'}
                                   </button>
                                 )}
-                                
+
                                 {isProductionHead && request.status === 'in-preparation' && (
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'prepared')}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors text-sm font-medium"
+                                    disabled={updatingRequestId === request.id}
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
-                                    Mark as Prepared
+                                    {updatingRequestId === request.id && (
+                                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                    {updatingRequestId === request.id ? 'Updating...' : 'Mark as Prepared'}
                                   </button>
                                 )}
-                                
+
                                 {isProductionHead && request.status === 'prepared' && (
                                   <button
                                     onClick={() => openShippingDialog(request)}
@@ -2631,14 +2653,18 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                     Mark as Shipped
                                   </button>
                                 )}
-                                
+
                                 {/* Store In-Charge Actions */}
                                 {isStoreIncharge && (request.status === 'shipped' || request.status === 'partially-shipped') && (
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, request.status === 'partially-shipped' ? 'partially-delivered' : 'delivered')}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium"
+                                    disabled={updatingRequestId === request.id}
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
-                                    Confirm Delivery
+                                    {updatingRequestId === request.id && (
+                                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                    {updatingRequestId === request.id ? 'Confirming...' : 'Confirm Delivery'}
                                   </button>
                                 )}
                               </div>
@@ -2651,11 +2677,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Fulfillment Details - shows once shipped: requested vs actually shipped, highlighting shortfalls */}
                             {request.shippedQuantities && (
-                              <div className={`rounded-xl p-5 mb-4 border-2 shadow-lg ${
-                                request.status === 'partially-shipped' || request.status === 'partially-delivered'
-                                  ? 'bg-gradient-to-br from-red-50 to-orange-50 border-red-300'
-                                  : 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300'
-                              }`}>
+                              <div
+                                id={`fulfillment-${request.id}`}
+                                className={`rounded-xl p-5 mb-4 border-2 shadow-lg scroll-mt-24 ${
+                                  request.status === 'partially-shipped' || request.status === 'partially-delivered'
+                                    ? 'bg-gradient-to-br from-red-50 to-orange-50 border-red-300'
+                                    : 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300'
+                                } ${highlightRequestId === request.id ? 'ring-4 ring-orange-400 ring-offset-2' : ''}`}
+                              >
                                 <h5 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
                                   <Truck className="w-5 h-5" />
                                   Fulfillment Details
