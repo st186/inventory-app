@@ -1647,13 +1647,22 @@ export default function App() {
   // Floating button + panel to let any logged-in user enable/check push notifications
   const pushNotificationWidget = (
     <>
-      <button
-        onClick={() => setShowPushNotificationPanel(true)}
-        className="fixed bottom-6 right-6 z-40 bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
-        title="Push Notifications"
-      >
-        <Bell className="w-5 h-5" />
-      </button>
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
+        <button
+          onClick={() => setShowSecurityPanel(true)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all"
+          title="Security Settings"
+        >
+          <ShieldCheck className="w-5 h-5" />
+        </button>
+        <button
+          onClick={() => setShowPushNotificationPanel(true)}
+          className="bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
+          title="Push Notifications"
+        >
+          <Bell className="w-5 h-5" />
+        </button>
+      </div>
       {showPushNotificationPanel && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">
@@ -1667,13 +1676,6 @@ export default function App() {
           </div>
         </div>
       )}
-      <button
-        onClick={() => setShowSecurityPanel(true)}
-        className="fixed bottom-24 right-6 z-40 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all"
-        title="Security Settings"
-      >
-        <ShieldCheck className="w-5 h-5" />
-      </button>
       {showSecurityPanel && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">

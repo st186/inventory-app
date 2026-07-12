@@ -359,8 +359,9 @@ function buildTotp(secretBase32: string, email: string) {
 // Verifies a submitted TOTP code against a user's stored 2FA record, applying
 // attempt-based lockout to prevent brute-forcing 6-digit codes.
 async function verifyTwoFactorCode(userId: string, email: string, record: any, code: string): Promise<{ ok: boolean; error?: string; status?: number }> {
-  if (record?.lockedUntil && Date.now() < new Date(record.lockedUntil).getTime()) {
-    const retryAfterMinutes = Math.ceil((new Date(record.lockedUntil).getTime() - Date.now()) / MS_PER_MINUTE);
+  const lockedUntilMs = record?.lockedUntil ? new Date(record.lockedUntil).getTime() : null;
+  if (lockedUntilMs && Date.now() < lockedUntilMs) {
+    const retryAfterMinutes = Math.ceil((lockedUntilMs - Date.now()) / MS_PER_MINUTE);
     return { ok: false, error: `Too many failed attempts. Try again in ${retryAfterMinutes} minute(s).`, status: 429 };
   }
 
