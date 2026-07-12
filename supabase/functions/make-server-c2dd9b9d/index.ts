@@ -340,8 +340,10 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
 // TWO-FACTOR AUTHENTICATION (TOTP / Google Authenticator)
 // ============================================
 const TOTP_ISSUER = 'Bhandar IMS';
+const TOTP_SECRET_SIZE_BYTES = 20; // 160-bit secret, the standard size recommended by RFC 4226/6238
+const MS_PER_MINUTE = 60 * 1000;
 const TWO_FA_MAX_ATTEMPTS = 5;
-const TWO_FA_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const TWO_FA_LOCKOUT_MS = 15 * MS_PER_MINUTE;
 
 function buildTotp(secretBase32: string, email: string) {
   return new OTPAuth.TOTP({
@@ -358,7 +360,7 @@ function buildTotp(secretBase32: string, email: string) {
 // attempt-based lockout to prevent brute-forcing 6-digit codes.
 async function verifyTwoFactorCode(userId: string, email: string, record: any, code: string): Promise<{ ok: boolean; error?: string; status?: number }> {
   if (record?.lockedUntil && Date.now() < new Date(record.lockedUntil).getTime()) {
-    const retryAfterMinutes = Math.ceil((new Date(record.lockedUntil).getTime() - Date.now()) / 60000);
+    const retryAfterMinutes = Math.ceil((new Date(record.lockedUntil).getTime() - Date.now()) / MS_PER_MINUTE);
     return { ok: false, error: `Too many failed attempts. Try again in ${retryAfterMinutes} minute(s).`, status: 429 };
   }
 
@@ -415,7 +417,7 @@ app.post('/make-server-c2dd9b9d/auth/2fa/setup', async (c) => {
       return c.json({ error: '2FA is already enabled. Disable it before setting up a new device.' }, 400);
     }
 
-    const secret = new OTPAuth.Secret({ size: 20 });
+    const secret = new OTPAuth.Secret({ size: TOTP_SECRET_SIZE_BYTES });
     const totp = buildTotp(secret.base32, email);
 
     await kvWithRetry.set(`2fa:${userId}`, {

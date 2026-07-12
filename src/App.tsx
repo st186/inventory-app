@@ -1669,7 +1669,7 @@ export default function App() {
       )}
       <button
         onClick={() => setShowSecurityPanel(true)}
-        className="fixed bottom-6 right-20 z-40 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all"
+        className="fixed bottom-24 right-6 z-40 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all"
         title="Security Settings"
       >
         <ShieldCheck className="w-5 h-5" />
