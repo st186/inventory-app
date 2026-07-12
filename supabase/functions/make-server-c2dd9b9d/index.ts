@@ -61,7 +61,11 @@ const configuredOrigins = (Deno.env.get('ALLOWED_ORIGINS') ?? '')
   .map((o) => o.trim())
   .filter(Boolean);
 
-const defaultDevOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'];
+const defaultDevOrigins = [
+  'http://localhost:3000', 'http://localhost:5173',
+  'http://127.0.0.1:3000', 'http://127.0.0.1:5173',
+  'http://[::1]:3000', 'http://[::1]:5173'
+];
 const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaultDevOrigins;
 
 app.use('*', cors({
@@ -227,6 +231,14 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
   }
 }
 
+// Extracts the role from a verifyUser() result, or null if the caller is unauthenticated.
+function extractCallerRole(authResult: any): string | null {
+  if (!authResult || 'error' in authResult) {
+    return null;
+  }
+  return authResult.user?.user_metadata?.role ?? null;
+}
+
 // Signup route
 app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
   try {
@@ -268,7 +280,7 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
 
       if (!isBootstrap) {
         const authResult = await verifyUser(c.req.header('Authorization'));
-        const callerRole = !('error' in authResult) ? authResult.user.user_metadata?.role : null;
+        const callerRole = extractCallerRole(authResult);
 
         if (callerRole !== 'cluster_head') {
           return c.json(
@@ -2346,18 +2358,18 @@ app.post('/make-server-c2dd9b9d/setup-cluster-head', async (c) => {
   try {
     const { email, password, name } = await c.req.json();
 
-    const { data: existingUsersForAuthCheck, error: listUsersError } = await supabase.auth.admin.listUsers();
-    if (listUsersError) {
+    const { data: existingUsers, error: listError } = await supabase.auth.admin.listUsers();
+    if (listError) {
       return c.json({ error: 'Unable to verify authorization' }, 500);
     }
 
-    const clusterHeadExists = existingUsersForAuthCheck.users.some(
+    const clusterHeadExists = existingUsers.users.some(
       (u) => u.user_metadata?.role === 'cluster_head'
     );
 
     if (clusterHeadExists) {
       const authResult = await verifyUser(c.req.header('Authorization'));
-      const callerRole = !('error' in authResult) ? authResult.user.user_metadata?.role : null;
+      const callerRole = extractCallerRole(authResult);
 
       if (callerRole !== 'cluster_head') {
         return c.json(

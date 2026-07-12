@@ -89,8 +89,8 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                   <option value="employee">Employee (View your payouts)</option>
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Manager, cluster head, and audit accounts can only be created by an
-                  existing cluster head. Contact your administrator for access.
+                  Manager, Cluster Head, and Audit accounts can only be created by an
+                  existing Cluster Head. Contact your administrator for access.
                 </p>
               </div>
 
