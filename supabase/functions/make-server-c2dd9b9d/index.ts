@@ -53,14 +53,25 @@ console.log('Environment check:', {
 });
 console.log('About to configure CORS and middleware...');
 
+// Allowed origins for CORS. Configure via the ALLOWED_ORIGINS env var (comma-separated)
+// in production, e.g. "https://your-app.netlify.app,https://your-custom-domain.com".
+// Falls back to common local development origins if not configured.
+const configuredOrigins = (Deno.env.get('ALLOWED_ORIGINS') ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const defaultDevOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'];
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaultDevOrigins;
+
 app.use('*', cors({
-  origin: '*',
+  origin: allowedOrigins,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   exposeHeaders: ['Content-Length'],
   maxAge: 86400,
 }));
-console.log('✅ CORS configured successfully');
+console.log('✅ CORS configured successfully with allowed origins:', allowedOrigins);
 
 app.use('*', logger(console.log));
 console.log('✅ Logger middleware configured');
@@ -239,6 +250,35 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
       return c.json({ error: 'Employee ID is required for employee accounts' }, 400);
     }
 
+    // Privileged roles (manager, cluster_head, audit) must not be self-assignable by
+    // anonymous callers. Only an existing cluster_head may create them, with a single
+    // bootstrap exception allowing the very first cluster_head account to be created
+    // when no cluster_head exists yet.
+    if (role !== 'employee') {
+      const { data: existingUsers, error: listError } = await supabase.auth.admin.listUsers();
+      if (listError) {
+        return c.json({ error: 'Unable to verify authorization for this role' }, 500);
+      }
+
+      const clusterHeadExists = existingUsers.users.some(
+        (u) => u.user_metadata?.role === 'cluster_head'
+      );
+
+      const isBootstrap = role === 'cluster_head' && !clusterHeadExists;
+
+      if (!isBootstrap) {
+        const authResult = await verifyUser(c.req.header('Authorization'));
+        const callerRole = !('error' in authResult) ? authResult.user.user_metadata?.role : null;
+
+        if (callerRole !== 'cluster_head') {
+          return c.json(
+            { error: 'Only an existing cluster head can create manager, cluster head, or audit accounts' },
+            403
+          );
+        }
+      }
+    }
+
     // Create user with Supabase Auth
     console.log('Creating user with admin API...');
     const { data, error } = await supabase.auth.admin.createUser({
@@ -283,200 +323,13 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
   }
 });
 
-// Quick setup endpoint for creating test cluster head (for development/testing)
-// This endpoint handles everything: delete old account + create new account + create employee record
-app.post('/make-server-c2dd9b9d/auth/setup-test-cluster-head', async (c) => {
-  try {
-    const testEmail = 'admin@bhandar.com';
-    const testPassword = 'Admin@123';
-    const testName = 'Test Cluster Head';
-    const employeeId = 'BM001';
-    
-    // Step 1: Check if cluster head already exists and delete it
-    try {
-      const { data: existingUsers } = await supabase.auth.admin.listUsers();
-      const existing = existingUsers?.users?.find(u => u.email === testEmail);
-      
-      if (existing) {
-        // Delete existing user
-        await supabase.auth.admin.deleteUser(existing.id);
-        console.log('Deleted existing test cluster head');
-        
-        // Also delete the unified employee record
-        try {
-          await kv.del(`unified-employee:${employeeId}`);
-          console.log('Deleted existing unified employee record');
-        } catch (e) {
-          console.log('No unified employee record to delete');
-        }
-      }
-    } catch (e) {
-      console.log('No existing user to delete');
-    }
-
-    // Step 2: Create the new account with admin API (bypasses email confirmation)
-    const { data: userData, error: createError } = await supabase.auth.admin.createUser({
-      email: testEmail,
-      password: testPassword,
-      user_metadata: {
-        name: testName,
-        role: 'cluster_head',
-        employeeId: employeeId
-      },
-      email_confirm: true // Auto-confirm email
-    });
-
-    if (createError) {
-      console.log('Failed to create cluster head:', createError);
-      return c.json({ error: createError.message }, 400);
-    }
-
-    console.log('Created cluster head auth account:', userData.user.id);
-
-    // Step 3: Create unified employee record
-    try {
-      const employee = {
-        employeeId: employeeId,
-        name: testName,
-        email: testEmail,
-        role: 'cluster_head',
-        employmentType: 'fulltime',
-        joiningDate: new Date().toISOString().split('T')[0],
-        createdBy: 'system',
-        status: 'active',
-        authUserId: userData.user.id,
-        createdAt: getNowIST()
-      };
-      
-      await kv.set(`unified-employee:${employeeId}`, employee);
-      console.log('Created unified employee record');
-    } catch (err) {
-      console.log('Error creating unified employee record:', err);
-    }
-
-    return c.json({
-      success: true,
-      message: 'Test cluster head created successfully!',
-      credentials: {
-        email: testEmail,
-        password: testPassword,
-        name: testName,
-        role: 'cluster_head',
-        employeeId: employeeId
-      }
-    });
-  } catch (error) {
-    console.log('Setup error:', error);
-    return c.json({ error: 'Failed to setup test cluster head' }, 500);
-  }
-});
-
-// Admin login endpoint - generates session token using admin privileges
-// This bypasses password authentication for development/testing
-app.post('/make-server-c2dd9b9d/auth/admin-login', async (c) => {
-  try {
-    const { email } = await c.req.json();
-    
-    if (!email) {
-      return c.json({ error: 'Email is required' }, 400);
-    }
-
-    // Find user by email
-    const { data: users, error: listError } = await supabase.auth.admin.listUsers();
-    if (listError) {
-      return c.json({ error: listError.message }, 400);
-    }
-
-    const user = users.users.find(u => u.email === email);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Generate a magic link which includes access tokens
-    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
-      email: email,
-      options: {
-        redirectTo: window?.location?.origin || 'http://localhost:3000'
-      }
-    });
-
-    if (linkError) {
-      console.log('Error generating login link:', linkError);
-      return c.json({ error: linkError.message }, 400);
-    }
-
-    // Extract tokens from the properties
-    const properties = linkData?.properties;
-    
-    return c.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        user_metadata: user.user_metadata
-      },
-      session: properties
-    });
-  } catch (error) {
-    console.log('Admin login error:', error);
-    return c.json({ error: 'Failed to generate admin login' }, 500);
-  }
-});
-
-// Delete ALL auth accounts - complete reset for fixing broken accounts
-app.post('/make-server-c2dd9b9d/auth/reset-all-accounts', async (c) => {
-  try {
-    console.log('Deleting ALL auth accounts for fresh start...');
-    
-    const { data: users, error: listError } = await supabase.auth.admin.listUsers();
-    if (listError) {
-      return c.json({ error: listError.message }, 400);
-    }
-
-    const deleted = [];
-    const errors = [];
-
-    // Delete every single auth account
-    for (const user of users.users) {
-      try {
-        await supabase.auth.admin.deleteUser(user.id);
-        deleted.push(user.email);
-        console.log(`Deleted: ${user.email}`);
-      } catch (err) {
-        errors.push({ email: user.email, error: String(err) });
-      }
-    }
-
-    // Clear authUserId from all employee records
-    try {
-      const allEmployees = await kv.getByPrefix('employee:');
-      for (const emp of allEmployees) {
-        await kv.set(`employee:${emp.id}`, { ...emp, authUserId: null });
-      }
-      
-      const unifiedEmployees = await kv.getByPrefix('unified-employee:');
-      for (const emp of unifiedEmployees) {
-        const key = `unified-employee:${emp.employeeId}`;
-        await kv.set(key, { ...emp, authUserId: null });
-      }
-    } catch (err) {
-      console.log('Error clearing employee auth IDs:', err);
-    }
-
-    return c.json({
-      success: true,
-      message: 'All auth accounts deleted. System reset complete.',
-      deleted: deleted.length,
-      deletedAccounts: deleted,
-      errors: errors.length,
-      errorDetails: errors
-    });
-  } catch (error) {
-    console.log('Reset accounts error:', error);
-    return c.json({ error: 'Failed to reset accounts' }, 500);
-  }
-});
+// NOTE: The following development/debug-only endpoints have been removed for security reasons
+// because they were reachable in production without any authentication or authorization checks:
+//   - POST /auth/setup-test-cluster-head (created an admin account with hardcoded credentials)
+//   - POST /auth/admin-login (minted a valid session for any email with no password check)
+//   - POST /auth/reset-all-accounts (deleted every auth account with no authorization)
+// If similar tooling is needed again, it must require an authenticated cluster_head caller
+// and must never be enabled in production deployments.
 
 // Get all inventory items for user
 app.get('/make-server-c2dd9b9d/inventory', async (c) => {
@@ -1958,54 +1811,22 @@ app.get('/make-server-c2dd9b9d/debug/user', async (c) => {
   });
 });
 
-// Fix user role - updates the user's metadata to include the role
-app.post('/make-server-c2dd9b9d/auth/fix-role', async (c) => {
-  try {
-    const { email, role } = await c.req.json();
+// NOTE: The unauthenticated POST /auth/fix-role endpoint has been removed. It allowed any
+// caller to escalate any account (identified only by email) to the cluster_head role with
+// no authentication. Role changes must now go through an authenticated, authorized workflow.
 
-    if (!email || !role) {
-      return c.json({ error: 'Email and role are required' }, 400);
-    }
-
-    if (!['manager', 'cluster_head', 'employee', 'audit'].includes(role)) {
-      return c.json({ error: 'Invalid role' }, 400);
-    }
-
-    // Get user by email
-    const { data: users, error: listError } = await supabase.auth.admin.listUsers();
-    if (listError) {
-      return c.json({ error: listError.message }, 400);
-    }
-
-    const user = users.users.find(u => u.email === email);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Update user metadata
-    const { data, error } = await supabase.auth.admin.updateUserById(
-      user.id,
-      {
-        user_metadata: {
-          ...user.user_metadata,
-          role
-        }
-      }
-    );
-
-    if (error) {
-      return c.json({ error: error.message }, 400);
-    }
-
-    return c.json({ success: true, message: `Role updated to ${role}. Please log out and log back in.` });
-  } catch (error) {
-    console.log('Error fixing role:', error);
-    return c.json({ error: 'Failed to update role' }, 500);
-  }
-});
-
-// Bulk create employee accounts
+// Bulk create employee accounts (manager/cluster_head only)
 app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const callerRole = authResult.user.user_metadata?.role;
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can create employee accounts' }, 403);
+  }
+
   try {
     const { employees } = await c.req.json();
 
@@ -2041,14 +1862,12 @@ app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
             email: emp.email, 
             status: 'ready_for_signup',
             employeeId: emp.employeeId,
-            message: 'Employee must complete signup at login page',
-            credentials: {
-              email: emp.email,
-              password: emp.password
-            }
+            message: 'Employee must complete signup at login page'
           });
 
-          // Update employee record with email and temp password
+          // Update employee record with email. The temp password is intentionally not
+          // persisted here - it is only used by the admin to share with the employee
+          // out-of-band, and the employee sets their own password during signup.
           const allEmployees = await kv.getByPrefix('employee:');
           const employeeRecord = allEmployees.find((e: any) => e.employeeId === emp.employeeId);
           
@@ -2057,7 +1876,6 @@ app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
             await kv.set(employeeKey, { 
               ...employeeRecord, 
               email: emp.email,
-              tempPassword: emp.password,  // Store for employee to use
               authUserId: null
             });
           }
@@ -2522,10 +2340,33 @@ app.delete('/make-server-c2dd9b9d/salary-advances/:id', async (c) => {
 });
 
 // Setup cluster head account (special endpoint for initial setup)
+// This is only allowed when no cluster_head account exists yet (bootstrap), otherwise
+// it must be called by an already-authenticated cluster_head.
 app.post('/make-server-c2dd9b9d/setup-cluster-head', async (c) => {
   try {
     const { email, password, name } = await c.req.json();
-    
+
+    const { data: existingUsersForAuthCheck, error: listUsersError } = await supabase.auth.admin.listUsers();
+    if (listUsersError) {
+      return c.json({ error: 'Unable to verify authorization' }, 500);
+    }
+
+    const clusterHeadExists = existingUsersForAuthCheck.users.some(
+      (u) => u.user_metadata?.role === 'cluster_head'
+    );
+
+    if (clusterHeadExists) {
+      const authResult = await verifyUser(c.req.header('Authorization'));
+      const callerRole = !('error' in authResult) ? authResult.user.user_metadata?.role : null;
+
+      if (callerRole !== 'cluster_head') {
+        return c.json(
+          { error: 'A cluster head account already exists. Only an existing cluster head can create additional cluster head accounts.' },
+          403
+        );
+      }
+    }
+
     console.log('Setting up cluster head account for:', email);
 
     // Generate employee ID

@@ -84,12 +84,14 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                   onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'cluster_head' | 'employee' | 'audit' })}
                   className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
                   required={isSignup}
+                  disabled
                 >
                   <option value="employee">Employee (View your payouts)</option>
-                  <option value="manager">Manager (Manage inventory)</option>
-                  <option value="cluster_head">Cluster Head (View & approve)</option>
-                  <option value="audit">Audit (View reports)</option>
                 </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Manager, cluster head, and audit accounts can only be created by an
+                  existing cluster head. Contact your administrator for access.
+                </p>
               </div>
 
               {formData.role === 'employee' && (
