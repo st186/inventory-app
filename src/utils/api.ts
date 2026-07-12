@@ -2430,3 +2430,58 @@ export async function getAllLoanRepayments(accessToken: string) {
   const response = await fetchWithAuth(`${API_BASE}/online-loans/repayments`, accessToken);
   return response.repayments || [];
 }
+
+// ============================================
+// TWO-FACTOR AUTHENTICATION (TOTP / Google Authenticator)
+// ============================================
+
+export async function get2FAStatus(accessToken: string): Promise<{ enabled: boolean }> {
+  return fetchWithAuth(`${API_BASE}/auth/2fa/status`, accessToken);
+}
+
+export async function setup2FA(accessToken: string): Promise<{ secret: string; otpauthUrl: string }> {
+  return fetchWithAuth(`${API_BASE}/auth/2fa/setup`, accessToken, { method: 'POST' });
+}
+
+export async function confirm2FASetup(accessToken: string, code: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${API_BASE}/auth/2fa/verify-setup`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+// Verifies the TOTP code entered during login. Deliberately bypasses fetchWithAuth's
+// shared 401 handling (which force-signs-out and reloads the whole app) since an
+// incorrect/incomplete code entered mid-login is an expected, retryable case, not a
+// reason to tear down the session.
+export async function verify2FALogin(accessToken: string, code: string): Promise<{ success: boolean }> {
+  const authHeaderValue = 'Bearer ' + accessToken;
+  const response = await fetch(`${API_BASE}/auth/2fa/verify`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': authHeaderValue,
+    },
+    body: JSON.stringify({ code }),
+  });
+
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {
+    // ignore - handled by !response.ok below
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.error || `HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return data;
+}
+
+export async function disable2FA(accessToken: string, code: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${API_BASE}/auth/2fa/disable`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
