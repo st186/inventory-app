@@ -266,6 +266,20 @@ function extractCallerRole(authResult: any): string | null {
   return authResult.user?.user_metadata?.role ?? null;
 }
 
+// Returns true if the authenticated caller is a manager/cluster_head (who may
+// access any employee's data), or is the employee identified by employeeId
+// themselves (matched via their own user_metadata.employeeId). Used to scope
+// self-service endpoints (e.g. viewing one's own timesheets/leaves) without
+// allowing an authenticated-but-unrelated employee to read someone else's data.
+function isSelfOrPrivileged(authResult: any, employeeId: string | null | undefined): boolean {
+  const role = extractCallerRole(authResult);
+  if (role === 'manager' || role === 'cluster_head') {
+    return true;
+  }
+  const callerEmployeeId = authResult?.user?.user_metadata?.employeeId;
+  return !!callerEmployeeId && !!employeeId && callerEmployeeId === employeeId;
+}
+
 // Authorizes callers of cron-triggered reminder endpoints. Accepts either:
 //  - a request bearing a valid X-Cron-Secret header matching the CRON_SECRET
 //    environment variable (used by the pg_cron jobs), or
@@ -2225,6 +2239,11 @@ app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
 // Employee Management Routes
 // Get all employees
 app.get('/make-server-c2dd9b9d/employees', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
     // Fetch from both old and new employee storage for backwards compatibility
     const [oldEmployees, unifiedEmployees] = await Promise.all([
