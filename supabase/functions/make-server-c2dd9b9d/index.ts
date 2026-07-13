@@ -1,10 +1,13 @@
 import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
+import { secureHeaders } from 'npm:hono/secure-headers';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as OTPAuth from 'npm:otpauth@9';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
+import { recordAudit, extractClientIp } from './audit.tsx';
+import { checkRateLimit, rateLimitedResponse } from './rateLimit.tsx';
 
 // ============================================
 // IST TIMEZONE UTILITIES (GMT+5:30)
@@ -78,8 +81,31 @@ app.use('*', cors({
 }));
 console.log('✅ CORS configured successfully with allowed origins:', allowedOrigins);
 
+// Adds standard hardening headers (X-Content-Type-Options, X-Frame-Options,
+// Strict-Transport-Security, etc.) to every response to reduce clickjacking,
+// MIME-sniffing, and related risks.
+app.use('*', secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'none'"],
+    frameAncestors: ["'none'"],
+  },
+  xFrameOptions: 'DENY',
+  crossOriginResourcePolicy: 'cross-origin',
+}));
+console.log('✅ Security headers middleware configured');
+
 app.use('*', logger(console.log));
 console.log('✅ Logger middleware configured');
+
+// Server-side debug logging flag. Verbose logs that could include PII (emails,
+// names, request bodies) are gated behind this flag; error-level logs are
+// always emitted. Enable via the DEBUG_MODE edge function secret when needed.
+const isDebugEnabled = Deno.env.get('DEBUG_MODE') === 'true';
+function debugLog(...args: unknown[]): void {
+  if (isDebugEnabled) {
+    console.log(...args);
+  }
+}
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -268,13 +294,23 @@ async function verifyCronOrPrivilegedUser(c: any): Promise<{ error: string; stat
 
 // Signup route
 app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
+  // Rate limit signup attempts per source IP to slow down automated account
+  // creation / credential-stuffing style abuse. Falls back to a shared bucket
+  // if no IP header is present (e.g. local dev), which still bounds abuse.
+  const signupIp = extractClientIp(c) || 'unknown';
+  const signupRateLimit = await checkRateLimit(`signup:${signupIp}`, 10, 15 * 60 * 1000);
+  if (!signupRateLimit.allowed) {
+    const { body, status } = rateLimitedResponse(signupRateLimit);
+    return c.json(body, status);
+  }
+
   try {
     const { email, password, name, role, employeeId } = await c.req.json();
 
-    console.log('=== SIGNUP REQUEST ===');
-    console.log('Email:', email);
-    console.log('Role:', role);
-    console.log('EmployeeId:', employeeId);
+    debugLog('=== SIGNUP REQUEST ===');
+    debugLog('Email:', email);
+    debugLog('Role:', role);
+    debugLog('EmployeeId:', employeeId);
 
     if (!email || !password || !role) {
       return c.json({ error: 'Email, password, and role are required' }, 400);
@@ -319,7 +355,7 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
     }
 
     // Create user with Supabase Auth
-    console.log('Creating user with admin API...');
+    debugLog('Creating user with admin API...');
     const { data, error } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -328,17 +364,35 @@ app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
     });
 
     if (error) {
-      console.log('Signup error:', error);
+      console.log('Signup error for role', role, ':', error.message);
       return c.json({ error: error.message }, 400);
     }
 
-    console.log('User created successfully:', data.user?.id);
+    debugLog('User created successfully:', data.user?.id);
     
     // IMPORTANT: Update the password to ensure it's properly set for signInWithPassword
-    console.log('Setting password explicitly...');
+    debugLog('Setting password explicitly...');
     await supabase.auth.admin.updateUserById(data.user.id, {
       password: password
     });
+
+    // Privileged account creation (manager/cluster_head/audit) is a security-sensitive
+    // action -- record who created it (if an authenticated caller performed it) for
+    // later review. Employee self-signups are not logged to avoid noise.
+    if (role !== 'employee') {
+      const creatorAuthResult = await verifyUser(c.req.header('Authorization'));
+      const creator = 'error' in creatorAuthResult ? null : creatorAuthResult.user;
+      await recordAudit({
+        action: 'account.create',
+        actor: creator
+          ? { id: creator.id, email: creator.email, role: extractCallerRole(creatorAuthResult) }
+          : null,
+        targetType: 'user',
+        targetId: data.user?.id,
+        details: { email, role },
+        ipAddress: signupIp,
+      });
+    }
 
     // If employee, link to existing employee record
     if (role === 'employee' && employeeId) {
@@ -510,6 +564,15 @@ app.post('/make-server-c2dd9b9d/auth/2fa/verify', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  // Per-user rate limit as an additional layer on top of the per-account
+  // attempt lockout in verifyTwoFactorCode, to bound request volume even
+  // before a code is checked.
+  const verifyRateLimit = await checkRateLimit(`2fa-verify:${authResult.user.id}`, 20, 15 * 60 * 1000);
+  if (!verifyRateLimit.allowed) {
+    const { body, status } = rateLimitedResponse(verifyRateLimit);
+    return c.json(body, status);
+  }
+
   try {
     const { code } = await c.req.json();
     const userId = authResult.user.id;
@@ -563,6 +626,15 @@ app.post('/make-server-c2dd9b9d/auth/2fa/disable', async (c) => {
     }
 
     await kvWithRetry.del(`2fa:${userId}`);
+
+    await recordAudit({
+      action: '2fa.disable',
+      actor: { id: userId, email, role: extractCallerRole(authResult) },
+      targetType: 'user',
+      targetId: userId,
+      ipAddress: extractClientIp(c),
+    });
+
     return c.json({ success: true });
   } catch (error) {
     console.error('❌ Error disabling 2FA:', error);
@@ -2241,6 +2313,19 @@ app.put('/make-server-c2dd9b9d/employees/:id', async (c) => {
 
 // Delete employee (Archive with employment history)
 app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
+  // NOTE: This legacy route previously had no authentication/authorization
+  // check at all, allowing any caller to archive/deactivate an employee
+  // record. Require manager/cluster_head, consistent with the equivalent
+  // /unified-employees/:employeeId delete route below.
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can delete employees' }, 403);
+  }
+
   try {
     const idParam = c.req.param('id');
     console.log('Archiving employee with ID:', idParam);
@@ -2312,7 +2397,16 @@ app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
     await kv.del(key);
     
     console.log('Employee archived successfully. Total earnings:', totalEarnings);
-    
+
+    await recordAudit({
+      action: 'employee.archive',
+      actor: { id: authResult.user.id, email: authResult.user.email, role: callerRole },
+      targetType: 'employee',
+      targetId: employeeId,
+      details: { archivedFrom: key },
+      ipAddress: extractClientIp(c),
+    });
+
     return c.json({ success: true, archived: archivedEmployee });
   } catch (error) {
     console.log('Error archiving employee:', error);
@@ -3600,7 +3694,15 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
     await kv.del(`unified-employee:${employeeId}`);
     
     console.log('Employee archived successfully. Total earnings:', totalEarnings);
-    
+
+    await recordAudit({
+      action: 'employee.archive',
+      actor: { id: authResult.user.id, email: authResult.user.email, role: callerRole },
+      targetType: 'employee',
+      targetId: employeeId,
+      ipAddress: extractClientIp(c),
+    });
+
     return c.json({ success: true, archived: archivedEmployee });
   } catch (error) {
     console.log('Error deleting unified employee:', error);
@@ -4702,9 +4804,28 @@ app.delete('/make-server-c2dd9b9d/cluster-heads/by-email/:email', async (c) => {
       // Delete from KV store
       await kv.del(`unified-employee:${employee.employeeId}`);
       console.log('Deleted employee record:', employee.employeeId);
+
+      await recordAudit({
+        action: 'cluster_head.delete',
+        actor: { id: authResult.user.id, email: authResult.user.email, role: callerRole },
+        targetType: 'user',
+        targetId: employee.employeeId,
+        details: { email },
+        ipAddress: extractClientIp(c),
+      });
+
       return c.json({ success: true, deleted: employee });
     } else {
       console.log('No employee record found, but auth user may have been deleted');
+
+      await recordAudit({
+        action: 'cluster_head.delete',
+        actor: { id: authResult.user.id, email: authResult.user.email, role: callerRole },
+        targetType: 'user',
+        details: { email },
+        ipAddress: extractClientIp(c),
+      });
+
       return c.json({ success: true, message: 'Deleted auth user if existed' });
     }
   } catch (error) {
