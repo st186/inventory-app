@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserPlus, Check, AlertCircle, Mail, Lock } from 'lucide-react';
-import { publicAnonKey } from '../utils/supabase/info';
+import { getSupabaseClient } from '../utils/supabase/client';
 
 interface Employee {
   id: string;
@@ -67,13 +67,21 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
 
       console.log('Creating accounts for employees:', employeeData);
 
+      const { data: { session } } = await getSupabaseClient().auth.getSession();
+      if (!session?.access_token) {
+        alert('You must be signed in as a manager or cluster head to create employee accounts.');
+        setProcessing(false);
+        return;
+      }
+      const authToken = session.access_token;
+
       const response = await fetch(
         `https://xssxnhrzxvtejavoqgwg.supabase.co/functions/v1/make-server-c2dd9b9d/auth/create-employee-accounts`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': 'Bearer ' + authToken
           },
           body: JSON.stringify({ employees: employeeData })
         }

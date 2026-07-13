@@ -18,6 +18,8 @@ const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInve
 const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
 const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
 import { AuthPage } from './components/AuthPage';
+import { TwoFactorVerify } from './components/TwoFactorVerify';
+import { TwoFactorSetup } from './components/TwoFactorSetup';
 import { EmployeeTimesheet } from './components/EmployeeTimesheet';
 import { EmployeeLeave } from './components/EmployeeLeave';
 import { CreateEmployee } from './components/CreateEmployee';
@@ -38,7 +40,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, ShieldCheck } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -298,6 +300,9 @@ export default function App() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showPushNotificationPanel, setShowPushNotificationPanel] = useState(false);
+  const [showSecurityPanel, setShowSecurityPanel] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [pendingTwoFactor, setPendingTwoFactor] = useState<{ accessToken: string; refreshToken: string; email: string } | null>(null);
   const [stores, setStores] = useState<api.Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
@@ -716,7 +721,15 @@ export default function App() {
         designation
       };
       setUser(userData);
-      
+
+      // Reflect current 2FA enrollment status for the security settings panel
+      try {
+        const status = await api.get2FAStatus(session.access_token);
+        setTwoFactorEnabled(!!status.enabled);
+      } catch (error) {
+        console.error('Error fetching 2FA status on session check:', error);
+      }
+
       // Load data for the user
       await loadData(session.access_token);
       
@@ -821,6 +834,47 @@ export default function App() {
     };
   }, []);
 
+  const finalizeLogin = async (authUser: any, session: { access_token: string }) => {
+    let storeId = null;
+    let designation = authUser.user_metadata?.designation || null;
+
+    // For employees, fetch full employee record to get storeId
+    if (authUser.user_metadata?.employeeId) {
+      try {
+        const employees = await api.getEmployees();
+        const employeeRecord = employees.find(emp => emp.employeeId === authUser.user_metadata?.employeeId);
+        if (employeeRecord) {
+          storeId = employeeRecord.storeId || null;
+          designation = employeeRecord.designation || designation;
+        }
+      } catch (error) {
+        console.error('Error fetching employee storeId:', error);
+      }
+    }
+
+    const userData = {
+      email: authUser.email || '',
+      name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'User',
+      role: authUser.user_metadata?.role || 'manager',
+      employeeId: authUser.user_metadata?.employeeId || null,
+      accessToken: session.access_token,
+      storeId,
+      designation
+    };
+    setUser(userData);
+    setTwoFactorEnabled(false);
+    setPendingTwoFactor(null);
+
+    // Load data for the user
+    await loadData(session.access_token);
+
+    // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
+    if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
+      await loadStores();
+      await loadEmployees();
+    }
+  };
+
   const handleLogin = async (email: string, password: string) => {
     setAuthError(null);
     try {
@@ -835,47 +889,61 @@ export default function App() {
       }
 
       if (data.user && data.session) {
-        let storeId = null;
-        let designation = data.user.user_metadata?.designation || null;
-        
-        // For employees, fetch full employee record to get storeId
-        if (data.user.user_metadata?.employeeId) {
-          try {
-            const employees = await api.getEmployees();
-            const employeeRecord = employees.find(emp => emp.employeeId === data.user.user_metadata?.employeeId);
-            if (employeeRecord) {
-              storeId = employeeRecord.storeId || null;
-              designation = employeeRecord.designation || designation;
-            }
-          } catch (error) {
-            console.error('Error fetching employee storeId:', error);
-          }
+        // Check whether this account has TOTP-based 2FA enabled before treating the
+        // password check alone as a completed login.
+        let requires2FA = false;
+        try {
+          const status = await api.get2FAStatus(data.session.access_token);
+          requires2FA = !!status.enabled;
+        } catch (statusError) {
+          console.error('Error checking 2FA status:', statusError);
         }
-        
-        const userData = {
-          email: data.user.email || '',
-          name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
-          role: data.user.user_metadata?.role || 'manager',
-          employeeId: data.user.user_metadata?.employeeId || null,
-          accessToken: data.session.access_token,
-          storeId,
-          designation
-        };
-        setUser(userData);
-        
-        // Load data for the user
-        await loadData(data.session.access_token);
-        
-        // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
-        if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
-          await loadStores();
-          await loadEmployees();
+
+        if (requires2FA) {
+          // Don't persist or otherwise use this session until the second factor is
+          // verified. Sign out to clear the auto-persisted session, keep the tokens
+          // in memory only, and prompt for the authenticator code.
+          const refreshToken = data.session.refresh_token;
+          await supabaseClient.auth.signOut();
+          setPendingTwoFactor({
+            accessToken: data.session.access_token,
+            refreshToken,
+            email: data.user.email || email
+          });
+          return;
         }
+
+        await finalizeLogin(data.user, data.session);
       }
     } catch (error) {
       console.log('Login error:', error);
       setAuthError('Failed to sign in. Please try again.');
     }
+  };
+
+  const handleTwoFactorVerified = async () => {
+    if (!pendingTwoFactor) return;
+    const { accessToken, refreshToken } = pendingTwoFactor;
+
+    // Restore the real Supabase session now that the second factor has been verified.
+    const { data, error } = await supabaseClient.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken
+    });
+
+    if (error || !data.user || !data.session) {
+      setAuthError('Failed to complete sign in. Please try again.');
+      setPendingTwoFactor(null);
+      return;
+    }
+
+    setTwoFactorEnabled(true);
+    await finalizeLogin(data.user, data.session);
+  };
+
+  const handleTwoFactorCancel = () => {
+    setPendingTwoFactor(null);
+    setAuthError(null);
   };
 
   const handleSignup = async (email: string, password: string, name: string, role: 'manager' | 'cluster_head' | 'employee' | 'audit') => {
@@ -953,6 +1021,8 @@ export default function App() {
   const handleLogout = async () => {
     await supabaseClient.auth.signOut();
     setUser(null);
+    setTwoFactorEnabled(false);
+    setPendingTwoFactor(null);
     setInventory([]);
     setOverheads([]);
     setFixedCosts([]);
@@ -1555,6 +1625,16 @@ export default function App() {
 
   // Show auth page if not logged in
   if (!user) {
+    if (pendingTwoFactor) {
+      return (
+        <TwoFactorVerify
+          accessToken={pendingTwoFactor.accessToken}
+          email={pendingTwoFactor.email}
+          onVerified={handleTwoFactorVerified}
+          onCancel={handleTwoFactorCancel}
+        />
+      );
+    }
     return (
       <AuthPage
         onLogin={handleLogin}
@@ -1567,13 +1647,22 @@ export default function App() {
   // Floating button + panel to let any logged-in user enable/check push notifications
   const pushNotificationWidget = (
     <>
-      <button
-        onClick={() => setShowPushNotificationPanel(true)}
-        className="fixed bottom-6 right-6 z-40 bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
-        title="Push Notifications"
-      >
-        <Bell className="w-5 h-5" />
-      </button>
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
+        <button
+          onClick={() => setShowSecurityPanel(true)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all"
+          title="Security Settings"
+        >
+          <ShieldCheck className="w-5 h-5" />
+        </button>
+        <button
+          onClick={() => setShowPushNotificationPanel(true)}
+          className="bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
+          title="Push Notifications"
+        >
+          <Bell className="w-5 h-5" />
+        </button>
+      </div>
       {showPushNotificationPanel && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">
@@ -1584,6 +1673,23 @@ export default function App() {
               <X className="w-5 h-5" />
             </button>
             <PushNotificationStatus userId={user.employeeId || user.email} />
+          </div>
+        </div>
+      )}
+      {showSecurityPanel && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">
+            <button
+              onClick={() => setShowSecurityPanel(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <TwoFactorSetup
+              accessToken={user.accessToken}
+              enabled={twoFactorEnabled}
+              onStatusChange={setTwoFactorEnabled}
+            />
           </div>
         </div>
       )}

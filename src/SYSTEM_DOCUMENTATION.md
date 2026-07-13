@@ -712,6 +712,9 @@ SUPABASE_DB_URL           # Auto-provided by Supabase
 VAPID_PUBLIC_KEY          # Manual setup
 VAPID_PRIVATE_KEY         # Manual setup
 VAPID_SUBJECT             # Manual setup
+ALLOWED_ORIGINS           # Manual setup - comma-separated list of allowed CORS origins in production
+CRON_SECRET               # Manual setup - shared secret used by pg_cron reminder jobs (see supabase/migrations/20260701000002_secure_reminder_cron_jobs.sql)
+DEBUG_MODE                # Manual setup - set to "true" to enable verbose server-side logging (default: off; keep off in production to avoid logging PII)
 ```
 
 ---
