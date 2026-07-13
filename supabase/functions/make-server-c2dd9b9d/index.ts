@@ -240,6 +240,32 @@ function extractCallerRole(authResult: any): string | null {
   return authResult.user?.user_metadata?.role ?? null;
 }
 
+// Authorizes callers of cron-triggered reminder endpoints. Accepts either:
+//  - a request bearing a valid X-Cron-Secret header matching the CRON_SECRET
+//    environment variable (used by the pg_cron jobs), or
+//  - an authenticated manager/cluster_head calling the endpoint manually.
+// Returns null if authorized, or a Response-shaped error object to return otherwise.
+async function verifyCronOrPrivilegedUser(c: any): Promise<{ error: string; status: number } | null> {
+  const cronSecret = Deno.env.get('CRON_SECRET');
+  const providedSecret = c.req.header('X-Cron-Secret');
+
+  if (cronSecret && providedSecret && providedSecret === cronSecret) {
+    return null;
+  }
+
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return { error: authResult.error, status: authResult.status };
+  }
+
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return { error: 'Only managers or cluster heads can trigger this endpoint', status: 403 };
+  }
+
+  return null;
+}
+
 // Signup route
 app.post('/make-server-c2dd9b9d/auth/signup', async (c) => {
   try {
@@ -2688,6 +2714,10 @@ app.post('/make-server-c2dd9b9d/setup-cluster-head', async (c) => {
 
 // Get all item sales data
 app.get('/make-server-c2dd9b9d/item-sales', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
   try {
     console.log('Fetching item sales data...');
     const itemSales = await kv.getByPrefix('item-sales:');
@@ -2701,6 +2731,15 @@ app.get('/make-server-c2dd9b9d/item-sales', async (c) => {
 
 // Upload item sales data (merges with existing data)
 app.post('/make-server-c2dd9b9d/item-sales', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can upload item sales data' }, 403);
+  }
+
   try {
     console.log('=== Item Sales Upload Started ===');
     
@@ -2792,6 +2831,15 @@ app.post('/make-server-c2dd9b9d/item-sales', async (c) => {
 
 // Delete all item sales data
 app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can clear item sales data' }, 403);
+  }
+
   try {
     console.log('Clearing all item sales data...');
     const itemSales = await kv.getByPrefix('item-sales:');
@@ -2859,6 +2907,15 @@ function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number 
 
 // Create employee account (by manager)
 app.post('/make-server-c2dd9b9d/attendance/employees', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can create employee accounts' }, 403);
+  }
+
   try {
     const { name, dob, email, password, employeeId, managerId, aadharFront, aadharBack, joiningDate } = await c.req.json();
     
@@ -3421,8 +3478,22 @@ app.get('/make-server-c2dd9b9d/unified-employees/cluster-head/:clusterHeadId', a
 
 // Create unified employee (Manager or Employee with unique ID BM001, BM002, etc.)
 app.post('/make-server-c2dd9b9d/unified-employees', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can create employees' }, 403);
+  }
+
   try {
     const employeeData = await c.req.json();
+
+    // Only a cluster head may create privileged accounts (manager, cluster_head, audit).
+    if (employeeData.role && employeeData.role !== 'employee' && callerRole !== 'cluster_head') {
+      return c.json({ error: 'Only an existing cluster head can create manager, cluster head, or audit accounts' }, 403);
+    }
     
     if (!employeeData.employeeId || !employeeData.name || !employeeData.email || !employeeData.password) {
       return c.json({ error: 'Missing required fields' }, 400);
@@ -3474,6 +3545,15 @@ app.post('/make-server-c2dd9b9d/unified-employees', async (c) => {
 
 // Delete unified employee (Archive with employment history)
 app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can delete employees' }, 403);
+  }
+
   try {
     const employeeId = c.req.param('employeeId');
     
@@ -3530,6 +3610,15 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
 
 // Reset employee password
 app.post('/make-server-c2dd9b9d/unified-employees/:employeeId/reset-password', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can reset employee passwords' }, 403);
+  }
+
   try {
     const employeeId = c.req.param('employeeId');
     const { newPassword } = await c.req.json();
@@ -4579,6 +4668,15 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/assign-incharge', async (c) 
 
 // Delete cluster head by email (admin utility endpoint)
 app.delete('/make-server-c2dd9b9d/cluster-heads/by-email/:email', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can delete cluster head accounts' }, 403);
+  }
+
   try {
     const email = decodeURIComponent(c.req.param('email'));
     console.log('Deleting cluster head with email:', email);
@@ -7707,11 +7805,20 @@ app.get('/make-server-c2dd9b9d/push/vapid-public-key', (c) => {
 
 // Subscribe to push notifications
 app.post('/make-server-c2dd9b9d/push/subscribe', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
     const { subscription, userId } = await c.req.json();
     
     if (!subscription || !userId) {
       return c.json({ error: 'Subscription and userId are required' }, 400);
+    }
+
+    if (userId !== authResult.user.id) {
+      return c.json({ error: 'Cannot subscribe on behalf of another user' }, 403);
     }
     
     await push.storeSubscription(userId, subscription);
@@ -7728,11 +7835,20 @@ app.post('/make-server-c2dd9b9d/push/subscribe', async (c) => {
 
 // Unsubscribe from push notifications
 app.post('/make-server-c2dd9b9d/push/unsubscribe', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
     const { userId } = await c.req.json();
     
     if (!userId) {
       return c.json({ error: 'userId is required' }, 400);
+    }
+
+    if (userId !== authResult.user.id) {
+      return c.json({ error: 'Cannot unsubscribe another user' }, 403);
     }
     
     await push.removeSubscription(userId);
@@ -7820,6 +7936,11 @@ app.post('/make-server-c2dd9b9d/push/send-multiple', async (c) => {
 // stock requests for today and sends them a reminder notification.
 // Can be called manually or via cron job at 3pm daily.
 app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
+  const authError = await verifyCronOrPrivilegedUser(c);
+  if (authError) {
+    return c.json({ error: authError.error }, authError.status);
+  }
+
   try {
     console.log('=== STOCK REQUEST REMINDER CHECK (3PM) ===');
     console.log('Timestamp:', new Date().toISOString());
@@ -7945,6 +8066,11 @@ app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
 // missing. A day is NOT considered missing if the employee has an approved
 // leave for that date, or if the date is before they joined.
 app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
+  const authError = await verifyCronOrPrivilegedUser(c);
+  if (authError) {
+    return c.json({ error: authError.error }, authError.status);
+  }
+
   try {
     console.log('=== ATTENDANCE REMINDER CHECK ===');
     const now = new Date();
@@ -8042,6 +8168,11 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
 // the data model, so (matching how "New Production Request" already notifies
 // everyone) all pending production requests are included for every Production Head.
 app.post('/make-server-c2dd9b9d/send-fulfillment-reminders', async (c) => {
+  const authError = await verifyCronOrPrivilegedUser(c);
+  if (authError) {
+    return c.json({ error: authError.error }, authError.status);
+  }
+
   try {
     console.log('=== FULFILLMENT REMINDER CHECK (1PM) ===');
     const today = new Date().toISOString().split('T')[0];
@@ -8115,6 +8246,11 @@ app.post('/make-server-c2dd9b9d/send-fulfillment-reminders', async (c) => {
 // Reminds Operations Managers who haven't logged inventory and/or sales data
 // for today yet. Fires once per person per day.
 app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
+  const authError = await verifyCronOrPrivilegedUser(c);
+  if (authError) {
+    return c.json({ error: authError.error }, authError.status);
+  }
+
   try {
     console.log('=== DATA ENTRY REMINDER CHECK (8PM) ===');
     const today = new Date().toISOString().split('T')[0];
@@ -8772,6 +8908,15 @@ app.post('/make-server-c2dd9b9d/cash-conversion', async (c) => {
 
 // Create a new investor
 app.post('/make-server-c2dd9b9d/investors', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const investorData = await c.req.json();
     
@@ -8800,6 +8945,15 @@ app.post('/make-server-c2dd9b9d/investors', async (c) => {
 
 // Get all investors
 app.get('/make-server-c2dd9b9d/investors', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const investors = await kvWithRetry.getByPrefix('investor:');
     
@@ -8819,6 +8973,15 @@ app.get('/make-server-c2dd9b9d/investors', async (c) => {
 
 // Update investor
 app.put('/make-server-c2dd9b9d/investors/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const investorId = c.req.param('id');
     const updateData = await c.req.json();
@@ -8848,6 +9011,15 @@ app.put('/make-server-c2dd9b9d/investors/:id', async (c) => {
 
 // Delete investor
 app.delete('/make-server-c2dd9b9d/investors/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const investorId = c.req.param('id');
     
@@ -8869,6 +9041,15 @@ app.delete('/make-server-c2dd9b9d/investors/:id', async (c) => {
 
 // Apply for a new loan
 app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const loanData = await c.req.json();
     
@@ -8911,6 +9092,15 @@ app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
 
 // Get all loans (optionally filter by store)
 app.get('/make-server-c2dd9b9d/online-loans', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const storeId = c.req.query('storeId');
     
@@ -8935,6 +9125,15 @@ app.get('/make-server-c2dd9b9d/online-loans', async (c) => {
 
 // Repay a loan (partial or full)
 app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const loanId = c.req.param('id');
     const repaymentData = await c.req.json();
@@ -8988,6 +9187,15 @@ app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
 
 // Get all loans across all stores
 app.get('/make-server-c2dd9b9d/online-loans/all', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const loans = await kvWithRetry.getByPrefix('online-loan:');
     
@@ -9009,6 +9217,15 @@ app.get('/make-server-c2dd9b9d/online-loans/all', async (c) => {
 
 // Get all loan repayments (for analytics)
 app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  const callerRole = extractCallerRole(authResult);
+  if (callerRole !== 'manager' && callerRole !== 'cluster_head') {
+    return c.json({ error: 'Only managers or cluster heads can access this endpoint' }, 403);
+  }
+
   try {
     const loans = await kvWithRetry.getByPrefix('online-loan:');
     
@@ -9046,6 +9263,14 @@ app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
 
 // DIAGNOSTIC: Check inventory database status (NO AUTH REQUIRED FOR DEBUGGING)
 app.get('/make-server-c2dd9b9d/diagnostic/inventory-status', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (extractCallerRole(authResult) !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can access diagnostic endpoints' }, 403);
+  }
+
   try {
     console.log('🔍 [DIAGNOSTIC] Checking inventory database status...');
     
@@ -9073,6 +9298,14 @@ app.get('/make-server-c2dd9b9d/diagnostic/inventory-status', async (c) => {
 
 // DIAGNOSTIC: Show all key prefixes in database to find where data is hiding
 app.get('/make-server-c2dd9b9d/diagnostic/all-keys', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (extractCallerRole(authResult) !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can access diagnostic endpoints' }, 403);
+  }
+
   try {
     console.log('🔍 [DIAGNOSTIC] Fetching ALL database keys...');
     
@@ -9118,6 +9351,14 @@ app.get('/make-server-c2dd9b9d/diagnostic/all-keys', async (c) => {
 
 // DIAGNOSTIC: Search for backup data
 app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (extractCallerRole(authResult) !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can access diagnostic endpoints' }, 403);
+  }
+
   try {
     console.log('🔍 [DIAGNOSTIC] Searching for backup keys...');
     
