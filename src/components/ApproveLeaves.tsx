@@ -150,7 +150,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
   const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -211,7 +211,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
           <select
             value={selectedEmployee}
             onChange={(e) => setSelectedEmployee(e.target.value)}
-            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
           >
             <option value="">-- Select {entityType} --</option>
             {filteredEmployees.map(emp => (
@@ -224,7 +224,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
 
         {/* Employee Info Card */}
         {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl shadow-lg p-6 mb-6 text-white">
+          <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 mb-6 text-white">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
                 <User className="w-8 h-8" />
@@ -240,7 +240,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
 
         {/* Leaves Table */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-purple-100 to-pink-100 border-b border-gray-200">
+          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
             <h3 className="text-lg text-gray-900">Pending Leave Applications</h3>
           </div>
 
@@ -252,69 +252,52 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
               <p className="text-gray-500">No pending leave applications for this employee</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Date</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Type</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Reason</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Applied On</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {leaves.map((leave, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 text-gray-900">
-                        {new Date(leave.leaveDate).toLocaleDateString('en-US', { 
-                          year: 'numeric', 
-                          month: 'short', 
+            <div className="divide-y divide-gray-100">
+              {leaves.map((leave, index) => (
+                <div key={index} className="p-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(leave.leaveDate).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
                           day: 'numeric',
                           weekday: 'short'
                         })}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          (leave.leaveType || 'full') === 'full' 
-                            ? 'bg-purple-100 text-purple-800' 
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-gray-700">{leave.reason}</td>
-                      <td className="px-6 py-4 text-gray-600 text-sm">
-                        {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { 
-                          month: 'short', 
-                          day: 'numeric',
-                          year: 'numeric'
-                        }) : '-'}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleApprove(leave.id)}
-                            disabled={loading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleReject(leave.id)}
-                            disabled={loading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
+                    </div>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
+                      (leave.leaveType || 'full') === 'full'
+                        ? 'bg-orange-100 text-orange-800'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApprove(leave.id)}
+                      disabled={loading}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleReject(leave.id)}
+                      disabled={loading}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

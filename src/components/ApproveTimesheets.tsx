@@ -155,7 +155,7 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
   const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -236,7 +236,7 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
           <select
             value={selectedEmployee}
             onChange={(e) => setSelectedEmployee(e.target.value)}
-            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
           >
             <option value="">-- Select {entityType} --</option>
             {filteredEmployees.map(emp => (
@@ -270,7 +270,7 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
 
         {/* Employee Info Card */}
         {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl shadow-lg p-6 mb-6 text-white">
+          <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 mb-6 text-white">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
                 <User className="w-8 h-8" />
@@ -286,7 +286,7 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
 
         {/* Timesheets Table */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-purple-100 to-pink-100 border-b border-gray-200">
+          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
             <h3 className="text-lg text-gray-900">Pending Timesheets</h3>
           </div>
 
@@ -298,69 +298,45 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
               <p className="text-gray-500">No pending timesheets for this employee</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Date</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Day</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Start Time</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">End Time</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Total Hours</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Status</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {timesheets.map((timesheet, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 text-gray-900">
-                        {new Date(timesheet.date).toLocaleDateString('en-US', { 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric' 
+            <div className="divide-y divide-gray-100">
+              {timesheets.map((timesheet, index) => (
+                <div key={index} className="p-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(timesheet.date).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric'
                         })}
-                      </td>
-                      <td className="px-6 py-4 text-gray-700">
-                        {new Date(timesheet.date).toLocaleDateString('en-US', { weekday: 'short' })}
-                      </td>
-                      <td className="px-6 py-4 text-gray-900">{timesheet.startTime}</td>
-                      <td className="px-6 py-4 text-gray-900">{timesheet.endTime}</td>
-                      <td className="px-6 py-4">
-                        <span className={`${timesheet.totalHours >= 8 ? 'text-green-700' : timesheet.totalHours >= 4 ? 'text-yellow-700' : 'text-red-700'}`}>
-                          {timesheet.totalHours.toFixed(2)} hrs
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
-                          <Clock className="w-4 h-4" />
-                          Pending
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleApprove(timesheet.id)}
-                            disabled={loading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleReject(timesheet.id)}
-                            disabled={loading}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <span className="text-gray-400 font-normal"> · {new Date(timesheet.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">{timesheet.startTime} - {timesheet.endTime}</p>
+                    </div>
+                    <span className={`text-sm font-medium flex-shrink-0 ${timesheet.totalHours >= 8 ? 'text-green-700' : timesheet.totalHours >= 4 ? 'text-yellow-700' : 'text-red-700'}`}>
+                      {timesheet.totalHours.toFixed(2)} hrs
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApprove(timesheet.id)}
+                      disabled={loading}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleReject(timesheet.id)}
+                      disabled={loading}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

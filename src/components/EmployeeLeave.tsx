@@ -208,34 +208,34 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-3 sm:p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Leave Management</h1>
-          <p className="text-gray-600">Apply for leaves and track your leave balance</p>
+        <div className="mb-4 sm:mb-6">
+          <h1 className="text-2xl sm:text-3xl text-gray-900 mb-1 sm:mb-2">Leave Management</h1>
+          <p className="text-sm sm:text-base text-gray-600">Apply for leaves and track your leave balance</p>
         </div>
 
         {/* Leave Balance Card */}
-        <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl shadow-lg p-6 mb-6 text-white">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <h2 className="text-lg mb-4 opacity-90">Leave Balance</h2>
-              
+        <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6 text-white">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base sm:text-lg mb-3 sm:mb-4 opacity-90">Leave Balance</h2>
+
               {/* Current Balance */}
               <div className="mb-4">
                 <div className="text-sm opacity-75 mb-1">Current Balance</div>
-                <div className={`text-5xl mb-1 ${leaveBalance < 0 ? 'text-red-200' : ''}`}>
+                <div className={`text-4xl sm:text-5xl mb-1 ${leaveBalance < 0 ? 'text-red-200' : ''}`}>
                   {leaveBalance}
                   {leaveBalance < 0 && (
-                    <span className="text-sm ml-2 bg-red-500/30 px-2 py-1 rounded">
+                    <span className="text-xs sm:text-sm ml-2 bg-red-500/30 px-2 py-1 rounded">
                       Negative
                     </span>
                   )}
                 </div>
                 <p className="text-xs opacity-75">
-                  {leaveBalance < 0 
-                    ? 'You have taken advance leave - will be deducted next month' 
+                  {leaveBalance < 0
+                    ? 'You have taken advance leave - will be deducted next month'
                     : 'approved leaves deducted'}
                 </p>
               </div>
@@ -244,26 +244,26 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
               {projectedBalance !== leaveBalance && (
                 <div className="pt-4 border-t border-white/20">
                   <div className="text-sm opacity-75 mb-1">Projected Balance</div>
-                  <div className={`text-3xl mb-1 ${projectedBalance < 0 ? 'text-red-200' : ''}`}>
+                  <div className={`text-2xl sm:text-3xl mb-1 ${projectedBalance < 0 ? 'text-red-200' : ''}`}>
                     {projectedBalance}
                   </div>
                   <p className="text-xs opacity-75">if all pending leaves are approved</p>
                 </div>
               )}
-              
-              <p className="text-sm opacity-75 mt-4">3 leaves/month • max 5 days (3 regular + 2 advance)</p>
+
+              <p className="text-xs sm:text-sm opacity-75 mt-4">3 leaves/month • max 5 days (3 regular + 2 advance)</p>
             </div>
-            <div className="bg-white/20 rounded-full p-6">
+            <div className="hidden sm:block bg-white/20 rounded-full p-6 flex-shrink-0">
               <Calendar className="w-16 h-16" />
             </div>
           </div>
         </div>
 
         {/* Apply Leave Button */}
-        <div className="mb-6">
+        <div className="mb-4 sm:mb-6">
           <button
             onClick={() => setShowApplyForm(!showApplyForm)}
-            className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-md"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors shadow-md"
           >
             <Plus className="w-5 h-5" />
             Apply for Leave
@@ -283,7 +283,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                   value={newLeave.leaveDate}
                   onChange={(e) => setNewLeave({ ...newLeave, leaveDate: e.target.value })}
                   min={new Date().toISOString().split('T')[0]}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
               
@@ -292,7 +292,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                 <select
                   value={newLeave.leaveType}
                   onChange={(e) => setNewLeave({ ...newLeave, leaveType: e.target.value as 'full' | 'half' })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 >
                   <option value="full">Full Day</option>
                   <option value="half">Half Day</option>
@@ -306,7 +306,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                   value={newLeave.reason}
                   onChange={(e) => setNewLeave({ ...newLeave, reason: e.target.value })}
                   placeholder="Enter reason for leave"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
             </div>
@@ -318,7 +318,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                   type="checkbox"
                   checked={newLeave.isAdvanceLeave}
                   onChange={(e) => setNewLeave({ ...newLeave, isAdvanceLeave: e.target.checked })}
-                  className="mt-1 w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  className="mt-1 w-5 h-5 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-gray-900 mb-1">
@@ -338,7 +338,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
               <button
                 onClick={applyLeave}
                 disabled={loading}
-                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300"
+                className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:bg-gray-300"
               >
                 Submit Application
               </button>
@@ -354,7 +354,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
 
         {/* Leave History */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-purple-100 to-pink-100 border-b border-gray-200">
+          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
             <h3 className="text-lg text-gray-900">Leave History</h3>
           </div>
 
@@ -366,59 +366,44 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
               <p className="text-gray-500">No leave applications yet</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Date</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Leave Type</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Reason</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Applied On</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Status</th>
-                    <th className="px-6 py-3 text-left text-sm text-gray-700">Approved By</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {sortedLeaves.map((leave, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 text-gray-900">
-                        {new Date(leave.leaveDate).toLocaleDateString('en-US', { 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric' 
+            <div className="divide-y divide-gray-100">
+              {sortedLeaves.map((leave, index) => (
+                <div key={index} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(leave.leaveDate).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric'
                         })}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            (leave.leaveType || 'full') === 'full' 
-                              ? 'bg-purple-100 text-purple-800' 
-                              : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                          </span>
-                          {leave.isAdvanceLeave && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                              Advance
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-gray-700">{leave.reason}</td>
-                      <td className="px-6 py-4 text-gray-600 text-sm">
-                        {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { 
-                          month: 'short', 
-                          day: 'numeric' 
-                        }) : '-'}
-                      </td>
-                      <td className="px-6 py-4">{getStatusBadge(leave.status)}</td>
-                      <td className="px-6 py-4 text-gray-600 text-sm">
-                        {leave.approvedBy || '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
+                    </div>
+                    {getStatusBadge(leave.status)}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      (leave.leaveType || 'full') === 'full'
+                        ? 'bg-orange-100 text-orange-800'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                    </span>
+                    {leave.isAdvanceLeave && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                        Advance
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400">
+                      Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
+                    </span>
+                    {leave.approvedBy && (
+                      <span className="text-xs text-gray-400">· by {leave.approvedBy}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

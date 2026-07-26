@@ -162,7 +162,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+        <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
           <Target className="h-5 w-5 text-white" />
         </div>
         <div>
@@ -174,7 +174,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
       {/* 7-Day Forecast */}
       <Card className="p-6">
         <h3 className="text-lg mb-4 flex items-center gap-2">
-          <Calendar className="h-5 w-5 text-purple-600" />
+          <Calendar className="h-5 w-5 text-orange-600" />
           7-Day Demand Forecast
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
@@ -183,7 +183,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
               key={day.date}
               className={`p-4 rounded-lg border-2 ${
                 day.isWeekend 
-                  ? 'bg-purple-50 border-purple-200' 
+                  ? 'bg-orange-50 border-orange-200' 
                   : 'bg-gray-50 border-gray-200'
               }`}
             >
@@ -260,7 +260,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
               <YAxis tick={{ fontSize: 12 }} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="expectedDemand" fill="#8b5cf6" name="Expected" />
+              <Bar dataKey="expectedDemand" fill="#14b8a6" name="Expected" />
               <Bar dataKey="recommendedProduction" fill="#10b981" name="Recommended" />
             </BarChart>
           </ResponsiveContainer>
@@ -276,7 +276,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
               <YAxis tick={{ fontSize: 12 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="sales" stroke="#ec4899" strokeWidth={2} name="Sales (₹)" />
+              <Line type="monotone" dataKey="sales" stroke="#f43f5e" strokeWidth={2} name="Sales (₹)" />
             </LineChart>
           </ResponsiveContainer>
         </Card>
@@ -309,7 +309,7 @@ export function PredictiveAnalytics({ context, stores }: Props) {
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-purple-500"
+                      className="h-full bg-orange-500"
                       style={{ width: `${(item.current / item.recommended) * 100}%` }}
                     />
                   </div>

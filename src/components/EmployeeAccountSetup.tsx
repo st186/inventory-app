@@ -130,8 +130,8 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-              <UserPlus className="w-5 h-5 text-purple-600" />
+            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+              <UserPlus className="w-5 h-5 text-orange-600" />
             </div>
             <div>
               <h2 className="text-xl">Prepare Employee Login Credentials</h2>
@@ -290,7 +290,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                 <button
                   onClick={createAccounts}
                   disabled={processing}
-                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {processing ? (
                     <>

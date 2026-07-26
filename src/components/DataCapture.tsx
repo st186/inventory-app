@@ -541,7 +541,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('day')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'day'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -551,7 +551,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('thisMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'thisMonth'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -561,7 +561,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('prevMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'prevMonth'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -571,7 +571,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('thisYear')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'thisYear'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -581,7 +581,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('prevYear')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'prevYear'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -591,7 +591,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('custom')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'custom'
-                  ? 'bg-purple-100 text-purple-800 border-2 border-purple-300'
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -656,7 +656,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-purple-600" />
+              <TrendingUp className="w-5 h-5 text-orange-600" />
               <p className="text-sm text-gray-600">Avg Discrepancy</p>
             </div>
             <p className="text-2xl text-gray-900">₹{periodStats.avgDiscrepancy.toFixed(2)}</p>

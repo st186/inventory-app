@@ -212,7 +212,7 @@ export function InventoryItemsManagement({ context }: Props) {
 
   const getCategoryColor = (category: string) => {
     switch (category) {
-      case 'finished_product': return 'bg-purple-100 text-purple-800';
+      case 'finished_product': return 'bg-orange-100 text-orange-800';
       case 'raw_material': return 'bg-blue-100 text-blue-800';
       case 'sauce_chutney': return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
@@ -249,7 +249,7 @@ export function InventoryItemsManagement({ context }: Props) {
           )}
           <button
             onClick={() => setShowAddForm(!showAddForm)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg transition-all"
           >
             <Plus className="w-5 h-5" />
             Add New Item
@@ -280,7 +280,7 @@ export function InventoryItemsManagement({ context }: Props) {
 
       {/* Add/Edit Form */}
       {showAddForm && (
-        <Card className="p-6 border-2 border-purple-200">
+        <Card className="p-6 border-2 border-orange-200">
           <h2 className="text-xl mb-4">
             {editingId ? 'Edit Item' : 'Add New Item'}
           </h2>
@@ -293,7 +293,7 @@ export function InventoryItemsManagement({ context }: Props) {
                   value={formData.displayName}
                   onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                   placeholder="e.g., Schezwan Momo"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   required
                 />
               </div>
@@ -303,7 +303,7 @@ export function InventoryItemsManagement({ context }: Props) {
                 <select
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   required
                 >
                   <option value="finished_product">Finished Product</option>
@@ -317,7 +317,7 @@ export function InventoryItemsManagement({ context }: Props) {
                 <select
                   value={formData.unit}
                   onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   required
                 >
                   <option value="pieces">Pieces</option>
@@ -333,7 +333,7 @@ export function InventoryItemsManagement({ context }: Props) {
                 <select
                   value={formData.linkedEntityType}
                   onChange={(e) => setFormData({ ...formData, linkedEntityType: e.target.value as any, linkedEntityId: '' })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   required
                 >
                   <option value="global">All (Global)</option>
@@ -348,7 +348,7 @@ export function InventoryItemsManagement({ context }: Props) {
                   <select
                     value={formData.linkedEntityId}
                     onChange={(e) => setFormData({ ...formData, linkedEntityId: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     required
                   >
                     <option value="">-- Select Store --</option>
@@ -365,7 +365,7 @@ export function InventoryItemsManagement({ context }: Props) {
                   <select
                     value={formData.linkedEntityId}
                     onChange={(e) => setFormData({ ...formData, linkedEntityId: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     required
                   >
                     <option value="">-- Select Production House --</option>
@@ -387,7 +387,7 @@ export function InventoryItemsManagement({ context }: Props) {
               </button>
               <button
                 type="submit"
-                className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg"
+                className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg"
               >
                 {editingId ? 'Update Item' : 'Add Item'}
               </button>
@@ -404,7 +404,7 @@ export function InventoryItemsManagement({ context }: Props) {
             <select
               value={filterCategory}
               onChange={(e) => setFilterCategory(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
             >
               <option value="all">All Categories</option>
               <option value="finished_product">Finished Products</option>
@@ -418,7 +418,7 @@ export function InventoryItemsManagement({ context }: Props) {
             <select
               value={filterEntityType}
               onChange={(e) => setFilterEntityType(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
             >
               <option value="all">All Types</option>
               <option value="global">Global Items</option>
@@ -432,7 +432,7 @@ export function InventoryItemsManagement({ context }: Props) {
       {/* Items List */}
       {loading ? (
         <div className="text-center py-12">
-          <div className="inline-block w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+          <div className="inline-block w-8 h-8 border-4 border-orange-600 border-t-transparent rounded-full animate-spin"></div>
           <p className="mt-4 text-gray-600">Loading items...</p>
         </div>
       ) : filteredItems.length === 0 ? (
@@ -443,7 +443,7 @@ export function InventoryItemsManagement({ context }: Props) {
           {items.length === 0 && (
             <button
               onClick={handleInitializeDefaults}
-              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg"
+              className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg"
             >
               Initialize Default Items
             </button>
@@ -458,17 +458,17 @@ export function InventoryItemsManagement({ context }: Props) {
                   {getEntityTypeIcon(item.linkedEntityType)}
                   <h3 className="font-semibold text-gray-900">{item.displayName}</h3>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-3">
                   <button
                     onClick={() => handleEdit(item)}
-                    className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                    className="p-2 min-h-11 min-w-11 flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded"
                     title="Edit"
                   >
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(item.id)}
-                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    className="p-2 min-h-11 min-w-11 flex items-center justify-center text-red-600 hover:bg-red-50 rounded"
                     title="Delete"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -504,10 +504,10 @@ export function InventoryItemsManagement({ context }: Props) {
       )}
 
       {/* Summary */}
-      <Card className="p-6 bg-gradient-to-r from-purple-50 to-pink-50">
+      <Card className="p-6 bg-gradient-to-r from-orange-50 to-rose-50">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
           <div>
-            <div className="text-2xl text-purple-600">{items.filter(i => i.isActive).length}</div>
+            <div className="text-2xl text-orange-600">{items.filter(i => i.isActive).length}</div>
             <div className="text-sm text-gray-600">Total Items</div>
           </div>
           <div>

@@ -124,7 +124,7 @@ export function FixFloatingPointPrecision({ context }: Props) {
 
   return (
     <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 max-w-xl">
-      <div className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-6 py-4 rounded-lg shadow-2xl border-4 border-blue-300">
+      <div className="bg-gradient-to-r from-blue-500 to-orange-500 text-white px-6 py-4 rounded-lg shadow-2xl border-4 border-blue-300">
         <div className="flex items-center gap-3">
           <AlertCircle className="w-6 h-6 animate-pulse" />
           <div className="flex-1">

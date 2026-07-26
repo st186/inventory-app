@@ -581,7 +581,7 @@ New Password: ${result.credentials.password}
   const stats = getEmployeeStats();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -597,7 +597,7 @@ New Password: ${result.credentials.password}
                 <p className="text-sm text-gray-600">Total</p>
                 <p className="text-2xl text-gray-900">{stats.total}</p>
               </div>
-              <Users className="w-8 h-8 text-purple-500" />
+              <Users className="w-8 h-8 text-teal-500" />
             </div>
           </div>
 
@@ -639,7 +639,7 @@ New Password: ${result.credentials.password}
                 <p className="text-sm text-gray-600">Active</p>
                 <p className="text-2xl text-gray-900">{stats.active}</p>
               </div>
-              <Users className="w-8 h-8 text-pink-500" />
+              <Users className="w-8 h-8 text-rose-500" />
             </div>
           </div>
         </div>
@@ -651,7 +651,7 @@ New Password: ${result.credentials.password}
               onClick={() => setActiveTab('employees')}
               className={`flex-1 px-6 py-4 text-center transition-colors ${
                 activeTab === 'employees'
-                  ? 'border-b-2 border-purple-600 text-purple-600'
+                  ? 'border-b-2 border-orange-600 text-orange-600'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
@@ -664,7 +664,7 @@ New Password: ${result.credentials.password}
               onClick={() => setActiveTab('hierarchy')}
               className={`flex-1 px-6 py-4 text-center transition-colors ${
                 activeTab === 'hierarchy'
-                  ? 'border-b-2 border-purple-600 text-purple-600'
+                  ? 'border-b-2 border-orange-600 text-orange-600'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
@@ -677,7 +677,7 @@ New Password: ${result.credentials.password}
               onClick={() => setActiveTab('payroll')}
               className={`flex-1 px-6 py-4 text-center transition-colors ${
                 activeTab === 'payroll'
-                  ? 'border-b-2 border-purple-600 text-purple-600'
+                  ? 'border-b-2 border-orange-600 text-orange-600'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
@@ -690,7 +690,7 @@ New Password: ${result.credentials.password}
               onClick={() => setActiveTab('attendance')}
               className={`flex-1 px-6 py-4 text-center transition-colors ${
                 activeTab === 'attendance'
-                  ? 'border-b-2 border-purple-600 text-purple-600'
+                  ? 'border-b-2 border-orange-600 text-orange-600'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
@@ -731,7 +731,7 @@ New Password: ${result.credentials.password}
           <>
             {/* Action Bar */}
             <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
@@ -739,13 +739,13 @@ New Password: ${result.credentials.password}
                 placeholder="Search by name, ID, or email..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setShowCreateForm(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg transition-all"
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg transition-all"
               >
                 <UserPlus className="w-5 h-5" />
                 Add {isClusterHead ? 'Employee/Manager' : 'Employee'}
@@ -754,7 +754,7 @@ New Password: ${result.credentials.password}
                 <>
                   <button
                     onClick={() => setShowAccountSetup(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all"
+                    className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:shadow-lg transition-all"
                   >
                     <KeyRound className="w-5 h-5" />
                     Create Login Accounts
@@ -787,7 +787,7 @@ New Password: ${result.credentials.password}
         {showCreateForm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Create New {isClusterHead ? 'Employee/Manager' : 'Employee'}</h2>
               </div>
 
@@ -799,7 +799,7 @@ New Password: ${result.credentials.password}
                     <select
                       value={formData.role}
                       onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'employee' | 'cluster_head' })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="employee">Employee</option>
                       <option value="manager">Manager</option>
@@ -814,7 +814,7 @@ New Password: ${result.credentials.password}
                   <select
                     value={formData.employmentType}
                     onChange={(e) => setFormData({ ...formData, employmentType: e.target.value as 'fulltime' | 'contract' })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     disabled={formData.role === 'cluster_head'}
                   >
                     <option value="fulltime">Full-Time</option>
@@ -832,7 +832,7 @@ New Password: ${result.credentials.password}
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="Enter full name"
                   />
                 </div>
@@ -844,7 +844,7 @@ New Password: ${result.credentials.password}
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="employee@example.com"
                   />
                 </div>
@@ -856,7 +856,7 @@ New Password: ${result.credentials.password}
                     type="password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="Create a password"
                   />
                 </div>
@@ -868,7 +868,7 @@ New Password: ${result.credentials.password}
                     type="date"
                     value={formData.dob}
                     onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                 </div>
 
@@ -879,7 +879,7 @@ New Password: ${result.credentials.password}
                     type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="+91 9876543210"
                   />
                 </div>
@@ -891,7 +891,7 @@ New Password: ${result.credentials.password}
                     type="date"
                     value={formData.joiningDate}
                     onChange={(e) => setFormData({ ...formData, joiningDate: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                 </div>
 
@@ -902,7 +902,7 @@ New Password: ${result.credentials.password}
                     <select
                       value={formData.storeId}
                       onChange={(e) => setFormData({ ...formData, storeId: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="">Select a store...</option>
                       {stores.map((store) => (
@@ -970,7 +970,7 @@ New Password: ${result.credentials.password}
                   <button
                     onClick={handleCreateEmployee}
                     disabled={loading}
-                    className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                    className="flex-1 bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
                   >
                     {loading ? 'Creating...' : 'Create Employee'}
                   </button>
@@ -1005,7 +1005,7 @@ New Password: ${result.credentials.password}
         {showEditForm && editingEmployee && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Edit Employee</h2>
               </div>
 
@@ -1017,7 +1017,7 @@ New Password: ${result.credentials.password}
                     <select
                       value={editingEmployee.role}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, role: e.target.value as 'manager' | 'employee' | 'cluster_head' })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="employee">Employee</option>
                       <option value="manager">Manager</option>
@@ -1032,7 +1032,7 @@ New Password: ${result.credentials.password}
                   <select
                     value={editingEmployee.employmentType}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, employmentType: e.target.value as 'fulltime' | 'contract' })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   >
                     <option value="fulltime">Full-Time</option>
                     <option value="contract">Contract</option>
@@ -1046,7 +1046,7 @@ New Password: ${result.credentials.password}
                     type="text"
                     value={editingEmployee.name}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, name: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="Enter full name"
                   />
                 </div>
@@ -1058,7 +1058,7 @@ New Password: ${result.credentials.password}
                     type="email"
                     value={editingEmployee.email}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="employee@example.com"
                   />
                 </div>
@@ -1070,7 +1070,7 @@ New Password: ${result.credentials.password}
                     type="date"
                     value={editingEmployee.dob}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, dob: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                 </div>
 
@@ -1081,7 +1081,7 @@ New Password: ${result.credentials.password}
                     type="tel"
                     value={editingEmployee.phone}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, phone: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="+91 9876543210"
                   />
                 </div>
@@ -1093,7 +1093,7 @@ New Password: ${result.credentials.password}
                     type="date"
                     value={editingEmployee.joiningDate}
                     onChange={(e) => setEditingEmployee({ ...editingEmployee, joiningDate: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                 </div>
 
@@ -1141,7 +1141,7 @@ New Password: ${result.credentials.password}
                   <button
                     onClick={handleUpdateEmployee}
                     disabled={loading}
-                    className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                    className="flex-1 bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
                   >
                     {loading ? 'Updating...' : 'Update Employee'}
                   </button>
@@ -1166,7 +1166,7 @@ New Password: ${result.credentials.password}
         <div className="bg-white rounded-lg shadow-md overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gradient-to-r from-purple-100 to-pink-100">
+              <thead className="bg-gradient-to-r from-orange-100 to-amber-100">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">Employee ID</th>
                   <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">Name</th>
@@ -1206,7 +1206,7 @@ New Password: ${result.credentials.password}
                     filteredEmployees.map((emp) => (
                     <tr key={emp.employeeId} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">
+                        <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">
                           {emp.employeeId}
                         </span>
                       </td>
@@ -1217,7 +1217,7 @@ New Password: ${result.credentials.password}
                           emp.role === 'manager' 
                             ? 'bg-blue-100 text-blue-700' 
                             : emp.role === 'cluster_head'
-                            ? 'bg-purple-100 text-purple-700'
+                            ? 'bg-orange-100 text-orange-700'
                             : 'bg-green-100 text-green-700'
                         }`}>
                           {emp.role === 'manager' ? 'Manager' : emp.role === 'cluster_head' ? 'Cluster Head' : 'Employee'}
@@ -1237,7 +1237,7 @@ New Password: ${result.credentials.password}
                       {isClusterHead && (
                         <td className="px-6 py-4 whitespace-nowrap">
                           {emp.designation === 'operations_incharge' ? (
-                            <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">
+                            <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">
                               Operations Incharge
                             </span>
                           ) : emp.designation === 'store_incharge' ? (
@@ -1330,7 +1330,7 @@ New Password: ${result.credentials.password}
                           {isClusterHead && emp.role === 'employee' && (
                             <button
                               onClick={() => handleOpenAssignManager(emp)}
-                              className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                              className="p-2 text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"
                               title="Assign Supervisor (Manager or Incharge)"
                             >
                               <UserCog className="w-5 h-5" />
@@ -1348,7 +1348,7 @@ New Password: ${result.credentials.password}
                           {isClusterHead && emp.role === 'employee' && (
                             <button
                               onClick={() => handleOpenAssignDesignation(emp)}
-                              className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                              className="p-2 text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
                               title="Assign Designation (Store/Production Incharge)"
                             >
                               <UserCog className="w-5 h-5" />
@@ -1446,7 +1446,7 @@ New Password: ${result.credentials.password}
                               emp.role === 'manager' 
                                 ? 'bg-blue-100 text-blue-700'
                                 : emp.role === 'cluster_head'
-                                ? 'bg-purple-100 text-purple-700'
+                                ? 'bg-orange-100 text-orange-700'
                                 : 'bg-green-100 text-green-700'
                             }`}>
                               {emp.role === 'cluster_head' ? 'Cluster Head' : emp.role.charAt(0).toUpperCase() + emp.role.slice(1)}
@@ -1480,7 +1480,7 @@ New Password: ${result.credentials.password}
         {selectedEmployee && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Employee Details</h2>
               </div>
 
@@ -1641,7 +1641,7 @@ New Password: ${result.credentials.password}
                 {migrationResult.updates && migrationResult.updates.length > 0 && (
                   <div>
                     <h3 className="text-lg text-gray-900 mb-3">✓ Successfully Updated</h3>
-                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                    <div className="max-h-60 overflow-y-auto overflow-x-auto border border-gray-200 rounded-lg">
                       <table className="w-full">
                         <thead className="bg-gray-50 sticky top-0">
                           <tr>
@@ -1669,7 +1669,7 @@ New Password: ${result.credentials.password}
                 {migrationResult.manualAssignmentNeeded && migrationResult.manualAssignmentNeeded.length > 0 && (
                   <div>
                     <h3 className="text-lg text-gray-900 mb-3">⚠ Needs Manual Store Assignment</h3>
-                    <div className="max-h-60 overflow-y-auto border border-yellow-200 rounded-lg bg-yellow-50">
+                    <div className="max-h-60 overflow-y-auto overflow-x-auto border border-yellow-200 rounded-lg bg-yellow-50">
                       <table className="w-full">
                         <thead className="bg-yellow-100 sticky top-0">
                           <tr>
@@ -1702,7 +1702,7 @@ New Password: ${result.credentials.password}
                 {migrationResult.errorDetails && migrationResult.errorDetails.length > 0 && (
                   <div>
                     <h3 className="text-lg text-gray-900 mb-3">✗ Errors</h3>
-                    <div className="max-h-60 overflow-y-auto border border-red-200 rounded-lg bg-red-50">
+                    <div className="max-h-60 overflow-y-auto overflow-x-auto border border-red-200 rounded-lg bg-red-50">
                       <table className="w-full">
                         <thead className="bg-red-100 sticky top-0">
                           <tr>
@@ -1742,9 +1742,9 @@ New Password: ${result.credentials.password}
         {showAssignManager && assigningManagerTo && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-              <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Assign Supervisor</h2>
-                <p className="text-sm text-purple-100 mt-1">
+                <p className="text-sm text-orange-100 mt-1">
                   {assigningManagerTo.name} ({assigningManagerTo.employeeId})
                 </p>
               </div>
@@ -1805,7 +1805,7 @@ New Password: ${result.credentials.password}
                   <select
                     value={selectedManagerForAssignment}
                     onChange={(e) => setSelectedManagerForAssignment(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   >
                     <option value="">Select {selectedSupervisorType === 'manager' ? 'a manager' : 'an incharge'}...</option>
                     {selectedSupervisorType === 'manager' ? (
@@ -1835,7 +1835,7 @@ New Password: ${result.credentials.password}
                   <button
                     onClick={handleAssignManager}
                     disabled={loading || !selectedManagerForAssignment}
-                    className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
                   >
                     {loading ? 'Assigning...' : 'Assign Supervisor'}
                   </button>
@@ -1930,7 +1930,7 @@ New Password: ${result.credentials.password}
         {showChangeStore && changingStoreFor && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-              <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Change Employee Store</h2>
                 <p className="text-sm text-blue-100 mt-1">
                   {changingStoreFor.name} ({changingStoreFor.employeeId})
@@ -1992,7 +1992,7 @@ New Password: ${result.credentials.password}
                   <button
                     onClick={handleChangeStore}
                     disabled={loading || !selectedNewStore}
-                    className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                    className="flex-1 bg-stone-800 hover:bg-stone-900 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
                   >
                     {loading ? 'Updating...' : 'Update Store'}
                   </button>
@@ -2016,23 +2016,23 @@ New Password: ${result.credentials.password}
         {showAssignDesignation && assigningDesignationTo && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-              <div className="sticky top-0 bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-6 rounded-t-xl">
+              <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Assign Employee Designation</h2>
-                <p className="text-sm text-indigo-100 mt-1">
+                <p className="text-sm text-blue-100 mt-1">
                   {assigningDesignationTo.name} ({assigningDesignationTo.employeeId})
                 </p>
               </div>
 
               <div className="p-6 space-y-4">
                 {/* Info Box */}
-                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-start gap-3">
-                    <UserCog className="w-5 h-5 text-indigo-600 mt-0.5" />
+                    <UserCog className="w-5 h-5 text-blue-600 mt-0.5" />
                     <div>
-                      <p className="text-sm text-indigo-900 mb-1">
+                      <p className="text-sm text-blue-900 mb-1">
                         <strong>Department Incharge Designations</strong>
                       </p>
-                      <p className="text-xs text-indigo-700">
+                      <p className="text-xs text-blue-700">
                         Assign employees as Store Incharge or Production Incharge. They will manage other employees in their department.
                       </p>
                     </div>
@@ -2064,7 +2064,7 @@ New Password: ${result.credentials.password}
                   <select
                     value={selectedDesignation}
                     onChange={(e) => setSelectedDesignation(e.target.value as 'none' | 'store_incharge' | 'production_incharge')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="none">Regular Employee (No Designation)</option>
                     <option value="store_incharge">Store Incharge - Store Operations Department</option>
@@ -2101,7 +2101,7 @@ New Password: ${result.credentials.password}
                   <button
                     onClick={handleAssignDesignation}
                     disabled={loading}
-                    className="flex-1 bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                    className="flex-1 bg-stone-800 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
                   >
                     {loading ? 'Assigning...' : 'Assign Designation'}
                   </button>

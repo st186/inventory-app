@@ -1,0 +1,48 @@
+// Shared notification -> in-app navigation mapping.
+// Keep this in sync with public/sw.js's NOTIFICATION_VIEW_MAP / getNavigationTarget,
+// which duplicates this logic for the web push service worker context (plain JS, no imports).
+
+export interface NotificationNavigationTarget {
+  view: string;
+  tab?: string;
+  highlightRequestId?: string;
+}
+
+const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
+  inventory_logged: { view: 'inventory' },
+  sales_logged: { view: 'sales' },
+  discrepancy_request: { view: 'sales' },
+  discrepancy_approved: { view: 'sales' },
+  discrepancy_rejected: { view: 'sales' },
+  production_pending: { view: 'production' },
+  production_approved: { view: 'production' },
+  timesheet_pending: { view: 'attendance', tab: 'approve-timesheet' },
+  timesheet_approved: { view: 'attendance', tab: 'timesheet' },
+  timesheet_rejected: { view: 'attendance', tab: 'timesheet' },
+  leave_pending: { view: 'attendance', tab: 'approve-leave' },
+  leave_approved: { view: 'attendance', tab: 'leave' },
+  leave_rejected: { view: 'attendance', tab: 'leave' },
+  attendance_reminder: { view: 'attendance', tab: 'timesheet' },
+  stock_request_new: { view: 'stock-requests' },
+  stock_request_delayed: { view: 'analytics' },
+  stock_recalibration: { view: 'analytics' },
+  fulfillment_reminder: { view: 'stock-requests' },
+  data_entry_reminder: { view: 'inventory' },
+};
+
+export function getNavigationTarget(data: any): NotificationNavigationTarget | null {
+  if (!data || !data.type) return null;
+
+  if (typeof data.type === 'string' && data.type.startsWith('production_request_') && data.relatedId) {
+    return { view: 'analytics', highlightRequestId: data.relatedId };
+  }
+  if (data.type === 'stock_request_new' && data.relatedId) {
+    return { view: 'stock-requests', highlightRequestId: data.relatedId };
+  }
+
+  const mapped = NOTIFICATION_VIEW_MAP[data.type];
+  if (mapped) {
+    return { view: mapped.view, tab: mapped.tab, highlightRequestId: data.relatedId || undefined };
+  }
+  return null;
+}

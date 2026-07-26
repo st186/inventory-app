@@ -952,7 +952,7 @@ export function MonthlyStockRecalibration({
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
         <div className="bg-white rounded-2xl p-8 max-w-md">
           <div className="flex items-center gap-3">
-            <RefreshCw className="w-6 h-6 animate-spin text-purple-600" />
+            <RefreshCw className="w-6 h-6 animate-spin text-orange-600" />
             <span className="text-gray-700">Loading inventory data...</span>
           </div>
         </div>
@@ -981,7 +981,7 @@ export function MonthlyStockRecalibration({
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full my-8">
         {/* Header */}
-        <div className="relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 p-6 rounded-t-2xl">
+        <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 p-6 rounded-t-2xl">
           <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
           <div className="relative flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -1005,11 +1005,11 @@ export function MonthlyStockRecalibration({
         </div>
 
         {/* Info Cards */}
-        <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-pink-50">
+        <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-rose-50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border-2 border-purple-200">
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border-2 border-orange-200">
               <div className="text-sm text-gray-600 mb-1">Total Items</div>
-              <div className="text-2xl text-purple-600">{totalItems}</div>
+              <div className="text-2xl text-orange-600">{totalItems}</div>
             </div>
             <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border-2 border-orange-200">
               <div className="text-sm text-gray-600 mb-1">Items with Difference</div>
@@ -1081,7 +1081,7 @@ export function MonthlyStockRecalibration({
                       step="0.01"
                       value={item.actualQuantity}
                       onChange={(e) => handleActualQuantityChange(item.itemId, e.target.value)}
-                      className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       placeholder="Enter count"
                     />
                   </div>
@@ -1138,7 +1138,7 @@ export function MonthlyStockRecalibration({
                       type="text"
                       value={item.notes}
                       onChange={(e) => handleNotesChange(item.itemId, e.target.value)}
-                      className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       placeholder="Add any additional notes..."
                     />
                   </div>
@@ -1169,7 +1169,7 @@ export function MonthlyStockRecalibration({
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-6 py-3 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-xl hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? (
               <>

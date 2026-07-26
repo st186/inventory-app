@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
-import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle } from 'lucide-react';
+import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle, Banknote, Smartphone, Coins } from 'lucide-react';
+import * as api from '../utils/api';
 
 type Props = {
   inventory: InventoryItem[];
@@ -16,8 +17,65 @@ type Props = {
   isManager?: boolean;
 };
 
-export function InventoryList({ 
-  inventory, 
+// Shared payment-method pill used across all three lists below.
+function PaymentBadge({
+  paymentMethod,
+  cashAmount,
+  onlineAmount,
+  onlineLabel = 'Online',
+}: {
+  paymentMethod?: string;
+  cashAmount?: number;
+  onlineAmount?: number;
+  onlineLabel?: string;
+}) {
+  if (!paymentMethod) return null;
+
+  if (paymentMethod === 'both') {
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 text-xs rounded-full">
+          <Banknote className="w-3 h-3" /> ₹{(cashAmount || 0).toLocaleString()}
+        </span>
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-secondary text-primary text-xs rounded-full">
+          <Smartphone className="w-3 h-3" /> ₹{(onlineAmount || 0).toLocaleString()}
+        </span>
+      </div>
+    );
+  }
+
+  if (paymentMethod === 'cash') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 text-xs rounded-full">
+        <Banknote className="w-3 h-3" /> Cash
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-secondary text-primary text-xs rounded-full">
+      <Smartphone className="w-3 h-3" /> {onlineLabel}
+    </span>
+  );
+}
+
+function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+        {icon}
+      </div>
+      <h3 className="text-foreground">{title}</h3>
+    </div>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return <p className="text-sm text-muted-foreground text-center py-10">{label}</p>;
+}
+
+export function InventoryList({
+  inventory,
   overheads,
   fixedCosts,
   onEditInventory,
@@ -30,6 +88,14 @@ export function InventoryList({
 }: Props) {
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead' | 'fixedcost', id: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
+
+  useEffect(() => {
+    api.getCustomItems().then(setCustomItems).catch(() => {});
+  }, []);
+
+  const getItemMeta = (itemName: string, category: string) =>
+    customItems.find((ci) => ci.category === category && ci.itemName.trim().toLowerCase() === itemName.trim().toLowerCase());
 
   // Helper function to format numbers - show decimals only if needed
   const formatNumber = (num: number): string => {
@@ -81,98 +147,94 @@ export function InventoryList({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 gap-4">
         {/* Inventory Items */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Package className="w-5 h-5 text-blue-600" />
-            <h3 className="text-gray-900">Inventory Items</h3>
-          </div>
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <SectionHeader icon={<Package className="w-4 h-4" />} title="Inventory items" />
 
           {inventory.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">
-              No inventory items for this date
-            </p>
+            <EmptyState label="No inventory items for this date" />
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-5">
               {Object.entries(groupedInventory).map(([category, items]) => {
-                // Calculate category total
                 const categoryTotal = items.reduce((sum, item) => sum + item.totalCost, 0);
-                
+
                 return (
                   <div key={category}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm text-gray-700">
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <h4 className="text-xs text-muted-foreground uppercase tracking-wide">
                         {INVENTORY_CATEGORIES[category as keyof typeof INVENTORY_CATEGORIES]}
                       </h4>
-                      <span className="text-sm font-semibold text-blue-600">
+                      <span className="text-xs text-primary">
                         ₹{categoryTotal.toLocaleString()}
                       </span>
                     </div>
                     <div className="space-y-2">
-                      {items.map((item) => (
-                        <div
-                          key={item.id}
-                          className={`border rounded-lg p-4 transition-colors group ${
-                            duplicateIds.has(item.id)
-                              ? 'border-amber-400 bg-amber-50 hover:border-amber-500'
-                              : 'border-gray-200 hover:border-blue-300'
-                          }`}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex-1">
+                      {items.map((item) => {
+                        const meta = getItemMeta(item.itemName, item.category);
+                        const isDuplicate = duplicateIds.has(item.id);
+                        return (
+                          <div
+                            key={item.id}
+                            className={`rounded-xl border p-3 transition-colors group flex items-center gap-3 ${
+                              isDuplicate
+                                ? 'border-amber-300 bg-amber-50'
+                                : 'border-border bg-background hover:border-primary/40'
+                            }`}
+                          >
+                            <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 text-lg">
+                              {meta?.emoji || '📦'}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <p className="text-gray-900">{item.itemName}</p>
-                                {duplicateIds.has(item.id) && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-200 text-amber-800 text-xs font-medium rounded-full">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    Potential Duplicate
+                                <p className="text-sm text-foreground truncate">
+                                  {item.itemName}
+                                  {meta?.itemNameBengali ? ` (${meta.itemNameBengali})` : ''}
+                                </p>
+                                {isDuplicate && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-200 text-amber-800 text-[10px] rounded-full flex-shrink-0">
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    Duplicate?
                                   </span>
                                 )}
                               </div>
+                              <div className="flex flex-wrap items-center gap-2 mt-1">
+                                <span className="text-xs text-muted-foreground">
+                                  {formatNumber(item.quantity || 0)} {item.unit} · ₹{formatNumber(item.costPerUnit || 0)}/{item.unit}
+                                </span>
+                                <PaymentBadge
+                                  paymentMethod={item.paymentMethod}
+                                  cashAmount={item.cashAmount}
+                                  onlineAmount={item.onlineAmount}
+                                />
+                              </div>
                             </div>
-                            <div className="flex items-center gap-3">
-                              <span className="text-blue-600">₹{item.totalCost.toLocaleString()}</span>
+
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-sm text-primary">₹{item.totalCost.toLocaleString()}</span>
                               {isManager && (
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <button
                                     onClick={() => onEditInventory(item)}
-                                    className="p-1.5 hover:bg-blue-50 rounded text-blue-600 transition-colors"
+                                    className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
                                     title="Edit"
                                   >
-                                    <Edit2 className="w-4 h-4" />
+                                    <Edit2 className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     onClick={() => setDeleteConfirm({ type: 'inventory', id: item.id })}
-                                    className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
+                                    className="p-1.5 hover:bg-red-50 rounded-lg text-red-600 transition-colors"
                                     title="Delete"
                                   >
-                                    <Trash2 className="w-4 h-4" />
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
                               )}
                             </div>
                           </div>
-                          <div className="flex gap-4 text-sm text-gray-600">
-                            <span>
-                              {formatNumber(item.quantity || 0)} {item.unit}
-                            </span>
-                            <span>₹{formatNumber(item.costPerUnit || 0)}/{item.unit}</span>
-                            {/* Payment Method Badge */}
-                            {item.paymentMethod && (
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                item.paymentMethod === 'cash' ? 'bg-green-100 text-green-800' :
-                                item.paymentMethod === 'online' ? 'bg-blue-100 text-blue-800' :
-                                'bg-purple-100 text-purple-800'
-                              }`}>
-                                {item.paymentMethod === 'cash' ? '💵 Cash' :
-                                 item.paymentMethod === 'online' ? '📱 Online' :
-                                 `💰 Split (₹${formatNumber(item.cashAmount || 0)} + ₹${formatNumber(item.onlineAmount || 0)})`}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -182,83 +244,67 @@ export function InventoryList({
         </div>
 
         {/* Overhead Costs */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Receipt className="w-5 h-5 text-orange-600" />
-            <h3 className="text-gray-900">Overhead Costs</h3>
-          </div>
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <SectionHeader icon={<Receipt className="w-4 h-4" />} title="Overhead costs" />
 
           {overheads.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">
-              No overhead costs for this date
-            </p>
+            <EmptyState label="No overhead costs for this date" />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {overheads.map((item) => (
                 <div
                   key={item.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:border-orange-300 transition-colors group"
+                  className="rounded-xl border border-border bg-background p-3 hover:border-primary/40 transition-colors group flex items-start gap-3"
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1">
-                      <p className="text-gray-900">{(OVERHEAD_CATEGORIES as Record<string, string>)[item.category]}</p>
-                      {item.category === 'personal_expense' && item.employeeId && item.employeeName && (
-                        <p className="text-sm text-gray-600 mt-1">
-                          Employee: {item.employeeName} (ID: {item.employeeId})
-                        </p>
-                      )}
-                      {item.category === 'personal_expense' && item.expenseMonth && (
-                        <p className="text-sm text-purple-600 mt-1 font-medium">
-                          📅 Mapped to: {new Date(item.expenseMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                        </p>
-                      )}
-                      <p className="text-sm text-gray-500">{item.description}</p>
-                      {item.paymentMethod && (
-                        <div className="flex items-center gap-2 mt-2">
-                          {item.paymentMethod === 'cash' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                              💵 Paid via Cash
-                            </span>
-                          )}
-                          {item.paymentMethod === 'online' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
-                              📱 Paid via Paytm
-                            </span>
-                          )}
-                          {item.paymentMethod === 'both' && (
-                            <div className="flex flex-wrap gap-1">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                                💵 Cash: ₹{item.cashAmount?.toLocaleString()}
-                              </span>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
-                                📱 Paytm: ₹{item.onlineAmount?.toLocaleString()}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-orange-600">₹{item.amount.toLocaleString()}</span>
-                      {isManager && (
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => onEditOverhead(item)}
-                            className="p-1.5 hover:bg-orange-50 rounded text-orange-600 transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm({ type: 'overhead', id: item.id })}
-                            className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                  <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 text-primary">
+                    <Coins className="w-4 h-4" />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground">{(OVERHEAD_CATEGORIES as Record<string, string>)[item.category]}</p>
+                    {item.category === 'personal_expense' && item.employeeId && item.employeeName && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {item.employeeName} · {item.employeeId}
+                      </p>
+                    )}
+                    {item.category === 'personal_expense' && item.expenseMonth && (
+                      <p className="text-xs text-primary mt-0.5">
+                        Mapped to {new Date(item.expenseMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
+                    {item.paymentMethod && (
+                      <div className="mt-2">
+                        <PaymentBadge
+                          paymentMethod={item.paymentMethod}
+                          cashAmount={item.cashAmount}
+                          onlineAmount={item.onlineAmount}
+                          onlineLabel="Paytm"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-sm text-primary">₹{item.amount.toLocaleString()}</span>
+                    {isManager && (
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => onEditOverhead(item)}
+                          className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm({ type: 'overhead', id: item.id })}
+                          className="p-1.5 hover:bg-red-50 rounded-lg text-red-600 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -267,78 +313,62 @@ export function InventoryList({
         </div>
 
         {/* Fixed Costs */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Wallet className="w-5 h-5 text-green-600" />
-            <h3 className="text-gray-900">Fixed Costs</h3>
-          </div>
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <SectionHeader icon={<Wallet className="w-4 h-4" />} title="Fixed costs" />
 
           {fixedCosts.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">
-              No fixed costs for this date
-            </p>
+            <EmptyState label="No fixed costs for this date" />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {fixedCosts.map((item) => (
                 <div
                   key={item.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:border-green-300 transition-colors group"
+                  className="rounded-xl border border-border bg-background p-3 hover:border-primary/40 transition-colors group flex items-start gap-3"
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1">
-                      <p className="text-gray-900">{FIXED_COST_CATEGORIES[item.category]}</p>
-                      <p className="text-sm text-gray-500">{item.description}</p>
-                      {item.category === 'lpg_gas' && item.units && item.unitPrice && (
-                        <p className="text-xs text-gray-400 mt-1">
-                          {item.units} cylinder{item.units > 1 ? 's' : ''} × ₹{item.unitPrice.toLocaleString()}
-                        </p>
-                      )}
-                      {item.paymentMethod && (
-                        <div className="flex items-center gap-2 mt-2">
-                          {item.paymentMethod === 'cash' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                              💵 Paid via Cash
-                            </span>
-                          )}
-                          {item.paymentMethod === 'online' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
-                              📱 Paid via Paytm
-                            </span>
-                          )}
-                          {item.paymentMethod === 'both' && (
-                            <div className="flex flex-wrap gap-1">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                                💵 Cash: ₹{item.cashAmount?.toLocaleString()}
-                              </span>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
-                                📱 Paytm: ₹{item.onlineAmount?.toLocaleString()}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-green-600">₹{item.amount.toLocaleString()}</span>
-                      {isManager && (
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => onEditFixedCost(item)}
-                            className="p-1.5 hover:bg-green-50 rounded text-green-600 transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm({ type: 'fixedcost', id: item.id })}
-                            className="p-1.5 hover:bg-red-50 rounded text-red-600 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                  <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 text-primary">
+                    <Wallet className="w-4 h-4" />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground">{FIXED_COST_CATEGORIES[item.category]}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
+                    {item.category === 'lpg_gas' && item.units && item.unitPrice && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {item.units} cylinder{item.units > 1 ? 's' : ''} × ₹{item.unitPrice.toLocaleString()}
+                      </p>
+                    )}
+                    {item.paymentMethod && (
+                      <div className="mt-2">
+                        <PaymentBadge
+                          paymentMethod={item.paymentMethod}
+                          cashAmount={item.cashAmount}
+                          onlineAmount={item.onlineAmount}
+                          onlineLabel="Paytm"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-sm text-primary">₹{item.amount.toLocaleString()}</span>
+                    {isManager && (
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => onEditFixedCost(item)}
+                          className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm({ type: 'fixedcost', id: item.id })}
+                          className="p-1.5 hover:bg-red-50 rounded-lg text-red-600 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -350,23 +380,23 @@ export function InventoryList({
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <h3 className="text-gray-900 mb-4">Confirm Delete</h3>
-            <p className="text-gray-600 mb-6">
-              Are you sure you want to delete this {deleteConfirm.type === 'inventory' ? 'inventory item' : deleteConfirm.type === 'overhead' ? 'overhead cost' : 'fixed cost'}? This action cannot be undone.
+          <div className="bg-card rounded-2xl max-w-md w-full p-6">
+            <h3 className="text-foreground mb-3">Delete this entry?</h3>
+            <p className="text-muted-foreground mb-6 text-sm">
+              This {deleteConfirm.type === 'inventory' ? 'inventory item' : deleteConfirm.type === 'overhead' ? 'overhead cost' : 'fixed cost'} will be removed. This can't be undone.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setDeleteConfirm(null)}
                 disabled={isDeleting}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2.5 border border-border text-foreground rounded-xl hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDelete(deleteConfirm.type, deleteConfirm.id)}
                 disabled={isDeleting}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isDeleting && <Loader2 className="w-4 h-4 animate-spin" />}
                 {isDeleting ? 'Deleting...' : 'Delete'}

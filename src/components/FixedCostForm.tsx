@@ -265,8 +265,8 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
 
           {/* Split Payment Amounts */}
           {formData.paymentMethod === 'both' && totalAmount > 0 && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-medium text-purple-900">Split Payment Details</p>
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-medium text-orange-900">Split Payment Details</p>
               
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Cash Amount (₹)</label>
@@ -310,7 +310,7 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
                 />
               </div>
 
-              <div className="flex justify-between text-sm pt-2 border-t border-purple-300">
+              <div className="flex justify-between text-sm pt-2 border-t border-orange-300">
                 <span className="text-gray-700">Total:</span>
                 <span className={`font-medium ${splitAmountsValid() ? 'text-green-600' : 'text-red-600'}`}>
                   ₹{(parseFloat(formData.cashAmount || '0') + parseFloat(formData.onlineAmount || '0')).toFixed(2)} / ₹{totalAmount.toFixed(2)}

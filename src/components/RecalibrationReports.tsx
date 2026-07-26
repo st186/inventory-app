@@ -188,9 +188,9 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
     <div className="space-y-6">
       {/* Header with Create Button */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl p-6 text-white flex-1">
+        <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl p-6 text-white flex-1">
           <h2 className="text-2xl mb-2">Stock Recalibration Reports</h2>
-          <p className="text-purple-100">
+          <p className="text-orange-100">
             {view === 'pending' && 'Review and approve monthly stock recalibrations'}
             {view === 'history' && 'View historical recalibration records'}
             {view === 'wastage' && 'Analyze monthly wastage and counting errors'}
@@ -215,7 +215,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
             onClick={() => setView('pending')}
             className={`flex-1 px-4 py-2 rounded-lg transition-all ${
               view === 'pending'
-                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
@@ -226,7 +226,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
           onClick={() => setView('history')}
           className={`flex-1 px-4 py-2 rounded-lg transition-all ${
             view === 'history'
-              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+              ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
           }`}
         >
@@ -236,7 +236,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
           onClick={() => setView('wastage')}
           className={`flex-1 px-4 py-2 rounded-lg transition-all ${
             view === 'wastage'
-              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+              ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
           }`}
         >
@@ -252,7 +252,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
             type="month"
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+            className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:outline-none"
           />
         </div>
       )}
@@ -260,7 +260,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
       {/* Content */}
       {loading ? (
         <div className="bg-white rounded-lg p-12 text-center shadow-sm">
-          <RefreshCw className="w-12 h-12 text-purple-600 animate-spin mx-auto mb-4" />
+          <RefreshCw className="w-12 h-12 text-orange-600 animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Loading...</p>
         </div>
       ) : (
@@ -277,7 +277,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
                 pendingRecalibrations.map((recal) => (
                   <div
                     key={recal.id}
-                    className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 hover:border-purple-300 transition-all"
+                    className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 hover:border-orange-300 transition-all"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
@@ -383,7 +383,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
                     <button
                       onClick={() => viewDetails(recal)}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
                     >
                       <Eye className="w-4 h-4" />
                       View Details
@@ -416,7 +416,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
                       <p className="text-2xl">{wastageReport.summary?.totalCountingErrors || 0}</p>
                       <p className="text-xs opacity-75 mt-1">items</p>
                     </div>
-                    <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg p-4 text-white">
+                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-4 text-white">
                       <p className="text-sm opacity-90 mb-1">Recalibrations</p>
                       <p className="text-2xl">{wastageReport.summary?.totalRecalibrations || 0}</p>
                       <p className="text-xs opacity-75 mt-1">this month</p>
@@ -487,9 +487,9 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
       {showDetailModal && selectedRecalibration && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 text-white">
+            <div className="bg-gradient-to-r from-orange-600 to-red-600 p-6 text-white">
               <h3 className="text-xl mb-1">{selectedRecalibration.locationName}</h3>
-              <p className="text-purple-100 text-sm">
+              <p className="text-orange-100 text-sm">
                 {formatDate(selectedRecalibration.date)} • {selectedRecalibration.locationType === 'production_house' ? 'Production House' : 'Store'}
               </p>
             </div>

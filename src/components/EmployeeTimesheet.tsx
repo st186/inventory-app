@@ -23,6 +23,7 @@ interface EmployeeTimesheetProps {
 
 export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(getWeekStart(new Date()));
+  const [mobileDate, setMobileDate] = useState<Date>(new Date());
   const [timesheetData, setTimesheetData] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [leaves, setLeaves] = useState<any[]>([]);
@@ -187,6 +188,18 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
     }
   };
 
+  const previousDay = () => {
+    const newDate = new Date(mobileDate);
+    newDate.setDate(newDate.getDate() - 1);
+    setMobileDate(newDate);
+  };
+
+  const nextDay = () => {
+    const newDate = new Date(mobileDate);
+    newDate.setDate(newDate.getDate() + 1);
+    setMobileDate(newDate);
+  };
+
   const previousWeek = () => {
     const newStart = new Date(currentWeekStart);
     newStart.setDate(newStart.getDate() - 7);
@@ -284,7 +297,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
   weekEnd.setDate(weekEnd.getDate() + 6);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -292,12 +305,131 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
           <p className="text-gray-600">Track your daily working hours</p>
         </div>
 
+        {/* Mobile: single-day view */}
+        <div className="md:hidden">
+          {(() => {
+            const entry = getTimesheetEntry(mobileDate);
+            const onLeave = isOnLeave(mobileDate);
+            const isApproved = entry.status === 'approved';
+
+            return (
+              <div className="bg-white rounded-2xl shadow-sm p-4">
+                {/* Day Navigator */}
+                <div className="flex items-center justify-between mb-4">
+                  <button
+                    onClick={previousDay}
+                    aria-label="Previous day"
+                    className="w-10 h-10 flex items-center justify-center bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200 transition-colors flex-shrink-0"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <div className="text-center">
+                    <p className="text-base text-gray-900">
+                      {mobileDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                    </p>
+                    <button
+                      onClick={() => setMobileDate(new Date())}
+                      className="text-xs text-orange-600 mt-0.5"
+                    >
+                      Jump to today
+                    </button>
+                  </div>
+                  <button
+                    onClick={nextDay}
+                    aria-label="Next day"
+                    className="w-10 h-10 flex items-center justify-center bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200 transition-colors flex-shrink-0"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {onLeave ? (
+                  <div className="flex items-center gap-2 justify-center py-8 text-yellow-700 bg-yellow-50 rounded-xl">
+                    <AlertCircle className="w-5 h-5" />
+                    On leave this day
+                  </div>
+                ) : (
+                  <>
+                    {/* Status badge */}
+                    <div className="flex justify-center mb-4">
+                      {isApproved ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
+                          <CheckCircle className="w-4 h-4" /> Approved
+                        </span>
+                      ) : entry.status === 'rejected' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">
+                          <XCircle className="w-4 h-4" /> Rejected
+                        </span>
+                      ) : entry.startTime && entry.endTime ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
+                          <Clock className="w-4 h-4" /> Pending approval
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-sm">
+                          Not logged yet
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Time inputs */}
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1.5">Time in</label>
+                        <input
+                          type="time"
+                          value={entry.startTime}
+                          onChange={(e) => handleTimeChange(mobileDate, 'startTime', e.target.value)}
+                          disabled={isApproved}
+                          className="w-full px-3 py-3 text-base border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1.5">Time out</label>
+                        <input
+                          type="time"
+                          value={entry.endTime}
+                          onChange={(e) => handleTimeChange(mobileDate, 'endTime', e.target.value)}
+                          disabled={isApproved}
+                          className="w-full px-3 py-3 text-base border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-center text-sm text-gray-600 mb-4">
+                      {entry.totalHours > 0 ? (
+                        <span className={entry.totalHours >= 4 ? 'text-green-700' : 'text-red-700'}>
+                          {entry.totalHours.toFixed(2)} hours
+                        </span>
+                      ) : (
+                        'Enter both times to calculate hours'
+                      )}
+                    </p>
+
+                    {!isApproved && (
+                      <button
+                        onClick={() => saveSingleDay(mobileDate)}
+                        disabled={loading || !entry.startTime || !entry.endTime}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        <Save className="w-5 h-5" />
+                        Send for approval
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Desktop: week view */}
+        <div className="hidden md:block">
         {/* Week Navigator */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <button
                   onClick={previousWeek}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   Previous Week
@@ -305,7 +437,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                 
                 <div className="text-center">
                   <div className="flex items-center gap-2 justify-center mb-1">
-                    <Calendar className="w-5 h-5 text-purple-600" />
+                    <Calendar className="w-5 h-5 text-orange-600" />
                     <span className="text-lg text-gray-900">
                       {currentWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       {' - '}
@@ -317,7 +449,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                 
                 <button
                   onClick={nextWeek}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
                 >
                   Next Week
                   <ChevronRight className="w-4 h-4" />
@@ -341,7 +473,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gradient-to-r from-purple-600 to-pink-600 text-white">
+                  <thead className="bg-gradient-to-r from-orange-600 to-red-600 text-white">
                     <tr>
                       <th className="px-6 py-4 text-left">Date</th>
                       <th className="px-6 py-4 text-left">Day</th>
@@ -374,7 +506,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                                 value={entry.startTime}
                                 onChange={(e) => handleTimeChange(date, 'startTime', e.target.value)}
                                 disabled={entry.status === 'approved'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
+                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                               />
                             )}
                           </td>
@@ -387,7 +519,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                                 value={entry.endTime}
                                 onChange={(e) => handleTimeChange(date, 'endTime', e.target.value)}
                                 disabled={entry.status === 'approved'}
-                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100"
+                                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                               />
                             )}
                           </td>
@@ -433,7 +565,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                               <button
                                 onClick={() => saveSingleDay(date)}
                                 disabled={loading || !entry.startTime || !entry.endTime}
-                                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                               >
                                 <Save className="w-4 h-4" />
                                 Save
@@ -453,11 +585,12 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
           <button
             onClick={saveWeek}
             disabled={loading}
-            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg disabled:opacity-50"
+            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-lg disabled:opacity-50"
           >
             <Save className="w-5 h-5" />
             Save Entire Week
           </button>
+        </div>
         </div>
       </div>
     </div>

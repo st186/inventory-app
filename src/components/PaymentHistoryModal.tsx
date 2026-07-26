@@ -116,10 +116,10 @@ export function PaymentHistoryModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4 flex items-center justify-between">
+        <div className="bg-gradient-to-r from-orange-600 to-red-600 px-6 py-4 flex items-center justify-between">
           <div>
             <h2 className="text-xl text-white font-semibold">Payment History</h2>
-            <p className="text-purple-100 text-sm mt-1">
+            <p className="text-orange-100 text-sm mt-1">
               {employee.name} ({employee.employeeId})
             </p>
           </div>
@@ -143,12 +143,12 @@ export function PaymentHistoryModal({
                 ₹{totalPayouts.toLocaleString('en-IN')}
               </p>
             </div>
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <p className="text-sm text-purple-700 mb-1">Personal Expenses</p>
-              <p className="text-2xl font-semibold text-purple-900">
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+              <p className="text-sm text-orange-700 mb-1">Personal Expenses</p>
+              <p className="text-2xl font-semibold text-orange-900">
                 {personalExpenses.length}
               </p>
-              <p className="text-sm text-purple-600 mt-1">
+              <p className="text-sm text-orange-600 mt-1">
                 ₹{totalExpenses.toLocaleString('en-IN')}
               </p>
             </div>
@@ -163,7 +163,7 @@ export function PaymentHistoryModal({
           {/* Month-wise Payment History */}
           <div>
             <h3 className="text-lg text-gray-900 mb-3 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-purple-600" />
+              <DollarSign className="w-5 h-5 text-orange-600" />
               Payment History (Month-wise)
             </h3>
             
@@ -184,17 +184,17 @@ export function PaymentHistoryModal({
                   }, 0);
                   
                   return (
-                    <div key={monthGroup.monthKey} className="border-2 border-purple-200 rounded-xl overflow-hidden">
+                    <div key={monthGroup.monthKey} className="border-2 border-orange-200 rounded-xl overflow-hidden">
                       {/* Month Header */}
-                      <div className="bg-gradient-to-r from-purple-100 to-pink-100 px-4 py-3 border-b border-purple-200">
+                      <div className="bg-gradient-to-r from-orange-100 to-amber-100 px-4 py-3 border-b border-orange-200">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Calendar className="w-5 h-5 text-purple-600" />
+                            <Calendar className="w-5 h-5 text-orange-600" />
                             <h4 className="text-lg font-semibold text-gray-900">{monthGroup.monthLabel}</h4>
                           </div>
                           <div className="text-right">
                             <p className="text-sm text-gray-600">{monthGroup.payments.length} payment{monthGroup.payments.length !== 1 ? 's' : ''}</p>
-                            <p className="text-lg font-semibold text-purple-900">₹{monthTotal.toLocaleString('en-IN')}</p>
+                            <p className="text-lg font-semibold text-orange-900">₹{monthTotal.toLocaleString('en-IN')}</p>
                           </div>
                         </div>
                       </div>
@@ -235,15 +235,15 @@ export function PaymentHistoryModal({
                               const isMapped = expense.expenseMonth && expense.expenseMonth !== `${new Date(expense.date).getFullYear()}-${String(new Date(expense.date).getMonth() + 1).padStart(2, '0')}`;
                               
                               return (
-                                <div key={`expense-${expense.id}`} className="border border-purple-200 rounded-lg p-3 bg-purple-50">
+                                <div key={`expense-${expense.id}`} className="border border-orange-200 rounded-lg p-3 bg-orange-50">
                                   <div className="flex justify-between items-start">
                                     <div className="flex-1">
                                       <div className="flex items-center gap-2">
-                                        <CreditCard className="w-4 h-4 text-purple-600" />
-                                        <span className="text-sm font-medium text-purple-900">Salary (Personal Expense)</span>
+                                        <CreditCard className="w-4 h-4 text-orange-600" />
+                                        <span className="text-sm font-medium text-orange-900">Salary (Personal Expense)</span>
                                       </div>
                                       {isMapped ? (
-                                        <p className="text-xs text-purple-600 mt-1 font-medium flex items-center gap-1">
+                                        <p className="text-xs text-orange-600 mt-1 font-medium flex items-center gap-1">
                                           📅 Mapped to this month • Paid on: {isPaid}
                                         </p>
                                       ) : (
@@ -254,7 +254,7 @@ export function PaymentHistoryModal({
                                       <p className="text-sm text-gray-500 mt-1">{expense.description}</p>
                                     </div>
                                     <div className="text-right">
-                                      <p className="text-lg font-semibold text-purple-900">₹{expense.amount.toLocaleString('en-IN')}</p>
+                                      <p className="text-lg font-semibold text-orange-900">₹{expense.amount.toLocaleString('en-IN')}</p>
                                     </div>
                                   </div>
                                 </div>

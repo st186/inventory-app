@@ -62,7 +62,7 @@ export function DebugPanel({ user, productionData }: Props) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 p-3 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 z-50"
+        className="fixed bottom-4 right-4 p-3 bg-orange-600 text-white rounded-full shadow-lg hover:bg-orange-700 z-50"
       >
         <Bug className="w-6 h-6" />
       </button>
@@ -70,7 +70,7 @@ export function DebugPanel({ user, productionData }: Props) {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 bg-white rounded-xl shadow-2xl p-6 max-w-2xl max-h-[80vh] overflow-auto z-50 border-2 border-purple-600">
+    <div className="fixed bottom-4 right-4 bg-white rounded-xl shadow-2xl p-6 max-w-2xl max-h-[80vh] overflow-auto z-50 border-2 border-orange-600">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg text-gray-900">Debug Panel</h3>
         <button

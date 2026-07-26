@@ -68,9 +68,9 @@ export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
               <p className="text-xs text-gray-500 mb-2">Direct Reports:</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {manager.employees.map((employee) => (
-                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-pink-50 rounded-lg border border-pink-100">
+                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-rose-50 rounded-lg border border-rose-100">
                     <ChevronRight className="w-4 h-4 text-gray-400" />
-                    <div className="w-8 h-8 bg-pink-600 rounded-full flex items-center justify-center text-white text-sm">
+                    <div className="w-8 h-8 bg-rose-600 rounded-full flex items-center justify-center text-white text-sm">
                       <User className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">

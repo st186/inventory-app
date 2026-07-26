@@ -250,7 +250,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
         </div>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Create Store
@@ -259,7 +259,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
 
       {/* Create Form */}
       {showCreateForm && (
-        <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-6">
+        <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-6">
           <h3 className="text-lg text-gray-900 mb-4">Create New Store</h3>
           <form onSubmit={handleCreateStore} className="space-y-4">
             <div>
@@ -271,7 +271,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                 value={newStoreName}
                 onChange={(e) => setNewStoreName(e.target.value)}
                 placeholder="e.g., Downtown Branch, Main Street Store"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 required
               />
             </div>
@@ -284,14 +284,14 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                 value={newStoreLocation}
                 onChange={(e) => setNewStoreLocation(e.target.value)}
                 placeholder="e.g., 123 Main St, City"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
             <div className="flex gap-3">
               <button
                 type="submit"
                 disabled={creating}
-                className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50"
               >
                 {creating ? 'Creating...' : 'Create Store'}
               </button>
@@ -391,7 +391,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                     <button
                       onClick={() => handleAssignManager(store.id)}
                       disabled={assigning || !selectedManagerId}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm disabled:opacity-50"
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm disabled:opacity-50"
                     >
                       <Check className="w-4 h-4" />
                       {assigning ? 'Assigning...' : 'Assign'}
@@ -432,7 +432,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                     <button
                       onClick={() => handleChangeProductionHouse(store.id)}
                       disabled={assigningProductionHouse || !selectedProductionHouseId}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm disabled:opacity-50"
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm disabled:opacity-50"
                     >
                       <Check className="w-4 h-4" />
                       {assigningProductionHouse ? 'Assigning...' : 'Assign'}
@@ -452,7 +452,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                 <>
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <Store className="w-5 h-5 text-purple-600" />
+                      <Store className="w-5 h-5 text-orange-600" />
                       <h3 className="text-gray-900">{store.name}</h3>
                     </div>
                     <button
@@ -495,7 +495,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                     
                     <button
                       onClick={() => handleStartAssignManager(store)}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors text-sm"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
                     >
                       <UserCog className="w-4 h-4" />
                       {store.managerId ? 'Change Manager' : 'Assign Manager'}

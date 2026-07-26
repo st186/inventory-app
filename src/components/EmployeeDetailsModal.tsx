@@ -70,14 +70,14 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between rounded-t-2xl">
+        <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between rounded-t-2xl">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
               <User className="w-6 h-6" />
             </div>
             <div>
               <h2 className="text-xl font-bold">Edit Employee Details</h2>
-              <p className="text-sm text-purple-100">{employee.name} ({employee.employeeId})</p>
+              <p className="text-sm text-orange-100">{employee.name} ({employee.employeeId})</p>
             </div>
           </div>
           <button
@@ -113,7 +113,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
             <select
               value={formData.role}
               onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             >
               <option value="employee">Employee</option>
               <option value="manager">Manager</option>
@@ -136,7 +136,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
                 value={formData.clusterHeadId}
                 onChange={(e) => setFormData({ ...formData, clusterHeadId: e.target.value })}
                 placeholder="e.g., BM005 (leave empty if reporting to another manager)"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
                 Only for top-level managers. Leave empty if this manager reports to another manager (set via Hierarchy tab instead).
@@ -156,7 +156,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
                 ...formData, 
                 designation: e.target.value as any || null 
               })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             >
               <option value="">No Designation</option>
               <option value="operations_incharge">Operations Incharge</option>
@@ -180,7 +180,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
               <select
                 value={formData.storeId || ''}
                 onChange={(e) => setFormData({ ...formData, storeId: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="">No Store</option>
                 {stores.map(store => (
@@ -205,7 +205,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
                 ...formData, 
                 department: e.target.value as any || null 
               })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             >
               <option value="">No Department</option>
               <option value="store_operations">Store Operations</option>
@@ -239,7 +239,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
             {saving ? 'Saving...' : 'Save Changes'}

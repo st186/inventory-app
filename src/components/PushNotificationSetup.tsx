@@ -48,12 +48,12 @@ export function PushNotificationSetup() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-2xl shadow-xl p-8">
           {/* Header */}
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-amber-500 rounded-xl flex items-center justify-center">
               <Bell className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -76,19 +76,19 @@ export function PushNotificationSetup() {
                 </p>
                 <ul className="space-y-2 text-gray-700">
                   <li className="flex items-start gap-2">
-                    <span className="text-purple-600 mt-1">•</span>
+                    <span className="text-orange-600 mt-1">•</span>
                     <span>Sales approval requests</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="text-purple-600 mt-1">•</span>
+                    <span className="text-orange-600 mt-1">•</span>
                     <span>Production requests from stores</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="text-purple-600 mt-1">•</span>
+                    <span className="text-orange-600 mt-1">•</span>
                     <span>Timesheet and leave approvals</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="text-purple-600 mt-1">•</span>
+                    <span className="text-orange-600 mt-1">•</span>
                     <span>Urgent system notifications</span>
                   </li>
                 </ul>
@@ -107,8 +107,8 @@ export function PushNotificationSetup() {
               <div className="space-y-4">
                 <h3 className="text-lg text-gray-900">Setup Process (2 steps):</h3>
                 <div className="grid md:grid-cols-2 gap-4">
-                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-                    <div className="w-8 h-8 bg-purple-500 text-white rounded-lg flex items-center justify-center mb-3">
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                    <div className="w-8 h-8 bg-orange-500 text-white rounded-lg flex items-center justify-center mb-3">
                       1
                     </div>
                     <h4 className="text-gray-900 mb-2">Generate VAPID Keys</h4>
@@ -116,8 +116,8 @@ export function PushNotificationSetup() {
                       We'll generate secure encryption keys for push notifications
                     </p>
                   </div>
-                  <div className="bg-pink-50 border border-pink-200 rounded-xl p-4">
-                    <div className="w-8 h-8 bg-pink-500 text-white rounded-lg flex items-center justify-center mb-3">
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                    <div className="w-8 h-8 bg-rose-500 text-white rounded-lg flex items-center justify-center mb-3">
                       2
                     </div>
                     <h4 className="text-gray-900 mb-2">Configure in Supabase</h4>
@@ -130,7 +130,7 @@ export function PushNotificationSetup() {
 
               <button
                 onClick={() => setStep('generate')}
-                className="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg"
+                className="w-full py-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg"
               >
                 Start Setup →
               </button>
@@ -141,8 +141,8 @@ export function PushNotificationSetup() {
           {step === 'generate' && !vapidKeys && (
             <div className="space-y-6">
               <div className="text-center py-8">
-                <div className="w-20 h-20 bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Key className="w-10 h-10 text-purple-600" />
+                <div className="w-20 h-20 bg-gradient-to-br from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Key className="w-10 h-10 text-orange-600" />
                 </div>
                 <h2 className="text-xl text-gray-900 mb-3">Generate VAPID Keys</h2>
                 <p className="text-gray-600 mb-6 max-w-md mx-auto">
@@ -151,7 +151,7 @@ export function PushNotificationSetup() {
                 </p>
                 <button
                   onClick={generateKeys}
-                  className="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg"
+                  className="px-8 py-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg"
                 >
                   Generate Keys
                 </button>
@@ -186,7 +186,7 @@ export function PushNotificationSetup() {
               {/* Public Key */}
               <div className="space-y-2">
                 <label className="block text-sm text-gray-700">
-                  <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs mr-2">PUBLIC KEY</span>
+                  <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs mr-2">PUBLIC KEY</span>
                   VAPID_PUBLIC_KEY
                 </label>
                 <div className="relative">
@@ -198,7 +198,7 @@ export function PushNotificationSetup() {
                   />
                   <button
                     onClick={() => copyToClipboard(vapidKeys.publicKey, 'public')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-purple-600 transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-orange-600 transition-colors"
                     title="Copy to clipboard"
                   >
                     {copied === 'public' ? (
@@ -225,7 +225,7 @@ export function PushNotificationSetup() {
                   />
                   <button
                     onClick={() => copyToClipboard(vapidKeys.privateKey, 'private')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-purple-600 transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-orange-600 transition-colors"
                     title="Copy to clipboard"
                   >
                     {copied === 'private' ? (

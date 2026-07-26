@@ -177,7 +177,7 @@ export function InvestmentsManagement({ context }: Props) {
             resetForm();
             setShowAddModal(true);
           }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-lg hover:from-purple-700 hover:to-pink-600 transition-all shadow-lg"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-lg hover:from-orange-700 hover:to-rose-600 transition-all shadow-lg"
         >
           <UserPlus className="w-5 h-5" />
           Add Investor
@@ -187,7 +187,7 @@ export function InvestmentsManagement({ context }: Props) {
       {/* Investors List */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600"></div>
         </div>
       ) : investors.length === 0 ? (
         <div className="bg-gray-50 rounded-xl p-12 text-center border-2 border-dashed border-gray-300">
@@ -199,7 +199,7 @@ export function InvestmentsManagement({ context }: Props) {
               resetForm();
               setShowAddModal(true);
             }}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-lg hover:from-purple-700 hover:to-pink-600 transition-all shadow-lg"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-lg hover:from-orange-700 hover:to-rose-600 transition-all shadow-lg"
           >
             <UserPlus className="w-5 h-5" />
             Add First Investor
@@ -210,9 +210,9 @@ export function InvestmentsManagement({ context }: Props) {
           {investors.map((investor) => {
             const analytics = getInvestorAnalytics(investor.id);
             return (
-              <div key={investor.id} className="bg-white rounded-xl shadow-lg border-2 border-purple-100 overflow-hidden">
+              <div key={investor.id} className="bg-white rounded-xl shadow-lg border-2 border-orange-100 overflow-hidden">
                 {/* Investor Header */}
-                <div className="bg-gradient-to-r from-purple-600 to-pink-500 p-6 text-white">
+                <div className="bg-gradient-to-r from-orange-600 to-rose-500 p-6 text-white">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
@@ -222,7 +222,7 @@ export function InvestmentsManagement({ context }: Props) {
                         <div>
                           <h3 className="text-xl font-bold">{investor.name}</h3>
                           {investor.contactNumber && (
-                            <div className="flex items-center gap-2 text-purple-100 text-sm mt-1">
+                            <div className="flex items-center gap-2 text-orange-100 text-sm mt-1">
                               <Phone className="w-3 h-3" />
                               {investor.contactNumber}
                             </div>
@@ -230,7 +230,7 @@ export function InvestmentsManagement({ context }: Props) {
                         </div>
                       </div>
                       {investor.email && (
-                        <div className="flex items-center gap-2 text-purple-100 text-sm">
+                        <div className="flex items-center gap-2 text-orange-100 text-sm">
                           <Mail className="w-3 h-3" />
                           {investor.email}
                         </div>
@@ -256,7 +256,7 @@ export function InvestmentsManagement({ context }: Props) {
                 {/* Investment Analytics */}
                 <div className="p-6">
                   <h4 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-purple-600" />
+                    <TrendingUp className="w-4 h-4 text-orange-600" />
                     Investment Summary
                   </h4>
                   <div className="grid grid-cols-2 gap-4 mb-4">
@@ -280,8 +280,8 @@ export function InvestmentsManagement({ context }: Props) {
 
                   {/* Active Loans */}
                   {analytics.activeLoans > 0 && (
-                    <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-3">
-                      <p className="text-sm font-semibold text-purple-900">
+                    <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-3">
+                      <p className="text-sm font-semibold text-orange-900">
                         {analytics.activeLoans} Active Loan{analytics.activeLoans !== 1 ? 's' : ''}
                       </p>
                     </div>
@@ -336,14 +336,14 @@ export function InvestmentsManagement({ context }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 text-white">
+            <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold flex items-center gap-2">
                     <UserPlus className="w-6 h-6" />
                     {editingInvestor ? 'Edit Investor' : 'Add New Investor'}
                   </h2>
-                  <p className="text-purple-100 mt-1">Enter investor details</p>
+                  <p className="text-orange-100 mt-1">Enter investor details</p>
                 </div>
                 <button
                   onClick={() => {
@@ -369,7 +369,7 @@ export function InvestmentsManagement({ context }: Props) {
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter investor name"
                     required
                   />
@@ -386,7 +386,7 @@ export function InvestmentsManagement({ context }: Props) {
                     type="tel"
                     value={contactNumber}
                     onChange={(e) => setContactNumber(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter contact number"
                   />
                 </div>
@@ -402,7 +402,7 @@ export function InvestmentsManagement({ context }: Props) {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter email address"
                   />
                 </div>
@@ -418,7 +418,7 @@ export function InvestmentsManagement({ context }: Props) {
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     rows={2}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter address"
                   />
                 </div>
@@ -432,7 +432,7 @@ export function InvestmentsManagement({ context }: Props) {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                   placeholder="Additional notes about this investor"
                 />
               </div>
@@ -453,7 +453,7 @@ export function InvestmentsManagement({ context }: Props) {
                 <button
                   type="submit"
                   disabled={saving || !name}
-                  className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {saving ? (
                     <>

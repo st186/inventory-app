@@ -187,7 +187,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
     };
     
     return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
         {designationMap[designation] || designation}
       </span>
     );
@@ -204,7 +204,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
           Assign Managers to Employees
         </h1>
         <p className="text-gray-600 mt-2">
@@ -273,103 +273,72 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                   These employees need to be assigned to a manager
                 </p>
               </div>
-              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Employee
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Employee ID
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Designation
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Assign Manager
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {unassignedEmployees.map((employee) => (
-                      <tr key={employee.employeeId} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{employee.name}</div>
-                            <div className="text-sm text-gray-500">{employee.email}</div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                              {employee.employeeId}
-                            </span>
-                            {employee.role === 'employee' && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                                Employee
-                              </span>
-                            )}
-                            {employee.role === 'manager' && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                Manager
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {formatDesignation(employee.designation)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <select
-                            value={assignments[employee.employeeId] || ''}
-                            onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
-                            className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                          >
-                            <option value="">Select a manager...</option>
-                            {getAvailableSupervisors(employee).map((manager) => (
-                              <option key={manager.employeeId} value={manager.employeeId}>
-                                {manager.name} ({manager.employeeId})
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleSave(employee.employeeId)}
-                              disabled={!assignments[employee.employeeId] || saving === employee.employeeId}
-                              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                            >
-                              <Save className="w-4 h-4" />
-                              {saving === employee.employeeId ? 'Saving...' : 'Assign'}
-                            </button>
-                            {employee.role === 'employee' && (
-                              <button
-                                onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
-                                disabled={editingRole === employee.employeeId}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                              >
-                                <ArrowUpCircle className="w-4 h-4" />
-                                {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setSelectedEmployee(employee)}
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                            >
-                              <Edit className="w-4 h-4" />
-                              Edit
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
+                {unassignedEmployees.map((employee) => (
+                  <div key={employee.employeeId} className="p-4">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{employee.name}</p>
+                        <p className="text-xs text-gray-500 truncate">{employee.email}</p>
+                      </div>
+                      <p className="text-xs text-gray-500 flex-shrink-0">{formatDesignation(employee.designation)}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-3">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                        {employee.employeeId}
+                      </span>
+                      {employee.role === 'employee' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                          Employee
+                        </span>
+                      )}
+                      {employee.role === 'manager' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                          Manager
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      value={assignments[employee.employeeId] || ''}
+                      onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm mb-3"
+                    >
+                      <option value="">Select a manager...</option>
+                      {getAvailableSupervisors(employee).map((manager) => (
+                        <option key={manager.employeeId} value={manager.employeeId}>
+                          {manager.name} ({manager.employeeId})
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleSave(employee.employeeId)}
+                        disabled={!assignments[employee.employeeId] || saving === employee.employeeId}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {saving === employee.employeeId ? 'Saving...' : 'Assign'}
+                      </button>
+                      {employee.role === 'employee' && (
+                        <button
+                          onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
+                          disabled={editingRole === employee.employeeId}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                        >
+                          <ArrowUpCircle className="w-3.5 h-3.5" />
+                          {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedEmployee(employee)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -386,116 +355,80 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                   These employees are already assigned to managers
                 </p>
               </div>
-              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Employee
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Employee ID
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Designation
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Current Manager
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Reassign Manager
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {assignedEmployees.map((employee) => (
-                      <tr key={employee.employeeId} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{employee.name}</div>
-                            <div className="text-sm text-gray-500">{employee.email}</div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                              {employee.employeeId}
-                            </span>
-                            {employee.role === 'employee' && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                                Employee
-                              </span>
-                            )}
-                            {employee.role === 'manager' && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                Manager
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {formatDesignation(employee.designation)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{getManagerName(employee.managerId)}</div>
-                          {employee.managerId && (
-                            <div className="text-xs text-gray-500">{employee.managerId}</div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <select
-                            value={assignments[employee.employeeId] || employee.managerId || ''}
-                            onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
-                            className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                          >
-                            <option value="">Select a manager...</option>
-                            {getAvailableSupervisors(employee).map((manager) => (
-                              <option key={manager.employeeId} value={manager.employeeId}>
-                                {manager.name} ({manager.employeeId})
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleSave(employee.employeeId)}
-                              disabled={
-                                !assignments[employee.employeeId] || 
-                                assignments[employee.employeeId] === employee.managerId ||
-                                saving === employee.employeeId
-                              }
-                              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                            >
-                              <Save className="w-4 h-4" />
-                              {saving === employee.employeeId ? 'Saving...' : 'Update'}
-                            </button>
-                            {employee.role === 'employee' && (
-                              <button
-                                onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
-                                disabled={editingRole === employee.employeeId}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-                              >
-                                <ArrowUpCircle className="w-4 h-4" />
-                                {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setSelectedEmployee(employee)}
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                            >
-                              <Edit className="w-4 h-4" />
-                              Edit
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
+                {assignedEmployees.map((employee) => (
+                  <div key={employee.employeeId} className="p-4">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{employee.name}</p>
+                        <p className="text-xs text-gray-500 truncate">{employee.email}</p>
+                      </div>
+                      <p className="text-xs text-gray-500 flex-shrink-0">{formatDesignation(employee.designation)}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                        {employee.employeeId}
+                      </span>
+                      {employee.role === 'employee' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                          Employee
+                        </span>
+                      )}
+                      {employee.role === 'manager' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                          Manager
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Current manager: <span className="text-gray-700">{getManagerName(employee.managerId)}</span>
+                      {employee.managerId && <span className="text-gray-400"> ({employee.managerId})</span>}
+                    </p>
+                    <select
+                      value={assignments[employee.employeeId] || employee.managerId || ''}
+                      onChange={(e) => handleAssignmentChange(employee.employeeId, e.target.value)}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm mb-3"
+                    >
+                      <option value="">Select a manager...</option>
+                      {getAvailableSupervisors(employee).map((manager) => (
+                        <option key={manager.employeeId} value={manager.employeeId}>
+                          {manager.name} ({manager.employeeId})
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleSave(employee.employeeId)}
+                        disabled={
+                          !assignments[employee.employeeId] ||
+                          assignments[employee.employeeId] === employee.managerId ||
+                          saving === employee.employeeId
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {saving === employee.employeeId ? 'Saving...' : 'Update'}
+                      </button>
+                      {employee.role === 'employee' && (
+                        <button
+                          onClick={() => handlePromoteToManager(employee.employeeId, employee.name)}
+                          disabled={editingRole === employee.employeeId}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                        >
+                          <ArrowUpCircle className="w-3.5 h-3.5" />
+                          {editingRole === employee.employeeId ? 'Promoting...' : 'Promote'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedEmployee(employee)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

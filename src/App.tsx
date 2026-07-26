@@ -2,6 +2,7 @@
 import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
 import { InventoryManagement } from './components/InventoryManagement';
 import { InventoryView } from './components/InventoryView';
+import { SalesView } from './components/SalesView';
 import { ClusterDashboard } from './components/ClusterDashboard';
 // Lazy load heavy components for better performance
 const SalesManagement = lazy(() => import('./components/SalesManagement').then(module => ({ default: module.SalesManagement })));
@@ -43,12 +44,13 @@ import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
+import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
 
 export type InventoryItem = {
   id: string;
   date: string;
-  category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'staff_essentials';
+  category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'beverages' | 'cleaning_sanitation' | 'equipment_smallwares' | 'staff_welfare_ppe' | 'office_admin_supplies' | 'staff_essentials'; // 'staff_essentials' is legacy — no longer selectable for new entries, split into the 5 categories above
   itemName: string;
   quantity: number;
   unit: string;
@@ -67,12 +69,13 @@ export type InventoryItem = {
 export type OverheadItem = {
   id: string;
   date: string;
-  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'lunch' | 'emergency_online' | 'personal_expense' | 'miscellaneous' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'evening_snacks' | 'commission'; // 'commission' is a legacy category kept for backwards compatibility with old records
+  category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'breakfast' | 'lunch' | 'evening_snacks' | 'emergency_online' | 'personal_expense' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'vehicle_maintenance' | 'donations_community' | 'staff_welfare' | 'miscellaneous' | 'commission'; // 'miscellaneous' and 'commission' are legacy categories kept for backwards compatibility with old records; no longer selectable in the form
   description: string;
   amount: number;
   storeId?: string; // Optional storeId for multi-store filtering
   employeeId?: string; // For personal_expense category
   employeeName?: string; // For personal_expense category
+  employeeIds?: string[]; // For breakfast/lunch/evening_snacks: which employees this meal covered
   expenseMonth?: string; // For personal_expense: YYYY-MM format to map expense to specific month (for backlogged salaries)
   // Payment method fields
   paymentMethod?: 'cash' | 'online' | 'both';
@@ -733,9 +736,32 @@ export default function App() {
     checkSession();
   }, []); // Empty dependency array - only run once on mount
 
+  // Shared by both the web-push (service worker) and native (Capacitor/FCM) navigation paths.
+  const applyNavigationTarget = useCallback((target: { view: string; tab?: string; highlightRequestId?: string }) => {
+    console.log('🔔 [nav] applyNavigationTarget called with:', target);
+    if (!target?.view) {
+      console.log('🔔 [nav] No view on target, bailing out');
+      return;
+    }
+    setActiveView(target.view as typeof activeView);
+    setHighlightTab(target.tab || null);
+    if (target.highlightRequestId) {
+      setHighlightRequestId(target.highlightRequestId);
+    }
+    console.log('🔔 [nav] Applied: view=', target.view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
+  }, [setActiveView]);
+
   // Initialize push notifications when user logs in
   useEffect(() => {
     if (user) {
+      const userId = user.employeeId || user.email;
+
+      // Native (Android) push goes through Capacitor + FCM, not the web-push/VAPID flow below.
+      if (nativePushNotifications.isNativePushSupported()) {
+        nativePushNotifications.initializeNativePushNotifications(userId, applyNavigationTarget);
+        return;
+      }
+
       const setupPushNotifications = async () => {
         try {
           // Check if push notifications are supported
@@ -743,7 +769,7 @@ export default function App() {
             console.log('Push notifications not supported on this device');
             return;
           }
-          
+
           // Get VAPID public key from server
           const response = await fetch(
             `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/vapid-public-key`,
@@ -753,23 +779,22 @@ export default function App() {
               }
             }
           );
-          
+
           if (!response.ok) {
             console.log('Could not fetch VAPID key - push notifications disabled');
             return;
           }
-          
+
           const data = await response.json();
-          
+
           if (!data.configured || !data.publicKey) {
             console.log('📱 Push notifications not configured. To enable, set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables.');
             return;
           }
-          
+
           // Initialize push notifications with user ID
-          const userId = user.employeeId || user.email;
           const success = await pushNotifications.initializePushNotifications(userId, data.publicKey);
-          
+
           if (success) {
             console.log('🔔 Push notifications enabled successfully for user:', userId);
           }
@@ -778,10 +803,10 @@ export default function App() {
           console.log('ℹ️ Push notifications setup skipped:', error instanceof Error ? error.message : 'Unknown error');
         }
       };
-      
+
       setupPushNotifications();
     }
-  }, [user]); // Run when user changes
+  }, [user, applyNavigationTarget]); // Run when user changes
 
   // Deep-link handling for push notification clicks (see public/sw.js).
   // Two delivery paths depending on whether a tab was already open when clicked:
@@ -789,20 +814,6 @@ export default function App() {
   //   2. No tab open: service worker opens a new window with ?view=&tab=&highlightRequestId= params.
   useEffect(() => {
     console.log('🔔 [nav] Registering service worker message listener');
-
-    const applyNavigationTarget = (target: { view: string; tab?: string; highlightRequestId?: string }) => {
-      console.log('🔔 [nav] applyNavigationTarget called with:', target);
-      if (!target?.view) {
-        console.log('🔔 [nav] No view on target, bailing out');
-        return;
-      }
-      setActiveView(target.view as typeof activeView);
-      setHighlightTab(target.tab || null);
-      if (target.highlightRequestId) {
-        setHighlightRequestId(target.highlightRequestId);
-      }
-      console.log('🔔 [nav] Applied: view=', target.view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
-    };
 
     // Case 1: tab was already open, service worker messages us directly
     const handleServiceWorkerMessage = (event: MessageEvent) => {
@@ -828,7 +839,7 @@ export default function App() {
     return () => {
       navigator.serviceWorker?.removeEventListener?.('message', handleServiceWorkerMessage);
     };
-  }, []);
+  }, [applyNavigationTarget]);
 
   const handleLogin = async (email: string, password: string) => {
     setAuthError(null);
@@ -1578,7 +1589,7 @@ export default function App() {
     <>
       <button
         onClick={() => setShowPushNotificationPanel(true)}
-        className="fixed bottom-6 right-6 z-40 bg-purple-600 hover:bg-purple-700 text-white rounded-full p-3 shadow-lg transition-all"
+        className="fixed bottom-6 right-6 z-40 bg-orange-600 hover:bg-orange-700 text-white rounded-full p-3 shadow-lg transition-all"
         title="Push Notifications"
       >
         <Bell className="w-5 h-5" />
@@ -1610,6 +1621,7 @@ export default function App() {
   const isAnyIncharge = isStoreIncharge || isProductionIncharge;
   const isOperationsManager = user.role === 'manager' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
   const isManager = user.role === 'manager';
+  const isStoreInchargeManager = user.role === 'manager' && user.designation === 'store_incharge';
   const canViewProduction = isProductionIncharge || isOperationsManager || isClusterHead;
 
   // Debug: Log user permissions
@@ -1662,7 +1674,7 @@ export default function App() {
 
         <div className="min-h-screen bg-gray-50">
           {/* Employee Navigation */}
-          <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
+          <nav className="bg-stone-900 shadow-xl sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center py-3">
               <div className="flex items-center gap-4">
@@ -1688,7 +1700,7 @@ export default function App() {
                   onClick={() => setActiveView('analytics')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'analytics'
-                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      ? 'bg-white text-orange-600 border-white shadow-lg'
                       : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
@@ -1701,7 +1713,7 @@ export default function App() {
                       onClick={() => setActiveView('inventory')}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                         activeView === 'inventory'
-                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          ? 'bg-white text-orange-600 border-white shadow-lg'
                           : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                       }`}
                     >
@@ -1712,7 +1724,7 @@ export default function App() {
                       onClick={() => setActiveView('sales')}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                         activeView === 'sales'
-                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          ? 'bg-white text-orange-600 border-white shadow-lg'
                           : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                       }`}
                     >
@@ -1726,7 +1738,7 @@ export default function App() {
                     onClick={() => setActiveView('production')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                       activeView === 'production'
-                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        ? 'bg-white text-orange-600 border-white shadow-lg'
                         : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                     }`}
                   >
@@ -1739,7 +1751,7 @@ export default function App() {
                     onClick={() => setActiveView('stock-requests')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                       activeView === 'stock-requests'
-                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        ? 'bg-white text-orange-600 border-white shadow-lg'
                         : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                     }`}
                   >
@@ -1753,7 +1765,7 @@ export default function App() {
                       onClick={() => setActiveView('advanced-inventory')}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                         activeView === 'advanced-inventory'
-                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          ? 'bg-white text-orange-600 border-white shadow-lg'
                           : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                       }`}
                     >
@@ -1764,7 +1776,7 @@ export default function App() {
                       onClick={() => setActiveView('inventory-items')}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                         activeView === 'inventory-items'
-                          ? 'bg-white text-purple-600 border-white shadow-lg'
+                          ? 'bg-white text-orange-600 border-white shadow-lg'
                           : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                       }`}
                     >
@@ -1779,7 +1791,7 @@ export default function App() {
                   onClick={() => setActiveView('payroll')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'payroll'
-                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      ? 'bg-white text-orange-600 border-white shadow-lg'
                       : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
@@ -1790,7 +1802,7 @@ export default function App() {
                   onClick={() => setActiveView('attendance')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                     activeView === 'attendance'
-                      ? 'bg-white text-purple-600 border-white shadow-lg'
+                      ? 'bg-white text-orange-600 border-white shadow-lg'
                       : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                   }`}
                 >
@@ -1803,7 +1815,7 @@ export default function App() {
                     onClick={() => setActiveView('export')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all backdrop-blur-sm border-2 ${
                       activeView === 'export'
-                        ? 'bg-white text-purple-600 border-white shadow-lg'
+                        ? 'bg-white text-orange-600 border-white shadow-lg'
                         : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
                     }`}
                   >
@@ -1867,7 +1879,7 @@ export default function App() {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'analytics'
-                      ? 'bg-white text-purple-600'
+                      ? 'bg-white text-orange-600'
                       : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
@@ -1883,7 +1895,7 @@ export default function App() {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                         activeView === 'inventory'
-                          ? 'bg-white text-purple-600'
+                          ? 'bg-white text-orange-600'
                           : 'bg-white/20 text-white hover:bg-white/30'
                       }`}
                     >
@@ -1897,7 +1909,7 @@ export default function App() {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                         activeView === 'sales'
-                          ? 'bg-white text-purple-600'
+                          ? 'bg-white text-orange-600'
                           : 'bg-white/20 text-white hover:bg-white/30'
                       }`}
                     >
@@ -1914,7 +1926,7 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                       activeView === 'production'
-                        ? 'bg-white text-purple-600'
+                        ? 'bg-white text-orange-600'
                         : 'bg-white/20 text-white hover:bg-white/30'
                     }`}
                   >
@@ -1930,7 +1942,7 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                       activeView === 'stock-requests'
-                        ? 'bg-white text-purple-600'
+                        ? 'bg-white text-orange-600'
                         : 'bg-white/20 text-white hover:bg-white/30'
                     }`}
                   >
@@ -1947,7 +1959,7 @@ export default function App() {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                         activeView === 'advanced-inventory'
-                          ? 'bg-white text-purple-600'
+                          ? 'bg-white text-orange-600'
                           : 'bg-white/20 text-white hover:bg-white/30'
                       }`}
                     >
@@ -1961,7 +1973,7 @@ export default function App() {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                         activeView === 'inventory-items'
-                          ? 'bg-white text-purple-600'
+                          ? 'bg-white text-orange-600'
                           : 'bg-white/20 text-white hover:bg-white/30'
                       }`}
                     >
@@ -1979,7 +1991,7 @@ export default function App() {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'payroll'
-                      ? 'bg-white text-purple-600'
+                      ? 'bg-white text-orange-600'
                       : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
@@ -1993,7 +2005,7 @@ export default function App() {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                     activeView === 'attendance'
-                      ? 'bg-white text-purple-600'
+                      ? 'bg-white text-orange-600'
                       : 'bg-white/20 text-white hover:bg-white/30'
                   }`}
                 >
@@ -2009,7 +2021,7 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                       activeView === 'export'
-                        ? 'bg-white text-purple-600'
+                        ? 'bg-white text-orange-600'
                         : 'bg-white/20 text-white hover:bg-white/30'
                     }`}
                   >
@@ -2122,7 +2134,7 @@ export default function App() {
 
       <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
-      <nav className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 shadow-xl sticky top-0 z-50">
+      <nav className="bg-stone-900 shadow-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8">
           <div className="flex justify-between items-center py-2 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-4">
@@ -2183,7 +2195,7 @@ export default function App() {
                     onClick={() => setActiveView('analytics')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'analytics'
-                        ? 'bg-white text-purple-600 shadow-lg font-semibold'
+                        ? 'bg-white text-cyan-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2205,7 +2217,7 @@ export default function App() {
                     onClick={() => setActiveView('sales')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'sales'
-                        ? 'bg-white text-pink-600 shadow-lg font-semibold'
+                        ? 'bg-white text-fuchsia-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2229,7 +2241,7 @@ export default function App() {
                     onClick={() => setActiveView('employees')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'employees'
-                        ? 'bg-white text-indigo-600 shadow-lg font-semibold'
+                        ? 'bg-white text-violet-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2276,7 +2288,7 @@ export default function App() {
                     onClick={() => setActiveView('analytics')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'analytics'
-                        ? 'bg-white text-purple-600 shadow-lg font-semibold'
+                        ? 'bg-white text-cyan-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2287,7 +2299,7 @@ export default function App() {
                     onClick={() => setActiveView('sales')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'sales'
-                        ? 'bg-white text-pink-600 shadow-lg font-semibold'
+                        ? 'bg-white text-fuchsia-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2322,7 +2334,7 @@ export default function App() {
                     onClick={() => setActiveView('employees')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                       activeView === 'employees'
-                        ? 'bg-white text-indigo-600 shadow-lg font-semibold'
+                        ? 'bg-white text-violet-600 shadow-lg font-semibold'
                         : 'bg-white/10 backdrop-blur-sm text-white hover:bg-white/20 border border-white/20'
                     }`}
                   >
@@ -2384,7 +2396,7 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
                       activeView === 'analytics'
-                        ? 'bg-white text-purple-600 font-semibold shadow-sm'
+                        ? 'bg-white text-orange-600 font-semibold shadow-sm'
                         : 'bg-white/10 text-white hover:bg-white/20'
                     }`}
                   >
@@ -2621,7 +2633,7 @@ export default function App() {
 
       {/* Store Selector for Cluster Heads */}
       {isClusterHead && stores.length > 0 && (
-        <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 border-b border-purple-100 px-4 py-6">
+        <div className="bg-gradient-to-br from-orange-50 via-amber-50 to-orange-50 border-b border-orange-100 px-4 py-6">
           <div className="max-w-7xl mx-auto">
             <StoreSelector
               stores={stores}
@@ -2663,7 +2675,14 @@ export default function App() {
       <main className="pb-6">
         <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
         {activeView === 'sales' ? (
-          <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
+          // Store incharge logs sales; operations manager reconciles cash/Paytm and aggregator
+          // payouts against it (same screen, field-level permissions inside); everyone else
+          // (cluster head, etc.) gets a fully read-only view.
+          (isStoreInchargeManager || isOperationsManager) ? (
+            <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
+          ) : (
+            <SalesView context={contextValue} selectedStoreId={selectedStoreId} />
+          )
         ) : activeView === 'inventory' ? (
           // Only Operations Manager can edit, others get read-only view
           user.role === 'manager' ? (

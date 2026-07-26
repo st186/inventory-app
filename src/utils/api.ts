@@ -1739,6 +1739,8 @@ export interface CustomItem {
   id: string;
   category: string;
   itemName: string;
+  itemNameBengali?: string;
+  emoji?: string;
   createdAt?: string;
 }
 
@@ -1767,16 +1769,44 @@ export async function getCustomItems(): Promise<CustomItem[]> {
 export async function addCustomItem(category: string, itemName: string): Promise<CustomItem> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
     throw new Error('Not authenticated');
   }
-  
+
   const data = await fetchWithAuth(`${API_BASE}/custom-items`, session.access_token, {
     method: 'POST',
     body: JSON.stringify({ category, itemName }),
   });
   return data.customItem;
+}
+
+export async function updateCustomItem(id: string, updates: Partial<Omit<CustomItem, 'id'>>): Promise<CustomItem> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  const data = await fetchWithAuth(`${API_BASE}/custom-items/${id}`, session.access_token, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+  return data.customItem;
+}
+
+export async function deleteCustomItem(id: string): Promise<void> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  await fetchWithAuth(`${API_BASE}/custom-items/${id}`, session.access_token, {
+    method: 'DELETE',
+  });
 }
 
 // ============================================

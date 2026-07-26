@@ -6,6 +6,7 @@ import { FileText, Download, TrendingUp, DollarSign, Package, Users, Calendar } 
 import { Card } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
+import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
 
 type Props = {
   context: InventoryContextType;
@@ -143,7 +144,8 @@ export function ReportsVisualization({ context, stores }: Props) {
     // Category-wise spending
     const categorySpending: Record<string, number> = {};
     filteredInventory.forEach(item => {
-      const category = item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      const category = (INVENTORY_CATEGORIES as Record<string, string>)[item.category]
+        || item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
       categorySpending[category] = (categorySpending[category] || 0) + item.totalCost;
     });
 
@@ -202,7 +204,7 @@ export function ReportsVisualization({ context, stores }: Props) {
     };
   }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, dateRange]);
 
-  const COLORS = ['#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6'];
+  const COLORS = ['#14b8a6', '#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6'];
 
   const handleExport = () => {
     const data = {
@@ -231,7 +233,7 @@ export function ReportsVisualization({ context, stores }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
             <FileText className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -292,7 +294,7 @@ export function ReportsVisualization({ context, stores }: Props) {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">Active Stores</p>
-                <Package className="h-5 w-5 text-purple-600" />
+                <Package className="h-5 w-5 text-orange-600" />
               </div>
               <p className="text-2xl mb-1">{salesAnalytics.storeWiseSales.length}</p>
               <p className="text-xs text-muted-foreground">Contributing to revenue</p>
@@ -310,8 +312,8 @@ export function ReportsVisualization({ context, stores }: Props) {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="online" stroke="#8b5cf6" strokeWidth={2} name="Online" />
-                  <Line type="monotone" dataKey="offline" stroke="#ec4899" strokeWidth={2} name="Offline" />
+                  <Line type="monotone" dataKey="online" stroke="#14b8a6" strokeWidth={2} name="Online" />
+                  <Line type="monotone" dataKey="offline" stroke="#f43f5e" strokeWidth={2} name="Offline" />
                   <Line type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} name="Total" />
                 </LineChart>
               </ResponsiveContainer>
@@ -368,7 +370,7 @@ export function ReportsVisualization({ context, stores }: Props) {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">Product Varieties</p>
-                <Users className="h-5 w-5 text-purple-600" />
+                <Users className="h-5 w-5 text-orange-600" />
               </div>
               <p className="text-2xl mb-1">{productionAnalytics.productionData.length}</p>
               <p className="text-xs text-muted-foreground">Types being produced</p>
@@ -384,7 +386,7 @@ export function ReportsVisualization({ context, stores }: Props) {
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="value" fill="#8b5cf6" name="Units Produced" />
+                <Bar dataKey="value" fill="#14b8a6" name="Units Produced" />
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -416,7 +418,7 @@ export function ReportsVisualization({ context, stores }: Props) {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">Categories</p>
-                <Calendar className="h-5 w-5 text-purple-600" />
+                <Calendar className="h-5 w-5 text-orange-600" />
               </div>
               <p className="text-2xl mb-1">{inventoryAnalytics.categoryData.length}</p>
               <p className="text-xs text-muted-foreground">Active categories</p>
@@ -432,7 +434,7 @@ export function ReportsVisualization({ context, stores }: Props) {
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="value" fill="#ec4899" name="Amount (₹)" />
+                <Bar dataKey="value" fill="#f43f5e" name="Amount (₹)" />
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -473,7 +475,7 @@ export function ReportsVisualization({ context, stores }: Props) {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">Profit Margin</p>
-                <TrendingUp className="h-5 w-5 text-purple-600" />
+                <TrendingUp className="h-5 w-5 text-orange-600" />
               </div>
               <p className="text-2xl mb-1">{financialAnalytics.profitMargin.toFixed(1)}%</p>
               <p className="text-xs text-muted-foreground">Profit ratio</p>

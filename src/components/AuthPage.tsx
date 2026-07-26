@@ -41,11 +41,11 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 sm:p-8">
         {/* Logo and Title */}
         <div className="text-center mb-6 sm:mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 bg-blue-600 rounded-full mb-3 sm:mb-4">
+          <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 bg-orange-600 rounded-full mb-3 sm:mb-4">
             <Package className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
           </div>
           <h1 className="text-gray-900 mb-2">Inventory Management</h1>
@@ -71,7 +71,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
                   placeholder="Enter your name"
                   required={isSignup}
                 />
@@ -82,7 +82,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                 <select
                   value={formData.role}
                   onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'cluster_head' | 'employee' | 'audit' })}
-                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
                   required={isSignup}
                 >
                   <option value="employee">Employee (View your payouts)</option>
@@ -99,7 +99,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
                     type="text"
                     value={formData.employeeId}
                     onChange={(e) => setFormData({ ...formData, employeeId: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+                    className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
                     placeholder="Enter your Employee ID"
                     required={isSignup && formData.role === 'employee'}
                   />
@@ -117,7 +117,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
               placeholder="Enter your email"
               required
             />
@@ -129,7 +129,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
               placeholder="Enter your password"
               required
               minLength={6}
@@ -144,7 +144,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base touch-manipulation"
+            className="w-full px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 active:bg-orange-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base touch-manipulation"
           >
             {loading ? (
               <>
@@ -167,7 +167,7 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
               setIsSignup(!isSignup);
               setFormData({ email: '', password: '', name: '', role: 'employee', employeeId: '' });
             }}
-            className="text-sm text-blue-600 hover:text-blue-700 active:text-blue-800 touch-manipulation"
+            className="text-sm text-orange-600 hover:text-orange-700 active:text-orange-800 touch-manipulation"
           >
             {isSignup
               ? 'Already have an account? Sign in'

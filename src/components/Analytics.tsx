@@ -140,6 +140,50 @@ const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
 type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastWeek' | 'lastMonth' | 'custom';
 type WastageTimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
+const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'thisWeek', label: 'This Week' },
+  { value: 'thisMonth', label: 'This Month' },
+  { value: 'lastWeek', label: 'Last Week' },
+  { value: 'lastMonth', label: 'Last Month' },
+  { value: 'custom', label: 'Custom' }
+];
+
+// Date-range filter used across the Analytics tabs. Mobile gets a compact
+// dropdown (the pill row clips/truncates on narrow screens); desktop keeps
+// the pill row.
+function TimeFilterBar({ value, onChange }: { value: TimeFilter; onChange: (v: TimeFilter) => void }) {
+  return (
+    <>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as TimeFilter)}
+        className="sm:hidden w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+      >
+        {TIME_FILTER_OPTIONS.map((filter) => (
+          <option key={filter.value} value={filter.value}>{filter.label}</option>
+        ))}
+      </select>
+      <div className="hidden sm:flex gap-2 overflow-x-auto pb-0">
+        {TIME_FILTER_OPTIONS.map((filter) => (
+          <button
+            key={filter.value}
+            onClick={() => onChange(filter.value)}
+            className={`px-4 py-2 rounded-lg text-sm transition-colors whitespace-nowrap ${
+              value === filter.value
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {filter.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
   // Load online sales and payout data for commission calculation
   const [onlineSalesData, setOnlineSalesData] = useState<any[]>([]);
@@ -2340,15 +2384,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     filteredOverheadData.forEach(item => {
       // Skip legacy commission entries - they're now calculated from online sales/payout data
       if (isCommissionEntry(item)) return;
-      // Skip personal_expense items - they're counted under Salaries
-      if (item.category === 'personal_expense') return;
-      
+
       const category = item.category || 'Other';
       const displayName = (OVERHEAD_CATEGORIES as Record<string, string>)[category] || category;
       if (!categoryExpenses[displayName]) {
         categoryExpenses[displayName] = 0;
         categoryItems[displayName] = [];
-        categoryTypes[displayName] = 'overhead';
+        // personal_expense is salary-deducted (already summed separately into
+        // salaryExpenses above) — display it under Fixed Costs, not Operating.
+        categoryTypes[displayName] = category === 'personal_expense' ? 'fixed' : 'overhead';
       }
       categoryExpenses[displayName] += (item.amount || 0);
       categoryItems[displayName].push(item);
@@ -2405,7 +2449,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
   const expenseBreakdown = prepareExpenseBreakdown();
 
-  const COLORS = ['#ec4899', '#a78bfa', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c', '#8b5cf6', '#10b981', '#f59e0b'];
+  const COLORS = ['#f43f5e', '#38bdf8', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c', '#14b8a6', '#10b981', '#f59e0b'];
 
   // Calculate total approved cash discrepancies (losses only - negative cashOffset)
   const calculateCashDiscrepancy = () => {
@@ -2551,7 +2595,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   alert('Failed to cleanup duplicates. Please try again.');
                 }
               }}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm flex items-center gap-2 shadow-lg"
+              className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm flex items-center gap-2 shadow-lg"
               title="Remove duplicate entries from database"
             >
               <ClipboardCheck className="w-4 h-4" />
@@ -2610,19 +2654,19 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
         {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, Store Incharges, and Audit Users */}
         {(isClusterHead || isManager || isProductionIncharge || isStoreIncharge || isAudit) && (
-        <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl shadow-lg mb-6 p-4 border border-purple-200">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-purple-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+        <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-2xl shadow-lg mb-6 p-4 border border-orange-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <h3 className="text-orange-900" style={{ fontSize: '16px', fontWeight: '700' }}>
               {isStoreIncharge ? 'Store Analytics Dashboard' : isAudit ? 'Audit Analytics Dashboard' : 'Analytics Dashboard'}
             </h3>
             {/* Only show mode selector if not Store Incharge (they only see Store Analytics) */}
             {!isStoreIncharge && (
-            <div className="flex items-center gap-2 bg-white rounded-lg p-1 shadow-sm">
+            <div className="flex items-center gap-2 bg-white rounded-lg p-1 shadow-sm self-start sm:self-auto">
               <button
                 onClick={() => setAnalyticsMode('store')}
                 className={`px-4 py-2 rounded-md transition-all duration-200 ${
                   analyticsMode === 'store'
-                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
+                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -2635,7 +2679,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 onClick={() => setAnalyticsMode('production')}
                 className={`px-4 py-2 rounded-md transition-all duration-200 ${
                   analyticsMode === 'production'
-                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
+                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -2647,7 +2691,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             </div>
             )}
           </div>
-          <p className="text-purple-700 text-sm">
+          <p className="text-orange-700 text-sm">
             {analyticsMode === 'store' 
               ? 'Track revenue, expenses, and profitability across stores' 
               : 'Monitor production metrics, wastage, and SOP compliance'}
@@ -2659,7 +2703,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         {analyticsMode === 'store' && (
           <>
             {(isClusterHead || isManager || isProductionIncharge || isAudit) ? (
-              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+              <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
                     <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
@@ -2687,7 +2731,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
             ) : (
               // Info banner for employees showing their store
               context.user?.storeId && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+                <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
                   <div className="flex items-center gap-3">
                     <ShoppingCart className="w-6 h-6 text-blue-600" />
                     <div>
@@ -2817,7 +2861,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 onClick={() => setActiveView('datacapture')}
                 className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                   activeView === 'datacapture' 
-                    ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/50' 
+                    ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50' 
                     : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
                 }`}
               >
@@ -2826,7 +2870,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <span className="font-semibold text-sm">Data Capture</span>
                 </div>
                 {activeView === 'datacapture' && (
-                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-purple-500 rounded-full"></div>
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-orange-500 rounded-full"></div>
                 )}
               </button>
               
@@ -2834,7 +2878,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 onClick={() => setActiveView('production-requests')}
                 className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                   activeView === 'production-requests' 
-                    ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/50' 
+                    ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50' 
                     : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
                 }`}
               >
@@ -2843,7 +2887,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <span className="font-semibold text-sm">Stock Requests</span>
                 </div>
                 {activeView === 'production-requests' && (
-                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-indigo-500 rounded-full"></div>
+                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
                 )}
               </button>
               
@@ -2919,30 +2963,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
                   {/* Time Filter */}
-                  <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                    {[
-                      { value: 'today', label: 'Today' },
-                      { value: 'yesterday', label: 'Yesterday' },
-                      { value: 'thisWeek', label: 'This Week' },
-                      { value: 'thisMonth', label: 'This Month' },
-                      { value: 'lastWeek', label: 'Last Week' },
-                      { value: 'lastMonth', label: 'Last Month' },
-                      { value: 'custom', label: 'Custom' }
-                    ].map((filter) => (
-                      <button
-                        key={filter.value}
-                        onClick={() => setTimeFilter(filter.value as TimeFilter)}
-                        className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                          timeFilter === filter.value
-                            ? 'bg-gray-900 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}
-                      >
-                        {filter.label}
-                      </button>
-                    ))}
-                  </div>
-                  
+                  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+
                   {/* Export Buttons */}
                   <div className="flex gap-2">
                     <button
@@ -2958,7 +2980,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         });
                         toast.success('Analytics report exported!');
                       }}
-                      className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
+                      className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
                     >
                       <Download className="w-4 h-4" />
                       <span className="hidden sm:inline">Export</span>
@@ -3052,16 +3074,16 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               </div>
 
               {/* Profit Breakdown - Realized vs Unrealized */}
-              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8 border-2 border-indigo-200">
+              <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8 border-2 border-blue-200">
                 <h3 className="text-base sm:text-lg text-gray-900 mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-indigo-600" />
+                  <TrendingUp className="w-5 h-5 text-blue-600" />
                   Profit Breakdown
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {/* Unrealized Profit */}
                   <div className="bg-white rounded-lg p-4 shadow-sm">
                     <div className="text-xs sm:text-sm text-gray-600 mb-2">Unrealized Profit</div>
-                    <div className="text-xl sm:text-2xl text-indigo-600 mb-2">₹{unrealizedProfit.toLocaleString()}</div>
+                    <div className="text-xl sm:text-2xl text-blue-600 mb-2">₹{unrealizedProfit.toLocaleString()}</div>
                     <div className="text-xs text-gray-500">Before cash discrepancies</div>
                   </div>
                   
@@ -3104,7 +3126,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 <h3 className="text-base sm:text-lg text-gray-900 mb-4">
                   Daily Performance - {getPeriodLabel()}
                 </h3>
-                <div className="min-w-[300px]">
+                <div className="min-w-[260px]">
                   <ResponsiveContainer width="100%" height={300}>
                     <LineChart data={profitChartData.map((item, index) => ({ ...item, id: `profit-${item.date}-${index}`, key: `data-${index}` }))}>
                       <CartesianGrid key="profit-line-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -3118,7 +3140,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                       <YAxis key="profit-line-yaxis" stroke="#666" tick={{ fontSize: 11 }} />
                       <Tooltip key="profit-line-tooltip" content={<CustomTooltip />} />
                       <Legend key="profit-line-legend" wrapperStyle={{ fontSize: '12px' }} />
-                      <Line key="revenue-line" type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#8b5cf6', r: 4 }} />
+                      <Line key="revenue-line" type="monotone" dataKey="revenue" stroke="#14b8a6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#14b8a6', r: 4 }} />
                       <Line key="expenses-line" type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} name="Expenses" dot={{ fill: '#ef4444', r: 4 }} />
                       <Line key="profit-line" type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.5} name="Profit" dot={{ fill: '#10b981', r: 4 }} />
                     </LineChart>
@@ -3178,12 +3200,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 {/* Profitability Metrics */}
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <div className="flex items-center gap-2 mb-3 sm:mb-4">
-                    <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
+                    <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
                     <h3 className="text-base sm:text-lg text-gray-900">Profitability Metrics</h3>
                   </div>
                   <div className="space-y-3">
                     {/* Profit Margin */}
-                    <div className="bg-purple-50 p-3 sm:p-4 rounded-lg">
+                    <div className="bg-orange-50 p-3 sm:p-4 rounded-lg">
                       <div className="flex justify-between items-center mb-2">
                         <div className="text-xs sm:text-sm text-gray-700">Profit Margin</div>
                         <div className={`text-lg font-bold ${metrics.profitMargin > 30 ? 'text-green-600' : metrics.profitMargin > 15 ? 'text-yellow-600' : 'text-red-600'}`}>
@@ -3261,28 +3283,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </div>
 
                 {/* Time Filter */}
-                <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {[
-                    { value: 'today', label: 'Today' },
-                    { value: 'yesterday', label: 'Yesterday' },
-                    { value: 'thisWeek', label: 'This Week' },
-                    { value: 'thisMonth', label: 'This Month' },
-                    { value: 'lastWeek', label: 'Last Week' },
-                    { value: 'lastMonth', label: 'Last Month' },
-                    { value: 'custom', label: 'Custom' }
-                  ].map((filter) => (
-                    <button
-                      key={filter.value}
-                      onClick={() => setTimeFilter(filter.value as TimeFilter)}
-                      className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        timeFilter === filter.value
-                          ? 'bg-gray-900 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
+                <div className="w-full sm:w-auto">
+                  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
                 </div>
               </div>
 
@@ -3317,7 +3319,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalExpenses.toLocaleString()}</div>
                 </div>
-                <div className="bg-gradient-to-br from-pink-100 to-pink-200 rounded-lg p-4">
+                <div className="bg-gradient-to-br from-rose-100 to-rose-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Inventory Costs</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.inventoryExpenses.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
@@ -3332,12 +3334,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.commissionExpenses.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{metrics.totalExpenses > 0 ? ((metrics.commissionExpenses / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
                 </div>
-                <div className="bg-gradient-to-br from-indigo-100 to-indigo-200 rounded-lg p-4">
+                <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Fixed Costs</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{(metrics.fixedCostsTotal || 0).toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{(((metrics.fixedCostsTotal || 0) / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
                 </div>
-                <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
+                <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Salary Costs</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.salaryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
@@ -3350,50 +3352,50 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 
                 {/* Large Pie Chart - Full Width */}
                 <div className="relative mb-8">
-                  <div className="absolute inset-0 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl blur-xl opacity-50"></div>
-                  <div className="relative bg-white rounded-2xl p-8 shadow-lg">
-                    <ResponsiveContainer width="100%" height={500}>
-                      <PieChart key="expense-breakdown-pie-chart">
-                        <defs key="expense-pie-defs">
-                          {COLORS.map((color, index) => (
-                            <linearGradient key={`expense-gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={color} stopOpacity={0.9} />
-                              <stop offset="100%" stopColor={color} stopOpacity={0.7} />
-                            </linearGradient>
-                          ))}
-                        </defs>
-                        <Pie
-                          key="expense-pie"
-                          data={expenseBreakdown}
-                          cx="50%"
-                          cy="50%"
-                          labelLine={{
-                            stroke: '#666',
-                            strokeWidth: 1.5,
-                            strokeDasharray: '3 3'
-                          }}
-                          label={({ name, percentage }) => `${name}: ${percentage}%`}
-                          outerRadius={180}
-                          innerRadius={90}
-                          fill="#8884d8"
-                          dataKey="value"
-                          paddingAngle={3}
-                          animationBegin={0}
-                          animationDuration={800}
-                          animationEasing="ease-out"
-                        >
-                          {expenseBreakdown.map((entry, index) => (
-                            <Cell 
-                              key={`expense-cell-${entry.name}-${index}`} 
-                              fill={`url(#gradient-${index % COLORS.length})`}
-                              stroke="#fff"
-                              strokeWidth={4}
-                            />
-                          ))}
-                        </Pie>
-                        <Tooltip key="expense-pie-tooltip" content={<CustomPieTooltip />} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                  <div className="relative bg-white rounded-2xl p-3 sm:p-8 shadow-sm border border-gray-100">
+                    <div className="relative">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <PieChart key="expense-breakdown-pie-chart">
+                          <defs key="expense-pie-defs">
+                            {COLORS.map((color, index) => (
+                              <linearGradient key={`expense-gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={color} stopOpacity={0.9} />
+                                <stop offset="100%" stopColor={color} stopOpacity={0.7} />
+                              </linearGradient>
+                            ))}
+                          </defs>
+                          <Pie
+                            key="expense-pie"
+                            data={expenseBreakdown}
+                            cx="50%"
+                            cy="50%"
+                            outerRadius="85%"
+                            innerRadius="62%"
+                            fill="#8884d8"
+                            dataKey="value"
+                            paddingAngle={2}
+                            animationBegin={0}
+                            animationDuration={800}
+                            animationEasing="ease-out"
+                          >
+                            {expenseBreakdown.map((entry, index) => (
+                              <Cell
+                                key={`expense-cell-${entry.name}-${index}`}
+                                fill={`url(#gradient-${index % COLORS.length})`}
+                                stroke="#fff"
+                                strokeWidth={3}
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip key="expense-pie-tooltip" content={<CustomPieTooltip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      {/* Center summary */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <p className="text-xs text-gray-500">Total expenses</p>
+                        <p className="text-lg sm:text-2xl text-gray-900 font-semibold">₹{metrics.totalExpenses.toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -3627,12 +3629,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   )}
                   
                   <div className="space-y-3">
-                    <div className="bg-purple-50 p-4 rounded-lg">
+                    <div className="bg-orange-50 p-4 rounded-lg">
                       <div className="text-xs text-gray-600 mb-1">Contract Workers</div>
                       <div className="text-xl text-gray-900">₹{metrics.contractWorkerExpenses.toLocaleString()}</div>
                       <div className="text-xs text-gray-600 mt-1">Daily wages from sales data</div>
                     </div>
-                    <div className="bg-pink-50 p-4 rounded-lg">
+                    <div className="bg-rose-50 p-4 rounded-lg">
                       <div className="text-xs text-gray-600 mb-1">Permanent Employees</div>
                       <div className="text-xl text-gray-900">₹{metrics.permanentEmployeeExpenses.toLocaleString()}</div>
                       <div className="text-xs text-gray-600 mt-1">
@@ -3677,7 +3679,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.rentExpenses.toLocaleString()}</div>
                     <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.rentExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
                   </div>
-                  <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
+                  <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
                     <div className="text-xs sm:text-sm text-gray-700 mb-1">💰 Salaries</div>
                     <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
                     <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.salaryExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
@@ -3686,13 +3688,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 {/* Bar Chart for Fixed Costs */}
                 <div className="overflow-x-auto">
-                  <div className="min-w-[300px]">
+                  <div className="min-w-[260px]">
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart 
                         data={[
                           { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
                           { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
-                          { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#a78bfa' }
+                          { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#38bdf8' }
                         ]}
                         barCategoryGap="30%"
                       >
@@ -3704,7 +3706,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                           {[
                             { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
                             { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
-                            { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#a78bfa' }
+                            { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#38bdf8' }
                           ].map((entry, index) => (
                             <Cell key={`fixed-costs-cell-${entry.name}-${index}`} fill={entry.fill} />
                           ))}
@@ -3763,28 +3765,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                 </div>
 
                 {/* Time Filter */}
-                <div className="flex gap-1 sm:gap-2 overflow-x-auto pb-2 sm:pb-0">
-                  {[
-                    { value: 'today', label: 'Today' },
-                    { value: 'yesterday', label: 'Yesterday' },
-                    { value: 'thisWeek', label: 'This Week' },
-                    { value: 'thisMonth', label: 'This Month' },
-                    { value: 'lastWeek', label: 'Last Week' },
-                    { value: 'lastMonth', label: 'Last Month' },
-                    { value: 'custom', label: 'Custom' }
-                  ].map((filter) => (
-                    <button
-                      key={filter.value}
-                      onClick={() => setTimeFilter(filter.value as TimeFilter)}
-                      className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap ${
-                        timeFilter === filter.value
-                          ? 'bg-gray-900 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
+                <div className="w-full sm:w-auto">
+                  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
                 </div>
               </div>
 
@@ -3825,7 +3807,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
                 </div>
-                <div className="bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg p-4">
+                <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
                   <div className="text-xs sm:text-sm text-gray-700 mb-1">Offline Sales</div>
                   <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
                   <div className="text-xs text-gray-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
@@ -3843,7 +3825,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   Sales Trend - {getPeriodLabel()}
                 </h3>
                 <div className="overflow-x-auto">
-                  <div className="min-w-[300px]">
+                  <div className="min-w-[260px]">
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart data={salesChartData.map((item, index) => ({ ...item, uniqueKey: `sales-${item.period}-${index}` }))} barCategoryGap="25%">
                         <CartesianGrid key="sales-channel-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -3852,7 +3834,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                         <Tooltip key="sales-channel-tooltip" content={<CustomTooltip />} />
                         <Legend key="sales-channel-legend" wrapperStyle={{ fontSize: '12px' }} />
                         <Bar key="online-bar" dataKey="online" stackId="a" fill="#60a5fa" name="Online Sales" radius={[0, 0, 0, 0]} maxBarSize={80} />
-                        <Bar key="offline-bar" dataKey="offline" stackId="a" fill="#a78bfa" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
+                        <Bar key="offline-bar" dataKey="offline" stackId="a" fill="#38bdf8" name="Offline Sales" radius={[8, 8, 0, 0]} maxBarSize={80} />
                         <Line key="total-line" type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} dot={{ fill: '#f59e0b', r: 5 }} name="Total Sales Trend" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -3887,25 +3869,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
-                    <TrendingUp className="w-5 h-5 text-purple-600" />
+                    <TrendingUp className="w-5 h-5 text-orange-600" />
                     <h3 className="text-base sm:text-lg text-gray-900">Performance Insights</h3>
                   </div>
                   <div className="space-y-3">
-                    <div className="bg-purple-50 p-4 rounded-lg">
+                    <div className="bg-orange-50 p-4 rounded-lg">
                       <div className="text-xs text-gray-600 mb-1">Daily Revenue Average</div>
                       <div className="text-xl text-gray-900">
                         ₹{filteredSalesData.length > 0 ? (metrics.totalRevenue / filteredSalesData.length).toFixed(0) : 0}
                       </div>
                       <div className="text-xs text-gray-600 mt-1">Per day</div>
                     </div>
-                    <div className="bg-pink-50 p-4 rounded-lg">
+                    <div className="bg-rose-50 p-4 rounded-lg">
                       <div className="text-xs text-gray-600 mb-1">Daily Profit Average</div>
                       <div className="text-xl text-gray-900">
                         ₹{filteredSalesData.length > 0 ? (metrics.netProfit / filteredSalesData.length).toFixed(0) : 0}
                       </div>
                       <div className="text-xs text-gray-600 mt-1">Per day</div>
                     </div>
-                    <div className="bg-indigo-50 p-4 rounded-lg">
+                    <div className="bg-blue-50 p-4 rounded-lg">
                       <div className="text-xs text-gray-600 mb-1">Best Performing Day</div>
                       <div className="text-xl text-gray-900">
                         ₹{filteredSalesData.length > 0 ? Math.max(...filteredSalesData.map(sale => (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0))).toLocaleString() : 0}
@@ -3936,7 +3918,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         {activeView === 'production' && (
           <div>
             {/* Date Range Selector for Production Data */}
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+            <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
               <div className="flex flex-col gap-4">
                 <div>
                   <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
@@ -4398,14 +4380,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   
                   {/* Alert Settings and Plate Settings - For Operations Managers and Production Incharge in Production Analytics Mode */}
                   {analyticsMode === 'production' && (isManager || isProductionIncharge) && (
-                    <div className="flex gap-2 items-start">
+                    <div className="flex flex-wrap gap-2 items-start">
                       {/* Stock Alert Settings Button */}
                       <button
                         onClick={() => {
                           setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds)));
                           setShowStockAlertModal(true);
                         }}
-                        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-lg hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2 shadow-lg"
+                        className="px-4 py-2 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-lg hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2 shadow-lg"
                         title="Configure Stock Alert Thresholds"
                       >
                         <Settings className="w-5 h-5" />
@@ -4454,7 +4436,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                             console.log('🔘 Manage Items button clicked in Analytics');
                             onNavigateToManageItems();
                           }}
-                          className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg font-semibold"
+                          className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg font-semibold"
                           title="Manage inventory items"
                         >
                           <Package className="w-5 h-5" />
@@ -4475,7 +4457,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                           console.log('🏭 Production House Selector Changed:', newValue);
                           setSelectedProductionHouseId(newValue);
                         }}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       >
                         <option value="all">All Production Houses</option>
                         {context.productionHouses.map(ph => (
@@ -4908,9 +4890,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
                 // Color mapping for the 7 core momos (for backwards compatibility)
                 const colorMap: Record<string, string> = {
-                  'chicken': 'purple',
-                  'chickenCheese': 'pink',
-                  'chicken_cheese': 'pink',
+                  'chicken': 'violet',
+                  'chickenCheese': 'rose',
+                  'chicken_cheese': 'rose',
                   'veg': 'green',
                   'cheeseCorn': 'yellow',
                   'cheese_corn': 'yellow',
@@ -4931,7 +4913,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     key: item.name,
                     camelKey: stockKey, // Base key for stock lookup (e.g., "chicken")
                     label: item.displayName, // Keep full display name including "Momo"
-                    color: colorMap[baseName] || colorMap[stockKey] || 'indigo',
+                    color: colorMap[baseName] || colorMap[stockKey] || 'sky',
                     unit: item.unit
                   };
                 });
@@ -5133,35 +5115,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
             {/* Momo Production Charts */}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-              <div className="flex justify-between items-center mb-6">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 gap-3 sm:gap-0">
                 <div>
                   <h2 className="text-xl text-gray-900 mb-1">Momo Production Analysis</h2>
                   <p className="text-sm text-gray-600">Daily, weekly, monthly, and yearly production trends</p>
                 </div>
 
                 {/* Time Filter */}
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { filter: 'today', label: 'Today' },
-                    { filter: 'yesterday', label: 'Yesterday' },
-                    { filter: 'thisWeek', label: 'This Week' },
-                    { filter: 'lastWeek', label: 'Last Week' },
-                    { filter: 'thisMonth', label: 'This Month' },
-                    { filter: 'lastMonth', label: 'Last Month' },
-                    { filter: 'custom', label: 'Custom' }
-                  ].map(({ filter, label }) => (
-                    <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter as TimeFilter)}
-                      className={`px-3 py-2 rounded-lg text-xs sm:text-sm transition-colors ${
-                        timeFilter === filter
-                          ? 'bg-orange-600 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="w-full sm:w-auto">
+                  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
                 </div>
               </div>
 
@@ -5656,11 +5618,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
               {/* Wastage Breakdown by Type with Time Filter */}
               <div className="bg-white rounded-lg border-2 border-gray-200 p-6">
-                <div className="flex justify-between items-center mb-6">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
                   <h3 className="text-xl text-gray-900">Wastage Breakdown by Type</h3>
-                  
+
                   {/* Time Filter for Wastage */}
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
                       <button
                         key={filter}
@@ -5774,14 +5736,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                     <Bar key="dough-bar" dataKey="dough" name="Dough" fill="#dc2626" />
                     <Bar key="stuffing-bar" dataKey="stuffing" name="Stuffing" fill="#f97316" />
                     <Bar key="batter-bar" dataKey="batter" name="Batter" fill="#fbbf24" />
-                    <Bar key="coating-bar" dataKey="coating" name="Coating" fill="#a855f7" />
+                    <Bar key="coating-bar" dataKey="coating" name="Coating" fill="#14b8a6" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
               {/* SOP Maintenance Section - Cluster Head Only */}
               {isClusterHead && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg border-2 border-blue-200 p-6 mt-6">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border-2 border-blue-200 p-6 mt-6">
                   <div className="flex justify-between items-center mb-6">
                     <div>
                       <h3 className="text-xl text-gray-900 flex items-center gap-2">
@@ -5961,12 +5923,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
               {/* Daily Usage vs SOP Compliance */}
               <div className="bg-white rounded-lg border-2 border-gray-200 p-6 mt-6">
                 <div className="mb-6">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
                     <h3 className="text-xl text-gray-900 flex items-center gap-2">
-                      <TrendingUp className="w-6 h-6 text-indigo-600" />
+                      <TrendingUp className="w-6 h-6 text-blue-600" />
                       Daily Ingredient Usage & SOP Compliance
                     </h3>
-                    
+
                     {/* Date Selector for SOP Compliance */}
                     <DatePicker
                       label="Date:"
@@ -6313,7 +6275,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 p-6 rounded-t-2xl">
+            <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 p-6 rounded-t-2xl">
               <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
               <div className="relative flex items-center justify-between">
                 <div className="flex items-center gap-4">
@@ -6384,7 +6346,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   const currentThresholds = tempStockAlertThresholds[camelKey] ?? stockAlertThresholds[camelKey] ?? { high: 600, medium: 300, low: 150 };
                   
                   return (
-                    <div key={camelKey} className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-4">
+                    <div key={camelKey} className="bg-gradient-to-r from-orange-50 to-rose-50 border-2 border-orange-200 rounded-xl p-4">
                       <h3 className="text-gray-900 font-semibold mb-3">{label}</h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {/* High Threshold */}
@@ -6471,7 +6433,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
                   setTempStockAlertThresholds({});
                   toast.success('Stock alert thresholds updated successfully');
                 }}
-                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2"
+                className="px-6 py-3 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-xl hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2"
               >
                 <Check className="w-5 h-5" />
                 Save Thresholds
@@ -6589,7 +6551,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 flex items-center justify-between">
+            <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <UserX className="w-6 h-6" />
                 <h3 className="text-xl">Leave Details - Today</h3>

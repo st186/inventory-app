@@ -40,7 +40,11 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
-  const canEdit = context.user?.role === 'manager' || context.user?.role === 'cluster_head';
+  // Payout/commission reconciliation is an operations-manager responsibility, not the store incharge's -
+  // it reveals aggregator commission structure that the store incharge shouldn't need to see.
+  const canEdit =
+    (context.user?.role === 'manager' && context.user?.designation !== 'store_incharge' && context.user?.designation !== 'production_incharge') ||
+    context.user?.role === 'cluster_head';
 
   // Load online sales and payout data
   useEffect(() => {
@@ -137,19 +141,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
 
     setIsSubmitting(true);
     try {
-      // Save sales data
-      const salesEntry: OnlineSalesEntry = {
-        id: salesForDate?.id || `ONLINE-SALES-${Date.now()}`,
-        date: selectedDate,
-        swiggySales: totalSwiggySales,
-        zomatoSales: totalZomatoSales,
-        storeId: effectiveStoreId || undefined,
-        createdAt: salesForDate?.createdAt || new Date().toISOString()
-      };
-
-      await api.saveOnlineSalesData(context.user.accessToken, salesEntry);
-
-      // Save payout data
+      // Save payout data (sales figures are owned by the store incharge's daily entry)
       const payoutEntry: OnlinePayoutEntry = {
         id: payoutsForDate?.id || `ONLINE-PAYOUT-${Date.now()}`,
         date: selectedDate,
@@ -160,33 +152,18 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
       };
 
       await api.saveOnlinePayoutData(context.user.accessToken, payoutEntry);
-
-      // If there's extra payout, add it to Online Cash in Hand (Paytm)
-      if (extraPayout > 0) {
-        // Find existing sales data for this date
-        const existingSales = context.salesData.find(s => 
-          s.date === selectedDate && 
-          (!effectiveStoreId || s.storeId === effectiveStoreId)
-        );
-
-        if (existingSales) {
-          // Update existing sales to add extra payout to paytmAmount
-          await context.updateSalesData(existingSales.id, {
-            ...existingSales,
-            paytmAmount: existingSales.paytmAmount + extraPayout
-          });
-        }
-      }
+      // Note: if payout exceeds recorded online sales, the server applies the excess
+      // to the store's Paytm cash-in-hand automatically.
 
       // Reload data
       await loadOnlineData();
-      
+
       // Notify parent component to reload its data
       if (onDataUpdate) {
         onDataUpdate();
       }
-      
-      alert('✅ Online sales and payout data saved successfully!');
+
+      alert('✅ Payout data saved successfully! If the payout exceeded online sales, the difference has been added to Paytm cash-in-hand (refresh to see it reflected in Sales).');
     } catch (error) {
       console.error('Error saving online data:', error);
       alert('❌ Error saving online data. Please try again.');
@@ -198,12 +175,12 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-6 border border-purple-200">
+      <div className="bg-gradient-to-r from-orange-50 to-rose-50 rounded-lg p-6 border border-orange-200">
         <h2 className="text-2xl font-bold text-gray-800 mb-2">
-          Online Sales Management (Swiggy & Zomato)
+          Aggregator Payout Reconciliation (Swiggy & Zomato)
         </h2>
         <p className="text-gray-600 text-sm">
-          Track sales and payouts from food delivery aggregators. Extra payouts automatically add to Online Cash in Hand (Paytm).
+          Record what Swiggy and Zomato actually paid out against the store incharge's logged online sales. Extra payouts automatically add to Online Cash in Hand (Paytm).
         </p>
       </div>
 
@@ -225,18 +202,18 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
           <p className="text-2xl font-bold text-blue-600">₹{cumulativeStats.totalPayouts.toFixed(2)}</p>
         </div>
 
-        <div className="bg-white rounded-lg p-6 border-2 border-purple-200 shadow-sm">
+        <div className="bg-white rounded-lg p-6 border-2 border-orange-200 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-gray-600">Net Commission (Till Now)</span>
-            <TrendingUp className="w-5 h-5 text-purple-600" />
+            <TrendingUp className="w-5 h-5 text-orange-600" />
           </div>
-          <p className="text-2xl font-bold text-purple-600">₹{cumulativeStats.netCommission.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-orange-600">₹{cumulativeStats.netCommission.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">Sales - Payout</p>
         </div>
       </div>
 
       {/* Daily Entry Form */}
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg p-6 border-2 border-purple-200 shadow-lg">
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg p-6 border-2 border-orange-200 shadow-lg">
         <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <Calendar className="w-5 h-5" />
           Daily Entry for {new Date(selectedDate).toLocaleDateString('en-IN', { 
@@ -247,43 +224,16 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Sales Section */}
+          {/* Sales Section - read-only, logged by the store incharge */}
           <div className="space-y-4">
-            <h4 className="font-semibold text-gray-700 border-b pb-2">Sales Data</h4>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Swiggy Sales (₹)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={swiggySales}
-                onChange={(e) => setSwiggySales(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="0.00"
-                disabled={!canEdit}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Zomato Sales (₹)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={zomatoSales}
-                onChange={(e) => setZomatoSales(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="0.00"
-                disabled={!canEdit}
-              />
-            </div>
+            <h4 className="font-semibold text-gray-700 border-b pb-2">Sales Data (logged by store incharge)</h4>
 
             <div className="bg-green-50 p-3 rounded-lg">
               <p className="text-sm font-medium text-gray-700">Total Online Sales</p>
               <p className="text-xl font-bold text-green-600">₹{totalOnlineSales.toFixed(2)}</p>
+              {!salesForDate && (
+                <p className="text-xs text-gray-500 mt-1">No online sales logged for this date yet</p>
+              )}
             </div>
           </div>
 
@@ -300,7 +250,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
                 step="0.01"
                 value={swiggyPayout}
                 onChange={(e) => setSwiggyPayout(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
                 disabled={!canEdit}
               />
@@ -315,7 +265,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
                 step="0.01"
                 value={zomatoPayout}
                 onChange={(e) => setZomatoPayout(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
                 disabled={!canEdit}
               />
@@ -330,9 +280,9 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
 
         {/* Calculation Summary */}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className={`p-4 rounded-lg ${netCommission >= 0 ? 'bg-purple-50 border-2 border-purple-200' : 'bg-red-50 border-2 border-red-200'}`}>
+          <div className={`p-4 rounded-lg ${netCommission >= 0 ? 'bg-orange-50 border-2 border-orange-200' : 'bg-red-50 border-2 border-red-200'}`}>
             <p className="text-sm font-medium text-gray-700 mb-1">Net Commission (Sales - Payout)</p>
-            <p className={`text-2xl font-bold ${netCommission >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
+            <p className={`text-2xl font-bold ${netCommission >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
               ₹{netCommission.toFixed(2)}
             </p>
             <p className="text-xs text-gray-600 mt-1">
@@ -357,7 +307,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-3 rounded-lg font-semibold hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-3 rounded-lg font-semibold hover:from-orange-700 hover:to-red-700 transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <>
@@ -367,7 +317,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
               ) : (
                 <>
                   <CheckCircle className="w-5 h-5" />
-                  Save Online Sales & Payout
+                  Save Payout Data
                 </>
               )}
             </button>
@@ -376,7 +326,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
       </form>
 
       {/* Daily Breakdown Table */}
-      <div className="bg-white rounded-lg p-6 border-2 border-purple-200 shadow-lg">
+      <div className="bg-white rounded-lg p-6 border-2 border-orange-200 shadow-lg">
         <h3 className="text-lg font-semibold text-gray-800 mb-4">Daily Breakdown</h3>
         
         <div className="overflow-x-auto">
@@ -440,7 +390,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
                         <td className="py-3 px-4 text-right text-gray-700">₹{swiggyP.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right text-gray-700">₹{zomatoP.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right font-semibold text-blue-600">₹{totalP.toFixed(2)}</td>
-                        <td className={`py-3 px-4 text-right font-semibold ${commission >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
+                        <td className={`py-3 px-4 text-right font-semibold ${commission >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
                           ₹{commission.toFixed(2)}
                         </td>
                       </tr>

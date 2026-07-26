@@ -458,8 +458,8 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
   };
 
   const getStockColor = (percentage: number) => {
-    if (percentage >= 80) return { bg: 'bg-purple-50', border: 'border-purple-200', bar: 'bg-purple-500', text: 'text-purple-700' };
-    if (percentage >= 60) return { bg: 'bg-pink-50', border: 'border-pink-200', bar: 'bg-pink-500', text: 'text-pink-700' };
+    if (percentage >= 80) return { bg: 'bg-orange-50', border: 'border-orange-200', bar: 'bg-orange-500', text: 'text-orange-700' };
+    if (percentage >= 60) return { bg: 'bg-rose-50', border: 'border-rose-200', bar: 'bg-rose-500', text: 'text-rose-700' };
     if (percentage >= 40) return { bg: 'bg-green-50', border: 'border-green-200', bar: 'bg-green-500', text: 'text-green-700' };
     if (percentage >= 20) return { bg: 'bg-yellow-50', border: 'border-yellow-200', bar: 'bg-yellow-500', text: 'text-yellow-700' };
     return { bg: 'bg-red-50', border: 'border-red-200', bar: 'bg-red-500', text: 'text-red-700' };
@@ -516,7 +516,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
           {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
             <button
               onClick={onNavigateToManageItems}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
             >
               <Package className="w-4 h-4" />
               <span className="text-sm font-semibold">Manage Items</span>

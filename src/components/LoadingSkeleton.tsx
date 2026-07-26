@@ -5,7 +5,7 @@ export const LoadingSkeleton: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-pulse">
       {/* Header Skeleton */}
       <div className="mb-6">
-        <div className="h-8 bg-gradient-to-r from-purple-200 to-pink-200 rounded-lg w-64 mb-4"></div>
+        <div className="h-8 bg-gradient-to-r from-orange-200 to-amber-200 rounded-lg w-64 mb-4"></div>
         <div className="h-4 bg-gray-200 rounded w-96"></div>
       </div>
       
@@ -14,7 +14,7 @@ export const LoadingSkeleton: React.FC = () => {
         {[1, 2, 3].map((i) => (
           <div key={i} className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <div className="h-4 bg-gray-200 rounded w-24 mb-4"></div>
-            <div className="h-10 bg-gradient-to-r from-purple-100 to-pink-100 rounded-lg w-32 mb-2"></div>
+            <div className="h-10 bg-gradient-to-r from-orange-100 to-amber-100 rounded-lg w-32 mb-2"></div>
             <div className="h-3 bg-gray-100 rounded w-48"></div>
           </div>
         ))}
@@ -29,14 +29,14 @@ export const LoadingSkeleton: React.FC = () => {
           <div className="h-4 bg-gray-100 rounded w-3/4"></div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div className="h-32 bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg"></div>
-            <div className="h-32 bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg"></div>
+            <div className="h-32 bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg"></div>
+            <div className="h-32 bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg"></div>
           </div>
         </div>
       </div>
       
       {/* Loading indicator */}
-      <div className="fixed bottom-4 right-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-2">
+      <div className="fixed bottom-4 right-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-2">
         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
         <span className="font-medium">Loading...</span>
       </div>
@@ -50,7 +50,7 @@ export const CompactLoadingSkeleton: React.FC = () => {
     <div className="px-3 py-4 animate-pulse">
       {/* Mobile header */}
       <div className="mb-4">
-        <div className="h-6 bg-gradient-to-r from-purple-200 to-pink-200 rounded w-48 mb-2"></div>
+        <div className="h-6 bg-gradient-to-r from-orange-200 to-amber-200 rounded w-48 mb-2"></div>
         <div className="h-3 bg-gray-200 rounded w-64"></div>
       </div>
       
@@ -61,9 +61,9 @@ export const CompactLoadingSkeleton: React.FC = () => {
             <div className="flex justify-between items-center">
               <div className="flex-1">
                 <div className="h-3 bg-gray-200 rounded w-20 mb-2"></div>
-                <div className="h-6 bg-gradient-to-r from-purple-100 to-pink-100 rounded w-24"></div>
+                <div className="h-6 bg-gradient-to-r from-orange-100 to-amber-100 rounded w-24"></div>
               </div>
-              <div className="w-12 h-12 bg-gradient-to-br from-purple-50 to-pink-50 rounded-full"></div>
+              <div className="w-12 h-12 bg-gradient-to-br from-orange-50 to-rose-50 rounded-full"></div>
             </div>
           </div>
         ))}
@@ -71,9 +71,9 @@ export const CompactLoadingSkeleton: React.FC = () => {
       
       {/* Bottom loading */}
       <div className="mt-6 text-center">
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-100 to-pink-100 rounded-full">
-          <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-sm text-purple-700 font-medium">Loading...</span>
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-100 to-amber-100 rounded-full">
+          <div className="w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-sm text-orange-700 font-medium">Loading...</span>
         </div>
       </div>
     </div>

@@ -1,13 +1,45 @@
 import { useState } from 'react';
 import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { DateSelector } from './DateSelector';
-import { Package, DollarSign, TrendingUp, Lock, Eye, Calendar } from 'lucide-react';
+import { Package, DollarSign, TrendingUp, Lock, Eye, Calendar, AlertTriangle } from 'lucide-react';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 
 type Props = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
 };
+
+function StatChip({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-secondary rounded-2xl p-4">
+      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
+      <p className="text-foreground text-xl mt-1">₹{value.toLocaleString()}</p>
+    </div>
+  );
+}
+
+function SectionCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-card rounded-2xl border border-border p-5 mb-4">
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+          {icon}
+        </div>
+        <h2 className="text-foreground">{title}</h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="text-center py-10 text-muted-foreground">
+      <div className="mx-auto mb-3 opacity-50 w-fit">{icon}</div>
+      <p className="text-sm">{label}</p>
+    </div>
+  );
+}
 
 export function InventoryView({ context, selectedStoreId }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -17,7 +49,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
 
   // Filter data based on selected date and selected store (fallback to user's store)
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
-  
+
   const filteredInventory = context.inventory.filter(
     (item) => {
       const dateMatch = item.date === selectedDate;
@@ -96,16 +128,16 @@ export function InventoryView({ context, selectedStoreId }: Props) {
   const isClusterHead = context.user?.role === 'cluster_head';
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header with Read-Only Badge */}
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Eye className="w-6 h-6 text-blue-600" />
-          <h1 className="text-2xl text-gray-900">Inventory Overview</h1>
+          <Eye className="w-5 h-5 text-primary" />
+          <h1 className="text-xl text-foreground">Inventory overview</h1>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-2 border-amber-200 rounded-lg">
-          <Lock className="w-4 h-4 text-amber-600" />
-          <span className="text-sm text-amber-800">View Only</span>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-full">
+          <Lock className="w-3.5 h-3.5 text-amber-700" />
+          <span className="text-xs text-amber-800">View only</span>
         </div>
       </div>
 
@@ -116,167 +148,108 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 mb-6">
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/30">
-          <p className="text-sm text-blue-100 uppercase tracking-wide">Inventory Cost</p>
-          <p className="text-white text-2xl mt-2">₹{totalInventoryCost.toLocaleString()}</p>
-        </div>
-        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 shadow-lg shadow-orange-500/30">
-          <p className="text-sm text-orange-100 uppercase tracking-wide">Overhead Cost</p>
-          <p className="text-white text-2xl mt-2">₹{totalOverheadCost.toLocaleString()}</p>
-        </div>
-        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 shadow-lg shadow-green-500/30">
-          <p className="text-sm text-green-100 uppercase tracking-wide">Fixed Cost</p>
-          <p className="text-white text-2xl mt-2">₹{totalFixedCost.toLocaleString()}</p>
-        </div>
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 shadow-lg shadow-purple-500/30">
-          <p className="text-sm text-purple-100 uppercase tracking-wide">Total Expenses</p>
-          <p className="text-white text-2xl mt-2">
-            ₹{(totalInventoryCost + totalOverheadCost + totalFixedCost).toLocaleString()}
-          </p>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 mb-4">
+        <StatChip label="Inventory cost" value={totalInventoryCost} />
+        <StatChip label="Overhead cost" value={totalOverheadCost} />
+        <StatChip label="Fixed cost" value={totalFixedCost} />
+        <StatChip label="Total expenses" value={totalInventoryCost + totalOverheadCost + totalFixedCost} />
       </div>
 
       {/* Inventory Items by Category */}
-      <div className="bg-white rounded-xl shadow-md p-6 mb-6 border border-gray-200">
-        <div className="flex items-center gap-2 mb-4">
-          <Package className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl text-gray-900">Inventory Items</h2>
-        </div>
-        
+      <SectionCard icon={<Package className="w-4 h-4" />} title="Inventory items">
         {Object.keys(inventoryByCategory).length > 0 ? (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {Object.entries(inventoryByCategory).map(([category, items]) => (
-              <div key={category} className="border-l-4 border-blue-500 pl-4">
-                <h3 className="text-lg text-gray-900 mb-3">{categoryLabels[category]}</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Item Name</th>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Quantity</th>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Cost/Unit</th>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Total Cost</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {items.map((item) => (
-                        <tr key={item.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                            {item.itemName || <span className="text-red-600 italic">⚠️ Missing Name</span>}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                            {item.quantity} {item.unit}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                            ₹{(item.costPerUnit || 0).toFixed(2)}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-900">
-                            ₹{(item.totalCost || 0).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div key={category}>
+                <h3 className="text-xs text-muted-foreground uppercase tracking-wide mb-2 px-1">{categoryLabels[category] || category}</h3>
+                <div className="space-y-2">
+                  {items.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-border bg-background p-3 flex items-center gap-3"
+                    >
+                      <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 text-lg">
+                        📦
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground truncate">
+                          {item.itemName || (
+                            <span className="text-red-600 italic inline-flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" /> Missing name
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {item.quantity} {item.unit} · ₹{(item.costPerUnit || 0).toFixed(2)}/{item.unit}
+                        </p>
+                      </div>
+                      <span className="text-sm text-primary flex-shrink-0">₹{(item.totalCost || 0).toLocaleString()}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-gray-500">
-            <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No inventory items for this date</p>
-          </div>
+          <EmptyState icon={<Package className="w-10 h-10" />} label="No inventory items for this date" />
         )}
-      </div>
+      </SectionCard>
 
       {/* Overhead Costs by Category */}
-      <div className="bg-white rounded-xl shadow-md p-6 mb-6 border border-gray-200">
-        <div className="flex items-center gap-2 mb-4">
-          <DollarSign className="w-5 h-5 text-orange-600" />
-          <h2 className="text-xl text-gray-900">Overhead Costs</h2>
-        </div>
-        
+      <SectionCard icon={<DollarSign className="w-4 h-4" />} title="Overhead costs">
         {Object.keys(overheadsByCategory).length > 0 ? (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {Object.entries(overheadsByCategory).map(([category, items]) => (
-              <div key={category} className="border-l-4 border-orange-500 pl-4">
-                <h3 className="text-lg text-gray-900 mb-3">{categoryLabels[category]}</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Description</th>
-                        <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {items.map((item) => (
-                        <tr key={item.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-900">{item.description}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-900">
-                            ₹{item.amount.toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div key={category}>
+                <h3 className="text-xs text-muted-foreground uppercase tracking-wide mb-2 px-1">{categoryLabels[category] || category}</h3>
+                <div className="space-y-2">
+                  {items.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-border bg-background p-3 flex items-center justify-between gap-3"
+                    >
+                      <p className="text-sm text-foreground truncate">{item.description}</p>
+                      <span className="text-sm text-primary flex-shrink-0">₹{item.amount.toLocaleString()}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-gray-500">
-            <DollarSign className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No overhead costs for this date</p>
-          </div>
+          <EmptyState icon={<DollarSign className="w-10 h-10" />} label="No overhead costs for this date" />
         )}
-      </div>
+      </SectionCard>
 
       {/* Fixed Costs */}
       {filteredFixedCosts.length > 0 && (
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="w-5 h-5 text-green-600" />
-            <h2 className="text-xl text-gray-900">Fixed Costs</h2>
+        <SectionCard icon={<TrendingUp className="w-4 h-4" />} title="Fixed costs">
+          <div className="space-y-2">
+            {filteredFixedCosts.map((item) => (
+              <div
+                key={item.id}
+                className="rounded-xl border border-border bg-background p-3 flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground truncate">{categoryLabels[item.category] || item.category}</p>
+                  <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                </div>
+                <span className="text-sm text-primary flex-shrink-0">₹{item.amount.toLocaleString()}</span>
+              </div>
+            ))}
           </div>
-          
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Category</th>
-                  <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Description</th>
-                  <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredFixedCosts.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {categoryLabels[item.category]}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{item.description}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-900">
-                      ₹{item.amount.toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Monthly Stock Recalibration Button */}
       {isClusterHead && (
-        <div className="mt-6">
+        <div className="mt-2 mb-4">
           <button
-            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+            className="flex items-center gap-2 bg-primary hover:opacity-90 text-primary-foreground py-2.5 px-4 rounded-xl text-sm transition-opacity"
             onClick={() => setShowRecalibration(true)}
           >
-            <Calendar className="w-5 h-5 mr-2" />
-            Monthly Stock Recalibration
+            <Calendar className="w-4 h-4" />
+            Monthly stock recalibration
           </button>
         </div>
       )}
@@ -291,17 +264,15 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       )}
 
       {/* Info Message */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div className="mt-4 bg-secondary rounded-2xl p-4">
         <div className="flex gap-3">
-          <Lock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm text-blue-800">
-              {isClusterHead 
-                ? 'You are viewing inventory data in read-only mode. Only Operations Managers can add or edit inventory items.'
-                : 'You are viewing inventory data in read-only mode. To add or modify inventory items, please contact your Operations Manager.'
-              }
-            </p>
-          </div>
+          <Lock className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-foreground">
+            {isClusterHead
+              ? "You're viewing inventory data in read-only mode. Only operations managers can add or edit inventory items."
+              : "You're viewing inventory data in read-only mode. To add or modify inventory items, contact your operations manager."
+            }
+          </p>
         </div>
       </div>
     </div>

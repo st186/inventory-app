@@ -41,10 +41,10 @@ export function DatePicker({ value, onChange, label, className = '', min, max }:
       )}
       <div
         onClick={handleContainerClick}
-        className={`relative flex items-center gap-2 px-4 py-2 border-2 border-gray-300 rounded-lg bg-white hover:border-purple-400 hover:bg-purple-50 transition-all cursor-pointer group ${isFullWidth ? 'w-full' : 'min-w-[160px]'}`}
+        className={`relative flex items-center gap-2 px-4 py-2 border-2 border-gray-300 rounded-lg bg-white hover:border-orange-400 hover:bg-orange-50 transition-all cursor-pointer group ${isFullWidth ? 'w-full' : 'min-w-[160px]'}`}
       >
-        <Calendar className="w-4 h-4 text-gray-500 group-hover:text-purple-600 transition-colors flex-shrink-0" />
-        <span className="text-sm text-gray-700 group-hover:text-purple-700 transition-colors flex-1">
+        <Calendar className="w-4 h-4 text-gray-500 group-hover:text-orange-600 transition-colors flex-shrink-0" />
+        <span className="text-sm text-gray-700 group-hover:text-orange-700 transition-colors flex-1">
           {formatDisplayDate(value)}
         </span>
         <input

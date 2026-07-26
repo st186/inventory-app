@@ -334,7 +334,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-3xl text-gray-900 flex items-center gap-3">
-            <Factory className="w-8 h-8 text-purple-600" />
+            <Factory className="w-8 h-8 text-orange-600" />
             Production House Management
           </h1>
           <p className="text-gray-600 mt-2">Manage production houses, inventory, and store mappings</p>
@@ -349,7 +349,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
           </button>
           <button
             onClick={() => setShowCreateForm(true)}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-2"
           >
             <Plus className="w-5 h-5" />
             New Production House
@@ -370,7 +370,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   placeholder="e.g., Main Production House"
                 />
               </div>
@@ -382,7 +382,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   required
                   value={formData.location}
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   placeholder="e.g., Sector 21, Dwarka"
                 />
               </div>
@@ -392,7 +392,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                 <select
                   value={formData.productionHeadId}
                   onChange={(e) => setFormData({ ...formData, productionHeadId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 >
                   <option value="">Select Production Head</option>
                   {productionHeads.map(head => (
@@ -416,7 +416,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
                 >
                   Create
                 </button>
@@ -522,7 +522,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   <button
                     type="button"
                     onClick={handleTransferAll}
-                    className="px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
+                    className="px-3 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 transition-colors"
                   >
                     Transfer All
                   </button>
@@ -692,7 +692,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
             <p className="text-gray-600 mb-6">Create your first production house to get started</p>
             <button
               onClick={() => setShowCreateForm(true)}
-              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors inline-flex items-center gap-2"
+              className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors inline-flex items-center gap-2"
             >
               <Plus className="w-5 h-5" />
               Create Production House
@@ -712,7 +712,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-gray-600">
                         <Hash className="w-4 h-4" />
-                        <span className="text-sm font-mono bg-purple-100 text-purple-800 px-2 py-1 rounded">ID: {house.id}</span>
+                        <span className="text-sm font-mono bg-orange-100 text-orange-800 px-2 py-1 rounded">ID: {house.id}</span>
                       </div>
                       <div className="flex items-center gap-4 text-gray-600">
                         <div className="flex items-center gap-2">
@@ -730,14 +730,14 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   </div>
                   <div className="text-right">
                     <div className="text-sm text-gray-600">Total Inventory</div>
-                    <div className="text-2xl text-purple-600">{totalInventory} pcs</div>
+                    <div className="text-2xl text-orange-600">{totalInventory} pcs</div>
                   </div>
                 </div>
 
                 {/* Current Inventory */}
                 <div className="mb-6">
                   <h4 className="text-gray-900 mb-3 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-purple-600" />
+                    <Package className="w-5 h-5 text-orange-600" />
                     Current Stock Levels
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -761,11 +761,11 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                       <div className="text-xs text-gray-600 mb-1">Paneer</div>
                       <div className="text-lg text-gray-900">{house.inventory.paneer}</div>
                     </div>
-                    <div className="bg-purple-50 rounded-lg p-3">
+                    <div className="bg-orange-50 rounded-lg p-3">
                       <div className="text-xs text-gray-600 mb-1">Veg Kurkure</div>
                       <div className="text-lg text-gray-900">{house.inventory.vegKurkure}</div>
                     </div>
-                    <div className="bg-pink-50 rounded-lg p-3">
+                    <div className="bg-rose-50 rounded-lg p-3">
                       <div className="text-xs text-gray-600 mb-1">Chicken Kurkure</div>
                       <div className="text-lg text-gray-900">{house.inventory.chickenKurkure}</div>
                     </div>
@@ -851,7 +851,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   <select
                     value={house.productionHeadId || ''}
                     onChange={(e) => handleAssignProductionHead(house.id, e.target.value)}
-                    className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   >
                     <option value="">No Production Head Assigned</option>
                     {productionHeads.map(head => (
@@ -913,7 +913,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   </div>
                   <select
                     onChange={(e) => e.target.value && handleAssignStoreToHouse(store.id, e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     defaultValue=""
                   >
                     <option value="">Assign to Production House</option>

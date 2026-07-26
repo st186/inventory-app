@@ -23,7 +23,7 @@ type Props = {
   context: InventoryContextType;
 };
 
-const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#14b8a6', '#f43f5e'];
 
 export function ClusterDashboard({ context }: Props) {
   // Daily Spends Data
@@ -134,7 +134,7 @@ export function ClusterDashboard({ context }: Props) {
           <p className="text-2xl">₹{totalOverheadSpend.toLocaleString()}</p>
         </div>
 
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg p-6 text-white">
+        <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-lg p-6 text-white">
           <div className="flex items-center gap-2 mb-2">
             <TrendingUp className="w-5 h-5" />
             <p className="text-sm opacity-90">Total Expenses</p>
@@ -172,7 +172,7 @@ export function ClusterDashboard({ context }: Props) {
             <Line
               type="monotone"
               dataKey="total"
-              stroke="#8b5cf6"
+              stroke="#14b8a6"
               name="Total"
               strokeWidth={2}
             />

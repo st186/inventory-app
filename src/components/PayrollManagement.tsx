@@ -59,7 +59,8 @@ const generatePayslip = (
   personalExpenses: number = 0
 ) => {
   const regularPayouts = payouts.reduce((sum, p) => sum + p.amount, 0);
-  const totalAmount = regularPayouts + personalExpenses;
+  // personalExpenses are salary-advance cash already given to the employee — deduct from this month's net pay
+  const totalAmount = regularPayouts - personalExpenses;
   const grossSalary = totalAmount;
   
   // Create a simple HTML content for the payslip
@@ -79,20 +80,20 @@ const generatePayslip = (
         .payslip-container {
           max-width: 800px;
           margin: 0 auto;
-          border: 2px solid #9333ea;
+          border: 2px solid #ea580c;
           padding: 30px;
-          background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+          background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
         }
         .header {
           text-align: center;
-          border-bottom: 3px solid #9333ea;
+          border-bottom: 3px solid #ea580c;
           padding-bottom: 20px;
           margin-bottom: 30px;
         }
         .company-name {
           font-size: 32px;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
           margin-bottom: 5px;
         }
         .company-tagline {
@@ -102,7 +103,7 @@ const generatePayslip = (
         }
         .payslip-title {
           font-size: 24px;
-          color: #9333ea;
+          color: #ea580c;
           margin: 20px 0 10px 0;
           font-weight: bold;
         }
@@ -123,7 +124,7 @@ const generatePayslip = (
           display: table-cell;
           padding: 10px 0;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
           width: 40%;
         }
         .info-value {
@@ -139,7 +140,7 @@ const generatePayslip = (
           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .payment-table th {
-          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
           color: white;
           padding: 12px;
           text-align: left;
@@ -153,10 +154,10 @@ const generatePayslip = (
           border-bottom: none;
         }
         .payment-table tr:nth-child(even) {
-          background: #faf5ff;
+          background: #fff7ed;
         }
         .total-section {
-          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
           color: white;
           padding: 20px;
           margin-top: 30px;
@@ -174,7 +175,7 @@ const generatePayslip = (
         .footer {
           margin-top: 40px;
           padding-top: 20px;
-          border-top: 2px solid #9333ea;
+          border-top: 2px solid #ea580c;
           text-align: center;
           font-size: 12px;
           color: #666;
@@ -189,11 +190,11 @@ const generatePayslip = (
           width: 45%;
         }
         .signature-line {
-          border-top: 2px solid #9333ea;
+          border-top: 2px solid #ea580c;
           margin-top: 50px;
           padding-top: 10px;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
         }
         @media print {
           body {
@@ -253,8 +254,8 @@ const generatePayslip = (
             ${personalExpenses > 0 ? `
               <tr>
                 <td>Various</td>
-                <td>Salary (via Personal Expense)</td>
-                <td style="text-align: right;">₹${personalExpenses.toLocaleString('en-IN')}</td>
+                <td>Salary Advance Deduction</td>
+                <td style="text-align: right;">-₹${personalExpenses.toLocaleString('en-IN')}</td>
               </tr>
             ` : ''}
           </tbody>
@@ -595,6 +596,18 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
   };
 
+  // Find this employee's pending salary-advance deduction (if any) for the month a payout date falls in
+  const getPendingAdvanceDeduction = (employeeId: string, dateStr: string) => {
+    if (!dateStr) return null;
+    const monthStr = dateStr.slice(0, 7); // YYYY-MM
+    for (const advance of salaryAdvances) {
+      if (advance.employeeId !== employeeId || advance.status !== 'approved' || advance.remainingAmount <= 0) continue;
+      const deduction = (advance.deductions || []).find((d: any) => d.month === monthStr && !d.deducted);
+      if (deduction) return { advance, deduction };
+    }
+    return null;
+  };
+
   const handleAddPayout = async () => {
     if (payoutData.employeeIds.length === 0 || !payoutData.amount) {
       alert('Please select employees and enter amount');
@@ -605,13 +618,35 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
     try {
       setSubmitting(true);
+      const grossAmount = parseFloat(payoutData.amount);
+      // Track advance updates to apply after payouts save successfully
+      const advanceUpdates: { advanceId: string; deductions: any[]; remainingAmount: number }[] = [];
+
       const newPayouts = payoutData.employeeIds.map(empId => {
         const employee = employees.find(e => e.id === empId);
+        const payoutId = crypto.randomUUID();
+        const pending = getPendingAdvanceDeduction(empId, payoutData.date);
+        let netAmount = grossAmount;
+
+        if (pending) {
+          netAmount = grossAmount - pending.deduction.amount;
+          const updatedDeductions = pending.advance.deductions.map((d: any) =>
+            d.month === pending.deduction.month
+              ? { ...d, deducted: true, deductedDate: new Date().toISOString(), payoutId }
+              : d
+          );
+          advanceUpdates.push({
+            advanceId: pending.advance.id,
+            deductions: updatedDeductions,
+            remainingAmount: Math.max(0, pending.advance.remainingAmount - pending.deduction.amount),
+          });
+        }
+
         return {
-          id: crypto.randomUUID(),
+          id: payoutId,
           employeeId: empId,
           employeeName: employee?.name || '',
-          amount: parseFloat(payoutData.amount),
+          amount: netAmount,
           date: payoutData.date,
           storeId: selectedStoreId || undefined, // Add storeId for proper filtering
           createdAt: new Date().toISOString()
@@ -619,14 +654,29 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       });
 
       console.log('Adding payouts:', newPayouts);
-      
+
       const result = await api.addPayouts(newPayouts);
       console.log('Payouts added successfully:', result);
-      
+
+      // Mark the corresponding salary-advance installments as deducted now that the payout is saved
+      for (const update of advanceUpdates) {
+        await api.updateSalaryAdvance(update.advanceId, {
+          deductions: update.deductions,
+          remainingAmount: update.remainingAmount,
+        });
+      }
+      if (advanceUpdates.length > 0) {
+        await loadData();
+      }
+
       setPayouts([...payouts, ...newPayouts]);
       setShowPayoutModal(false);
       setPayoutData({ employeeIds: [], amount: '', date: selectedDate });
-      alert('Payout added successfully!');
+      alert(
+        advanceUpdates.length > 0
+          ? `Payout added successfully! Salary advance deduction applied for ${advanceUpdates.length} employee(s).`
+          : 'Payout added successfully!'
+      );
     } catch (error) {
       console.error('Error adding payout:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
@@ -788,9 +838,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     
     console.log(`💰 Total Payout Calculation:`);
     console.log(`   Regular Payouts: ₹${totalPayout}`);
-    console.log(`   Personal Expenses: ₹${totalPersonalExpenses}`);
-    console.log(`   TOTAL: ₹${totalPayout + totalPersonalExpenses}`);
-    
+    console.log(`   Personal Expenses (salary advance deductions): ₹${totalPersonalExpenses}`);
+    console.log(`   NET TOTAL: ₹${totalPayout - totalPersonalExpenses}`);
+
     const employeePayouts = permanentEmployees.map(emp => {
       const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
       return {
@@ -800,9 +850,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       };
     });
 
-    return { 
-      totalPayout: totalPayout + totalPersonalExpenses, // Include personal expenses in total
-      employeePayouts 
+    return {
+      totalPayout: totalPayout - totalPersonalExpenses, // Net of salary-advance deductions already given as cash
+      employeePayouts
     };
   };
 
@@ -813,11 +863,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const getAvatarColor = (index: number) => {
     const colors = [
       'bg-blue-500',
-      'bg-purple-500',
+      'bg-teal-500',
       'bg-green-500',
       'bg-orange-500',
-      'bg-pink-500',
-      'bg-indigo-500'
+      'bg-rose-500',
+      'bg-violet-500'
     ];
     return colors[index % colors.length];
   };
@@ -900,7 +950,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   onClick={() => setActiveTab('advances')}
                   className={`py-4 border-b-2 transition-colors ${
                     activeTab === 'advances'
-                      ? 'border-purple-500 text-purple-600'
+                      ? 'border-orange-500 text-orange-600'
                       : 'border-transparent text-gray-600 hover:text-gray-900'
                   }`}
                 >
@@ -934,52 +984,52 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             </div>
             
             {/* Date Range Filter */}
-            <div className="bg-gradient-to-br from-[#E8D5F2] to-[#D4B5F0] rounded-lg p-4">
-              <div className="flex items-center gap-4 flex-wrap">
+            <div className="bg-gradient-to-br from-[#E8D5F2] to-[#D4B5F0] rounded-lg p-3 sm:p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
                 <div className="flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-purple-700" />
+                  <Calendar className="w-5 h-5 text-orange-700 flex-shrink-0" />
                   <span className="text-gray-900">View Period:</span>
                 </div>
-                
-                <div className="flex gap-2">
+
+                <div className="flex gap-2 flex-wrap">
                   <button
                     onClick={() => setViewMode('current')}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
+                    className={`px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base transition-colors ${
                       viewMode === 'current'
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-white text-gray-700 hover:bg-purple-50'
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-orange-50'
                     }`}
                   >
                     Current Month
                   </button>
                   <button
                     onClick={() => setViewMode('last')}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
+                    className={`px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base transition-colors ${
                       viewMode === 'last'
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-white text-gray-700 hover:bg-purple-50'
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-orange-50'
                     }`}
                   >
                     Last Month
                   </button>
                   <button
                     onClick={() => setViewMode('custom')}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
+                    className={`px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base transition-colors ${
                       viewMode === 'custom'
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-white text-gray-700 hover:bg-purple-50'
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-orange-50'
                     }`}
                   >
                     Custom Range
                   </button>
                 </div>
-                
+
                 {viewMode === 'current' ? (
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg self-start">
                     <span className="text-gray-900 font-medium">{currentMonth.monthName}</span>
                   </div>
                 ) : viewMode === 'last' ? (
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg self-start">
                     <span className="text-gray-900 font-medium">{lastMonth.monthName}</span>
                   </div>
                 ) : (
@@ -1080,7 +1130,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
                             {emp.role && (
                               <div className="mb-2">
-                                <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+                                <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">
                                   {emp.role}
                                 </span>
                               </div>
@@ -1274,7 +1324,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 )
                 .reduce((sum, o) => sum + o.amount, 0);
               
-              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0) + monthPersonalExpenses;
+              // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
+              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0) - monthPersonalExpenses;
               
               monthlyPayslips.push({
                 month: monthName,
@@ -1290,8 +1341,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
             const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
             const myPersonalExpenses = currentEmployee ? calculatePersonalExpenses(currentEmployee.id) : 0;
-            // Net Amount = Total amount paid out (payouts + personal expenses)
-            const myNetAmount = myPersonalExpenses + totalPayout;
+            // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
+            const myNetAmount = totalPayout - myPersonalExpenses;
 
             return (
               <div className="p-6">
@@ -1311,7 +1362,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           setSelectedEmployeeForHistory(currentEmployee!);
                           setShowPaymentHistory(true);
                         }}
-                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl"
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-lg hover:shadow-xl"
                       >
                         <FileText className="w-4 h-4" />
                         View All Payments
@@ -1325,7 +1376,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
                             hasActiveAdvance
                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 shadow-md'
+                          : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-700 hover:to-red-700 shadow-md'
                       }`}
                       title={hasActiveAdvance ? 'You already have an active salary advance' : 'Apply for salary advance'}
                     >
@@ -1373,7 +1424,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 </>
                               )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-3">
                               <div>
                                 <p className="text-xs text-gray-600 mb-1">Amount</p>
                                 <p className="font-semibold text-gray-900">₹{advance.amount.toLocaleString()}</p>
@@ -1475,7 +1526,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 {/* Monthly Payslips Section */}
                 <div className="mb-8">
                   <div className="flex items-center gap-2 mb-4">
-                    <FileText className="w-5 h-5 text-purple-600" />
+                    <FileText className="w-5 h-5 text-orange-600" />
                     <h3 className="text-lg text-gray-900">Monthly Payslips</h3>
                   </div>
                   <p className="text-sm text-gray-600 mb-4">
@@ -1488,7 +1539,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                         key={index}
                         className={`border-2 rounded-xl p-4 transition-all ${
                           slip.isAvailable && (slip.payouts.length > 0 || (slip.personalExpenses && slip.personalExpenses > 0))
-                            ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-pink-50 hover:shadow-lg'
+                            ? 'border-orange-300 bg-gradient-to-br from-orange-50 to-rose-50 hover:shadow-lg'
                             : 'border-gray-200 bg-gray-50 opacity-60'
                         }`}
                       >
@@ -1497,7 +1548,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             <h4 className="text-gray-900 font-semibold">{slip.month} {slip.year}</h4>
                             <p className="text-sm text-gray-600 mt-1">
                               {slip.payouts.length} payout{slip.payouts.length !== 1 ? 's' : ''}
-                              {slip.personalExpenses > 0 && ` + ₹${slip.personalExpenses.toLocaleString('en-IN')} salary`}
+                              {slip.personalExpenses > 0 && ` − ₹${slip.personalExpenses.toLocaleString('en-IN')} advance deducted`}
                             </p>
                           </div>
                           {slip.isAvailable && (slip.payouts.length > 0 || (slip.personalExpenses && slip.personalExpenses > 0)) ? (
@@ -1511,7 +1562,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 employeeType,
                                 slip.personalExpenses || 0
                               )}
-                              className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                              className="flex items-center gap-2 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm"
                               title="Download Payslip"
                             >
                               <Download className="w-4 h-4" />
@@ -1643,8 +1694,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             const empPayouts = permanentPayouts.filter(p => p.employeeId === emp.id);
                             const totalPaid = empPayouts.reduce((sum, p) => sum + p.amount, 0);
                             const personalExpenses = calculatePersonalExpenses(emp.id);
-                            // Net Amount = Total amount paid out (payouts + personal expenses)
-                            const netAmount = personalExpenses + totalPaid;
+                            // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
+                            const netAmount = totalPaid - personalExpenses;
                             const lastPayout = empPayouts.length > 0 
                               ? empPayouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
                               : null;
@@ -1661,7 +1712,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                         setSelectedEmployeeForHistory(emp);
                                         setShowPaymentHistory(true);
                                       }}
-                                      className="text-gray-900 hover:text-purple-600 hover:underline transition-colors text-left"
+                                      className="text-gray-900 hover:text-orange-600 hover:underline transition-colors text-left"
                                     >
                                       {emp.name}
                                     </button>
@@ -1672,7 +1723,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 </td>
                                 <td className="py-4 px-4">
                                   {emp.role && (
-                                    <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+                                    <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">
                                       {emp.role}
                                     </span>
                                   )}
@@ -1928,7 +1979,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             </div>
                             <div className="text-right">
                               <p className="text-sm text-gray-600 mb-1">Advance Amount</p>
-                              <p className="text-3xl font-bold text-purple-600">
+                              <p className="text-3xl font-bold text-orange-600">
                                 ₹{advance.amount.toLocaleString('en-IN')}
                               </p>
                             </div>
@@ -1936,7 +1987,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
                           {/* Deduction Details */}
                           <div className="bg-white border border-yellow-200 rounded-lg p-4 mb-4">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                               <div>
                                 <p className="text-xs text-gray-600 mb-1">Monthly Deduction</p>
                                 <p className="text-lg font-semibold text-gray-900">
@@ -2163,10 +2214,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             <div className="p-6 space-y-4">
               <div>
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-purple-600 mt-0.5" />
+                  <AlertCircle className="w-5 h-5 text-orange-600 mt-0.5" />
                   <div>
-                    <p className="text-sm text-purple-800 font-medium mb-1">Recovery Terms</p>
-                    <p className="text-sm text-purple-700">
+                    <p className="text-sm text-orange-800 font-medium mb-1">Recovery Terms</p>
+                    <p className="text-sm text-orange-700">
                       The advance will be automatically deducted from your salary over the next 4 months in equal installments.
                     </p>
                   </div>
@@ -2180,14 +2231,14 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   value={advanceAmount}
                   onChange={(e) => setAdvanceAmount(e.target.value)}
                   placeholder="Enter amount (e.g., 10000)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
 
               {advanceAmount && !isNaN(parseFloat(advanceAmount)) && parseFloat(advanceAmount) > 0 && (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                   <p className="text-sm text-gray-700 mb-2">Monthly Deduction Preview:</p>
-                  <p className="text-2xl font-bold text-purple-600">
+                  <p className="text-2xl font-bold text-orange-600">
                     ₹{(parseFloat(advanceAmount) / 4).toLocaleString('en-IN')}/month
                   </p>
                   <p className="text-xs text-gray-600 mt-1">for 4 months</p>
@@ -2208,7 +2259,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <button
                 onClick={handleApplySalaryAdvance}
                 disabled={!advanceAmount || isNaN(parseFloat(advanceAmount)) || parseFloat(advanceAmount) <= 0}
-                className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Submit Request
               </button>
@@ -2349,6 +2400,27 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 onChange={(date) => setPayoutData({ ...payoutData, date })}
                 className="w-full"
               />
+              {payoutData.amount && payoutData.employeeIds.length > 0 && (() => {
+                const grossAmount = parseFloat(payoutData.amount) || 0;
+                const rows = payoutData.employeeIds
+                  .map((empId) => {
+                    const employee = employees.find((e) => e.id === empId);
+                    const pending = getPendingAdvanceDeduction(empId, payoutData.date);
+                    return { employee, pending };
+                  })
+                  .filter((r) => r.pending);
+                if (rows.length === 0) return null;
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                    <p className="text-sm font-medium text-amber-900">Salary advance deductions will apply:</p>
+                    {rows.map(({ employee, pending }) => (
+                      <p key={employee?.id} className="text-xs text-amber-800">
+                        {employee?.name}: ₹{grossAmount.toLocaleString()} − ₹{pending!.deduction.amount.toLocaleString()} advance = <span className="font-semibold">₹{(grossAmount - pending!.deduction.amount).toLocaleString()} net</span>
+                      </p>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
             <div className="p-6 border-t border-gray-200 flex gap-3">
               <button

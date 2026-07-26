@@ -95,8 +95,8 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
   return (
     <div className="bg-white rounded-xl shadow-sm p-6">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-          <User className="w-6 h-6 text-purple-600" />
+        <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
+          <User className="w-6 h-6 text-orange-600" />
         </div>
         <div>
           <h2 className="text-xl text-gray-900">Create Employee Account</h2>
@@ -127,7 +127,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
               type="text"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               placeholder="Enter full name"
               required
             />
@@ -142,7 +142,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
               type="date"
               value={formData.dob}
               onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               required
             />
           </div>
@@ -156,7 +156,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               placeholder="employee@example.com"
               required
             />
@@ -171,7 +171,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               placeholder="Create password"
               required
             />
@@ -185,7 +185,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Front */}
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-purple-400 transition-colors">
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-orange-400 transition-colors">
               <label className="cursor-pointer">
                 <div className="flex flex-col items-center gap-2">
                   <Upload className="w-8 h-8 text-gray-400" />
@@ -204,7 +204,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
             </div>
 
             {/* Back */}
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-purple-400 transition-colors">
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-orange-400 transition-colors">
               <label className="cursor-pointer">
                 <div className="flex flex-col items-center gap-2">
                   <Upload className="w-8 h-8 text-gray-400" />
@@ -243,7 +243,7 @@ export function CreateEmployee({ managerId, onEmployeeCreated }: CreateEmployeeP
         <button
           type="submit"
           disabled={loading}
-          className="w-full px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? 'Creating Employee...' : 'Create Employee Account'}
         </button>

@@ -166,7 +166,7 @@ export function MonthlyCommissionEntry({
 
   if (isLoading) {
     return (
-      <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border-2 border-purple-200">
+      <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200">
         <div className="flex items-center justify-center">
           <div className="text-gray-600">Loading...</div>
         </div>
@@ -175,9 +175,9 @@ export function MonthlyCommissionEntry({
   }
 
   return (
-    <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border-2 border-purple-200 mb-6">
+    <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200 mb-6">
       <div className="flex items-center gap-3 mb-4">
-        <div className="bg-purple-500 rounded-full p-2">
+        <div className="bg-orange-500 rounded-full p-2">
           <Percent className="w-6 h-6 text-white" />
         </div>
         <div>
@@ -214,7 +214,7 @@ export function MonthlyCommissionEntry({
                 step="0.01"
                 value={commissionAmount}
                 onChange={(e) => setCommissionAmount(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                 placeholder="Enter total commission amount"
                 disabled={isSaving}
               />
@@ -231,7 +231,7 @@ export function MonthlyCommissionEntry({
             <select
               value={paymentMethod}
               onChange={(e) => setPaymentMethod(e.target.value as 'online' | 'cash' | 'both')}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               disabled={isSaving}
             >
               <option value="online">Online (Paytm)</option>
@@ -253,7 +253,7 @@ export function MonthlyCommissionEntry({
                     step="0.01"
                     value={cashAmount}
                     onChange={(e) => setCashAmount(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter cash amount"
                     disabled={isSaving}
                   />
@@ -271,7 +271,7 @@ export function MonthlyCommissionEntry({
                     step="0.01"
                     value={onlineAmount}
                     onChange={(e) => setOnlineAmount(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     placeholder="Enter online amount"
                     disabled={isSaving}
                   />
@@ -287,7 +287,7 @@ export function MonthlyCommissionEntry({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               placeholder="Add any notes about this commission"
               rows={2}
               disabled={isSaving}
@@ -299,7 +299,7 @@ export function MonthlyCommissionEntry({
       <button
         onClick={handleSave}
         disabled={isSaving || !commissionAmount}
-        className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+        className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
       >
         {isSaving ? (
           <>

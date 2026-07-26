@@ -84,12 +84,12 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl p-6 text-white">
+      <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl p-6 text-white">
         <div className="flex items-center gap-3 mb-2">
           <Settings className="w-8 h-8" />
           <h2 className="text-2xl">Cluster Management</h2>
         </div>
-        <p className="text-purple-100">
+        <p className="text-orange-100">
           Assign stores and production houses to your cluster. You'll be able to view reports and analytics for all assigned locations.
         </p>
       </div>
@@ -103,7 +103,7 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
           <p className="text-xs opacity-75 mt-1">of {context.stores.length} total</p>
         </div>
         
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg p-6 text-white">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-6 text-white">
           <Building2 className="w-8 h-8 mb-2 opacity-90" />
           <p className="text-sm opacity-90 mb-1">Production Houses</p>
           <p className="text-3xl">{selectedProductionHouseIds.length}</p>
@@ -121,7 +121,7 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
       {/* Stores Section */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
-          <Store className="w-5 h-5 text-purple-600" />
+          <Store className="w-5 h-5 text-orange-600" />
           <h3 className="text-lg text-gray-900">Stores</h3>
           <span className="ml-auto text-sm text-gray-500">
             {selectedStoreIds.length} selected
@@ -140,13 +140,13 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
                   onClick={() => toggleStore(store.id)}
                   className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-all text-left ${
                     isSelected
-                      ? 'border-purple-500 bg-purple-50'
-                      : 'border-gray-200 bg-white hover:border-purple-300'
+                      ? 'border-orange-500 bg-orange-50'
+                      : 'border-gray-200 bg-white hover:border-orange-300'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
                     isSelected
-                      ? 'border-purple-500 bg-purple-500'
+                      ? 'border-orange-500 bg-orange-500'
                       : 'border-gray-300 bg-white'
                   }`}>
                     {isSelected && <CheckCircle className="w-4 h-4 text-white" />}
@@ -165,7 +165,7 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
       {/* Production Houses Section */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
-          <Building2 className="w-5 h-5 text-purple-600" />
+          <Building2 className="w-5 h-5 text-orange-600" />
           <h3 className="text-lg text-gray-900">Production Houses</h3>
           <span className="ml-auto text-sm text-gray-500">
             {selectedProductionHouseIds.length} selected
@@ -184,13 +184,13 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
                   onClick={() => toggleProductionHouse(ph.id)}
                   className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-all text-left ${
                     isSelected
-                      ? 'border-purple-500 bg-purple-50'
-                      : 'border-gray-200 bg-white hover:border-purple-300'
+                      ? 'border-orange-500 bg-orange-50'
+                      : 'border-gray-200 bg-white hover:border-orange-300'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
                     isSelected
-                      ? 'border-purple-500 bg-purple-500'
+                      ? 'border-orange-500 bg-orange-500'
                       : 'border-gray-300 bg-white'
                   }`}>
                     {isSelected && <CheckCircle className="w-4 h-4 text-white" />}
@@ -220,7 +220,7 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
             <button
               onClick={handleSave}
               disabled={loading}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>

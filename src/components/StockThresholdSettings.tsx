@@ -63,7 +63,7 @@ export function StockThresholdSettings({ storeId, accessToken, thresholds, onClo
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600 to-pink-500 p-6">
+        <div className="bg-gradient-to-r from-orange-600 to-rose-500 p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
@@ -115,7 +115,7 @@ export function StockThresholdSettings({ storeId, accessToken, thresholds, onClo
               const threshold = localThresholds[key] || { high: 600, medium: 300, low: 150 };
               
               return (
-                <div key={key} className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-4">
+                <div key={key} className="bg-gradient-to-r from-orange-50 to-rose-50 border-2 border-orange-200 rounded-xl p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-3">{label}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
@@ -166,7 +166,7 @@ export function StockThresholdSettings({ storeId, accessToken, thresholds, onClo
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl hover:from-purple-700 hover:to-pink-600 transition-all flex items-center gap-2 disabled:opacity-50"
+            className="px-6 py-3 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-xl hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2 disabled:opacity-50"
           >
             {saving ? (
               <>

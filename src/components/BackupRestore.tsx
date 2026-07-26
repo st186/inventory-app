@@ -306,12 +306,12 @@ export function BackupRestore({ context }: Props) {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl shadow-lg p-6 text-white">
+      <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 text-white">
         <div className="flex items-center gap-3 mb-2">
           <Database className="w-8 h-8" />
           <h1 className="text-2xl font-bold">Backup & Restore</h1>
         </div>
-        <p className="text-purple-100">
+        <p className="text-orange-100">
           Protect your data by creating regular backups. Export your data to JSON files and restore when needed.
         </p>
       </div>
@@ -336,17 +336,17 @@ export function BackupRestore({ context }: Props) {
             <p className="text-sm text-gray-600">Fixed Costs</p>
             <p className="text-2xl font-bold text-green-600">{context.fixedCosts.length}</p>
           </div>
-          <div className="bg-purple-50 rounded-lg p-4">
+          <div className="bg-orange-50 rounded-lg p-4">
             <p className="text-sm text-gray-600">Sales Records</p>
-            <p className="text-2xl font-bold text-purple-600">{context.salesData.length}</p>
+            <p className="text-2xl font-bold text-orange-600">{context.salesData.length}</p>
           </div>
-          <div className="bg-pink-50 rounded-lg p-4">
+          <div className="bg-rose-50 rounded-lg p-4">
             <p className="text-sm text-gray-600">Category Sales Data</p>
-            <p className="text-2xl font-bold text-pink-600">{context.categorySalesData.length}</p>
+            <p className="text-2xl font-bold text-rose-600">{context.categorySalesData.length}</p>
           </div>
-          <div className="bg-indigo-50 rounded-lg p-4">
+          <div className="bg-blue-50 rounded-lg p-4">
             <p className="text-sm text-gray-600">Production Data</p>
-            <p className="text-2xl font-bold text-indigo-600">{context.productionData.length}</p>
+            <p className="text-2xl font-bold text-blue-600">{context.productionData.length}</p>
           </div>
           <div className="bg-yellow-50 rounded-lg p-4">
             <p className="text-sm text-gray-600">Production Houses</p>
@@ -537,26 +537,26 @@ export function BackupRestore({ context }: Props) {
       )}
 
       {/* Additional Tips */}
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl shadow-lg p-6">
+      <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-xl shadow-lg p-6">
         <div className="flex items-start gap-3">
-          <Calendar className="w-6 h-6 text-purple-600 flex-shrink-0 mt-1" />
+          <Calendar className="w-6 h-6 text-orange-600 flex-shrink-0 mt-1" />
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">📅 Recommended Backup Schedule</h3>
             <ul className="space-y-2 text-sm text-gray-700">
               <li className="flex items-start gap-2">
-                <span className="text-purple-600 font-bold">•</span>
+                <span className="text-orange-600 font-bold">•</span>
                 <span><strong>Daily:</strong> At the end of each business day (especially after sales entry)</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-600 font-bold">•</span>
+                <span className="text-orange-600 font-bold">•</span>
                 <span><strong>Weekly:</strong> Every Sunday for weekly records</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-600 font-bold">•</span>
+                <span className="text-orange-600 font-bold">•</span>
                 <span><strong>Monthly:</strong> On the last day of each month before monthly reports</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-600 font-bold">•</span>
+                <span className="text-orange-600 font-bold">•</span>
                 <span><strong>Before Major Changes:</strong> Always backup before bulk edits or deletions</span>
               </li>
             </ul>

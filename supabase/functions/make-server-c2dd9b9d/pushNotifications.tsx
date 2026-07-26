@@ -1,5 +1,6 @@
 // Push Notification Handler for Supabase Edge Function
-// This file handles sending push notifications to subscribed users
+// This file handles sending push notifications to subscribed users,
+// both via Web Push (VAPID, browsers) and Firebase Cloud Messaging (native Android app).
 
 import webpush from 'npm:web-push';
 import * as kv from './kv_store.tsx';
@@ -16,6 +17,12 @@ interface PushSubscription {
 interface StoredSubscription {
   userId: string;
   subscription: PushSubscription;
+  createdAt: string;
+}
+
+interface StoredFcmToken {
+  userId: string;
+  token: string;
   createdAt: string;
 }
 
@@ -51,6 +58,37 @@ export async function getAllSubscriptions(): Promise<StoredSubscription[]> {
   return subscriptions as StoredSubscription[];
 }
 
+// Store a native (Android/FCM) push token. Kept separate from web-push subscriptions
+// (different key prefix) so a user signed in on both the web app and the native app
+// gets notified on both at once, instead of one overwriting the other.
+export async function storeFcmToken(userId: string, token: string): Promise<void> {
+  const key = `fcm_token:${userId}`;
+  const data: StoredFcmToken = {
+    userId,
+    token,
+    createdAt: new Date().toISOString(),
+  };
+  await kv.set(key, data);
+  console.log(`Stored FCM token for user: ${userId}`);
+}
+
+export async function getFcmToken(userId: string): Promise<StoredFcmToken | null> {
+  const key = `fcm_token:${userId}`;
+  const data = await kv.get(key);
+  return data as StoredFcmToken | null;
+}
+
+export async function removeFcmToken(userId: string): Promise<void> {
+  const key = `fcm_token:${userId}`;
+  await kv.del(key);
+  console.log(`Removed FCM token for user: ${userId}`);
+}
+
+export async function getAllFcmTokens(): Promise<StoredFcmToken[]> {
+  const tokens = await kv.getByPrefix('fcm_token:');
+  return tokens as StoredFcmToken[];
+}
+
 let vapidConfigured = false;
 
 function ensureVapidConfigured(): void {
@@ -68,8 +106,187 @@ function ensureVapidConfigured(): void {
   vapidConfigured = true;
 }
 
-// Send push notification to a user
+// ---- Firebase Cloud Messaging (HTTP v1) ----
+// Requires a Firebase service account with FCM_PROJECT_ID / FCM_CLIENT_EMAIL / FCM_PRIVATE_KEY
+// env vars set. Implemented with Web Crypto directly (no google-auth-library dependency)
+// since Deno Edge Functions support crypto.subtle for RS256 JWT signing.
+
+let cachedFcmAccessToken: { token: string; expiresAt: number } | null = null;
+
+function base64UrlEncode(input: ArrayBuffer | string): string {
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function importFcmPrivateKey(pem: string): Promise<CryptoKey> {
+  const pemContents = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/, '')
+    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/\s/g, '');
+  const binaryDer = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+
+  return crypto.subtle.importKey(
+    'pkcs8',
+    binaryDer,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
+
+async function getFcmAccessToken(): Promise<string> {
+  if (cachedFcmAccessToken && cachedFcmAccessToken.expiresAt > Date.now() + 60_000) {
+    return cachedFcmAccessToken.token;
+  }
+
+  const clientEmail = Deno.env.get('FCM_CLIENT_EMAIL');
+  const privateKeyRaw = Deno.env.get('FCM_PRIVATE_KEY');
+
+  if (!clientEmail || !privateKeyRaw) {
+    throw new Error('FCM service account not configured. Please set FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY environment variables.');
+  }
+
+  // Env vars typically store the PEM with literal \n sequences instead of real newlines.
+  const privateKeyPem = privateKeyRaw.includes('\\n') ? privateKeyRaw.replace(/\\n/g, '\n') : privateKeyRaw;
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claims = {
+    iss: clientEmail,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const unsignedJwt = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claims))}`;
+  const key = await importFcmPrivateKey(privateKeyPem);
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsignedJwt));
+  const signedJwt = `${unsignedJwt}.${base64UrlEncode(signature)}`;
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: signedJwt,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Failed to obtain FCM access token: ${response.status} ${errText}`);
+  }
+
+  const tokenData = await response.json();
+  cachedFcmAccessToken = {
+    token: tokenData.access_token,
+    expiresAt: Date.now() + tokenData.expires_in * 1000,
+  };
+  return cachedFcmAccessToken.token;
+}
+
+// Send a push notification to a single FCM token. Returns false (without throwing)
+// if FCM isn't configured, so callers can fall back to/coexist with web push.
+async function sendFcmNotification(
+  userId: string,
+  token: string,
+  payload: { title: string; message: string; icon?: string; tag?: string; data?: any }
+): Promise<boolean> {
+  const projectId = Deno.env.get('FCM_PROJECT_ID');
+  if (!projectId) {
+    return false;
+  }
+
+  try {
+    const accessToken = await getFcmAccessToken();
+
+    // FCM data payloads must be flat string maps.
+    const dataStrings: Record<string, string> = {};
+    if (payload.data && typeof payload.data === 'object') {
+      for (const [k, v] of Object.entries(payload.data)) {
+        dataStrings[k] = typeof v === 'string' ? v : JSON.stringify(v);
+      }
+    }
+
+    const response = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          message: {
+            token,
+            notification: {
+              title: payload.title,
+              body: payload.message,
+            },
+            data: dataStrings,
+            android: {
+              notification: {
+                tag: payload.tag || 'bhandar-notification',
+              },
+            },
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      const status = errBody?.error?.status;
+      // Token is no longer valid on the device - stop retrying.
+      if (status === 'NOT_FOUND' || status === 'UNREGISTERED' || status === 'INVALID_ARGUMENT') {
+        await removeFcmToken(userId);
+        console.log(`Removed invalid FCM token for user: ${userId}`);
+      }
+      console.error(`Error sending FCM notification to user ${userId}:`, response.status, errBody);
+      return false;
+    }
+
+    console.log(`FCM notification sent successfully to user: ${userId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error sending FCM notification to user ${userId}:`, error);
+    return false;
+  }
+}
+
+// Send push notification to a user, across every channel they're subscribed on
+// (web push and/or native FCM). Returns true if at least one channel succeeded.
 export async function sendPushNotification(
+  userId: string,
+  payload: {
+    title: string;
+    message: string;
+    icon?: string;
+    tag?: string;
+    data?: any;
+  }
+): Promise<boolean> {
+  const [webResult, fcmResult] = await Promise.all([
+    sendWebPushNotification(userId, payload),
+    sendFcmForUser(userId, payload),
+  ]);
+
+  return webResult || fcmResult;
+}
+
+async function sendFcmForUser(
+  userId: string,
+  payload: { title: string; message: string; icon?: string; tag?: string; data?: any }
+): Promise<boolean> {
+  const storedToken = await getFcmToken(userId);
+  if (!storedToken) return false;
+  return sendFcmNotification(userId, storedToken.token, payload);
+}
+
+async function sendWebPushNotification(
   userId: string,
   payload: {
     title: string;
@@ -82,7 +299,6 @@ export async function sendPushNotification(
   try {
     const storedSub = await getSubscription(userId);
     if (!storedSub) {
-      console.log(`No push subscription found for user: ${userId}`);
       return false;
     }
 
@@ -154,7 +370,7 @@ export async function sendPushNotificationToAll(
     data?: any;
   }
 ): Promise<{ success: number; failed: number }> {
-  const allSubscriptions = await getAllSubscriptions();
-  const userIds = allSubscriptions.map(sub => sub.userId);
+  const [webSubs, fcmTokens] = await Promise.all([getAllSubscriptions(), getAllFcmTokens()]);
+  const userIds = Array.from(new Set([...webSubs.map((s) => s.userId), ...fcmTokens.map((t) => t.userId)]));
   return sendPushNotificationToMultipleUsers(userIds, payload);
 }
