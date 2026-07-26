@@ -191,17 +191,17 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
                   {hierarchy.map((clusterHead) => (
                     <div key={clusterHead.employeeId} className="border border-gray-200 rounded-lg overflow-hidden">
                       {/* Cluster Head */}
-                      <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white">
+                      <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 sm:p-4">
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
                             <Building2 className="w-6 h-6" />
                           </div>
-                          <div className="flex-1">
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h3 className="text-lg text-gray-900">{clusterHead.name}</h3>
-                              <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">Cluster Head</span>
+                              <h3 className="text-lg text-gray-900 truncate min-w-0 flex-1">{clusterHead.name}</h3>
+                              <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded flex-shrink-0">Cluster Head</span>
                             </div>
-                            <div className="text-sm text-gray-600">{clusterHead.employeeId} • {clusterHead.email}</div>
+                            <div className="text-sm text-gray-600 truncate">{clusterHead.employeeId} • {clusterHead.email}</div>
                           </div>
                         </div>
                       </div>
@@ -228,17 +228,17 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
                     .map((manager: any) => (
                     <div key={manager.employeeId} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
                       {/* Manager */}
-                      <div className="bg-gradient-to-r from-orange-50 to-orange-100 p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-orange-600 rounded-full flex items-center justify-center text-white">
+                      <div className="bg-gradient-to-r from-orange-50 to-orange-100 p-3 sm:p-4">
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <div className="w-10 h-10 bg-orange-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
                             <UserCog className="w-5 h-5" />
                           </div>
-                          <div className="flex-1">
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h4 className="text-gray-900">{manager.name}</h4>
-                              <span className="px-2 py-1 bg-orange-600 text-white text-xs rounded">Manager</span>
+                              <h4 className="text-gray-900 truncate min-w-0 flex-1">{manager.name}</h4>
+                              <span className="px-2 py-1 bg-orange-600 text-white text-xs rounded flex-shrink-0">Manager</span>
                             </div>
-                            <div className="text-sm text-gray-600">{manager.employeeId} • {manager.email}</div>
+                            <div className="text-sm text-gray-600 truncate">{manager.employeeId} • {manager.email}</div>
                           </div>
                         </div>
                       </div>
@@ -254,18 +254,16 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
                                   {/* Incharge Header */}
                                   <div className="bg-gradient-to-r from-blue-100 to-blue-200 p-3">
                                     <div className="flex items-center gap-2">
-                                      <ChevronRight className="w-4 h-4 text-blue-400" />
-                                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white">
+                                      <ChevronRight className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
                                         <UserCog className="w-4 h-4" />
                                       </div>
-                                      <div className="flex-1">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-sm text-gray-900">{incharge.name}</span>
-                                          <span className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded">
-                                            {incharge.designation === 'store_incharge' ? 'Store Incharge' : 'Production Incharge'}
-                                          </span>
-                                        </div>
-                                        <div className="text-xs text-gray-600">{incharge.employeeId}</div>
+                                      <div className="flex-1 min-w-0">
+                                        <span className="text-sm text-gray-900 truncate block">{incharge.name}</span>
+                                        <span className="inline-block mt-1 px-2 py-0.5 bg-blue-600 text-white text-xs rounded max-w-full truncate align-top">
+                                          {incharge.designation === 'store_incharge' ? 'Store Incharge' : 'Production Incharge'}
+                                        </span>
+                                        <div className="text-xs text-gray-600 truncate mt-1">{incharge.employeeId}</div>
                                       </div>
                                     </div>
                                   </div>

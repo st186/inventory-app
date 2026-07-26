@@ -1345,35 +1345,35 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             const myNetAmount = totalPayout - myPersonalExpenses;
 
             return (
-              <div className="p-6">
+              <div className="p-4 sm:p-6">
                 <div className="mb-6">
-                  <div className="flex items-start justify-between mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
                     <div>
                       <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
                       <p className="text-sm text-gray-600">
                         View your salary records and download monthly payslips
                       </p>
                     </div>
-                    
-                    <div className="flex items-center gap-3">
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
                       {/* View All Payments Button */}
                       <button
                         onClick={() => {
                           setSelectedEmployeeForHistory(currentEmployee!);
                           setShowPaymentHistory(true);
                         }}
-                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-lg hover:shadow-xl"
+                        className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-lg hover:shadow-xl whitespace-nowrap"
                       >
                         <FileText className="w-4 h-4" />
                         View All Payments
                       </button>
-                      
+
                       {/* Apply for Salary Advance Button - Only for permanent employees */}
                       {employeeType === 'fulltime' && (
                         <button
                           onClick={() => setShowAdvanceModal(true)}
                           disabled={hasActiveAdvance}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
                             hasActiveAdvance
                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:from-orange-700 hover:to-red-700 shadow-md'
@@ -1543,9 +1543,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                             : 'border-gray-200 bg-gray-50 opacity-60'
                         }`}
                       >
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <h4 className="text-gray-900 font-semibold">{slip.month} {slip.year}</h4>
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-3">
+                          <div className="min-w-0">
+                            <h4 className="text-gray-900 font-semibold truncate">{slip.month} {slip.year}</h4>
                             <p className="text-sm text-gray-600 mt-1">
                               {slip.payouts.length} payout{slip.payouts.length !== 1 ? 's' : ''}
                               {slip.personalExpenses > 0 && ` − ₹${slip.personalExpenses.toLocaleString('en-IN')} advance deducted`}
@@ -1562,14 +1562,14 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 employeeType,
                                 slip.personalExpenses || 0
                               )}
-                              className="flex items-center gap-2 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm"
+                              className="flex items-center justify-center gap-2 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm flex-shrink-0"
                               title="Download Payslip"
                             >
                               <Download className="w-4 h-4" />
                               Download
                             </button>
                           ) : (
-                            <div className="px-3 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed">
+                            <div className="px-3 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed flex-shrink-0 text-center">
                               {(slip.payouts.length === 0 && (!slip.personalExpenses || slip.personalExpenses === 0)) ? 'No Data' : 'Not Available'}
                             </div>
                           )}
