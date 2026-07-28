@@ -394,6 +394,16 @@ export async function triggerPosSync(accessToken: string): Promise<any> {
   });
 }
 
+// Re-pulls a specific already-closed day's Ciferon SaleDetails and overwrites that day's
+// cash/Paytm/online totals - for correcting a historical record written before a sync bug
+// was fixed. Cluster-head only (enforced server-side).
+export async function backfillPosSync(accessToken: string, date: string): Promise<any> {
+  return fetchWithAuth(`${API_BASE}/pos-sync/backfill`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
+}
+
 // ============================================
 // PRODUCTION DATA API
 // ============================================

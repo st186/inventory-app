@@ -90,6 +90,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const [topupReason, setTopupReason] = useState<api.CashTopupReason>('store_inventory');
  const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
  const [isSyncingPos, setIsSyncingPos] = useState(false);
+ const [activeTab, setActiveTab] = useState<'entry' | 'loans'>('entry');
  
  const isClusterHead = context.user?.role === 'cluster_head';
  const isManager = context.user?.role === 'manager';
@@ -1776,9 +1777,26 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  )}
 
+ <div className="flex items-center gap-1.5 mb-4 bg-white/70 p-1 rounded-full w-fit border border-orange-200/50">
+ <button
+ onClick={() => setActiveTab('entry')}
+ className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'entry' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+ >
+ Sales Entry
+ </button>
+ <button
+ onClick={() => setActiveTab('loans')}
+ className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'loans' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+ >
+ Loans
+ </button>
+ </div>
+
+ {activeTab === 'entry' && (
+ <>
  {/* Date Selector */}
  <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
- 
+
  {/* Online Sales - simple combined total (Swiggy + Zomato), logged by the store incharge.
  Payout/commission reconciliation is handled separately by the operations manager below. */}
  {canEditSales && (
@@ -3086,9 +3104,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  </div>
  )}
+ </>
+ )}
 
  {/* Loan Management Section */}
- <div className="mt-6">
+ {activeTab === 'loans' && (
+ <div>
  <LoanManagementSection
  context={context}
  effectiveStoreId={effectiveStoreId}
@@ -3100,6 +3121,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  canApprove={isClusterHead}
  />
  </div>
+ )}
 
  {/* Paytm Daily Breakdown Modal */}
  {showPaytmBreakdown && (

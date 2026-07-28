@@ -8670,12 +8670,18 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
 // sales, so the whole run is skipped rather than writing a misleading record for the day.
 const STORE_OPENING_HOUR_IST = 15;
 
-async function runPosSync() {
-  const today = getTodayIST();
+// targetDate lets a cluster head backfill-correct a past day's already-closed sales record
+// (e.g. one written before the offlineSales staleness fix) by re-pulling that day's real
+// SaleDetails from Ciferon. Only Step A (cash/Paytm/online totals) runs for a backfill -
+// Step B (item-wise stock) and Step C (low-stock alert) are "tonight" side effects that
+// don't make sense to redo for a day that's already closed and reconciled elsewhere.
+async function runPosSync(targetDate?: string) {
+  const isBackfill = !!targetDate && targetDate !== getTodayIST();
+  const today = targetDate || getTodayIST();
   const todayRfc1123 = new Date(`${today}T00:00:00Z`).toUTCString();
   const results: any[] = [];
 
-  if (getHourIST() < STORE_OPENING_HOUR_IST) {
+  if (!isBackfill && getHourIST() < STORE_OPENING_HOUR_IST) {
     return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
   }
 
@@ -8813,6 +8819,9 @@ async function runPosSync() {
       }
 
       // ---- Step B: fragile item-wise stock sync ----
+      if (isBackfill) {
+        storeResult.stepB = { success: true, skipped: true, reason: 'backfill only re-runs Step A' };
+      } else
       try {
         const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
         const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
@@ -8905,6 +8914,9 @@ async function runPosSync() {
       // ---- Step C: low-stock alert (opening + this month's received - this month's sold,
       // same formula ProductionRequests.tsx's "Store Stock Status" uses, simplified to
       // skip its mid-month-recalibration-override edge case) ----
+      if (isBackfill) {
+        storeResult.stepC = { success: true, skipped: true, reason: 'backfill only re-runs Step A' };
+      } else
       try {
         const CATEGORY_KEYS: Array<{ camelKey: string; legacyKey: string }> = [
           { camelKey: 'chicken', legacyKey: 'Chicken Momos' },
@@ -9076,6 +9088,29 @@ app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
   }
 
   const result = await runPosSync();
+  return c.json(result, (result as any).status || 200);
+});
+
+// Backfill entrypoint - cluster head only. Re-pulls a specific already-closed day's
+// SaleDetails from Ciferon and overwrites that day's cash/Paytm/online totals, for
+// correcting a historical record written before a sync bug was fixed (Step A only -
+// see runPosSync's isBackfill branch).
+app.post('/make-server-c2dd9b9d/pos-sync/backfill', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (authResult.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can backfill a past day\'s POS sync' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const date = body?.date;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'Provide a date in YYYY-MM-DD format' }, 400);
+  }
+
+  const result = await runPosSync(date);
   return c.json(result, (result as any).status || 200);
 });
 

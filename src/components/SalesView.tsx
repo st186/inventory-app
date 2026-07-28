@@ -3,7 +3,7 @@ import { InventoryContextType } from '../App';
 import { DateSelector } from './DateSelector';
 import { OnlineSalesTab } from './OnlineSalesTab';
 import { LoanManagementSection } from './LoanManagementSection';
-import { Eye, Lock, Banknote, Smartphone, Wallet, CheckCircle, Clock, PlusCircle, XCircle, IndianRupee, RefreshCw } from 'lucide-react';
+import { Eye, Lock, Banknote, Smartphone, Wallet, CheckCircle, Clock, PlusCircle, XCircle, IndianRupee, RefreshCw, FileSpreadsheet, HandCoins } from 'lucide-react';
 import * as api from '../utils/api';
 import { toast } from 'sonner';
 
@@ -33,6 +33,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
   const [isSyncingPos, setIsSyncingPos] = useState(false);
   const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
   const [isLoadingLoans, setIsLoadingLoans] = useState(false);
+  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>('entry');
 
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
 
@@ -90,16 +91,23 @@ export function SalesView({ context, selectedStoreId }: Props) {
   });
   const clusterHeadPendingTopups = topupRequests.filter((r) => r.status === 'pending');
 
+  const todayIST = new Date().toISOString().split('T')[0];
+  const isViewingPastDate = selectedDate < todayIST;
+
   const handleSyncPosNow = async () => {
     if (!context.user?.accessToken) return;
     setIsSyncingPos(true);
     try {
-      const result = await api.triggerPosSync(context.user.accessToken);
+      // Cluster head viewing a past, already-closed date: re-pull that day's real totals
+      // instead of triggering "today"'s sync - fixes a record written before a sync bug fix.
+      const result = (isClusterHead && isViewingPastDate)
+        ? await api.backfillPosSync(context.user.accessToken, selectedDate)
+        : await api.triggerPosSync(context.user.accessToken);
       if (result?.skipped) {
         toast(result.message || "Skipped - store hasn't opened yet");
       } else if (result?.success) {
         await context.refreshData();
-        toast.success('POS sync complete');
+        toast.success(isViewingPastDate ? `Re-synced ${selectedDate}` : 'POS sync complete');
       } else {
         toast.error(result?.error || 'POS sync ran but reported an error - check the results');
       }
@@ -205,10 +213,10 @@ export function SalesView({ context, selectedStoreId }: Props) {
               onClick={handleSyncPosNow}
               disabled={isSyncingPos}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50"
-              title="Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
+              title={isClusterHead && isViewingPastDate ? `Re-pull ${selectedDate}'s real totals from Ciferon and overwrite this record` : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
-              {isSyncingPos ? 'Syncing...' : 'Sync POS Now'}
+              {isSyncingPos ? 'Syncing...' : (isClusterHead && isViewingPastDate ? `Re-sync ${selectedDate}` : 'Sync POS Now')}
             </button>
           )}
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-full">
@@ -218,6 +226,35 @@ export function SalesView({ context, selectedStoreId }: Props) {
         </div>
       </div>
 
+      {canManagePayouts && (
+        <div className="flex items-center gap-1.5 mb-6 bg-secondary/60 p-1 rounded-full w-fit">
+          <button
+            onClick={() => setActiveTab('entry')}
+            className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'entry' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Wallet className="w-3.5 h-3.5" /> Sales Entry
+          </button>
+          {canManagePayouts && (
+            <button
+              onClick={() => setActiveTab('payout')}
+              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'payout' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" /> Aggregator Payout
+            </button>
+          )}
+          {(isOperationsManager || isClusterHead) && (
+            <button
+              onClick={() => setActiveTab('loans')}
+              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'loans' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <HandCoins className="w-3.5 h-3.5" /> Loans
+            </button>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'entry' && (
+      <>
       <DateSelector
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
@@ -524,10 +561,12 @@ export function SalesView({ context, selectedStoreId }: Props) {
           </div>
         </div>
       )}
+      </>
+      )}
 
       {/* Loan management - operations manager can request, cluster head can approve/reject */}
-      {(isOperationsManager || isClusterHead) && (
-        <div className="mt-6">
+      {activeTab === 'loans' && (isOperationsManager || isClusterHead) && (
+        <div>
           <LoanManagementSection
             context={context}
             effectiveStoreId={effectiveStoreId}
@@ -542,8 +581,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
       )}
 
       {/* Aggregator payout reconciliation - operations manager / cluster head only */}
-      {canManagePayouts && (
-        <div className="mt-6">
+      {activeTab === 'payout' && canManagePayouts && (
+        <div>
           <OnlineSalesTab
             context={context}
             selectedStoreId={selectedStoreId}
