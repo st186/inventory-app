@@ -316,7 +316,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  setIsSyncingPos(true);
  try {
  const result = await api.triggerPosSync(context.user.accessToken);
- if (result?.success) {
+ if (result?.skipped) {
+ alert(result.message || "Skipped - store hasn't opened yet");
+ } else if (result?.success) {
  await context.refreshData();
  alert('POS sync complete');
  } else {

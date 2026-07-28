@@ -95,7 +95,9 @@ export function SalesView({ context, selectedStoreId }: Props) {
     setIsSyncingPos(true);
     try {
       const result = await api.triggerPosSync(context.user.accessToken);
-      if (result?.success) {
+      if (result?.skipped) {
+        toast(result.message || "Skipped - store hasn't opened yet");
+      } else if (result?.success) {
         await context.refreshData();
         toast.success('POS sync complete');
       } else {

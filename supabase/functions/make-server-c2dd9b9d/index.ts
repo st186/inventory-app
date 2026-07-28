@@ -28,6 +28,11 @@ function getDayOfMonthIST(timestamp?: string): number {
   return parseInt(date.substring(8, 10), 10);
 }
 
+function getHourIST(timestamp?: string): number {
+  const date = timestamp ? timestamp : getNowIST();
+  return parseInt(date.substring(11, 13), 10);
+}
+
 function formatDateTimeIST(timestamp: string): string {
   const date = new Date(timestamp);
   const day = date.getUTCDate();
@@ -8660,10 +8665,19 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
 //     ProductionRequests.tsx's Opening+Received-Sold reconciliation picks it up unchanged.
 // Shared sync logic - called by both the cron-secret-gated nightly route and the
 // verifyUser-gated manual "Sync Now" button, so there is exactly one implementation.
+// All stores open at 3 PM IST - syncing "today" before then would either return nothing
+// or (worse) a handful of pre-opening test/staging orders that read as confusing partial
+// sales, so the whole run is skipped rather than writing a misleading record for the day.
+const STORE_OPENING_HOUR_IST = 15;
+
 async function runPosSync() {
   const today = getTodayIST();
   const todayRfc1123 = new Date(`${today}T00:00:00Z`).toUTCString();
   const results: any[] = [];
+
+  if (getHourIST() < STORE_OPENING_HOUR_IST) {
+    return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
+  }
 
   try {
     const allStores = await kv.getByPrefix('store:');
@@ -9043,9 +9057,9 @@ app.post('/make-server-c2dd9b9d/pos-sync', async (c) => {
   return c.json(result, (result as any).status || 200);
 });
 
-// Manual "Sync Now" button entrypoint - lets a cluster head or operations manager
-// trigger today's sync early instead of waiting for the 10:30 PM cron, e.g. to check
-// figures before closing. Same underlying logic as the cron route above.
+// Manual "Sync Now" button entrypoint - lets production head, operations manager, store
+// incharge, or cluster head trigger today's sync early instead of waiting for the 10:30 PM
+// cron, e.g. to check figures before closing. Same underlying logic as the cron route above.
 app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) {
@@ -9054,9 +9068,11 @@ app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
 
   const role = authResult.user.user_metadata?.role;
   const designation = authResult.user.user_metadata?.designation;
-  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
-  if (role !== 'cluster_head' && !isOperationsManager) {
-    return c.json({ error: 'Only operations managers and cluster heads can trigger a manual POS sync' }, 403);
+  const isStoreIncharge = designation === 'store_incharge';
+  const isProductionIncharge = designation === 'production_incharge';
+  const isOperationsManager = role === 'manager' && !isStoreIncharge && !isProductionIncharge;
+  if (role !== 'cluster_head' && !isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
+    return c.json({ error: 'Only production head, operations manager, store incharge, or cluster head can trigger a manual POS sync' }, 403);
   }
 
   const result = await runPosSync();
