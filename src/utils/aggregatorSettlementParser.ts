@@ -39,6 +39,17 @@ function findSheet(workbook: XLSX.WorkBook, ...nameCandidates: string[]): XLSX.W
 }
 
 function sheetToRows(sheet: XLSX.WorkSheet): any[][] {
+  // These reports' worksheet XML often declares a used-range ("!ref", from the <dimension>
+  // tag) that starts several rows below where the real content actually begins - the title
+  // and header rows still physically exist as cells (A1, B7, etc.), but sheet_to_json only
+  // walks the declared range, so it silently drops everything above it. Widening the range
+  // to start at A1 (keeping the original end) before converting recovers those rows.
+  if (sheet['!ref']) {
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    range.s.r = 0;
+    range.s.c = 0;
+    sheet['!ref'] = XLSX.utils.encode_range(range);
+  }
   return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as any[][];
 }
 
