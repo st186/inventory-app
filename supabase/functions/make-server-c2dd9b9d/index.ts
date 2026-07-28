@@ -2808,6 +2808,103 @@ app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
 });
 
 // ============================================
+// Aggregator Settlement Routes - replaces the online-payouts daily-entry mechanism
+// above with document-upload settlements. Each settlement's netPayout is credited to
+// Paytm on its own settlementDate purely by calculatePaytmBalance summing these records
+// for the relevant date range client-side (same pattern already used for onlineLoans) -
+// no server-side mutation of the sales: record is needed here.
+// ============================================
+
+app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const storeId = c.req.query('storeId');
+    let settlements = await kv.getByPrefix('aggregator-settlement:');
+    if (storeId) {
+      settlements = (settlements || []).filter((s: any) => s.storeId === storeId);
+    }
+    return c.json({ success: true, settlements: settlements || [] });
+  } catch (error) {
+    console.log('Error fetching aggregator settlements:', error);
+    return c.json({ error: 'Failed to fetch aggregator settlements' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (!isOperationsManager && role !== 'cluster_head') {
+    return c.json({ error: 'Only operations managers or cluster heads can upload settlements' }, 403);
+  }
+
+  try {
+    const body = await c.req.json();
+    const required = ['storeId', 'aggregator', 'settlementDate', 'grossSales', 'netPayout', 'orderCount'];
+    for (const field of required) {
+      if (body[field] === undefined || body[field] === null || body[field] === '') {
+        return c.json({ error: `Missing required field: ${field}` }, 400);
+      }
+    }
+
+    const id = `AGG-SETTLE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const settlement = {
+      id,
+      storeId: body.storeId,
+      storeName: body.storeName || '',
+      aggregator: body.aggregator,
+      settlementDate: body.settlementDate,
+      bankUTR: body.bankUTR || '',
+      grossSales: body.grossSales,
+      netPayout: body.netPayout,
+      netCommission: body.netCommission ?? (body.grossSales - body.netPayout),
+      orderCount: body.orderCount,
+      sourceFileName: body.sourceFileName || '',
+      uploadedBy: authResult.user.email,
+      uploadedAt: getNowIST(),
+    };
+
+    await kv.set(`aggregator-settlement:${id}`, settlement);
+    return c.json({ success: true, settlement });
+  } catch (error) {
+    console.log('Error saving aggregator settlement:', error);
+    return c.json({ error: 'Failed to save aggregator settlement' }, 500);
+  }
+});
+
+app.delete('/make-server-c2dd9b9d/aggregator-settlements/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (!isOperationsManager && role !== 'cluster_head') {
+    return c.json({ error: 'Only operations managers or cluster heads can delete a settlement' }, 403);
+  }
+
+  try {
+    const id = c.req.param('id');
+    await kv.del(`aggregator-settlement:${id}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting aggregator settlement:', error);
+    return c.json({ error: 'Failed to delete aggregator settlement' }, 500);
+  }
+});
+
+// ============================================
 // Salary Advance Management Routes
 // ============================================
 

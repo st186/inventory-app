@@ -147,11 +147,36 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  
  const loadOnlinePayoutData = async () => {
  if (!context.user?.accessToken) return;
- 
+
  setIsLoadingPayouts(true);
  try {
- const payouts = await api.getOnlinePayoutData(context.user.accessToken);
- setOnlinePayoutData(payouts);
+ // Legacy daily-typed-in payouts (kept for historical months) plus the new
+ // document-upload aggregator settlements, merged into the same shape so every
+ // existing calculatePaytmBalance/paytmDailyBreakdown call site downstream keeps
+ // working unchanged. Multiple settlements can land on the same date (e.g. a
+ // Zomato and a Swiggy payout both settling that day), so settlements are summed
+ // per date first.
+ const [payouts, settlements] = await Promise.all([
+ api.getOnlinePayoutData(context.user.accessToken),
+ api.getAggregatorSettlements(context.user.accessToken),
+ ]);
+ const byDateAndStore = new Map<string, { date: string; storeId?: string; swiggyPayout: number; zomatoPayout: number }>();
+ for (const s of settlements) {
+ const key = `${s.storeId || ''}|${s.settlementDate}`;
+ const existing = byDateAndStore.get(key) || { date: s.settlementDate, storeId: s.storeId, swiggyPayout: 0, zomatoPayout: 0 };
+ if (s.aggregator === 'swiggy') existing.swiggyPayout += s.netPayout;
+ else existing.zomatoPayout += s.netPayout;
+ byDateAndStore.set(key, existing);
+ }
+ const settlementDerived: api.OnlinePayoutEntry[] = Array.from(byDateAndStore.values()).map((v, i) => ({
+ id: `SETTLEMENT-DERIVED-${i}`,
+ date: v.date,
+ storeId: v.storeId,
+ swiggyPayout: v.swiggyPayout,
+ zomatoPayout: v.zomatoPayout,
+ createdAt: '',
+ }));
+ setOnlinePayoutData([...payouts, ...settlementDerived]);
  } catch (error) {
  console.error('Error loading online payout data:', error);
  } finally {

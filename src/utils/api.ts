@@ -1332,6 +1332,55 @@ export async function saveOnlinePayoutData(accessToken: string, entry: OnlinePay
 }
 
 // ============================================
+// AGGREGATOR SETTLEMENT API (document-upload payout reconciliation - replaces the
+// online-payouts daily-entry mechanism above)
+// ============================================
+
+export type AggregatorSettlement = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  aggregator: 'zomato' | 'swiggy';
+  settlementDate: string; // YYYY-MM-DD
+  bankUTR: string;
+  grossSales: number;
+  netPayout: number;
+  netCommission: number;
+  orderCount: number;
+  sourceFileName: string;
+  uploadedBy: string;
+  uploadedAt: string;
+};
+
+export async function getAggregatorSettlements(accessToken: string, storeId?: string): Promise<AggregatorSettlement[]> {
+  try {
+    const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+    const data = await fetchWithAuth(`${API_BASE}/aggregator-settlements${query}`, accessToken);
+    return data.settlements || [];
+  } catch (error) {
+    console.error('Error fetching aggregator settlements:', error);
+    return [];
+  }
+}
+
+export async function createAggregatorSettlement(
+  accessToken: string,
+  entry: Omit<AggregatorSettlement, 'id' | 'uploadedBy' | 'uploadedAt'>
+): Promise<AggregatorSettlement> {
+  const data = await fetchWithAuth(`${API_BASE}/aggregator-settlements`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
+  return data.settlement;
+}
+
+export async function deleteAggregatorSettlement(accessToken: string, id: string): Promise<any> {
+  return fetchWithAuth(`${API_BASE}/aggregator-settlements/${id}`, accessToken, {
+    method: 'DELETE',
+  });
+}
+
+// ============================================
 // SALARY ADVANCE API
 // ============================================
 
