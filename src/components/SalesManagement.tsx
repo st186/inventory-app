@@ -1765,15 +1765,23 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  button needs to be here too (not just on the read-only view others land on). */}
  {canEditSales && (
  <div className="flex justify-end mb-3">
+ {(() => {
+ // Stores open at 3 PM IST - keep in sync with server-side STORE_OPENING_HOUR_IST.
+ // Computed via Intl so it's correct regardless of the browser's own timezone.
+ const istHourNow = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit' }), 10);
+ const syncDisabledForTiming = istHourNow < 15;
+ return (
  <button
  onClick={handleSyncPosNow}
- disabled={isSyncingPos}
- className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50"
- title="Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
+ disabled={isSyncingPos || syncDisabledForTiming}
+ className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+ title={syncDisabledForTiming ? "Stores open at 3 PM IST - sync isn't available before then" : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
  >
  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
- {isSyncingPos ? 'Syncing...' : 'Sync POS Now'}
+ {isSyncingPos ? 'Syncing...' : syncDisabledForTiming ? 'Opens at 3 PM' : 'Sync POS Now'}
  </button>
+ );
+ })()}
  </div>
  )}
 

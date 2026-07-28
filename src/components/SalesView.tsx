@@ -93,6 +93,13 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const todayIST = new Date().toISOString().split('T')[0];
   const isViewingPastDate = selectedDate < todayIST;
+  // Stores open at 3 PM IST - keep this in sync with STORE_OPENING_HOUR_IST server-side.
+  // Computed via Intl so it's correct regardless of the browser's own timezone.
+  const istHourNow = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit' }), 10);
+  const isBeforeStoreOpening = istHourNow < 15;
+  // Backfilling a past, already-closed date is always allowed regardless of time of day -
+  // only "today"'s sync needs to wait for the store to actually open.
+  const syncDisabledForTiming = !isViewingPastDate && isBeforeStoreOpening;
 
   const handleSyncPosNow = async () => {
     if (!context.user?.accessToken) return;
@@ -211,12 +218,18 @@ export function SalesView({ context, selectedStoreId }: Props) {
           {(isOperationsManager || isClusterHead || isStoreIncharge || isProductionIncharge) && (
             <button
               onClick={handleSyncPosNow}
-              disabled={isSyncingPos}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50"
-              title={isClusterHead && isViewingPastDate ? `Re-pull ${selectedDate}'s real totals from Ciferon and overwrite this record` : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
+              disabled={isSyncingPos || syncDisabledForTiming}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title={
+                syncDisabledForTiming
+                  ? "Stores open at 3 PM IST - sync isn't available before then"
+                  : isClusterHead && isViewingPastDate
+                  ? `Re-pull ${selectedDate}'s real totals from Ciferon and overwrite this record`
+                  : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
+              }
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
-              {isSyncingPos ? 'Syncing...' : (isClusterHead && isViewingPastDate ? `Re-sync ${selectedDate}` : 'Sync POS Now')}
+              {isSyncingPos ? 'Syncing...' : syncDisabledForTiming ? 'Opens at 3 PM' : (isClusterHead && isViewingPastDate ? `Re-sync ${selectedDate}` : 'Sync POS Now')}
             </button>
           )}
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-full">

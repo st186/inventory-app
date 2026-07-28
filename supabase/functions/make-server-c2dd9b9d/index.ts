@@ -9114,6 +9114,36 @@ app.post('/make-server-c2dd9b9d/pos-sync/backfill', async (c) => {
   return c.json(result, (result as any).status || 200);
 });
 
+// One-off admin utility - backfills every day in [startDate, endDate] via the same
+// per-day backfill path above, for verifying the sync end-to-end across a range at once.
+// Gated by a dedicated secret (not user auth) since it's a maintenance tool, not an
+// in-app feature - never exposed in the frontend.
+app.post('/make-server-c2dd9b9d/pos-sync/admin-bulk-backfill', async (c) => {
+  const adminSecret = c.req.header('X-Admin-Secret');
+  const expectedSecret = Deno.env.get('ADMIN_TOOLS_SECRET');
+  if (!expectedSecret || adminSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { startDate, endDate } = body || {};
+  if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return c.json({ error: 'Provide startDate and endDate in YYYY-MM-DD format' }, 400);
+  }
+
+  const results: any[] = [];
+  let cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (cursor <= end) {
+    const date = cursor.toISOString().substring(0, 10);
+    const result = await runPosSync(date);
+    results.push({ date, result });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return c.json({ success: true, days: results.length, results });
+});
+
 // ============================================
 // PRODUCTION DATA CLEANUP
 // ============================================

@@ -1,7 +1,53 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType } from '../App';
-import { DollarSign, TrendingUp, Wallet, Package, Calendar, Plus, X, CheckCircle } from 'lucide-react';
+import { DollarSign, TrendingUp, Wallet, Package, Calendar, Plus, X, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import * as api from '../utils/api';
+
+type BreakdownFilterPreset = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom';
+
+function getBreakdownDateRange(preset: BreakdownFilterPreset, customStart: string, customEnd: string): { start: string; end: string } {
+  const now = new Date();
+  const toISO = (d: Date) => d.toISOString().split('T')[0];
+  const startOfWeek = (d: Date) => {
+    const copy = new Date(d);
+    const day = copy.getDay(); // 0 = Sunday
+    copy.setDate(copy.getDate() - day);
+    return copy;
+  };
+
+  switch (preset) {
+    case 'today':
+      return { start: toISO(now), end: toISO(now) };
+    case 'yesterday': {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      return { start: toISO(y), end: toISO(y) };
+    }
+    case 'this_week': {
+      const start = startOfWeek(now);
+      return { start: toISO(start), end: toISO(now) };
+    }
+    case 'last_week': {
+      const thisWeekStart = startOfWeek(now);
+      const lastWeekEnd = new Date(thisWeekStart);
+      lastWeekEnd.setDate(lastWeekEnd.getDate() - 1);
+      const lastWeekStart = new Date(lastWeekEnd);
+      lastWeekStart.setDate(lastWeekStart.getDate() - 6);
+      return { start: toISO(lastWeekStart), end: toISO(lastWeekEnd) };
+    }
+    case 'this_month': {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { start: toISO(start), end: toISO(now) };
+    }
+    case 'last_month': {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: toISO(start), end: toISO(end) };
+    }
+    case 'custom':
+      return { start: customStart, end: customEnd };
+  }
+}
 
 type Props = {
   context: InventoryContextType;
@@ -38,6 +84,10 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
   const [onlinePayoutData, setOnlinePayoutData] = useState<OnlinePayoutEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
+  const [breakdownFilter, setBreakdownFilter] = useState<BreakdownFilterPreset>('this_month');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
 
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
   // Payout/commission reconciliation is an operations-manager responsibility, not the store incharge's -
@@ -325,10 +375,58 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
         )}
       </form>
 
-      {/* Daily Breakdown Table */}
-      <div className="bg-white rounded-lg p-6 border-2 border-orange-200 shadow-lg">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Daily Breakdown</h3>
-        
+      {/* Daily Breakdown Table - collapsible, date-filtered */}
+      <div className="bg-white rounded-lg border-2 border-orange-200 shadow-lg">
+        <button
+          onClick={() => setIsBreakdownOpen(!isBreakdownOpen)}
+          className="w-full flex items-center justify-between p-6 text-left"
+        >
+          <h3 className="text-lg font-semibold text-gray-800">Daily Breakdown</h3>
+          {isBreakdownOpen ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}
+        </button>
+
+        {isBreakdownOpen && (
+        <div className="px-6 pb-6">
+        <div className="flex flex-wrap gap-2 mb-4">
+          {([
+            ['today', 'Today'],
+            ['yesterday', 'Yesterday'],
+            ['this_week', 'This Week'],
+            ['last_week', 'Last Week'],
+            ['this_month', 'This Month'],
+            ['last_month', 'Last Month'],
+            ['custom', 'Custom'],
+          ] as [BreakdownFilterPreset, string][]).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setBreakdownFilter(value)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                breakdownFilter === value ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {breakdownFilter === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            />
+            <span className="text-gray-500 text-sm">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -345,21 +443,38 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
             </thead>
             <tbody>
               {(() => {
-                // Combine sales and payouts by date
+                const { start, end } = getBreakdownDateRange(breakdownFilter, customStart, customEnd);
+
+                // Combine sales and payouts by date, restricted to the selected range
                 const allDates = new Set([
                   ...onlineSalesData.map(s => s.date),
                   ...onlinePayoutData.map(p => p.date)
                 ]);
-                
+
                 const filteredSales = effectiveStoreId
                   ? onlineSalesData.filter(s => s.storeId === effectiveStoreId)
                   : onlineSalesData;
-                
+
                 const filteredPayouts = effectiveStoreId
                   ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
                   : onlinePayoutData;
 
-                return Array.from(allDates)
+                const datesInRange = Array.from(allDates).filter(date => {
+                  if (!start || !end) return true;
+                  return date >= start && date <= end;
+                });
+
+                if (datesInRange.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-sm text-gray-500">
+                        No payout data in this date range
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return datesInRange
                   .sort((a, b) => b.localeCompare(a)) // Sort descending
                   .map(date => {
                     const sales = filteredSales.find(s => s.date === date);
@@ -400,6 +515,8 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
             </tbody>
           </table>
         </div>
+        </div>
+        )}
       </div>
     </div>
   );
