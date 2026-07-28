@@ -63,6 +63,16 @@ const FILTER_OPTIONS: [FilterPreset, string][] = [
   ['custom', 'Custom'],
 ];
 
+const FILTER_LABELS: Record<FilterPreset, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  this_week: 'This Week',
+  last_week: 'Last Week',
+  this_month: 'This Month',
+  last_month: 'Last Month',
+  custom: 'Custom Range',
+};
+
 export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   const [settlements, setSettlements] = useState<api.AggregatorSettlement[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -75,8 +85,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [filterPreset, setFilterPreset] = useState<FilterPreset>('this_month');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
+  // Custom range only actually applies once "Apply" is pressed - draft* holds what's
+  // typed into the date inputs, appliedCustomStart/End is what filtering uses.
+  const [draftCustomStart, setDraftCustomStart] = useState('');
+  const [draftCustomEnd, setDraftCustomEnd] = useState('');
+  const [appliedCustomStart, setAppliedCustomStart] = useState('');
+  const [appliedCustomEnd, setAppliedCustomEnd] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const effectiveStoreId = selectedStoreId || context.user?.storeId;
@@ -105,12 +119,6 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [context.user?.accessToken, effectiveStoreId]);
 
-  const cumulativeStats = useMemo(() => {
-    const totalSales = settlements.reduce((sum, s) => sum + s.grossSales, 0);
-    const totalPayouts = settlements.reduce((sum, s) => sum + s.netPayout, 0);
-    const totalCommission = settlements.reduce((sum, s) => sum + s.netCommission, 0);
-    return { totalSales, totalPayouts, totalCommission };
-  }, [settlements]);
 
   const handleFileSelected = async (file: File) => {
     setParseError(null);
@@ -175,10 +183,24 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     }
   };
 
-  const { start: filterStart, end: filterEnd } = getDateRange(filterPreset, customStart, customEnd);
-  const filteredSettlements = settlements
-    .filter(s => !filterStart || !filterEnd || (s.settlementDate >= filterStart && s.settlementDate <= filterEnd))
-    .sort((a, b) => b.settlementDate.localeCompare(a.settlementDate));
+  const { start: filterStart, end: filterEnd } = getDateRange(filterPreset, appliedCustomStart, appliedCustomEnd);
+  // In custom mode, until "Apply" is pressed there's no range yet - show nothing rather
+  // than silently falling back to "all settlements", which would look like the filter
+  // isn't doing anything.
+  const hasActiveRange = filterPreset !== 'custom' || (!!appliedCustomStart && !!appliedCustomEnd);
+  const filteredSettlements = hasActiveRange
+    ? settlements
+        .filter(s => s.settlementDate >= filterStart && s.settlementDate <= filterEnd)
+        .sort((a, b) => b.settlementDate.localeCompare(a.settlementDate))
+    : [];
+
+  const filteredStats = useMemo(() => {
+    const totalSales = filteredSettlements.reduce((sum, s) => sum + s.grossSales, 0);
+    const totalPayouts = filteredSettlements.reduce((sum, s) => sum + s.netPayout, 0);
+    const totalCommission = filteredSettlements.reduce((sum, s) => sum + s.netCommission, 0);
+    return { totalSales, totalPayouts, totalCommission };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settlements, filterPreset, appliedCustomStart, appliedCustomEnd]);
 
   return (
     <div className="space-y-6">
@@ -207,35 +229,80 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         </div>
       </div>
 
+      {/* Date filter - applies to both the summary cards and the settlement history below */}
+      <div className="bg-white rounded-lg p-4 border-2 border-orange-200 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          {FILTER_OPTIONS.map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setFilterPreset(value)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                filterPreset === value ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {filterPreset === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <input
+              type="date"
+              value={draftCustomStart}
+              onChange={(e) => setDraftCustomStart(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            />
+            <span className="text-gray-500 text-sm">to</span>
+            <input
+              type="date"
+              value={draftCustomEnd}
+              onChange={(e) => setDraftCustomEnd(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            />
+            <button
+              onClick={() => { setAppliedCustomStart(draftCustomStart); setAppliedCustomEnd(draftCustomEnd); }}
+              disabled={!draftCustomStart || !draftCustomEnd}
+              className="px-4 py-1.5 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Apply
+            </button>
+            {!appliedCustomStart && (
+              <span className="text-xs text-gray-400">Pick both dates and press Apply</span>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg p-6 border-2 border-green-200 shadow-sm">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">Gross Sales (All Settlements)</span>
+            <span className="text-sm font-medium text-gray-600">Gross Sales ({FILTER_LABELS[filterPreset]})</span>
             <DollarSign className="w-5 h-5 text-green-600" />
           </div>
-          <p className="text-2xl font-bold text-green-600">₹{cumulativeStats.totalSales.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-green-600">₹{filteredStats.totalSales.toFixed(2)}</p>
         </div>
 
         <div className="bg-white rounded-lg p-6 border-2 border-blue-200 shadow-sm">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">Net Payout (All Settlements)</span>
+            <span className="text-sm font-medium text-gray-600">Net Payout ({FILTER_LABELS[filterPreset]})</span>
             <Wallet className="w-5 h-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold text-blue-600">₹{cumulativeStats.totalPayouts.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-blue-600">₹{filteredStats.totalPayouts.toFixed(2)}</p>
         </div>
 
         <div className="bg-white rounded-lg p-6 border-2 border-orange-200 shadow-sm">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">Net Commission (All Settlements)</span>
+            <span className="text-sm font-medium text-gray-600">Net Commission ({FILTER_LABELS[filterPreset]})</span>
             <TrendingUp className="w-5 h-5 text-orange-600" />
           </div>
-          <p className="text-2xl font-bold text-orange-600">₹{cumulativeStats.totalCommission.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-orange-600">₹{filteredStats.totalCommission.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">Gross Sales - Net Payout</p>
         </div>
       </div>
 
-      {/* Settlement History - collapsible, date-filtered */}
+      {/* Settlement History - collapsible, uses the date filter above */}
       <div className="bg-white rounded-lg border-2 border-orange-200 shadow-lg">
         <button
           onClick={() => setIsHistoryOpen(!isHistoryOpen)}
@@ -247,42 +314,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
         {isHistoryOpen && (
           <div className="px-6 pb-6">
-            <div className="flex flex-wrap gap-2 mb-4">
-              {FILTER_OPTIONS.map(([value, label]) => (
-                <button
-                  key={value}
-                  onClick={() => setFilterPreset(value)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    filterPreset === value ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {filterPreset === 'custom' && (
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <input
-                  type="date"
-                  value={customStart}
-                  onChange={(e) => setCustomStart(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-                />
-                <span className="text-gray-500 text-sm">to</span>
-                <input
-                  type="date"
-                  value={customEnd}
-                  onChange={(e) => setCustomEnd(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-            )}
-
             {isLoading ? (
               <div className="flex items-center justify-center py-8 text-gray-400 text-sm">Loading settlements...</div>
+            ) : !hasActiveRange ? (
+              <div className="py-8 text-center text-sm text-gray-500">Pick a custom date range and press Apply above</div>
             ) : filteredSettlements.length === 0 ? (
-              <div className="py-8 text-center text-sm text-gray-500">No settlements in this date range</div>
+              <div className="py-8 text-center text-sm text-gray-500">No settlements in this date range yet - use "Upload Settlement" above to add one</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
