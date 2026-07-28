@@ -389,6 +389,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  editingItem={editingOverhead}
  employees={employees}
  existingOverheads={context.overheads}
+ entityScope={activeTab}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields() };

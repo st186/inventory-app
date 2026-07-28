@@ -75,6 +75,7 @@ export const OVERHEAD_CATEGORY_META: Record<string, { label: string; group: Over
   party: { label: '🎉 Party Cost', group: 'operating' },
   emergency_online: { label: '🛒 Emergency Online Order (Blinkit)', group: 'operating' },
   utensils: { label: '🍴 Utensils', group: 'operating' },
+  cleaning_supplies: { label: '🧽 Cleaning Supplies', group: 'operating' },
   equipments: { label: '🔨 Equipments', group: 'operating' },
   license: { label: '📜 License Cost', group: 'operating' },
   water_jar: { label: '💧 Water Jar', group: 'operating' },
@@ -83,6 +84,7 @@ export const OVERHEAD_CATEGORY_META: Record<string, { label: string; group: Over
   staff_welfare: { label: '🎊 Staff Welfare (Uniforms, Festival Costs)', group: 'operating' },
   breakfast: { label: '🌅 Breakfast Cost', group: 'meals' },
   lunch: { label: '🍽️ Lunch Cost', group: 'meals' },
+  dinner: { label: '🌙 Dinner Cost', group: 'meals' },
   evening_snacks: { label: '🍿 Evening Snacks', group: 'meals' },
   personal_expense: { label: '👤 Personal Expense By an Employee', group: 'payroll_linked' },
   // Legacy categories kept for historical data display only — not selectable in the form
@@ -94,7 +96,27 @@ export const OVERHEAD_CATEGORIES: Record<string, string> = Object.fromEntries(
   Object.entries(OVERHEAD_CATEGORY_META).map(([key, { label }]) => [key, label])
 );
 
-export const MEAL_CATEGORIES: readonly string[] = ['breakfast', 'lunch', 'evening_snacks'];
+export const MEAL_CATEGORIES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'evening_snacks'];
+
+// The store's day-to-day overhead categories are a small, curated subset of the full
+// list above (which stays exactly as-is for the production house) - based on a real
+// month of store expense logging, not every operating-cost category the business has
+// ever needed applies to a single store's daily running costs. 'miscellaneous' is
+// re-included here specifically for the store list even though it's excluded from the
+// general/production list above.
+export const STORE_OVERHEAD_CATEGORY_KEYS: readonly string[] = [
+  'transportation',
+  'travel',
+  'fuel',
+  'breakfast',
+  'lunch',
+  'dinner',
+  'repair',
+  'cleaning_supplies',
+  'utensils',
+  'equipments',
+  'miscellaneous',
+];
 
 export const FIXED_COST_CATEGORIES: Record<string, string> = {
   electricity: '⚡ Electricity',
