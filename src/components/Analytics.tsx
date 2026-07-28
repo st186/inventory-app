@@ -188,6 +188,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Load online sales and payout data for commission calculation
  const [onlineSalesData, setOnlineSalesData] = useState<any[]>([]);
  const [onlinePayoutData, setOnlinePayoutData] = useState<any[]>([]);
+ const [aggregatorSettlements, setAggregatorSettlements] = useState<api.AggregatorSettlement[]>([]);
  const [isLoadingOnlineData, setIsLoadingOnlineData] = useState(false);
  
  // Load online loans data for interest expense calculation
@@ -201,13 +202,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  
  setIsLoadingOnlineData(true);
  try {
- const [salesData, payoutData] = await Promise.all([
+ const [salesData, payoutData, settlements] = await Promise.all([
  api.getOnlineSalesData(context.user.accessToken),
- api.getOnlinePayoutData(context.user.accessToken)
+ api.getOnlinePayoutData(context.user.accessToken),
+ api.getAggregatorSettlements(context.user.accessToken)
  ]);
- 
+
  setOnlineSalesData(salesData || []);
  setOnlinePayoutData(payoutData || []);
+ setAggregatorSettlements(settlements || []);
  } catch (error) {
  console.error('Error loading online sales/payout data:', error);
  } finally {
@@ -1719,12 +1722,66 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return dateMatch && storeMatch;
  });
  
- const totalOnlineSales = filteredOnlineSales.reduce((sum, sale) => 
+ const totalOnlineSales = filteredOnlineSales.reduce((sum, sale) =>
  sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
- const totalOnlinePayouts = filteredOnlinePayouts.reduce((sum, payout) => 
+ const totalOnlinePayouts = filteredOnlinePayouts.reduce((sum, payout) =>
  sum + (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0), 0);
- 
- const commissionExpenses = totalOnlineSales - totalOnlinePayouts;
+
+ // Commission should only be counted for days that actually have a recorded payout or
+ // settlement - treating every day of un-reconciled online sales as "100% commission"
+ // (the old totalOnlineSales - totalOnlinePayouts formula) massively overstates commission
+ // once online sales volume is auto-synced from POS but payouts haven't been reconciled yet.
+ const legacyPayoutDates = new Set(filteredOnlinePayouts.map(p => p.date));
+ const matchedOnlineSales = filteredOnlineSales
+ .filter(sale => legacyPayoutDates.has(sale.date))
+ .reduce((sum, sale) => sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
+ const legacyCommission = matchedOnlineSales - totalOnlinePayouts;
+
+ const filteredSettlements = aggregatorSettlements.filter(settlement => {
+ const dateMatch = (() => {
+ switch (timeFilter) {
+ case 'today':
+ return settlement.settlementDate === getTodayIST();
+ case 'yesterday': {
+ const yesterday = new Date();
+ yesterday.setDate(yesterday.getDate() - 1);
+ return settlement.settlementDate === yesterday.toISOString().split('T')[0];
+ }
+ case 'thisWeek': {
+ const today = new Date();
+ const startOfWeek = new Date(today);
+ startOfWeek.setDate(today.getDate() - today.getDay());
+ return new Date(settlement.settlementDate) >= startOfWeek && new Date(settlement.settlementDate) <= today;
+ }
+ case 'lastWeek': {
+ const lastWeekEnd = new Date();
+ lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+ const lastWeekStart = new Date(lastWeekEnd);
+ lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+ return new Date(settlement.settlementDate) >= lastWeekStart && new Date(settlement.settlementDate) <= lastWeekEnd;
+ }
+ case 'thisMonth': {
+ const currentMonth = new Date().toISOString().slice(0, 7);
+ return settlement.settlementDate.startsWith(currentMonth);
+ }
+ case 'lastMonth': {
+ const lastMonthDate = new Date();
+ lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+ const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+ return settlement.settlementDate.startsWith(lastMonth);
+ }
+ case 'custom':
+ return settlement.settlementDate >= dateRange.from && settlement.settlementDate <= dateRange.to;
+ default:
+ return true;
+ }
+ })();
+ const storeMatch = effectiveStoreId ? settlement.storeId === effectiveStoreId : true;
+ return dateMatch && storeMatch;
+ });
+ const settlementCommission = filteredSettlements.reduce((sum, s) => sum + s.netCommission, 0);
+
+ const commissionExpenses = legacyCommission + settlementCommission;
  
  // Combine online revenue from both sources:
  // 1. Main sales table's onlineSales field (manual entry)
@@ -2255,36 +2312,90 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return dateMatch && storeMatch;
  });
  
- // Group commission by date
+ // Group commission by date - only for dates that actually have a recorded legacy
+ // payout, same reasoning as the main metrics calculation above: treating every day of
+ // un-reconciled online sales as "100% commission" massively overstates it.
  filteredOnlineSales.forEach(sale => {
  const date = sale.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
- // Add online sales to calculate commission
  const onlineSales = (sale.swiggySales || 0) + (sale.zomatoSales || 0);
  if (!dailyData[date].onlineSales) dailyData[date].onlineSales = 0;
  dailyData[date].onlineSales += onlineSales;
  });
- 
+
  filteredOnlinePayouts.forEach(payout => {
  const date = payout.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
- // Add online payouts to calculate commission
  const onlinePayouts = (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0);
  if (!dailyData[date].onlinePayouts) dailyData[date].onlinePayouts = 0;
  dailyData[date].onlinePayouts += onlinePayouts;
+ dailyData[date].hasLegacyPayout = true;
  });
- 
- // Calculate and add commission expense for each day
+
+ // Calculate and add commission expense only for days with a recorded legacy payout
  Object.keys(dailyData).forEach(date => {
+ if (!dailyData[date].hasLegacyPayout) return;
  const onlineSales = dailyData[date].onlineSales || 0;
  const onlinePayouts = dailyData[date].onlinePayouts || 0;
  const commission = onlineSales - onlinePayouts;
  dailyData[date].expenses += commission;
- console.log(`Date ${date}: onlineSales=${onlineSales}, onlinePayouts=${onlinePayouts}, commission=${commission}`);
+ });
+
+ // Aggregator settlements (the document-upload replacement) contribute their own
+ // netCommission by settlement date, independent of the legacy payout matching above.
+ aggregatorSettlements
+ .filter(s => {
+ const storeMatch = !effectiveStoreId || s.storeId === effectiveStoreId;
+ const dateMatch = (() => {
+ switch (timeFilter) {
+ case 'today':
+ return s.settlementDate === getTodayIST();
+ case 'yesterday': {
+ const yesterday = new Date();
+ yesterday.setDate(yesterday.getDate() - 1);
+ return s.settlementDate === yesterday.toISOString().split('T')[0];
+ }
+ case 'thisWeek': {
+ const today = new Date();
+ const startOfWeek = new Date(today);
+ startOfWeek.setDate(today.getDate() - today.getDay());
+ return new Date(s.settlementDate) >= startOfWeek && new Date(s.settlementDate) <= today;
+ }
+ case 'lastWeek': {
+ const lastWeekEnd = new Date();
+ lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+ const lastWeekStart = new Date(lastWeekEnd);
+ lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+ return new Date(s.settlementDate) >= lastWeekStart && new Date(s.settlementDate) <= lastWeekEnd;
+ }
+ case 'thisMonth': {
+ const currentMonth = new Date().toISOString().slice(0, 7);
+ return s.settlementDate.startsWith(currentMonth);
+ }
+ case 'lastMonth': {
+ const lastMonthDate = new Date();
+ lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+ const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+ return s.settlementDate.startsWith(lastMonth);
+ }
+ case 'custom':
+ return s.settlementDate >= dateRange.from && s.settlementDate <= dateRange.to;
+ default:
+ return true;
+ }
+ })();
+ return storeMatch && dateMatch;
+ })
+ .forEach(s => {
+ const date = s.settlementDate;
+ if (!dailyData[date]) {
+ dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+ }
+ dailyData[date].expenses += s.netCommission;
  });
  
  // Add inventory expenses by date
