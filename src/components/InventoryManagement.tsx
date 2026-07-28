@@ -31,13 +31,15 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [searchQuery, setSearchQuery] = useState('');
 
  const isProductionIncharge = context.user?.designation === 'production_incharge';
+ const isStoreIncharge = context.user?.designation === 'store_incharge';
+ // Operations manager: any other manager (not tied to a single store or production house).
+ const isOperationsManager = context.user?.role === 'manager' && !isStoreIncharge && !isProductionIncharge;
  const [activeTab, setActiveTab] = useState<'store' | 'production'>(
  isProductionIncharge ? 'production' : 'store'
  );
  // Items saved before this split lack entityType — treat those as store expenses.
  const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: 'store' | 'production') =>
  tab === 'production' ? item.entityType === 'production_house' : item.entityType !== 'production_house';
- const canAddOnActiveTab = activeTab === 'production' ? isProductionIncharge : (context.isManager && !isProductionIncharge);
 
  const changeDate = (days: number) => {
  const current = new Date(selectedDate);
@@ -52,6 +54,22 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
  // This allows cluster heads to view data for any selected store
  const effectiveStoreId = selectedStoreId || context.user?.storeId;
+
+ // Operations manager can edit both tabs; production incharge only production; store
+ // incharge only their own store's store-tab entries (not other stores, not production).
+ const canAddOnActiveTab = activeTab === 'production'
+ ? (isProductionIncharge || isOperationsManager)
+ : (context.isManager && !isProductionIncharge && (!isStoreIncharge || effectiveStoreId === context.user?.storeId));
+
+ // Which production house new production-tab entries should be tagged with - the
+ // production incharge's own house, or (for an operations manager editing on their
+ // behalf) the only production house this business currently has.
+ const targetProductionHouseId = isProductionIncharge ? (context.user?.storeId || undefined) : context.productionHouses?.[0]?.id;
+ const getEntityFields = (): { entityType: 'store' | 'production_house'; storeId?: string; productionHouseId?: string } =>
+ activeTab === 'production'
+ ? { entityType: 'production_house', productionHouseId: targetProductionHouseId }
+ : { entityType: 'store', storeId: effectiveStoreId || undefined };
+
  console.log('🏪 InventoryManagement - effectiveStoreId:', effectiveStoreId);
  console.log('🏪 InventoryManagement - selectedStoreId prop:', selectedStoreId);
  console.log('🏪 InventoryManagement - user storeId:', context.user?.storeId);
@@ -183,7 +201,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  onClick={() => setShowInventoryForm(true)}
  disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} inventory items` : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge or operations manager' : 'the store incharge (own store only) or operations manager'} can add ${activeTab === 'production' ? 'production' : 'store'} inventory items` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Inventory Item
@@ -192,7 +210,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  onClick={() => setShowOverheadForm(true)}
  disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} overhead costs` : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge or operations manager' : 'the store incharge (own store only) or operations manager'} can add ${activeTab === 'production' ? 'production' : 'store'} overhead costs` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Overhead
@@ -201,7 +219,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  onClick={() => setShowFixedCostForm(true)}
  disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} fixed costs` : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge or operations manager' : 'the store incharge (own store only) or operations manager'} can add ${activeTab === 'production' ? 'production' : 'store'} fixed costs` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Fixed Cost
@@ -343,13 +361,14 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  editingItem={editingInventory}
  onSubmit={async (item) => {
  try {
+ const taggedItem = { ...item, ...getEntityFields() };
  if (editingInventory) {
- await context.updateInventoryItem(editingInventory.id, item);
+ await context.updateInventoryItem(editingInventory.id, taggedItem);
  setShowInventoryForm(false);
  setEditingInventory(null);
  toast.success('Inventory item updated successfully!');
  } else {
- await context.addInventoryItem(item);
+ await context.addInventoryItem(taggedItem);
  // Don't close form for new items - let user add more
  toast.success('Inventory item added! You can add another item.');
  }
@@ -372,10 +391,11 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  existingOverheads={context.overheads}
  onSubmit={async (item) => {
  try {
+ const taggedItem = { ...item, ...getEntityFields() };
  if (editingOverhead) {
- await context.updateOverheadItem(editingOverhead.id, item);
+ await context.updateOverheadItem(editingOverhead.id, taggedItem);
  } else {
- await context.addOverheadItem(item);
+ await context.addOverheadItem(taggedItem);
  }
  setShowOverheadForm(false);
  setEditingOverhead(null);
@@ -399,10 +419,11 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  editingItem={editingFixedCost}
  onSubmit={async (item) => {
  try {
+ const taggedItem = { ...item, ...getEntityFields() };
  if (editingFixedCost) {
- await context.updateFixedCostItem(editingFixedCost.id, item);
+ await context.updateFixedCostItem(editingFixedCost.id, taggedItem);
  } else {
- await context.addFixedCostItem(item);
+ await context.addFixedCostItem(taggedItem);
  }
  setShowFixedCostForm(false);
  setEditingFixedCost(null);
