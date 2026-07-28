@@ -61,10 +61,21 @@ self.addEventListener('push', (event) => {
 const NOTIFICATION_VIEW_MAP = {
   inventory_logged: { view: 'inventory' },
   sales_logged: { view: 'sales' },
+  sales_pending: { view: 'sales' },
+  sales_approved: { view: 'sales' },
+  sales_rejected: { view: 'sales' },
   discrepancy_request: { view: 'sales' },
   discrepancy_approved: { view: 'sales' },
   discrepancy_rejected: { view: 'sales' },
-  production_pending: { view: 'production' },
+  cash_topup_request: { view: 'sales' },
+  cash_topup_approved: { view: 'sales' },
+  cash_topup_rejected: { view: 'sales' },
+  pos_sync_stock_failed: { view: 'sales' },
+  low_stock_alert: { view: 'stock-requests' },
+  loan_requested: { view: 'sales' },
+  loan_approved: { view: 'sales' },
+  loan_rejected: { view: 'sales' },
+  production_pending: { view: 'production', tab: 'approvals' },
   production_approved: { view: 'production' },
   // Attendance: the recipient of "*_pending" is the approver, so they land on
   // the approval tab; the recipient of "*_approved/rejected" is the employee
@@ -76,10 +87,13 @@ const NOTIFICATION_VIEW_MAP = {
   leave_approved: { view: 'attendance', tab: 'leave' },
   leave_rejected: { view: 'attendance', tab: 'leave' },
   attendance_reminder: { view: 'attendance', tab: 'timesheet' },
-  stock_request_new: { view: 'stock-requests' },
+  stock_request_new: { view: 'stock-requests', tab: 'pending-fulfillment' },
+  stock_request_fulfilled: { view: 'stock-requests' },
+  stock_request_partial: { view: 'stock-requests' },
+  stock_request_cancelled: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
-  fulfillment_reminder: { view: 'stock-requests' }, // covers both stock + production requests; lands on the fulfillment screen
+  fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' }, // covers both stock + production requests; lands on the fulfillment screen
   data_entry_reminder: { view: 'inventory' }, // covers both inventory + sales reminders
 };
 
@@ -91,7 +105,7 @@ function getNavigationTarget(data) {
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {
-    return { view: 'stock-requests', highlightRequestId: data.relatedId };
+    return { view: 'stock-requests', tab: 'pending-fulfillment', highlightRequestId: data.relatedId };
   }
 
   const mapped = NOTIFICATION_VIEW_MAP[data.type];

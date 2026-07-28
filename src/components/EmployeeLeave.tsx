@@ -8,12 +8,16 @@ interface LeaveApplication {
   leaveDate: string;
   leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
   isAdvanceLeave?: boolean; // Whether this is an advance leave (borrowed from next month)
+  advanceDaysRequested?: number; // Total days in the advance-leave application this record belongs to
+  approverRole?: 'manager' | 'cluster_head'; // Who this advance leave routes to for approval
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;
   approvedBy?: string;
   approvedAt?: string;
 }
+
+const MAX_ADVANCE_DAYS_BEFORE_ESCALATION = 4;
 
 interface EmployeeLeaveProps {
   user: {
@@ -30,12 +34,27 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   const [projectedBalance, setProjectedBalance] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showApplyForm, setShowApplyForm] = useState(false);
+  const [applyMode, setApplyMode] = useState<'regular' | 'advance'>('regular');
   const [newLeave, setNewLeave] = useState({
-    leaveDate: '',
-    leaveType: 'full' as 'full' | 'half', // NEW: Leave type
-    isAdvanceLeave: false, // NEW: Advance leave option
+    startDate: '',
+    endDate: '',
+    leaveType: 'full' as 'full' | 'half',
     reason: ''
   });
+
+  // Half day only makes sense for a single-day application
+  const isSingleDay = !newLeave.endDate || newLeave.startDate === newLeave.endDate;
+
+  const getDateRange = (start: string, end: string) => {
+    const dates: string[] = [];
+    const cursor = new Date(start + 'T00:00:00');
+    const last = new Date((end || start) + 'T00:00:00');
+    while (cursor <= last) {
+      dates.push(cursor.toISOString().split('T')[0]);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  };
 
   useEffect(() => {
     loadLeaves();
@@ -82,93 +101,70 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   };
 
   const applyLeave = async () => {
-    if (!newLeave.leaveDate || !newLeave.reason) {
-      alert('Please fill all fields');
+    if (!newLeave.startDate || !newLeave.reason) {
+      alert('Please fill all fields, including a reason');
       return;
     }
 
-    // Check if leave already applied for this date
-    const existingLeave = leaves.find(l => l.leaveDate === newLeave.leaveDate);
-    if (existingLeave) {
-      alert('Leave already applied for this date');
+    const endDate = newLeave.endDate || newLeave.startDate;
+    if (endDate < newLeave.startDate) {
+      alert('End date cannot be before start date');
       return;
     }
 
-    // Calculate leave days for this request
-    const requestedDays = newLeave.leaveType === 'half' ? 0.5 : 1;
+    const datesInRange = getDateRange(newLeave.startDate, endDate);
+    // Multi-day applications are always full-day; half day only applies to a single date
+    const effectiveLeaveType = datesInRange.length > 1 ? 'full' : newLeave.leaveType;
 
-    // If advance leave is selected, validate constraints
-    if (newLeave.isAdvanceLeave) {
-      // Calculate total approved advance leaves for current month
-      const currentDate = new Date();
-      const currentMonth = currentDate.getMonth();
-      const currentYear = currentDate.getFullYear();
-      
-      const approvedAdvanceLeaves = leaves.filter(l => {
-        const leaveDate = new Date(l.leaveDate);
-        return (
-          l.isAdvanceLeave && 
-          l.status === 'approved' &&
-          leaveDate.getMonth() === currentMonth &&
-          leaveDate.getFullYear() === currentYear
-        );
-      });
-      
-      const totalAdvanceDays = approvedAdvanceLeaves.reduce((total, leave) => {
-        const leaveType = leave.leaveType || 'full';
-        return total + (leaveType === 'half' ? 0.5 : 1);
-      }, 0);
-      
-      // Check if adding this would exceed 2 days of advance leave
-      if (totalAdvanceDays + requestedDays > 2) {
-        alert(`You can only take maximum 2 days of advance leave per month. You have already used ${totalAdvanceDays} day(s).`);
-        return;
-      }
-      
-      // Advance leave can make balance negative, but total leaves (regular + advance) cannot exceed 5 days
-      const totalMonthLeaves = leaves.filter(l => {
-        const leaveDate = new Date(l.leaveDate);
-        return (
-          l.status === 'approved' &&
-          leaveDate.getMonth() === currentMonth &&
-          leaveDate.getFullYear() === currentYear
-        );
-      }).reduce((total, leave) => {
-        const leaveType = leave.leaveType || 'full';
-        return total + (leaveType === 'half' ? 0.5 : 1);
-      }, 0);
-      
-      if (totalMonthLeaves + requestedDays > 5) {
-        alert('Maximum 5 days of leave allowed per month (including advance leave).');
-        return;
-      }
-    } else {
+    // Check if leave already applied for any date in the range
+    const conflicting = datesInRange.filter(d => leaves.find(l => l.leaveDate === d));
+    if (conflicting.length > 0) {
+      alert(`Leave already applied for: ${conflicting.join(', ')}`);
+      return;
+    }
+
+    // Calculate total leave days for this request
+    const requestedDays = datesInRange.length * (effectiveLeaveType === 'half' ? 0.5 : 1);
+    const isAdvanceLeave = applyMode === 'advance';
+
+    // Advance leave over the threshold isn't blocked - it's just escalated to the
+    // cluster head instead of the employee's own manager (see approverRole below).
+    const approverRole: 'manager' | 'cluster_head' = requestedDays > MAX_ADVANCE_DAYS_BEFORE_ESCALATION ? 'cluster_head' : 'manager';
+
+    if (!isAdvanceLeave && leaveBalance < requestedDays) {
       // Regular leave - check if balance is sufficient
-      if (leaveBalance < requestedDays) {
-        alert(`Insufficient leave balance. You have ${leaveBalance} day(s) remaining. Consider applying for advance leave (max 2 days).`);
-        return;
-      }
+      alert(`Insufficient leave balance. You have ${leaveBalance} day(s) remaining. Consider applying via the Advance Leave tab instead.`);
+      return;
+    }
+
+    if (isAdvanceLeave && requestedDays > MAX_ADVANCE_DAYS_BEFORE_ESCALATION) {
+      const proceed = confirm(`You're requesting ${requestedDays} day(s) of advance leave, which is more than ${MAX_ADVANCE_DAYS_BEFORE_ESCALATION} days. This will be sent to the cluster head for approval instead of your manager. Continue?`);
+      if (!proceed) return;
     }
 
     try {
       setLoading(true);
-      const leaveData: LeaveApplication = {
-        employeeId: user.employeeId,
-        leaveDate: newLeave.leaveDate,
-        leaveType: newLeave.leaveType,
-        isAdvanceLeave: newLeave.isAdvanceLeave,
-        reason: newLeave.reason,
-        status: 'pending',
-        appliedAt: new Date().toISOString()
-      };
-      
-      await api.applyLeave(leaveData);
+      const appliedAt = new Date().toISOString();
+      for (const date of datesInRange) {
+        const leaveData: LeaveApplication = {
+          employeeId: user.employeeId,
+          leaveDate: date,
+          leaveType: effectiveLeaveType,
+          isAdvanceLeave,
+          ...(isAdvanceLeave ? { advanceDaysRequested: requestedDays, approverRole } : {}),
+          reason: newLeave.reason,
+          status: 'pending',
+          appliedAt
+        };
+        await api.applyLeave(leaveData);
+      }
       await loadLeaves();
       await calculateLeaveBalance();
-      
-      setNewLeave({ leaveDate: '', leaveType: 'full' as 'full' | 'half', isAdvanceLeave: false, reason: '' });
+
+      setNewLeave({ startDate: '', endDate: '', leaveType: 'full' as 'full' | 'half', reason: '' });
       setShowApplyForm(false);
-      alert('Leave application submitted successfully');
+      const approverLabel = isAdvanceLeave ? (approverRole === 'cluster_head' ? 'the cluster head' : 'your manager') : 'your manager';
+      alert(`Leave application submitted${datesInRange.length > 1 ? ` for ${datesInRange.length} days` : ''} - sent to ${approverLabel} for approval`);
     } catch (error) {
       console.error('Error applying leave:', error);
       alert('Error applying leave');
@@ -251,7 +247,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                 </div>
               )}
 
-              <p className="text-xs sm:text-sm opacity-75 mt-4">3 leaves/month • max 5 days (3 regular + 2 advance)</p>
+              <p className="text-xs sm:text-sm opacity-75 mt-4">4 leaves/month • up to {MAX_ADVANCE_DAYS_BEFORE_ESCALATION} days advance (manager approval), more needs cluster head approval</p>
             </div>
             <div className="hidden sm:block bg-white/20 rounded-full p-6 flex-shrink-0">
               <Calendar className="w-16 h-16" />
@@ -274,31 +270,80 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
         {showApplyForm && (
           <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
             <h3 className="text-lg text-gray-900 mb-4">Apply for Leave</h3>
-            
+
+            {/* Regular vs Advance Leave tabs */}
+            <div className="flex gap-2 mb-4 bg-gray-100 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setApplyMode('regular')}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  applyMode === 'regular' ? 'bg-white text-orange-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Regular Leave
+              </button>
+              <button
+                type="button"
+                onClick={() => setApplyMode('advance')}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  applyMode === 'advance' ? 'bg-white text-orange-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Advance Leave
+              </button>
+            </div>
+
+            {applyMode === 'advance' && (
+              <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="text-xs text-gray-700">
+                  <AlertCircle className="w-4 h-4 inline mr-1 text-yellow-700" />
+                  Advance leave borrows from next month's quota - your balance will go negative and next month's credit will absorb it (e.g. take 4 days now, next month starts at 0).
+                  <br />
+                  <span className="font-medium">Up to {MAX_ADVANCE_DAYS_BEFORE_ESCALATION} days needs your manager's approval. More than that is sent to the cluster head instead.</span>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm text-gray-700 mb-2">Leave Date</label>
+                <label className="block text-sm text-gray-700 mb-2">Start Date</label>
                 <input
                   type="date"
-                  value={newLeave.leaveDate}
-                  onChange={(e) => setNewLeave({ ...newLeave, leaveDate: e.target.value })}
+                  value={newLeave.startDate}
+                  onChange={(e) => setNewLeave({ ...newLeave, startDate: e.target.value, endDate: newLeave.endDate && newLeave.endDate < e.target.value ? e.target.value : newLeave.endDate })}
                   min={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
-              
+
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">End Date</label>
+                <input
+                  type="date"
+                  value={newLeave.endDate}
+                  onChange={(e) => setNewLeave({ ...newLeave, endDate: e.target.value })}
+                  min={newLeave.startDate || new Date().toISOString().split('T')[0]}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">Leave blank for a single day</p>
+              </div>
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Leave Type</label>
                 <select
-                  value={newLeave.leaveType}
+                  value={isSingleDay ? newLeave.leaveType : 'full'}
+                  disabled={!isSingleDay}
                   onChange={(e) => setNewLeave({ ...newLeave, leaveType: e.target.value as 'full' | 'half' })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
                 >
                   <option value="full">Full Day</option>
                   <option value="half">Half Day</option>
                 </select>
+                {!isSingleDay && (
+                  <p className="text-xs text-gray-500 mt-1">Half day isn't available for multi-day leave — each day in the range is applied as Full Day.</p>
+                )}
               </div>
-              
+
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Reason</label>
                 <input
@@ -309,29 +354,6 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
-            </div>
-
-            {/* Advance Leave Option */}
-            <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={newLeave.isAdvanceLeave}
-                  onChange={(e) => setNewLeave({ ...newLeave, isAdvanceLeave: e.target.checked })}
-                  className="mt-1 w-5 h-5 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-gray-900 mb-1">
-                    Apply as Advance Leave
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    <AlertCircle className="w-4 h-4 inline mr-1" />
-                    You can take up to 2 days advance leave per month. This will make your balance negative and will be deducted from next month's quota.
-                    <br />
-                    <span className="font-medium">Maximum total: 5 days/month (3 regular + 2 advance)</span>
-                  </div>
-                </div>
-              </label>
             </div>
 
             <div className="flex gap-3">
@@ -395,6 +417,11 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                         Advance
                       </span>
                     )}
+                    {leave.isAdvanceLeave && leave.status === 'pending' && leave.approverRole && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        {leave.approverRole === 'cluster_head' ? 'Needs Cluster Head Approval' : 'Needs Manager Approval'}
+                      </span>
+                    )}
                     <span className="text-xs text-gray-400">
                       Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
                     </span>
@@ -415,11 +442,12 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
             <div className="text-sm text-blue-900">
               <p className="mb-2"><strong>Leave Policy:</strong></p>
               <ul className="list-disc list-inside space-y-1">
-                <li>3 leaves are credited on the 1st of each month (Jan: 3, Feb: 6, Mar: 9, etc.)</li>
+                <li>4 leaves are credited on the 1st of each month (Aug: 4, Sep: 8, Oct: 12, etc.)</li>
                 <li>Unused leaves carry forward within the year</li>
                 <li>All unused leaves lapse on December 31st (reset to 0)</li>
-                <li>New year starts fresh with 3 leaves on January 1st</li>
-                <li>All leave applications require manager approval</li>
+                <li>New year starts fresh with 4 leaves on January 1st</li>
+                <li>Regular leave applications require your manager's approval</li>
+                <li>Advance leave up to {MAX_ADVANCE_DAYS_BEFORE_ESCALATION} days needs your manager's approval; more than that is routed to the cluster head</li>
                 <li>Approved leaves will prevent timesheet entry for that day</li>
               </ul>
             </div>

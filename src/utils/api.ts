@@ -36,9 +36,9 @@ export async function getSession() {
 // Global flag to prevent multiple logout redirects
 let isHandlingUnauthorized = false;
 
-async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0): Promise<any> {
+async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0, _refreshed = false): Promise<any> {
   const MAX_RETRIES = 2;
-  
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -64,24 +64,40 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
       if (response.status >= 500 && _retryCount < MAX_RETRIES) {
         console.warn(`Server error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}):`, errorMessage, '- retrying...');
         await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
-        return fetchWithAuth(url, accessToken, options, _retryCount + 1);
+        return fetchWithAuth(url, accessToken, options, _retryCount + 1, _refreshed);
       }
-      
+
+      // A 401 here often just means the access token expired while the app was
+      // backgrounded (mobile) or idle in a tab - not that the session is truly gone.
+      // Try refreshing it once before concluding the user needs to log back in;
+      // this was force-logging people out on ordinary token expiry.
+      if (response.status === 401 && !_refreshed) {
+        console.warn(`[${url}] Got 401, attempting a token refresh before giving up...`);
+        const supabase = createBrowserSupabase();
+        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+        if (!refreshError && refreshedSession?.access_token) {
+          console.log('Token refresh succeeded, retrying request');
+          return fetchWithAuth(url, refreshedSession.access_token, options, _retryCount, true);
+        }
+        console.warn('Token refresh failed:', refreshError?.message || 'no session returned');
+      }
+
       console.error(`API Error [${url}]:`, errorMessage);
-      
-      // If unauthorized, force logout (but only once to prevent reload loops)
+
+      // If unauthorized and a refresh was already tried (or isn't possible), force logout
+      // (but only once to prevent reload loops)
       if (response.status === 401 && !isHandlingUnauthorized) {
         isHandlingUnauthorized = true;
         console.error('Session expired or invalid. Please log in again.');
-        
+
         // Clear the session
         const supabase = createBrowserSupabase();
         await supabase.auth.signOut();
-        
+
         // Use a flag to ensure we only reload once
         if (!sessionStorage.getItem('logout_redirect_in_progress')) {
           sessionStorage.setItem('logout_redirect_in_progress', 'true');
-          
+
           // Small delay to allow other pending requests to fail gracefully
           setTimeout(() => {
             sessionStorage.removeItem('logout_redirect_in_progress');
@@ -89,7 +105,7 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
           }, 100);
         }
       }
-      
+
       throw new Error(errorMessage);
     }
 
@@ -315,6 +331,70 @@ export async function rejectDiscrepancy(accessToken: string, id: string, reason:
 }
 
 // ============================================
+// CASH TOP-UP REQUEST API
+// ============================================
+
+export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'other';
+
+export interface CashTopupRequest {
+  id: string;
+  storeId: string;
+  date: string;
+  requestedAmount: number;
+  reason: CashTopupReason;
+  requestedByEntityType: 'store' | 'production_house';
+  requestedByEntityName: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedBy: string;
+  requestedByName: string;
+  requestedByUserId: string;
+  requestDate: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+}
+
+export async function fetchCashTopupRequests(accessToken: string): Promise<CashTopupRequest[]> {
+  const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests`, accessToken);
+  return data.requests || [];
+}
+
+// targetStoreId is required only for production incharges (who have no cash-in-hand ledger
+// of their own) - store incharges and operations managers credit their own store automatically.
+export async function requestCashTopup(accessToken: string, date: string, requestedAmount: number, reason: CashTopupReason, targetStoreId?: string): Promise<CashTopupRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ date, requestedAmount, reason, targetStoreId }),
+  });
+  return data.request;
+}
+
+export async function approveCashTopup(accessToken: string, id: string): Promise<CashTopupRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests/${id}/approve`, accessToken, {
+    method: 'POST',
+  });
+  return data.request;
+}
+
+export async function rejectCashTopup(accessToken: string, id: string, reason: string): Promise<CashTopupRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests/${id}/reject`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  return data.request;
+}
+
+// Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM
+// cron job. Operations-manager/cluster-head only (enforced server-side).
+export async function triggerPosSync(accessToken: string): Promise<any> {
+  return fetchWithAuth(`${API_BASE}/pos-sync/trigger`, accessToken, {
+    method: 'POST',
+  });
+}
+
+// ============================================
 // PRODUCTION DATA API
 // ============================================
 
@@ -513,6 +593,7 @@ export interface Store {
   location: string;
   managerId: string | null;
   productionHouseId: string | null; // Map store to production house
+  ciferonStoreId?: string | null; // Maps to the store's numeric StoreId in the Ciferon POS, for nightly auto-sync
   createdBy: string;
   createdAt: string;
   updatedAt?: string;
@@ -575,17 +656,17 @@ export async function assignProductionHouseToStore(storeId: string, productionHo
   return data.store;
 }
 
-export async function updateStore(storeId: string, name: string, location: string): Promise<Store> {
+export async function updateStore(storeId: string, name: string, location: string, ciferonStoreId?: string | null): Promise<Store> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
     throw new Error('Not authenticated');
   }
-  
+
   const data = await fetchWithAuth(`${API_BASE}/stores/${storeId}`, session.access_token, {
     method: 'PUT',
-    body: JSON.stringify({ name, location }),
+    body: JSON.stringify({ name, location, ciferonStoreId }),
   });
   return data.store;
 }
@@ -1562,6 +1643,8 @@ export interface LeaveApplication {
   leaveDate: string;
   leaveType?: 'full' | 'half'; // Leave type (optional for backward compatibility)
   isAdvanceLeave?: boolean; // Whether this is an advance leave (borrowed from next month)
+  advanceDaysRequested?: number; // Total days in the advance-leave application this record belongs to
+  approverRole?: 'manager' | 'cluster_head'; // Who this advance leave routes to for approval
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt?: string;
@@ -1849,8 +1932,12 @@ export interface ProductionRequest {
   updatedAt: string;
 }
 
-export async function fetchProductionRequests(accessToken: string): Promise<ProductionRequest[]> {
-  const data = await fetchWithAuth(`${API_BASE}/production-requests`, accessToken);
+export async function fetchProductionRequests(accessToken: string, fromDate?: string, toDate?: string): Promise<ProductionRequest[]> {
+  const params = new URLSearchParams();
+  if (fromDate) params.set('from', fromDate);
+  if (toDate) params.set('to', toDate);
+  const query = params.toString();
+  const data = await fetchWithAuth(`${API_BASE}/production-requests${query ? `?${query}` : ''}`, accessToken);
   return data.requests || [];
 }
 
@@ -2298,7 +2385,9 @@ export type OnlineLoan = {
   storeName: string;
   loanAmount: number;
   loanDate: string; // Date when loan was taken
-  status: 'active' | 'repaid';
+  // 'pending' = raised, awaiting cluster-head approval; 'active' = approved and outstanding
+  // (added to Paytm on approval); 'repaid' = fully repaid; 'rejected' = declined.
+  status: 'pending' | 'active' | 'repaid' | 'rejected';
   repaidAmount: number;
   repaymentDate: string | null; // Date when fully repaid
   notes: string;
@@ -2308,6 +2397,12 @@ export type OnlineLoan = {
   investorName?: string; // Name of the investor
   interestRate?: number; // Interest rate as percentage (e.g., 5 for 5%)
   repaymentType?: 'partial' | 'full'; // Type of last repayment
+  requestedByName?: string;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectionReason?: string | null;
 };
 
 export async function applyOnlineLoan(
@@ -2317,6 +2412,21 @@ export async function applyOnlineLoan(
   const response = await fetchWithAuth(`${API_BASE}/online-loans`, accessToken, {
     method: 'POST',
     body: JSON.stringify(data),
+  });
+  return response.loan;
+}
+
+export async function approveOnlineLoan(accessToken: string, loanId: string) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans/${loanId}/approve`, accessToken, {
+    method: 'POST',
+  });
+  return response.loan;
+}
+
+export async function rejectOnlineLoan(accessToken: string, loanId: string, reason: string) {
+  const response = await fetchWithAuth(`${API_BASE}/online-loans/${loanId}/reject`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   });
   return response.loan;
 }

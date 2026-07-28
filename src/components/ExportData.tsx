@@ -72,6 +72,15 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     }
   };
 
+  // Local date string (not toISOString, which converts to UTC and can shift the date
+  // by a day for timezones ahead of UTC - e.g. IST midnight becomes "yesterday" in UTC).
+  const getLocalDateString = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const getDateRangeValues = () => {
     const today = new Date();
     let startDate: string;
@@ -79,20 +88,20 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
 
     switch (dateRange) {
       case 'today':
-        startDate = today.toISOString().split('T')[0];
+        startDate = getLocalDateString(today);
         endDate = startDate;
         break;
       case 'weekly':
         const weekStart = new Date(today);
         weekStart.setDate(today.getDate() - 7);
-        startDate = weekStart.toISOString().split('T')[0];
-        endDate = today.toISOString().split('T')[0];
+        startDate = getLocalDateString(weekStart);
+        endDate = getLocalDateString(today);
         break;
       case 'monthly':
         const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
         const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        startDate = monthStart.toISOString().split('T')[0];
-        endDate = monthEnd.toISOString().split('T')[0];
+        startDate = getLocalDateString(monthStart);
+        endDate = getLocalDateString(monthEnd);
         break;
       case 'custom':
         startDate = customStartDate;
@@ -119,13 +128,22 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     try {
       setLoading(true);
 
-      const [inventory, overheads, sales, employees, payouts, production] = await Promise.all([
+      const [
+        inventory, overheads, sales, employees, payouts, production,
+        onlineSales, onlinePayouts, salaryAdvances, onlineLoans, stores, itemSales
+      ] = await Promise.all([
         api.fetchInventory(accessToken),
         api.fetchOverheads(accessToken),
         api.fetchSalesData(accessToken),
         api.getEmployees(),
         api.getPayouts(),
-        api.fetchProductionData()
+        api.fetchProductionData(),
+        api.getOnlineSalesData(accessToken),
+        api.getOnlinePayoutData(accessToken),
+        api.getSalaryAdvances(),
+        selectedStoreId ? api.getOnlineLoans(accessToken, selectedStoreId) : api.getAllOnlineLoans(accessToken),
+        api.getStores(),
+        api.getSalesData(accessToken).then(r => r.data).catch(() => [])
       ]);
 
       // Filter data by date range and store
@@ -133,7 +151,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
         return items.filter((item: any) => {
           const itemDate = item[dateField];
           const matchesDate = itemDate >= startDate && itemDate <= endDate;
-          
+
           // If selectedStoreId is provided, ONLY show exact matches
           // Do NOT include legacy data without storeId when viewing a specific store
           if (selectedStoreId) {
@@ -141,7 +159,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             const matchesStore = itemStoreId === selectedStoreId;
             return matchesDate && matchesStore;
           }
-          
+
           return matchesDate;
         });
       };
@@ -151,25 +169,84 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
       const filteredSales = filterByDate(sales);
       const filteredPayouts = filterByDate(payouts);
       const filteredProduction = filterByDate(production);
+      const filteredOnlineSales = filterByDate(onlineSales);
+      const filteredOnlinePayouts = filterByDate(onlinePayouts);
+      const filteredSalaryAdvances = filterByDate(salaryAdvances, 'requestDate');
+      const filteredOnlineLoans = filterByDate(onlineLoans, 'loanDate');
+      const filteredItemSales = filterByDate(itemSales);
 
-      // Debug logging
-      console.log('Export Data Debug:', {
-        selectedStoreId,
-        totalInventory: inventory.length,
-        filteredInventory: filteredInventory.length,
-        totalSales: sales.length,
-        filteredSales: filteredSales.length,
-        totalOverheads: overheads.length,
-        filteredOverheads: filteredOverheads.length,
-        sampleSalesStoreIds: sales.slice(0, 3).map((s: any) => ({ date: s.date, storeId: s.storeId })),
-        sampleOverheadStoreIds: overheads.slice(0, 3).map((o: any) => ({ date: o.date, storeId: o.storeId }))
-      });
-
-      // Calculate totals based on the actual data structure
+      // Calculate totals based on the actual data structure.
+      // NOTE: online sales are tracked in their own table (SalesManagement's daily record's
+      // `onlineSales` field is always 0 now), so they must be added in separately here -
+      // omitting this previously understated Total Sales by the entire online portion.
       const totalInventorySpend = filteredInventory.reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
       const totalOverheadSpend = filteredOverheads.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      const totalSales = filteredSales.reduce((sum: number, item: any) => sum + (item.offlineSales || 0) + (item.onlineSales || 0), 0);
+      // Store vs Production House split (items saved before this split lack entityType — treat as store)
+      const isProductionExpense = (item: any) => item.entityType === 'production_house';
+      const totalStoreInventorySpend = filteredInventory.filter((i: any) => !isProductionExpense(i)).reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
+      const totalProductionInventorySpend = filteredInventory.filter(isProductionExpense).reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
+      const totalStoreOverheadSpend = filteredOverheads.filter((o: any) => !isProductionExpense(o)).reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
+      const totalProductionOverheadSpend = filteredOverheads.filter(isProductionExpense).reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
+      const totalOfflineSales = filteredSales.reduce((sum: number, item: any) => sum + (item.offlineSales || 0), 0);
+      const totalOnlineSalesLogged = filteredOnlineSales.reduce((sum: number, item: any) => sum + (item.swiggySales || 0) + (item.zomatoSales || 0), 0);
+      const totalSales = totalOfflineSales + totalOnlineSalesLogged;
       const totalPayouts = filteredPayouts.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
+      const totalAggregatorPayout = filteredOnlinePayouts.reduce((sum: number, item: any) => sum + (item.swiggyPayout || 0) + (item.zomatoPayout || 0), 0);
+      const netAggregatorCommission = totalOnlineSalesLogged - totalAggregatorPayout;
+      const totalSalaryAdvances = filteredSalaryAdvances.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
+      const activeLoanBalance = filteredOnlineLoans.reduce((sum: number, item: any) => sum + Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0)), 0);
+
+      const netProfit = totalSales - totalInventorySpend - totalOverheadSpend - totalPayouts;
+
+      // Store-wise breakdown, only meaningful when viewing all stores at once
+      const storeMap = new Map(stores.map((s: any) => [s.id, s.name]));
+      let storeBreakdown: Array<{ storeId: string; storeName: string; sales: number; inventorySpend: number; overheadSpend: number; profit: number }> = [];
+      if (!selectedStoreId) {
+        const storeIds = new Set<string>([
+          ...filteredSales.map((s: any) => s.storeId),
+          ...filteredInventory.map((i: any) => i.storeId),
+          ...filteredOverheads.map((o: any) => o.storeId),
+        ].filter(Boolean));
+        storeBreakdown = Array.from(storeIds).map((storeId) => {
+          const sSales = filteredSales.filter((s: any) => s.storeId === storeId).reduce((sum: number, s: any) => sum + (s.offlineSales || 0), 0)
+            + filteredOnlineSales.filter((s: any) => s.storeId === storeId).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
+          const sInventory = filteredInventory.filter((i: any) => i.storeId === storeId).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
+          const sOverhead = filteredOverheads.filter((o: any) => o.storeId === storeId).reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
+          return {
+            storeId,
+            storeName: storeMap.get(storeId) || storeId,
+            sales: sSales,
+            inventorySpend: sInventory,
+            overheadSpend: sOverhead,
+            profit: sSales - sInventory - sOverhead
+          };
+        }).sort((a, b) => b.sales - a.sales);
+      }
+
+      // Item-level sales (units sold per momo type) - shows what's actually moving, not just ₹ totals
+      const itemTotals: Record<string, number> = {};
+      filteredItemSales.forEach((record: any) => {
+        Object.entries(record.data || {}).forEach(([label, qty]) => {
+          itemTotals[label] = (itemTotals[label] || 0) + (Number(qty) || 0);
+        });
+      });
+
+      // Previous period of equal length, for trend comparison
+      const periodMs = new Date(endDate).getTime() - new Date(startDate).getTime();
+      const prevEnd = new Date(new Date(startDate).getTime() - 24 * 60 * 60 * 1000);
+      const prevStart = new Date(prevEnd.getTime() - periodMs);
+      const prevStartStr = prevStart.toISOString().split('T')[0];
+      const prevEndStr = prevEnd.toISOString().split('T')[0];
+      const inPrevRange = (d: string) => d >= prevStartStr && d <= prevEndStr;
+      const matchesStore = (storeId?: string) => !selectedStoreId || storeId === selectedStoreId;
+
+      const prevSales = sales.filter((s: any) => inPrevRange(s.date) && matchesStore(s.storeId)).reduce((sum: number, s: any) => sum + (s.offlineSales || 0), 0)
+        + onlineSales.filter((s: any) => inPrevRange(s.date) && matchesStore(s.storeId)).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
+      const prevInventorySpend = inventory.filter((i: any) => inPrevRange(i.date) && matchesStore(i.storeId)).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
+      const prevOverheadSpend = overheads.filter((o: any) => inPrevRange(o.date) && matchesStore(o.storeId)).reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
+      const prevPayouts = payouts.filter((p: any) => inPrevRange(p.date) && matchesStore(p.storeId)).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+      const prevProfit = prevSales - prevInventorySpend - prevOverheadSpend - prevPayouts;
+      const pctChange = (current: number, prev: number) => prev === 0 ? (current === 0 ? 0 : 100) : ((current - prev) / Math.abs(prev)) * 100;
 
       return {
         startDate,
@@ -181,11 +258,34 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
         employees,
         payouts: filteredPayouts,
         production: filteredProduction,
+        onlineSales: filteredOnlineSales,
+        onlinePayouts: filteredOnlinePayouts,
+        salaryAdvances: filteredSalaryAdvances,
+        onlineLoans: filteredOnlineLoans,
+        storeBreakdown,
+        itemTotals,
         summary: {
           totalInventorySpend,
           totalOverheadSpend,
+          totalStoreInventorySpend,
+          totalProductionInventorySpend,
+          totalStoreOverheadSpend,
+          totalProductionOverheadSpend,
+          totalOfflineSales,
+          totalOnlineSalesLogged,
           totalSales,
           totalPayouts,
+          totalAggregatorPayout,
+          netAggregatorCommission,
+          totalSalaryAdvances,
+          activeLoanBalance,
+          netProfit,
+          profitMargin: totalSales > 0 ? (netProfit / totalSales) * 100 : 0,
+          trend: {
+            salesChangePct: pctChange(totalSales, prevSales),
+            profitChangePct: pctChange(netProfit, prevProfit),
+            prevPeriod: `${prevStartStr} to ${prevEndStr}`
+          }
         }
       };
     } catch (error) {
@@ -214,12 +314,45 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     csv += `Generated on: ${new Date().toLocaleString()}\n\n`;
 
     // Summary Section
+    const s = data.summary;
     csv += `SUMMARY\n`;
-    csv += `Total Inventory Spend,₹${data.summary.totalInventorySpend.toLocaleString()}\n`;
-    csv += `Total Overhead Spend,${data.summary.totalOverheadSpend.toLocaleString()}\n`;
-    csv += `Total Sales,₹${data.summary.totalSales.toLocaleString()}\n`;
-    csv += `Total Payouts,₹${data.summary.totalPayouts.toLocaleString()}\n`;
-    csv += `Net Profit/Loss,₹${(data.summary.totalSales - data.summary.totalInventorySpend - data.summary.totalOverheadSpend - data.summary.totalPayouts).toLocaleString()}\n\n`;
+    csv += `Total Offline Sales,₹${s.totalOfflineSales.toLocaleString()}\n`;
+    csv += `Total Online Sales (Swiggy + Zomato),₹${s.totalOnlineSalesLogged.toLocaleString()}\n`;
+    csv += `Total Sales,₹${s.totalSales.toLocaleString()}\n`;
+    csv += `Total Inventory Spend,₹${s.totalInventorySpend.toLocaleString()}\n`;
+    csv += `  - Store Inventory Spend,₹${s.totalStoreInventorySpend.toLocaleString()}\n`;
+    csv += `  - Production House Inventory Spend,₹${s.totalProductionInventorySpend.toLocaleString()}\n`;
+    csv += `Total Overhead Spend,₹${s.totalOverheadSpend.toLocaleString()}\n`;
+    csv += `  - Store Overhead Spend,₹${s.totalStoreOverheadSpend.toLocaleString()}\n`;
+    csv += `  - Production House Overhead Spend,₹${s.totalProductionOverheadSpend.toLocaleString()}\n`;
+    csv += `Total Employee Payouts,₹${s.totalPayouts.toLocaleString()}\n`;
+    csv += `Net Profit/Loss,₹${s.netProfit.toLocaleString()}\n`;
+    csv += `Profit Margin,${s.profitMargin.toFixed(1)}%\n`;
+    csv += `Aggregator Payout (Swiggy + Zomato),₹${s.totalAggregatorPayout.toLocaleString()}\n`;
+    csv += `Net Aggregator Commission (Sales - Payout),₹${s.netAggregatorCommission.toLocaleString()}\n`;
+    csv += `Salary Advances Requested,₹${s.totalSalaryAdvances.toLocaleString()}\n`;
+    csv += `Outstanding Loan Balance,₹${s.activeLoanBalance.toLocaleString()}\n`;
+    csv += `vs Previous Period (${s.trend.prevPeriod}),Sales ${s.trend.salesChangePct >= 0 ? '+' : ''}${s.trend.salesChangePct.toFixed(1)}% • Profit ${s.trend.profitChangePct >= 0 ? '+' : ''}${s.trend.profitChangePct.toFixed(1)}%\n\n`;
+
+    // Store-wise breakdown (only populated when viewing all stores)
+    if (data.storeBreakdown && data.storeBreakdown.length > 0) {
+      csv += `\nSTORE-WISE BREAKDOWN\n`;
+      csv += `Store,Sales,Inventory Spend,Overhead Spend,Profit\n`;
+      data.storeBreakdown.forEach((row: any) => {
+        csv += `"${row.storeName}",₹${row.sales.toLocaleString()},₹${row.inventorySpend.toLocaleString()},₹${row.overheadSpend.toLocaleString()},₹${row.profit.toLocaleString()}\n`;
+      });
+    }
+
+    // Item-level sales (units sold per momo type)
+    if (data.itemTotals && Object.keys(data.itemTotals).length > 0) {
+      csv += `\nITEM-WISE UNITS SOLD\n`;
+      csv += `Momo Type,Units Sold\n`;
+      Object.entries(data.itemTotals)
+        .sort((a: any, b: any) => b[1] - a[1])
+        .forEach(([label, qty]: any) => {
+          csv += `"${label}",${qty}\n`;
+        });
+    }
 
     // Inventory Section
     csv += `\nINVENTORY ITEMS\n`;
@@ -245,11 +378,29 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     });
 
     // Sales Section
-    csv += `\nSALES DATA\n`;
-    csv += `Date,Offline Sales (Paytm),Offline Sales (Cash),Online Sales,Employee Salaries,Cash in Hand,Cash Offset,Status\n`;
+    csv += `\nSALES DATA (offline cash/Paytm reconciliation)\n`;
+    csv += `Date,Offline Sales (Paytm),Offline Sales (Cash),Employee Salaries,Cash in Hand,Cash Offset,Status\n`;
     data.sales.forEach((item: any) => {
-      csv += `${item.date},₹${item.paytmAmount || 0},₹${item.cashAmount || 0},₹${item.onlineSales || 0},₹${item.employeeSalary || 0},₹${item.actualCashInHand || 0},₹${item.cashOffset || 0},"${item.approvalRequired ? 'Pending Approval' : 'Approved'}"\n`;
+      csv += `${item.date},₹${item.paytmAmount || 0},₹${item.cashAmount || 0},₹${item.employeeSalary || 0},₹${item.actualCashInHand || 0},₹${item.cashOffset || 0},"${item.approvalRequired ? 'Pending Approval' : 'Approved'}"\n`;
     });
+
+    // Online Sales Section
+    if (data.onlineSales && data.onlineSales.length > 0) {
+      csv += `\nONLINE SALES (Swiggy + Zomato, logged by operations manager)\n`;
+      csv += `Date,Swiggy Sales,Zomato Sales,Total\n`;
+      data.onlineSales.forEach((item: any) => {
+        csv += `${item.date},₹${item.swiggySales || 0},₹${item.zomatoSales || 0},₹${(item.swiggySales || 0) + (item.zomatoSales || 0)}\n`;
+      });
+    }
+
+    // Aggregator Payout Reconciliation Section
+    if (data.onlinePayouts && data.onlinePayouts.length > 0) {
+      csv += `\nAGGREGATOR PAYOUT RECONCILIATION\n`;
+      csv += `Date,Swiggy Payout,Zomato Payout,Total Payout\n`;
+      data.onlinePayouts.forEach((item: any) => {
+        csv += `${item.date},₹${item.swiggyPayout || 0},₹${item.zomatoPayout || 0},₹${(item.swiggyPayout || 0) + (item.zomatoPayout || 0)}\n`;
+      });
+    }
 
     // Payouts Section
     csv += `\nEMPLOYEE PAYOUTS\n`;
@@ -258,6 +409,25 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
       const employee = data.employees.find((e: any) => e.id === item.employeeId);
       csv += `${item.date},"${item.employeeName}","${employee?.employeeId || '-'}",₹${item.amount}\n`;
     });
+
+    // Salary Advances Section
+    if (data.salaryAdvances && data.salaryAdvances.length > 0) {
+      csv += `\nSALARY ADVANCES\n`;
+      csv += `Date,Employee Name,Amount,Status,Monthly Deduction\n`;
+      data.salaryAdvances.forEach((item: any) => {
+        csv += `${item.requestDate},"${item.employeeName}",₹${item.amount},"${item.status}",₹${item.monthlyDeduction}\n`;
+      });
+    }
+
+    // Online Loans Section
+    if (data.onlineLoans && data.onlineLoans.length > 0) {
+      csv += `\nONLINE LOANS\n`;
+      csv += `Date,Store,Lender,Loan Amount,Repaid,Outstanding,Status\n`;
+      data.onlineLoans.forEach((item: any) => {
+        const outstanding = Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0));
+        csv += `${item.loanDate},"${item.storeName || '-'}","${item.investorName || '-'}",₹${item.loanAmount},₹${item.repaidAmount || 0},₹${outstanding},"${item.status}"\n`;
+      });
+    }
 
     // Employees Section
     csv += `\nEMPLOYEE MASTER LIST\n`;
@@ -302,12 +472,57 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
           
           <div class="summary">
             <h2>Summary</h2>
-            <div class="summary-item"><span>Total Inventory Spend:</span><span>₹${data.summary.totalInventorySpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Overhead Spend:</span><span>₹${data.summary.totalOverheadSpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Total Offline Sales:</span><span>₹${data.summary.totalOfflineSales.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Total Online Sales (Swiggy + Zomato):</span><span>₹${data.summary.totalOnlineSalesLogged.toLocaleString()}</span></div>
             <div class="summary-item"><span>Total Sales:</span><span>₹${data.summary.totalSales.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Payouts:</span><span>₹${data.summary.totalPayouts.toLocaleString()}</span></div>
-            <div class="summary-item"><strong>Net Profit/Loss:</strong><strong>₹${(data.summary.totalSales - data.summary.totalInventorySpend - data.summary.totalOverheadSpend - data.summary.totalPayouts).toLocaleString()}</strong></div>
+            <div class="summary-item"><span>Total Inventory Spend:</span><span>₹${data.summary.totalInventorySpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>&nbsp;&nbsp;- Store:</span><span>₹${data.summary.totalStoreInventorySpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>&nbsp;&nbsp;- Production House:</span><span>₹${data.summary.totalProductionInventorySpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Total Overhead Spend:</span><span>₹${data.summary.totalOverheadSpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>&nbsp;&nbsp;- Store:</span><span>₹${data.summary.totalStoreOverheadSpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>&nbsp;&nbsp;- Production House:</span><span>₹${data.summary.totalProductionOverheadSpend.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Total Employee Payouts:</span><span>₹${data.summary.totalPayouts.toLocaleString()}</span></div>
+            <div class="summary-item"><strong>Net Profit/Loss:</strong><strong>₹${data.summary.netProfit.toLocaleString()}</strong></div>
+            <div class="summary-item"><span>Profit Margin:</span><span>${data.summary.profitMargin.toFixed(1)}%</span></div>
+            <div class="summary-item"><span>Net Aggregator Commission (Sales - Payout):</span><span>₹${data.summary.netAggregatorCommission.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Salary Advances Requested:</span><span>₹${data.summary.totalSalaryAdvances.toLocaleString()}</span></div>
+            <div class="summary-item"><span>Outstanding Loan Balance:</span><span>₹${data.summary.activeLoanBalance.toLocaleString()}</span></div>
+            <div class="summary-item"><span>vs Previous Period (${data.summary.trend.prevPeriod}):</span><span>Sales ${data.summary.trend.salesChangePct >= 0 ? '+' : ''}${data.summary.trend.salesChangePct.toFixed(1)}% • Profit ${data.summary.trend.profitChangePct >= 0 ? '+' : ''}${data.summary.trend.profitChangePct.toFixed(1)}%</span></div>
           </div>
+
+          ${data.storeBreakdown && data.storeBreakdown.length > 0 ? `
+          <h2>Store-wise Breakdown</h2>
+          <table>
+            <thead>
+              <tr><th>Store</th><th>Sales</th><th>Inventory Spend</th><th>Overhead Spend</th><th>Profit</th></tr>
+            </thead>
+            <tbody>
+              ${data.storeBreakdown.map((row: any) => `
+                <tr>
+                  <td>${row.storeName}</td>
+                  <td>₹${row.sales.toLocaleString()}</td>
+                  <td>₹${row.inventorySpend.toLocaleString()}</td>
+                  <td>₹${row.overheadSpend.toLocaleString()}</td>
+                  <td>₹${row.profit.toLocaleString()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
+
+          ${data.itemTotals && Object.keys(data.itemTotals).length > 0 ? `
+          <h2>Item-wise Units Sold</h2>
+          <table>
+            <thead>
+              <tr><th>Momo Type</th><th>Units Sold</th></tr>
+            </thead>
+            <tbody>
+              ${Object.entries(data.itemTotals).sort((a: any, b: any) => b[1] - a[1]).map(([label, qty]: any) => `
+                <tr><td>${label}</td><td>${qty}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
 
           <h2>Inventory Items</h2>
           <table>
@@ -370,10 +585,10 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </tbody>
           </table>
 
-          <h2>Sales Data</h2>
+          <h2>Sales Data (offline cash/Paytm reconciliation)</h2>
           <table>
             <thead>
-              <tr><th>Date</th><th>Offline (Paytm)</th><th>Offline (Cash)</th><th>Online</th><th>Salaries</th><th>Cash in Hand</th><th>Cash Offset</th><th>Status</th></tr>
+              <tr><th>Date</th><th>Offline (Paytm)</th><th>Offline (Cash)</th><th>Salaries</th><th>Cash in Hand</th><th>Cash Offset</th><th>Status</th></tr>
             </thead>
             <tbody>
               ${data.sales.map((item: any) => `
@@ -381,7 +596,6 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                   <td>${item.date}</td>
                   <td>₹${item.paytmAmount || 0}</td>
                   <td>₹${item.cashAmount || 0}</td>
-                  <td>₹${item.onlineSales || 0}</td>
                   <td>₹${item.employeeSalary || 0}</td>
                   <td>₹${item.actualCashInHand || 0}</td>
                   <td>₹${item.cashOffset || 0}</td>
@@ -390,6 +604,44 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
               `).join('')}
             </tbody>
           </table>
+
+          ${data.onlineSales && data.onlineSales.length > 0 ? `
+          <h2>Online Sales (Swiggy + Zomato)</h2>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Swiggy</th><th>Zomato</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+              ${data.onlineSales.map((item: any) => `
+                <tr>
+                  <td>${item.date}</td>
+                  <td>₹${item.swiggySales || 0}</td>
+                  <td>₹${item.zomatoSales || 0}</td>
+                  <td>₹${(item.swiggySales || 0) + (item.zomatoSales || 0)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
+
+          ${data.onlinePayouts && data.onlinePayouts.length > 0 ? `
+          <h2>Aggregator Payout Reconciliation</h2>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Swiggy Payout</th><th>Zomato Payout</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+              ${data.onlinePayouts.map((item: any) => `
+                <tr>
+                  <td>${item.date}</td>
+                  <td>₹${item.swiggyPayout || 0}</td>
+                  <td>₹${item.zomatoPayout || 0}</td>
+                  <td>₹${(item.swiggyPayout || 0) + (item.zomatoPayout || 0)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
 
           <h2>Employee Payouts</h2>
           <table>
@@ -410,6 +662,48 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
               }).join('')}
             </tbody>
           </table>
+
+          ${data.salaryAdvances && data.salaryAdvances.length > 0 ? `
+          <h2>Salary Advances</h2>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Employee Name</th><th>Amount</th><th>Status</th><th>Monthly Deduction</th></tr>
+            </thead>
+            <tbody>
+              ${data.salaryAdvances.map((item: any) => `
+                <tr>
+                  <td>${item.requestDate}</td>
+                  <td>${item.employeeName}</td>
+                  <td>₹${item.amount}</td>
+                  <td>${item.status}</td>
+                  <td>₹${item.monthlyDeduction}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
+
+          ${data.onlineLoans && data.onlineLoans.length > 0 ? `
+          <h2>Online Loans</h2>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Store</th><th>Lender</th><th>Loan Amount</th><th>Repaid</th><th>Outstanding</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              ${data.onlineLoans.map((item: any) => `
+                <tr>
+                  <td>${item.loanDate}</td>
+                  <td>${item.storeName || '-'}</td>
+                  <td>${item.investorName || '-'}</td>
+                  <td>₹${item.loanAmount}</td>
+                  <td>₹${item.repaidAmount || 0}</td>
+                  <td>₹${Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0))}</td>
+                  <td>${item.status}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ` : ''}
 
           <h2>Employee Master List</h2>
           <table>
@@ -626,10 +920,14 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
               <li>✓ Complete Inventory Items with quantities and costs</li>
               <li>✓ Production Data with all momo types and wastage</li>
               <li>✓ All Overhead Expenses categorized</li>
-              <li>✓ Sales Data with payment breakdowns</li>
+              <li>✓ Offline Sales Data with payment breakdowns</li>
+              <li>✓ Online Sales (Swiggy + Zomato) and aggregator payout reconciliation</li>
+              <li>✓ Item-wise units sold, ranked by volume</li>
+              <li>✓ Store-wise breakdown (when viewing all stores)</li>
+              <li>✓ Salary Advances and Online Loans</li>
               <li>✓ Employee Payouts with detailed records</li>
               <li>✓ Employee Master List</li>
-              <li>✓ Financial Summary with profit/loss calculations</li>
+              <li>✓ Financial Summary with profit margin and trend vs. previous period</li>
             </ul>
           </div>
 
@@ -845,7 +1143,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                     <div className="text-xl text-gray-900">₹{previewData.summary.totalOverheadSpend.toLocaleString()}</div>
                   </div>
                   <div>
-                    <div className="text-sm text-gray-600">Sales</div>
+                    <div className="text-sm text-gray-600">Total Sales (offline + online)</div>
                     <div className="text-xl text-green-600">₹{previewData.summary.totalSales.toLocaleString()}</div>
                   </div>
                   <div>
@@ -856,19 +1154,47 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                 <div className="mt-4 pt-4 border-t border-orange-200">
                   <div className="flex justify-between items-center">
                     <span className="font-medium text-gray-900">Net Profit/Loss:</span>
-                    <span className={`text-xl font-bold ${
-                      (previewData.summary.totalSales - previewData.summary.totalInventorySpend - previewData.summary.totalOverheadSpend - previewData.summary.totalPayouts) >= 0
-                        ? 'text-green-600'
-                        : 'text-red-600'
-                    }`}>
-                      ₹{(previewData.summary.totalSales - previewData.summary.totalInventorySpend - previewData.summary.totalOverheadSpend - previewData.summary.totalPayouts).toLocaleString()}
+                    <span className={`text-xl font-bold ${previewData.summary.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      ₹{previewData.summary.netProfit.toLocaleString()} ({previewData.summary.profitMargin.toFixed(1)}% margin)
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center mt-2 text-sm">
+                    <span className="text-gray-600">vs previous period ({previewData.summary.trend.prevPeriod}):</span>
+                    <span className={previewData.summary.trend.salesChangePct >= 0 ? 'text-green-600' : 'text-red-600'}>
+                      Sales {previewData.summary.trend.salesChangePct >= 0 ? '+' : ''}{previewData.summary.trend.salesChangePct.toFixed(1)}% • Profit {previewData.summary.trend.profitChangePct >= 0 ? '+' : ''}{previewData.summary.trend.profitChangePct.toFixed(1)}%
                     </span>
                   </div>
                 </div>
               </div>
 
+              {/* Store vs Production House Expense Split */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="text-sm font-medium text-blue-900 mb-2">Store Expenses</div>
+                  <div className="flex justify-between text-sm text-blue-800">
+                    <span>Inventory</span>
+                    <span>₹{previewData.summary.totalStoreInventorySpend.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-blue-800">
+                    <span>Overhead</span>
+                    <span>₹{previewData.summary.totalStoreOverheadSpend.toLocaleString()}</span>
+                  </div>
+                </div>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="text-sm font-medium text-green-900 mb-2">Production House Expenses</div>
+                  <div className="flex justify-between text-sm text-green-800">
+                    <span>Inventory</span>
+                    <span>₹{previewData.summary.totalProductionInventorySpend.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-green-800">
+                    <span>Overhead</span>
+                    <span>₹{previewData.summary.totalProductionOverheadSpend.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Counts */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Inventory Items</div>
                   <div className="text-2xl text-gray-900">{previewData.inventory.length}</div>
@@ -886,10 +1212,52 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                   <div className="text-2xl text-gray-900">{previewData.sales.length}</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="text-sm text-gray-600">Online Sales Entries</div>
+                  <div className="text-2xl text-gray-900">{previewData.onlineSales?.length || 0}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="text-sm text-gray-600">Aggregator Payouts</div>
+                  <div className="text-2xl text-gray-900">{previewData.onlinePayouts?.length || 0}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Payout Records</div>
                   <div className="text-2xl text-gray-900">{previewData.payouts.length}</div>
                 </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="text-sm text-gray-600">Salary Advances</div>
+                  <div className="text-2xl text-gray-900">{previewData.salaryAdvances?.length || 0}</div>
+                </div>
               </div>
+
+              {previewData.storeBreakdown && previewData.storeBreakdown.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-3">Store-wise Breakdown</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-gray-100 text-left">
+                          <th className="p-2">Store</th>
+                          <th className="p-2">Sales</th>
+                          <th className="p-2">Inventory</th>
+                          <th className="p-2">Overhead</th>
+                          <th className="p-2">Profit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewData.storeBreakdown.map((row: any) => (
+                          <tr key={row.storeId} className="border-t border-gray-100">
+                            <td className="p-2">{row.storeName}</td>
+                            <td className="p-2">₹{row.sales.toLocaleString()}</td>
+                            <td className="p-2">₹{row.inventorySpend.toLocaleString()}</td>
+                            <td className="p-2">₹{row.overheadSpend.toLocaleString()}</td>
+                            <td className={`p-2 ${row.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>₹{row.profit.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               <div className="text-sm text-gray-600 text-center">
                 <p>Period: {previewData.startDate} to {previewData.endDate}</p>

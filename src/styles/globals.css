@@ -259,3 +259,34 @@ html {
     background-position: -200% 0;
   }
 }
+
+/* App boot/loading screen: bunny "eats" its way across a row of momos */
+@keyframes bunny-walk {
+  0% {
+    left: 0%;
+    transform: translateX(0) translateY(-50%);
+  }
+  100% {
+    left: 100%;
+    transform: translateX(-100%) translateY(-50%);
+  }
+}
+
+.bunny-walk {
+  animation: bunny-walk 2.4s linear infinite;
+}
+
+@keyframes momo-eaten {
+  0%, 15% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  25%, 100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+.momo-eaten {
+  animation: momo-eaten 2.4s linear infinite;
+}

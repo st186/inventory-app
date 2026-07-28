@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
@@ -25,7 +24,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [updatingRequestId, setUpdatingRequestId] = useState<string | null>(null);
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [chartTimeFilter, setChartTimeFilter] = useState<'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'>('daily');
+  const [chartTimeFilter, setChartTimeFilter] = useState<'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom'>('today');
+  const [showStockStatus, setShowStockStatus] = useState(false);
+  const [showWorkflow, setShowWorkflow] = useState(false);
+  const [showMomoTypeStats, setShowMomoTypeStats] = useState(false);
   
   // Helper function to get local date string without timezone conversion
   const getLocalDateString = (date: Date = new Date()) => {
@@ -34,11 +36,22 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
+
+  // Matches the backend's default range (start of last month) - see production-requests GET route.
+  const getDefaultLoadFrom = () => {
+    const now = new Date();
+    return getLocalDateString(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  };
   
   const [chartCustomRange, setChartCustomRange] = useState({
     from: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
     to: getLocalDateString(),
   });
+  // Tracks how far back the currently-loaded `requests` data reaches. The backend defaults
+  // to "start of last month" so the page never loads the entire history of requests; this
+  // gets pushed further back (and the data re-fetched) only when a filter actually needs it.
+  const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
+  const [loadingOlderData, setLoadingOlderData] = useState(false);
   const [salesData, setSalesData] = useState<any[]>([]);
   
   // Form state for new request - DYNAMIC for all finished products
@@ -75,6 +88,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Stock alert thresholds state - DYNAMIC
   const [showThresholdSettings, setShowThresholdSettings] = useState(false);
   const [stockThresholds, setStockThresholds] = useState<Record<string, { high: number; medium: number; low: number }>>({});
+
+  // Manual POS sync trigger state - lets the store incharge/cluster head force tonight's
+  // sync early instead of waiting for the 10:30 PM cron (mirrors SalesView.tsx's button).
+  const [isSyncingPos, setIsSyncingPos] = useState(false);
 
   // Shipping dialog state
   const [showShippingDialog, setShowShippingDialog] = useState(false);
@@ -179,6 +196,36 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     loadSalesData();
     loadStockThresholds();
   }, [context.user, selectedStoreId]);
+
+  // Spin up (fetch) older history on demand: only when a selected filter actually reaches
+  // further back than what's currently loaded, not on every render.
+  useEffect(() => {
+    if (!hasLoadedOnce) return;
+
+    let neededFrom: string | null = null;
+
+    if (filterDate) {
+      neededFrom = filterDate;
+    }
+
+    if (chartTimeFilter === 'lastMonth') {
+      // Comparison stats look one further month back (month-before-last)
+      const now = new Date();
+      neededFrom = getLocalDateString(new Date(now.getFullYear(), now.getMonth() - 2, 1));
+    } else if (chartTimeFilter === 'custom') {
+      const customStart = new Date(chartCustomRange.from);
+      const customEnd = new Date(chartCustomRange.to);
+      const daysDiff = Math.max(0, Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24)));
+      const comparisonStart = new Date(customStart);
+      comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
+      const customNeededFrom = getLocalDateString(comparisonStart);
+      neededFrom = neededFrom && neededFrom < customNeededFrom ? neededFrom : customNeededFrom;
+    }
+
+    if (neededFrom) {
+      ensureFromLoaded(neededFrom);
+    }
+  }, [filterDate, chartTimeFilter, chartCustomRange.from, chartCustomRange.to, hasLoadedOnce]);
 
   // Load opening balance after salesData is loaded
   useEffect(() => {
@@ -285,7 +332,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     }
   };
 
-  const loadRequests = async () => {
+  const loadRequests = async (fromOverride?: string) => {
     if (!context.user) return;
 
     try {
@@ -301,9 +348,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         console.error('No valid access token available');
         return;
       }
-      
-      const data = await api.fetchProductionRequests(accessToken);
-      
+
+      // Reuse whatever range is already loaded on plain refreshes (after accepting/shipping/etc.)
+      // so those don't silently shrink a window a filter previously extended further back.
+      // Mirrors the backend's own default (start of last month) on the very first load.
+      const effectiveFrom = fromOverride ?? loadedFrom ?? getDefaultLoadFrom();
+      const data = await api.fetchProductionRequests(accessToken, effectiveFrom);
+      setLoadedFrom(effectiveFrom);
+
       // Determine effective store ID for filtering
       const effectiveStoreId = selectedStoreId || context.user.storeId;
       
@@ -339,6 +391,19 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     }
   };
 
+  // Extends the loaded window backward (re-fetching) only when a filter actually needs
+  // history older than what's already in memory - e.g. picking a Custom range that reaches
+  // further back than "last month". Never shrinks the window back down once extended.
+  const ensureFromLoaded = async (neededFrom: string) => {
+    if (loadedFrom && neededFrom >= loadedFrom) return;
+    setLoadingOlderData(true);
+    try {
+      await loadRequests(neededFrom);
+    } finally {
+      setLoadingOlderData(false);
+    }
+  };
+
   const loadSalesData = async () => {
     if (!context.user) return;
     
@@ -362,6 +427,25 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       setSalesData(records);
     } catch (error) {
       console.error('Error loading sales data:', error);
+    }
+  };
+
+  const handleSyncPosNow = async () => {
+    const accessToken = await getFreshAccessToken();
+    if (!accessToken) return;
+    setIsSyncingPos(true);
+    try {
+      const result = await api.triggerPosSync(accessToken);
+      if (result?.success) {
+        await Promise.all([loadRequests(), loadSalesData(), loadStoreOpeningBalance()]);
+        toast.success('POS sync complete');
+      } else {
+        toast.error(result?.error || 'POS sync ran but reported an error - check the results');
+      }
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to trigger POS sync');
+    } finally {
+      setIsSyncingPos(false);
     }
   };
 
@@ -1003,183 +1087,6 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     new Date(b).getTime() - new Date(a).getTime()
   );
 
-  // Calculate chart data based on time filter
-  const getChartData = () => {
-    const now = new Date();
-    let periods: string[] = [];
-    let startDate: Date;
-    let endDate: Date = now;
-
-    // Helper to format date
-    const formatDate = (date: Date, format: string) => {
-      if (format === 'day') {
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      } else if (format === 'week') {
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay()); // Start of week (Sunday)
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        return `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-      } else if (format === 'month') {
-        return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      } else if (format === 'year') {
-        return date.getFullYear().toString();
-      }
-      return date.toLocaleDateString();
-    };
-
-    // Helper to get period key for grouping (using local dates to avoid timezone issues)
-    const getPeriodKey = (date: Date, format: string) => {
-      const getLocalDateString = (d: Date) => {
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      };
-
-      if (format === 'day') {
-        return getLocalDateString(date);
-      } else if (format === 'week') {
-        const weekStart = new Date(date);
-        const dayOfWeek = weekStart.getDay();
-        weekStart.setDate(weekStart.getDate() - dayOfWeek); // Move to Sunday
-        return getLocalDateString(weekStart);
-      } else if (format === 'month') {
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      } else if (format === 'year') {
-        return date.getFullYear().toString();
-      }
-      return getLocalDateString(date);
-    };
-
-    // Generate periods based on filter
-    if (chartTimeFilter === 'daily') {
-      // Last 5 days including today
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(now.getDate() - i);
-        periods.push(getPeriodKey(date, 'day'));
-      }
-    } else if (chartTimeFilter === 'weekly') {
-      // Last 5 weeks including current week
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(now.getDate() - (i * 7));
-        const periodKey = getPeriodKey(date, 'week');
-        // Avoid duplicates
-        if (!periods.includes(periodKey)) {
-          periods.push(periodKey);
-        }
-      }
-    } else if (chartTimeFilter === 'monthly') {
-      // Last 5 months including current month
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setMonth(now.getMonth() - i);
-        periods.push(getPeriodKey(date, 'month'));
-      }
-    } else if (chartTimeFilter === 'yearly') {
-      // Last 5 years including current year
-      for (let i = 4; i >= 0; i--) {
-        const date = new Date(now);
-        date.setFullYear(now.getFullYear() - i);
-        periods.push(getPeriodKey(date, 'year'));
-      }
-    } else if (chartTimeFilter === 'custom') {
-      startDate = new Date(chartCustomRange.from);
-      endDate = new Date(chartCustomRange.to);
-      // For custom, use daily grouping
-      const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-      for (let i = 0; i <= daysDiff; i++) {
-        const date = new Date(startDate);
-        date.setDate(startDate.getDate() + i);
-        periods.push(getPeriodKey(date, 'day'));
-      }
-    }
-
-    console.log('📊 Chart Periods:', { 
-      filter: chartTimeFilter, 
-      periods,
-      today: now.toISOString().split('T')[0]
-    });
-
-    console.log('📊 Requests for chart:', {
-      totalRequests: requests.length,
-      requestDates: requests.map(r => ({ date: r.requestDate, id: r.id.slice(0, 8), chickenMomo: (r as any).chickenMomo, chickenMomos: (r as any).chickenMomos }))
-    });
-
-    // Group requests by period - DYNAMIC
-    const periodData: Record<string, any> = {};
-    periods.forEach(period => {
-      const entry: any = { period };
-      // Initialize all finished products to 0
-      finishedProducts.forEach(({ label }) => {
-        entry[label] = 0;
-      });
-      periodData[period] = entry;
-    });
-
-    // Aggregate requests into periods
-    requests.forEach(req => {
-      const reqDate = new Date(req.requestDate);
-      let periodKey: string = '';
-      
-      if (chartTimeFilter === 'daily' || chartTimeFilter === 'custom') {
-        periodKey = getPeriodKey(reqDate, 'day');
-      } else if (chartTimeFilter === 'weekly') {
-        periodKey = getPeriodKey(reqDate, 'week');
-      } else if (chartTimeFilter === 'monthly') {
-        periodKey = getPeriodKey(reqDate, 'month');
-      } else if (chartTimeFilter === 'yearly') {
-        periodKey = getPeriodKey(reqDate, 'year');
-      }
-
-      if (periodData[periodKey]) {
-        // Dynamically accumulate all finished product quantities
-        // Support both new format (chickenMomo) and old format (chickenMomos with 's')
-        finishedProducts.forEach(({ camelKey, label }) => {
-          const newFormat = (req as any)[camelKey] || 0;
-          const oldFormat = (req as any)[camelKey + 's'] || 0;
-          periodData[periodKey][label] = (periodData[periodKey][label] || 0) + newFormat + oldFormat;
-        });
-      } else {
-        console.log('⚠️ Request not matching any period:', {
-          requestDate: req.requestDate,
-          periodKey,
-          availablePeriods: periods
-        });
-      }
-    });
-
-    console.log('📊 Aggregated Period Data:', periodData);
-
-    // Convert to array with formatted labels
-    const chartData = periods.map(period => {
-      const data = periodData[period];
-      const date = new Date(period);
-      let label: string = '';
-      
-      if (chartTimeFilter === 'daily' || chartTimeFilter === 'custom') {
-        label = formatDate(date, 'day');
-      } else if (chartTimeFilter === 'weekly') {
-        label = formatDate(date, 'week');
-      } else if (chartTimeFilter === 'monthly') {
-        label = formatDate(date, 'month');
-      } else if (chartTimeFilter === 'yearly') {
-        label = formatDate(date, 'year');
-      }
-
-      return {
-        name: label,
-        ...data,
-      };
-    });
-
-    console.log('📊 Final Chart Data:', chartData);
-
-    return chartData;
-  };
-
   // Auto-scroll to highlighted request when loaded. Prefer scrolling straight
   // to the Fulfillment Details subsection (what a store manager clicking a
   // "shipped"/"partially-shipped" notification actually wants to see) if it
@@ -1226,24 +1133,30 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
       {/* Stock Status Overview */}
       <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 border-2 border-green-200">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg sm:text-xl text-gray-900 mb-1 flex items-center gap-2">
-              <Package className="w-6 h-6 text-green-600" />
-              Store Stock Status
-            </h2>
-            <p className="text-sm text-gray-600">
-              Total inventory received from production house - Stock sold
-            </p>
-          </div>
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+          <button
+            type="button"
+            onClick={() => setShowStockStatus(!showStockStatus)}
+            className="flex items-start gap-2 text-left flex-1 min-w-0"
+          >
+            <Package className="w-6 h-6 text-green-600 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl text-gray-900 mb-1 flex items-center gap-2">
+                Store Stock Status
+                {showStockStatus ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+              </h2>
+              <p className="text-sm text-gray-600">
+                Total inventory received from production house - Stock sold
+              </p>
+            </div>
+          </button>
           {isStoreIncharge && (() => {
             // CHANGED: Recalibration now enabled for entire month for Store Incharges
             // Notifications will be sent to Operations Managers and Cluster Heads
             return (
               <button
                 onClick={() => setShowStoreRecalibration(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap bg-gradient-to-r from-teal-600 to-emerald-600 text-white hover:from-teal-700 hover:to-emerald-700 shadow-lg"
-                title="Recalibrate store stock (Operations Managers and Cluster Heads will be notified)"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap bg-gradient-to-r from-teal-600 to-emerald-600 text-white hover:from-teal-700 hover:to-emerald-700 shadow-lg w-full sm:w-auto flex-shrink-0"
               >
                 <CheckCircle className="w-5 h-5" />
                 Recalibrate Stock
@@ -1252,49 +1165,62 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           })()}
         </div>
 
+        {showStockStatus && (
+        <>
         {/* Currently Viewing Banner */}
         {(() => {
           const today = new Date();
           const effectiveStoreId = selectedStoreId || context.user?.storeId;
-          
+
           return (
             <div className="bg-gradient-to-r from-green-100 to-green-50 border-l-4 border-green-600 rounded-lg p-3 mb-4">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-1">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex flex-col gap-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-green-700" />
+                    <Calendar className="w-5 h-5 text-green-700 flex-shrink-0" />
                     <p className="text-sm font-semibold text-green-900">
                       Store Stock Status (Current Month)
                     </p>
                   </div>
-                  <p className="text-xs text-green-700 ml-7">
+                  <p className="text-xs text-green-700 sm:ml-7">
                     Opening balance + Current month received - Current month sold
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    onClick={() => setShowThresholdSettings(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all"
+                    onClick={handleSyncPosNow}
+                    disabled={isSyncingPos}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none disabled:opacity-50"
+                    title="Fetch today's sales/stock from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
                   >
-                    <Settings className="w-4 h-4" />
-                    <span className="text-sm font-semibold">Alert Settings</span>
+                    <RefreshCw className={`w-4 h-4 ${isSyncingPos ? 'animate-spin' : ''}`} />
+                    <span className="text-sm font-semibold whitespace-nowrap">{isSyncingPos ? 'Syncing...' : 'Sync Now'}</span>
                   </button>
-                  {(isOperationsHead || isClusterHead) && (
+                  {isClusterHead && (
                     <button
-                      onClick={() => setShowPlateConfigModal(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-900 transition-all shadow-md hover:shadow-lg"
+                      onClick={() => setShowThresholdSettings(true)}
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all flex-1 sm:flex-none"
                     >
                       <Settings className="w-4 h-4" />
-                      <span className="text-sm font-semibold">Plate Config</span>
+                      <span className="text-sm font-semibold whitespace-nowrap">Alert Settings</span>
                     </button>
                   )}
-                  {onNavigateToManageItems && (isOperationsHead || isClusterHead) && (
+                  {isClusterHead && (
+                    <button
+                      onClick={() => setShowPlateConfigModal(true)}
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-900 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span className="text-sm font-semibold whitespace-nowrap">Plate Config</span>
+                    </button>
+                  )}
+                  {onNavigateToManageItems && isClusterHead && (
                     <button
                       onClick={onNavigateToManageItems}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
                     >
                       <Package className="w-4 h-4" />
-                      <span className="text-sm font-semibold">Manage Items</span>
+                      <span className="text-sm font-semibold whitespace-nowrap">Manage Items</span>
                     </button>
                   )}
                 </div>
@@ -1538,7 +1464,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           }
           
           return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
               {finishedProducts.map(({ camelKey, label }, index) => {
                 const received = totalReceived[camelKey] || 0;
                 const sold = totalSales[camelKey] || 0;
@@ -1583,72 +1509,45 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   alertLabel = 'MEDIUM';
                 }
                 
-                // Show all momo types
-                
-                const stockPercentage = totalAvailable > 0 ? ((stock / totalAvailable) * 100).toFixed(0) : '0';
                 const isLowStock = stock < totalAvailable * 0.2 && totalAvailable > 0; // Less than 20%
                 
                 return (
-                  <div key={camelKey} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300 relative`}>
+                  <div key={camelKey} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-2.5 relative`}>
                     {/* Stock Alert Badge */}
                     {stockLevel !== 'high' && (
-                      <div className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg ${alertBgColor} border ${alertBorderColor}`}>
-                        <AlertTriangle className={`w-4 h-4 ${alertTextColor}`} />
-                        <span className={`text-xs font-semibold ${alertTextColor} uppercase`}>{alertLabel}</span>
+                      <div className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded ${alertBgColor} border ${alertBorderColor}`}>
+                        <AlertTriangle className={`w-3 h-3 ${alertTextColor}`} />
+                        <span className={`text-[10px] font-semibold ${alertTextColor} uppercase`}>{alertLabel}</span>
                       </div>
                     )}
-                    
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3 pr-20">{label}</h3>
-                    
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-600">Total Received:</span>
-                        <span className={`text-lg font-bold text-${color}-600`}>{received}</span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-600">Total Sold:</span>
-                        <span className={`text-lg font-bold text-${color}-700`}>{sold}</span>
-                      </div>
-                      
-                      <div className="border-t-2 border-gray-300 pt-2 mt-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
-                          <div className="text-right">
-                            <div className={`text-2xl font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
-                              {stock} pcs / {Math.round(stock / momosPerPlate)} plates
-                            </div>
-                          </div>
-                        </div>
-                        {totalAvailable > 0 && (
-                          <div className="mt-2">
-                            <div className="flex justify-between text-xs text-gray-600 mb-1">
-                              <span>{stockPercentage}% remaining</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div 
-                                className={`h-2 rounded-full ${isLowStock || stock < 0 ? 'bg-red-500' : `bg-${color}-500`}`}
-                                style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {(isLowStock || stock < 0) && (
-                        <div className="bg-red-100 border border-red-300 rounded-lg px-2 py-1 mt-2">
-                          <p className="text-xs text-red-800 font-semibold">
-                            {stock < 0 ? '⚠️ Oversold' : '⚠️ Low Stock'}
-                          </p>
-                        </div>
-                      )}
+
+                    <h3 className="text-xs font-semibold text-gray-900 mb-1.5 pr-14 truncate">{label}</h3>
+
+                    <div className="flex justify-between items-center text-[11px] text-gray-600">
+                      <span>Received: <span className={`font-semibold text-${color}-700`}>{received}</span></span>
+                      <span>Sold: <span className={`font-semibold text-${color}-700`}>{sold}</span></span>
                     </div>
+
+                    <div className="border-t border-gray-300 mt-1.5 pt-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-medium text-gray-500">Available</span>
+                      <div className={`text-sm font-bold ${isLowStock ? 'text-red-600' : stock < 0 ? 'text-red-600' : `text-${color}-800`}`}>
+                        {stock} pcs / {Math.round(stock / momosPerPlate)} pl
+                      </div>
+                    </div>
+
+                    {(isLowStock || stock < 0) && (
+                      <p className="text-[10px] text-red-700 font-semibold mt-1">
+                        {stock < 0 ? '⚠️ Oversold' : '⚠️ Low'}
+                      </p>
+                    )}
                   </div>
                 );
               })}
             </div>
           );
         })()}
+        </>
+        )}
       </div>
 
       {/* Store In-Charge Request Form */}
@@ -1874,70 +1773,82 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         </div>
       )}
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="space-y-3 sm:space-y-0 sm:flex sm:flex-wrap sm:gap-3">
-          <div className="flex-1 sm:min-w-[200px]">
-            <DatePicker
-              label="Filter by Date"
-              value={filterDate}
-              onChange={setFilterDate}
-              className="w-full"
-            />
-          </div>
-          <div className="flex-1 sm:min-w-[200px]">
-            <label className="block text-sm text-gray-700 mb-2">Filter by Status</label>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
-            >
-              <option value="all">All Status</option>
-              <option value="pending">Pending</option>
-              <option value="accepted">Accepted</option>
-              <option value="in-preparation">In Preparation</option>
-              <option value="prepared">Prepared</option>
-              <option value="shipped">Shipped</option>
-              <option value="delivered">Delivered</option>
-            </select>
-          </div>
-          {(filterDate || filterStatus !== 'all') && (
-            <div className="flex sm:items-end">
-              <button
-                onClick={() => {
-                  setFilterDate('');
-                  setFilterStatus('all');
-                }}
-                className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm text-teal-600 hover:text-teal-900 underline font-medium"
-              >
-                Clear Filters
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Flow View for Operations Head & Cluster Head */}
       {canViewAll && (
         <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-          <h2 className="text-lg sm:text-xl text-gray-900 mb-4 sm:mb-6">Production Request Workflow</h2>
-          
+          <button
+            type="button"
+            onClick={() => setShowWorkflow(!showWorkflow)}
+            className="w-full flex items-center justify-between gap-2 mb-4 sm:mb-6 text-left"
+          >
+            <h2 className="text-lg sm:text-xl text-gray-900">Production Request Workflow</h2>
+            {showWorkflow ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+          </button>
+
+          {showWorkflow && (
+          <>
+          <div className="mb-4 sm:mb-6 space-y-3 sm:space-y-0 sm:flex sm:flex-wrap sm:gap-3">
+            <div className="flex-1 sm:min-w-[200px]">
+              <DatePicker
+                label="Filter by Date"
+                value={filterDate}
+                onChange={setFilterDate}
+                className="w-full"
+              />
+            </div>
+            <div className="flex-1 sm:min-w-[200px]">
+              <label className="block text-sm text-gray-700 mb-2">Filter by Status</label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
+              >
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="accepted">Accepted</option>
+                <option value="in-preparation">In Preparation</option>
+                <option value="prepared">Prepared</option>
+                <option value="shipped">Shipped</option>
+                <option value="delivered">Delivered</option>
+              </select>
+            </div>
+            {(filterDate || filterStatus !== 'all') && (
+              <div className="flex sm:items-end">
+                <button
+                  onClick={() => {
+                    setFilterDate('');
+                    setFilterStatus('all');
+                  }}
+                  className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm text-teal-600 hover:text-teal-900 underline font-medium"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            )}
+          </div>
+          {loadingOlderData && (
+            <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-teal-600"></div>
+              Loading older requests for this date...
+            </div>
+          )}
+
           <div className="relative">
-            {/* Connection Line */}
-            <div className="absolute top-8 left-0 right-0 h-1 bg-gray-200" style={{ zIndex: 0 }}></div>
-            
+            {/* Connection Line - only meaningful once the grid is a single row */}
+            <div className="hidden md:block absolute top-6 left-0 right-0 h-1 bg-gray-200" style={{ zIndex: 0 }}></div>
+
             {/* Status Cards */}
-            <div className="relative grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" style={{ zIndex: 1 }}>
+            <div className="relative grid grid-cols-3 md:grid-cols-6 gap-3 sm:gap-4" style={{ zIndex: 1 }}>
               {/* Pending */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-yellow-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-yellow-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus.pending.length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus.pending.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-yellow-50 border-2 border-yellow-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-yellow-50 border-2 border-yellow-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <Clock className="w-3 h-3 text-yellow-600" />
+                    <Clock className="w-3 h-3 text-yellow-600 flex-shrink-0" />
                     <p className="text-xs text-yellow-800">Pending</p>
                   </div>
                 </div>
@@ -1945,14 +1856,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* Accepted */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus.accepted.length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus.accepted.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <CheckCircle className="w-3 h-3 text-blue-600" />
+                    <CheckCircle className="w-3 h-3 text-blue-600 flex-shrink-0" />
                     <p className="text-xs text-blue-800">Accepted</p>
                   </div>
                 </div>
@@ -1960,14 +1871,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* In Preparation */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-teal-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-teal-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus['in-preparation'].length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus['in-preparation'].length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-teal-50 border-2 border-teal-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-teal-50 border-2 border-teal-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <Package className="w-3 h-3 text-teal-600" />
+                    <Package className="w-3 h-3 text-teal-600 flex-shrink-0" />
                     <p className="text-xs text-teal-800">In Prep</p>
                   </div>
                 </div>
@@ -1975,14 +1886,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* Prepared */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus.prepared.length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus.prepared.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <CheckCircle className="w-3 h-3 text-blue-600" />
+                    <CheckCircle className="w-3 h-3 text-blue-600 flex-shrink-0" />
                     <p className="text-xs text-blue-800">Prepared</p>
                   </div>
                 </div>
@@ -1990,14 +1901,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* Shipped */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus.shipped.length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus.shipped.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-orange-50 border-2 border-orange-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-orange-50 border-2 border-orange-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <Truck className="w-3 h-3 text-orange-600" />
+                    <Truck className="w-3 h-3 text-orange-600 flex-shrink-0" />
                     <p className="text-xs text-orange-800">Shipped</p>
                   </div>
                 </div>
@@ -2005,14 +1916,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* Delivered */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-green-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-green-500 text-white flex items-center justify-center shadow-lg mb-2 sm:mb-3">
                   <div className="text-center">
-                    <div className="text-2xl">{groupedByStatus.delivered.length}</div>
+                    <div className="text-lg sm:text-2xl">{groupedByStatus.delivered.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-green-50 border-2 border-green-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-green-50 border-2 border-green-200 rounded-lg p-2 sm:p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <CheckCircle className="w-3 h-3 text-green-600" />
+                    <CheckCircle className="w-3 h-3 text-green-600 flex-shrink-0" />
                     <p className="text-xs text-green-800">Delivered</p>
                   </div>
                 </div>
@@ -2021,7 +1932,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           </div>
 
           {/* Summary Stats */}
-          <div className="mt-6 pt-6 border-t border-gray-200 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="mt-6 pt-6 border-t border-gray-200 grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
               <p className="text-2xl text-gray-900">{filteredRequests.length}</p>
               <p className="text-sm text-gray-600">Total Requests</p>
@@ -2041,19 +1952,30 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               <p className="text-sm text-gray-600">Completed</p>
             </div>
           </div>
+          </>
+          )}
         </div>
       )}
 
       {/* Stock Requests by Momo Type - Card View */}
       <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-        <div className="flex flex-col gap-3 sm:gap-4 mb-4 sm:mb-6">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-teal-600" />
+        <button
+          type="button"
+          onClick={() => setShowMomoTypeStats(!showMomoTypeStats)}
+          className="w-full flex items-center justify-between gap-2 mb-4 sm:mb-6 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <TrendingUp className="w-5 h-5 text-teal-600 flex-shrink-0" />
             <h2 className="text-lg sm:text-xl text-gray-900">Stock Requests by Momo Type</h2>
           </div>
-          
-          <div className="flex flex-wrap gap-2">
-            {[
+          {showMomoTypeStats ? <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />}
+        </button>
+
+        {showMomoTypeStats && (
+        <>
+        <div className="mb-4 sm:mb-6">
+          {(() => {
+            const filterOptions = [
               { filter: 'today', label: 'Today' },
               { filter: 'yesterday', label: 'Yesterday' },
               { filter: 'thisWeek', label: 'This Week' },
@@ -2061,20 +1983,36 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               { filter: 'thisMonth', label: 'This Month' },
               { filter: 'lastMonth', label: 'Last Month' },
               { filter: 'custom', label: 'Custom' }
-            ].map(({ filter, label }) => (
-              <button
-                key={filter}
-                onClick={() => setChartTimeFilter(filter as any)}
-                className={`px-3 py-2 rounded-lg text-xs sm:text-sm transition-colors flex-1 sm:flex-none ${
-                  chartTimeFilter === filter
-                    ? 'bg-teal-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+            ];
+            return (
+              <>
+                <select
+                  value={chartTimeFilter}
+                  onChange={(e) => setChartTimeFilter(e.target.value as any)}
+                  className="sm:hidden w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+                >
+                  {filterOptions.map(({ filter, label }) => (
+                    <option key={filter} value={filter}>{label}</option>
+                  ))}
+                </select>
+                <div className="hidden sm:flex gap-2 overflow-x-auto pb-1">
+                  {filterOptions.map(({ filter, label }) => (
+                    <button
+                      key={filter}
+                      onClick={() => setChartTimeFilter(filter as any)}
+                      className={`px-3 py-2 rounded-lg text-sm transition-colors whitespace-nowrap flex-shrink-0 ${
+                        chartTimeFilter === filter
+                          ? 'bg-teal-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {chartTimeFilter === 'custom' && (
@@ -2089,6 +2027,13 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               value={chartCustomRange.to}
               onChange={(date) => setChartCustomRange({ ...chartCustomRange, to: date })}
             />
+          </div>
+        )}
+
+        {loadingOlderData && (
+          <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-teal-600"></div>
+            Loading older requests for this range...
           </div>
         )}
 
@@ -2420,6 +2365,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             </div>
           );
         })()}
+        </>
+        )}
       </div>
 
       {/* Requests List - Grouped by Date */}

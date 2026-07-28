@@ -27,11 +27,25 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
   const [timesheetData, setTimesheetData] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [leaves, setLeaves] = useState<any[]>([]);
+  // Signature (startTime|endTime) of each date as last saved to the server, so the
+  // Save/Send button only lights up when there's something new to submit - not every
+  // time the already-pending entry simply re-renders.
+  const [savedSignatures, setSavedSignatures] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadTimesheetData();
     loadLeaves();
   }, [currentWeekStart]);
+
+  // Local date string (not toISOString, which converts to UTC and rolls the date back
+  // a day for timezones ahead of UTC - e.g. IST local midnight becomes "yesterday" in UTC).
+  // This was silently saving timesheet entries under the wrong date.
+  function getLocalDateString(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 
   function getWeekStart(date: Date): Date {
     const d = new Date(date);
@@ -50,16 +64,44 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
     return dates;
   }
 
+  // Attendance can only be logged for today or earlier, and never for a clock-in/out time
+  // that hasn't happened yet today.
+  function isFutureDate(date: Date): boolean {
+    return getLocalDateString(date) > getLocalDateString(new Date());
+  }
+
+  function getCurrentTimeString(): string {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function isFutureTimeToday(date: Date, time: string): boolean {
+    if (!time) return false;
+    return getLocalDateString(date) === getLocalDateString(new Date()) && time > getCurrentTimeString();
+  }
+
   const loadTimesheetData = async () => {
     try {
       setLoading(true);
       const data = await api.getTimesheets(user.employeeId);
       setTimesheetData(data as any);
+      const sigs: Record<string, string> = {};
+      (data as any[]).forEach((t) => {
+        sigs[t.date] = `${t.startTime}|${t.endTime}`;
+      });
+      setSavedSignatures(sigs);
     } catch (error) {
       console.error('Error loading timesheet:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Only enable the Save/Send button when the entry actually differs from what's
+  // already been submitted - once it's pending, re-showing the same values shouldn't
+  // look like there's a fresh action to take.
+  const isDirty = (entry: TimesheetEntry): boolean => {
+    return savedSignatures[entry.date] !== `${entry.startTime}|${entry.endTime}`;
   };
 
   const loadLeaves = async () => {
@@ -73,12 +115,12 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
   };
 
   const isOnLeave = (date: Date): boolean => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = getLocalDateString(date);
     return leaves.some(leave => leave.leaveDate === dateStr);
   };
 
   const getTimesheetEntry = (date: Date): TimesheetEntry => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = getLocalDateString(date);
     const existing = timesheetData.find(t => t.date === dateStr);
     
     if (existing) return existing;
@@ -108,7 +150,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
   };
 
   const handleTimeChange = (date: Date, field: 'startTime' | 'endTime', value: string) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = getLocalDateString(date);
     const existing = timesheetData.find(t => t.date === dateStr);
     
     let entry: TimesheetEntry;
@@ -134,17 +176,27 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
 
   const saveSingleDay = async (date: Date) => {
     const entry = getTimesheetEntry(date);
-    
+
     if (!entry.startTime || !entry.endTime) {
       alert('Please enter both start and end times');
       return;
     }
-    
+
+    if (isFutureDate(date)) {
+      alert('You cannot log attendance for a future date');
+      return;
+    }
+
+    if (isFutureTimeToday(date, entry.startTime) || isFutureTimeToday(date, entry.endTime)) {
+      alert('Time in/out cannot be later than the current time');
+      return;
+    }
+
     if (entry.totalHours < 4) {
       alert('For half day, minimum 4 hours required');
       return;
     }
-    
+
     try {
       setLoading(true);
       await api.saveTimesheet(entry);
@@ -160,24 +212,36 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
 
   const saveWeek = async () => {
     const weekDates = getWeekDates(currentWeekStart);
-    const entries = weekDates.map(date => getTimesheetEntry(date)).filter(e => e.startTime && e.endTime);
-    
+    const entries = weekDates
+      .map(date => ({ date, entry: getTimesheetEntry(date) }))
+      .filter(({ entry }) => entry.startTime && entry.endTime);
+
     if (entries.length === 0) {
       alert('Please enter timesheet data for at least one day');
       return;
     }
-    
+
     // Validate all entries
-    for (const entry of entries) {
+    for (const { date, entry } of entries) {
+      if (isFutureDate(date)) {
+        alert(`${entry.date}: You cannot log attendance for a future date`);
+        return;
+      }
+      if (isFutureTimeToday(date, entry.startTime) || isFutureTimeToday(date, entry.endTime)) {
+        alert(`${entry.date}: Time in/out cannot be later than the current time`);
+        return;
+      }
       if (entry.totalHours < 4) {
         alert(`${entry.date}: Minimum 4 hours required for half day`);
         return;
       }
     }
-    
+
+    const bulkEntries = entries.map(({ entry }) => entry);
+
     try {
       setLoading(true);
-      await api.saveTimesheetBulk(entries);
+      await api.saveTimesheetBulk(bulkEntries);
       await loadTimesheetData();
       alert('Week timesheet saved successfully');
     } catch (error) {
@@ -226,7 +290,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
       
       // Filter for previous week's approved or filled entries
       const previousWeekData = previousWeekDates.map(date => {
-        const dateStr = date.toISOString().split('T')[0];
+        const dateStr = getLocalDateString(date);
         return allTimesheets.find((t) => t.date === dateStr);
       }).filter(Boolean);
       
@@ -241,14 +305,14 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
       const newEntries: TimesheetEntry[] = [];
       
       currentWeekDates.forEach((currentDate, index) => {
-        const currentDateStr = currentDate.toISOString().split('T')[0];
+        const currentDateStr = getLocalDateString(currentDate);
         const previousEntry = previousWeekData[index] as TimesheetEntry;
         
-        // Skip if current date already has data or is on leave
+        // Skip if current date already has data, is on leave, or is still in the future
         const existingEntry = timesheetData.find(t => t.date === currentDateStr);
         const onLeave = isOnLeave(currentDate);
-        
-        if (!onLeave && previousEntry && previousEntry.startTime && previousEntry.endTime) {
+
+        if (!onLeave && !isFutureDate(currentDate) && previousEntry && previousEntry.startTime && previousEntry.endTime) {
           // Only copy if current date doesn't have approved data
           if (!existingEntry || existingEntry.status !== 'approved') {
             newEntries.push({
@@ -311,6 +375,13 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
             const entry = getTimesheetEntry(mobileDate);
             const onLeave = isOnLeave(mobileDate);
             const isApproved = entry.status === 'approved';
+            // Once submitted, an entry is locked from further edits until the manager
+            // rejects it (or it's approved) - it shouldn't be alterable while sitting
+            // in someone's approval queue.
+            const isLocked = isApproved || (!!entry.id && entry.status === 'pending');
+            const isFuture = isFutureDate(mobileDate);
+            const maxTime = getLocalDateString(mobileDate) === getLocalDateString(new Date()) ? getCurrentTimeString() : undefined;
+            const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && isDirty(entry);
 
             return (
               <div className="bg-white rounded-2xl shadow-sm p-4">
@@ -337,7 +408,8 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                   <button
                     onClick={nextDay}
                     aria-label="Next day"
-                    className="w-10 h-10 flex items-center justify-center bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200 transition-colors flex-shrink-0"
+                    disabled={getLocalDateString(mobileDate) >= getLocalDateString(new Date())}
+                    className="w-10 h-10 flex items-center justify-center bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200 transition-colors flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-orange-100"
                   >
                     <ChevronRight className="w-5 h-5" />
                   </button>
@@ -347,6 +419,11 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                   <div className="flex items-center gap-2 justify-center py-8 text-yellow-700 bg-yellow-50 rounded-xl">
                     <AlertCircle className="w-5 h-5" />
                     On leave this day
+                  </div>
+                ) : isFuture ? (
+                  <div className="flex items-center gap-2 justify-center py-8 text-gray-500 bg-gray-50 rounded-xl">
+                    <AlertCircle className="w-5 h-5" />
+                    Attendance can't be logged for a future date
                   </div>
                 ) : (
                   <>
@@ -379,7 +456,8 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                           type="time"
                           value={entry.startTime}
                           onChange={(e) => handleTimeChange(mobileDate, 'startTime', e.target.value)}
-                          disabled={isApproved}
+                          disabled={isLocked}
+                          max={maxTime}
                           className="w-full px-3 py-3 text-base border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                         />
                       </div>
@@ -389,7 +467,8 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                           type="time"
                           value={entry.endTime}
                           onChange={(e) => handleTimeChange(mobileDate, 'endTime', e.target.value)}
-                          disabled={isApproved}
+                          disabled={isLocked}
+                          max={maxTime}
                           className="w-full px-3 py-3 text-base border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                         />
                       </div>
@@ -408,11 +487,11 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                     {!isApproved && (
                       <button
                         onClick={() => saveSingleDay(mobileDate)}
-                        disabled={loading || !entry.startTime || !entry.endTime}
+                        disabled={loading || !canSubmit}
                         className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                       >
                         <Save className="w-5 h-5" />
-                        Send for approval
+                        {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry) ? 'Pending approval' : 'Send for approval'}
                       </button>
                     )}
                   </>
@@ -488,9 +567,14 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                     {weekDates.map((date, index) => {
                       const entry = getTimesheetEntry(date);
                       const onLeave = isOnLeave(date);
-                      
+                      const isFuture = isFutureDate(date);
+                      const maxTime = getLocalDateString(date) === getLocalDateString(new Date()) ? getCurrentTimeString() : undefined;
+                      // Once submitted, locked from further edits until rejected (or approved)
+                      const isLocked = entry.status === 'approved' || (!!entry.id && entry.status === 'pending');
+                      const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && isDirty(entry);
+
                       return (
-                        <tr key={index} className={onLeave ? 'bg-yellow-50' : index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                        <tr key={index} className={onLeave ? 'bg-yellow-50' : isFuture ? 'bg-gray-50' : index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
                           <td className="px-6 py-4 text-gray-900">
                             {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </td>
@@ -500,12 +584,15 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                           <td className="px-6 py-4">
                             {onLeave ? (
                               <span className="text-yellow-700 text-sm">On Leave</span>
+                            ) : isFuture ? (
+                              <span className="text-gray-400 text-sm">-</span>
                             ) : (
                               <input
                                 type="time"
                                 value={entry.startTime}
                                 onChange={(e) => handleTimeChange(date, 'startTime', e.target.value)}
-                                disabled={entry.status === 'approved'}
+                                disabled={isLocked}
+                                max={maxTime}
                                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                               />
                             )}
@@ -513,18 +600,21 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                           <td className="px-6 py-4">
                             {onLeave ? (
                               <span className="text-yellow-700 text-sm">On Leave</span>
+                            ) : isFuture ? (
+                              <span className="text-gray-400 text-sm">-</span>
                             ) : (
                               <input
                                 type="time"
                                 value={entry.endTime}
                                 onChange={(e) => handleTimeChange(date, 'endTime', e.target.value)}
-                                disabled={entry.status === 'approved'}
+                                disabled={isLocked}
+                                max={maxTime}
                                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-gray-100"
                               />
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            {onLeave ? (
+                            {onLeave || isFuture ? (
                               <span className="text-yellow-700">-</span>
                             ) : (
                               <span className={`${entry.totalHours >= 4 ? 'text-green-700' : entry.totalHours > 0 ? 'text-red-700' : 'text-gray-500'}`}>
@@ -537,6 +627,10 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                               <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
                                 <AlertCircle className="w-4 h-4" />
                                 Leave
+                              </span>
+                            ) : isFuture ? (
+                              <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-sm">
+                                Upcoming
                               </span>
                             ) : entry.status === 'approved' ? (
                               <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
@@ -561,14 +655,14 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            {!onLeave && entry.status !== 'approved' && (
+                            {!onLeave && !isFuture && entry.status !== 'approved' && (
                               <button
                                 onClick={() => saveSingleDay(date)}
-                                disabled={loading || !entry.startTime || !entry.endTime}
+                                disabled={loading || !canSubmit}
                                 className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                               >
                                 <Save className="w-4 h-4" />
-                                Save
+                                {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry) ? 'Pending' : 'Save'}
                               </button>
                             )}
                           </td>

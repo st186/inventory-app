@@ -93,6 +93,10 @@ export function ApplyLoanModal({
       setError('Please enter a valid loan amount');
       return;
     }
+    if (loanAmountNum <= 5000) {
+      setError('Loans must be for more than ₹5,000 - this is meant for heavy expenses, not routine top-ups');
+      return;
+    }
 
     try {
       setSaving(true);
@@ -139,7 +143,7 @@ export function ApplyLoanModal({
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <DollarSign className="w-6 h-6" />
-                Apply for Loan
+                Request Loan
               </h2>
               <p className="text-orange-100 mt-1">{storeName}</p>
             </div>
@@ -157,8 +161,8 @@ export function ApplyLoanModal({
           <div className="m-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg flex items-center gap-3">
             <DollarSign className="w-6 h-6 text-green-600 flex-shrink-0" />
             <div>
-              <p className="font-semibold text-green-900">Loan Applied Successfully!</p>
-              <p className="text-sm text-green-700">The loan amount has been added to your Online Cash in Hand.</p>
+              <p className="font-semibold text-green-900">Loan Request Sent!</p>
+              <p className="text-sm text-green-700">A cluster head will review it. Once approved, it's added to Online Cash in Hand (Paytm).</p>
             </div>
           </div>
         )}
@@ -191,7 +195,7 @@ export function ApplyLoanModal({
               />
             </div>
             <p className="text-xs text-gray-600 mt-1">
-              This amount will be added to your Online Cash in Hand (Paytm)
+              Must be more than ₹5,000. Once a cluster head approves this request, it's added to Online Cash in Hand (Paytm).
             </p>
           </div>
 
@@ -282,8 +286,9 @@ export function ApplyLoanModal({
               <div className="text-sm text-blue-900">
                 <p className="font-semibold mb-1">💡 How Loans Work</p>
                 <ul className="list-disc list-inside space-y-1">
-                  <li>Loan amount is <strong>added</strong> to Online Cash in Hand (Paytm)</li>
-                  <li>Track active loans in the loan section below</li>
+                  <li>Only requests over ₹5,000 can be raised, for heavy expenses</li>
+                  <li>A cluster head must approve the request first</li>
+                  <li>Once approved, the amount is <strong>added</strong> to Online Cash in Hand (Paytm)</li>
                   <li>Use "Repay Loan" to pay back (reduces Online Cash in Hand)</li>
                   <li>Supports partial and full repayments</li>
                 </ul>

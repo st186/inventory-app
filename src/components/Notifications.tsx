@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Bell, X, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import * as api from '../utils/api';
+import { getNavigationTarget } from '../utils/notificationNavigation';
 
 type NotificationsProps = {
- onNavigate?: (path: string, date?: string, requestId?: string) => void;
+ // Mirrors the push-notification deep-link shape (see notificationNavigation.ts /
+ // App.tsx's applyNavigationTarget) so a bell click and a push-notification tap
+ // land on exactly the same place.
+ onNavigate?: (view: string, tab?: string, highlightRequestId?: string) => void;
 };
 
 export function Notifications({ onNavigate }: NotificationsProps) {
@@ -59,51 +63,15 @@ export function Notifications({ onNavigate }: NotificationsProps) {
  handleMarkAsRead(notification.id);
  }
 
- // Navigate based on notification type
+ // Navigate based on notification type - uses the same resolver as push notifications
+ // so a bell click and a push-notification tap always land on the same place.
  if (onNavigate) {
- switch (notification.type) {
- case 'sales_pending':
- case 'sales_approved':
- case 'sales_rejected':
- case 'discrepancy_request':
- case 'discrepancy_approved':
- case 'discrepancy_rejected':
- onNavigate('sales', notification.relatedDate || undefined);
- break;
- case 'timesheet_pending':
- case 'timesheet_approved':
- case 'timesheet_rejected':
- onNavigate('attendance');
- break;
- case 'leave_pending':
- case 'leave_approved':
- case 'leave_rejected':
- onNavigate('leave');
- break;
- case 'production_pending':
- case 'production_approved':
- onNavigate('production', notification.relatedDate || undefined);
- break;
- // Production Request workflow notifications
- case 'production_request_new':
- case 'production_request_accepted':
- case 'production_request_in-preparation':
- case 'production_request_prepared':
- case 'production_request_shipped':
- case 'production_request_delivered':
- onNavigate('production-requests', notification.relatedDate || undefined, notification.relatedId || undefined);
- break;
- // Stock Request notifications
- case 'stock_request_new':
- case 'stock_request_fulfilled':
- case 'stock_request_partial':
- case 'stock_request_cancelled':
- onNavigate('stock-requests', notification.relatedDate || undefined, notification.relatedId || undefined);
- break;
- // Delayed pending request notifications
- case 'stock_request_delayed':
- onNavigate('production-requests', notification.relatedDate || undefined, notification.relatedId || undefined);
- break;
+ const target = getNavigationTarget({
+ type: notification.type,
+ relatedId: notification.relatedId,
+ });
+ if (target) {
+ onNavigate(target.view, target.tab, target.highlightRequestId);
  }
  }
 

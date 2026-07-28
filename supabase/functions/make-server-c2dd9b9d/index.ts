@@ -4,6 +4,7 @@ import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
+import { classifyAndSumProducts } from './posItemClassifier.tsx';
 
 // ============================================
 // IST TIMEZONE UTILITIES (GMT+5:30)
@@ -198,21 +199,23 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
     
     return { user };
   } catch (error: any) {
-    // Check if it's a connection error that we should retry
-    const isConnectionError = error?.message?.includes('connection reset') || 
-                              error?.message?.includes('connection error') ||
-                              error?.message?.includes('ECONNRESET');
-    
-    if (isConnectionError && retryCount < maxRetries) {
+    // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
+    // is returned as a normal { error } value above (line ~179), not thrown. So anything
+    // landing here is an infra/network hiccup talking to Supabase Auth itself (timeout,
+    // connection reset, transient unavailability), not proof the user's session is bad.
+    // Retry generously, and if retries are exhausted, return 503 (not 401) so the
+    // frontend's retry-on-5xx logic kicks in instead of force-logging the user out -
+    // treating "we couldn't verify" as "verification failed" was logging people out
+    // on ordinary network blips.
+    if (retryCount < maxRetries) {
       const delay = retryDelay(retryCount);
-      console.log(`⚠️ Connection error in verifyUser, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
+      console.log(`⚠️ Transient error in verifyUser (${error?.message || error}), retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return verifyUser(authHeader, retryCount + 1);
     }
-    
-    // If we've exhausted retries or it's a different error, log and return unauthorized
+
     console.error('❌ Error in verifyUser after retries:', error);
-    return { error: 'Unauthorized', status: 401 };
+    return { error: 'Service temporarily unavailable, please retry', status: 503 };
   }
 }
 
@@ -529,17 +532,24 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `inventory:${userId}:${itemId}`;
-    
+
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
     const userName = authResult.user.user_metadata?.name;
     const userEmail = authResult.user.email;
     const employeeId = authResult.user.user_metadata?.employeeId; // Employee ID like BM001
-    
+
+    // Production incharges have their production house ID stored in storeId (see
+    // /production-houses/:id/assign-head above); everyone else's storeId is a real store.
+    const isProductionIncharge = designation === 'production_incharge';
+
     const inventoryItem = {
       ...item,
       id: itemId,
       userId,
-      storeId: storeId || null,
+      storeId: isProductionIncharge ? null : (storeId || null),
+      entityType: isProductionIncharge ? 'production_house' : 'store',
+      productionHouseId: isProductionIncharge ? (storeId || null) : null,
       createdBy: employeeId || userId, // Use employeeId if available, fallback to userId
       createdByName: userName,
       createdByEmail: userEmail
@@ -709,15 +719,20 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
-    
+
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
     console.log(`🏪 StoreId: ${storeId || 'null'}`);
-    
+
+    const isProductionIncharge = designation === 'production_incharge';
+
     const overheadItem = {
       ...item,
       id: itemId,
       userId,
-      storeId: storeId || null
+      storeId: isProductionIncharge ? null : (storeId || null),
+      entityType: isProductionIncharge ? 'production_house' : 'store',
+      productionHouseId: isProductionIncharge ? (storeId || null) : null
     };
 
     console.log('💾 Saving expense/overhead item to KV store:', key);
@@ -842,6 +857,7 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
 
     if (role !== 'manager') {
       return c.json({ error: 'Only managers can add fixed costs' }, 403);
@@ -850,12 +866,16 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     const body = await c.req.json();
     const id = crypto.randomUUID();
     const key = `fixedcost:${userId}:${id}`;
-    
+
+    const isProductionIncharge = designation === 'production_incharge';
+
     const fixedCostItem = {
       ...body,
       id,
       userId,
-      storeId: storeId || null
+      storeId: isProductionIncharge ? null : (storeId || null),
+      entityType: isProductionIncharge ? 'production_house' : 'store',
+      productionHouseId: isProductionIncharge ? (storeId || null) : null
     };
 
     await kvWithRetry.set(key, fixedCostItem);
@@ -1002,7 +1022,8 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       }, 403);
     }
 
-    // Only store incharges add sales data (operations managers get a read-only view)
+    // Store incharge logs/validates the day's sales (POS-reported once live) against
+    // the cash they counted - operations manager gets a read-only monitoring view.
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
 
@@ -1043,14 +1064,15 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     await kvWithRetry.set(key, salesItem);
     console.log('✅ Sales data saved successfully:', itemId);
     
-    // Notify cluster heads about sales data entry
+    // Notify cluster heads and this store's operations manager(s) about the sales entry
     const clusterHeads = await getAllClusterHeads();
+    const opsManagers = await getOperationsManagers(storeId);
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
+
+    for (const recipient of [...clusterHeads, ...opsManagers]) {
+      if (recipient.authUserId) {
         await notifyUser(
-          clusterHead.authUserId,
+          recipient.authUserId,
           'sales_logged',
           'Sales Data Logged',
           `${managerName} logged sales data for ${item.date}`,
@@ -1059,7 +1081,7 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
         );
       }
     }
-    
+
     return c.json({ success: true, item: salesItem });
   } catch (error) {
     console.log('EXCEPTION in add sales:', error);
@@ -1078,14 +1100,13 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
 
-    // Store incharges log the day's sales; operations managers reconcile cash/Paytm against it.
-    // Each can only touch their own half of the record - enforced below, not just in the UI.
+    // Store incharge owns sales entry, POS validation, and cash reconciliation as a
+    // single workflow now - enforced here, not just in the UI.
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
-    const isOperationsManager = isManager && designation !== 'store_incharge' && designation !== 'production_incharge';
 
-    if (!isStoreIncharge && !isOperationsManager) {
-      return c.json({ error: 'Only store incharges or operations managers can update sales data' }, 403);
+    if (!isManager || !isStoreIncharge) {
+      return c.json({ error: 'Only store incharges can update sales data' }, 403);
     }
 
     const itemId = c.req.param('id');
@@ -1102,56 +1123,37 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     // Use the key from the existing sale
     const key = `sales:${existingSale.userId}:${itemId}`;
 
-    let salesItem;
-    if (isStoreIncharge) {
-      // Store incharge can edit sales-entry fields, but cash/Paytm reconciliation
-      // (entered by the operations manager) is preserved as-is.
-      salesItem = {
-        ...updates,
-        usedOnlineMoney: existingSale.usedOnlineMoney,
-        actualCashInHand: existingSale.actualCashInHand,
-        actualPaytmBalance: existingSale.actualPaytmBalance,
-        cashOffset: existingSale.cashOffset,
-        paytmOffset: existingSale.paytmOffset,
-        salesDiscrepancy: existingSale.salesDiscrepancy,
-        approvalRequired: existingSale.approvalRequired,
-        approvalStatus: existingSale.approvalStatus,
-        approvedBy: existingSale.approvedBy,
-        approvedAt: existingSale.approvedAt,
-        approvalRequested: existingSale.approvalRequested,
-        approvalRequestedAt: existingSale.approvalRequestedAt,
-        requestedCashInHand: existingSale.requestedCashInHand,
-        requestedOffset: existingSale.requestedOffset,
-        rejectedBy: existingSale.rejectedBy,
-        rejectedAt: existingSale.rejectedAt,
-        rejectionReason: existingSale.rejectionReason,
-        id: itemId,
-        userId: existingSale.userId
-      };
-    } else {
-      // Operations manager can only touch cash/Paytm reconciliation fields -
-      // the sales figures the store incharge logged are preserved untouched.
-      salesItem = {
-        ...existingSale,
-        usedOnlineMoney: updates.usedOnlineMoney,
-        actualCashInHand: updates.actualCashInHand,
-        actualPaytmBalance: updates.actualPaytmBalance,
-        cashOffset: updates.cashOffset,
-        paytmOffset: updates.paytmOffset,
-        salesDiscrepancy: updates.salesDiscrepancy,
-        approvalRequired: updates.approvalRequired,
-        approvalStatus: updates.approvalStatus,
-        approvedBy: updates.approvedBy,
-        approvedAt: updates.approvedAt,
-        approvalRequested: updates.approvalRequested,
-        approvalRequestedAt: updates.approvalRequestedAt,
-        id: itemId,
-        userId: existingSale.userId
-      };
-    }
+    const salesItem = {
+      ...existingSale,
+      ...updates,
+      id: itemId,
+      userId: existingSale.userId
+    };
 
     await kvWithRetry.set(key, salesItem);
     console.log('✅ Sales data updated successfully:', key);
+
+    // Notify this store's operations manager(s) that the store incharge logged/confirmed
+    // today's sales - the common path now that pos-sync creates the day's record first and
+    // the store incharge edits/confirms it via this route, not the POST route above.
+    try {
+      const opsManagers = await getOperationsManagers(salesItem.storeId);
+      const managerName = authResult.user.user_metadata?.name || authResult.user.email;
+      for (const opsManager of opsManagers) {
+        if (opsManager.authUserId) {
+          await notifyUser(
+            opsManager.authUserId,
+            'sales_logged',
+            'Sales Data Logged',
+            `${managerName} logged sales data for ${salesItem.date}`,
+            itemId,
+            salesItem.date
+          );
+        }
+      }
+    } catch (notifyError) {
+      console.error('Error notifying operations manager of sales update:', notifyError);
+    }
 
     return c.json({ success: true, item: salesItem });
   } catch (error) {
@@ -1448,6 +1450,258 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
   } catch (error) {
     console.log('Error approving sales data:', error);
     return c.json({ error: 'Failed to approve sales data' }, 500);
+  }
+});
+
+// ===== CASH TOP-UP REQUESTS =====
+// Ops Manager -> Cluster Head: when the offline till is running low (after that day's
+// store inventory spend), the ops manager asks for more physical cash. On approval, the
+// amount is credited to Offline Cash in Hand and debited from Online Cash in Hand by
+// bumping that day's sales record's usedOnlineMoney - the same lever the cash math in
+// SalesManagement.tsx already uses (see expectedCashInHand / calculatePaytmBalance there).
+// Kept as its own flow, separate from the cash-discrepancy escalation above.
+
+// Get all cash top-up requests
+app.get('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const requests = await getAllByPrefixWithRetry('cash-topup:');
+    return c.json({ requests: requests || [] });
+  } catch (error: any) {
+    console.log('Error fetching cash top-up requests:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ requests: [], warning: 'Database temporarily unavailable' });
+    }
+    return c.json({ error: 'Failed to fetch cash top-up requests' }, 500);
+  }
+});
+
+// Create a cash top-up request (operations manager only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+
+    if (!isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
+      return c.json({ error: 'Only store incharges, operations managers, and production incharges can request a cash top-up' }, 403);
+    }
+
+    const { date, requestedAmount, reason, targetStoreId } = await c.req.json();
+    const REASON_OPTIONS = ['store_inventory', 'production_inventory', 'other'];
+    if (!date || !requestedAmount || requestedAmount <= 0 || !REASON_OPTIONS.includes(reason)) {
+      return c.json({ error: 'Invalid cash top-up request data' }, 400);
+    }
+
+    // Store incharge/ops manager credit their own store's cash. A production incharge has
+    // no cash-in-hand ledger of their own - they must pick which store's till gets credited.
+    let storeId: string;
+    let requestedByEntityType: 'store' | 'production_house';
+    let requestedByEntityName: string;
+
+    if (isProductionIncharge) {
+      if (!targetStoreId) {
+        return c.json({ error: 'Production incharges must select which store to credit' }, 400);
+      }
+      const productionHouseId = authResult.user.user_metadata?.storeId; // production incharge's storeId holds their production house id
+      const allStores = await kv.getByPrefix('store:');
+      const targetStore = allStores.find((s: any) => s.id === targetStoreId);
+      if (!targetStore || targetStore.productionHouseId !== productionHouseId) {
+        return c.json({ error: 'Selected store is not supplied by your production house' }, 400);
+      }
+      storeId = targetStoreId;
+      const productionHouse = await kv.get(`production_house_${productionHouseId}`);
+      requestedByEntityType = 'production_house';
+      requestedByEntityName = productionHouse?.name || 'Production House';
+    } else {
+      storeId = authResult.user.user_metadata?.storeId;
+      if (!storeId) {
+        return c.json({ error: 'No store assigned to this account' }, 400);
+      }
+      const allStores = await kv.getByPrefix('store:');
+      const store = allStores.find((s: any) => s.id === storeId);
+      requestedByEntityType = 'store';
+      requestedByEntityName = store?.name || 'Store';
+    }
+
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const key = `cash-topup:${id}`;
+    const requestedBy = authResult.user.user_metadata?.employeeId || authResult.user.id;
+    const requestedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
+    const topupRequest = {
+      id,
+      storeId,
+      date,
+      requestedAmount,
+      reason,
+      requestedByEntityType,
+      requestedByEntityName,
+      status: 'pending',
+      requestedBy,
+      requestedByName,
+      requestedByUserId: authResult.user.id,
+      requestDate: getNowIST(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null
+    };
+
+    await kvWithRetry.set(key, topupRequest);
+
+    // Notify all cluster heads
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'cash_topup_request',
+          'Cash Top-up Requested',
+          `${requestedByName} (${requestedByEntityName}) requested ₹${requestedAmount.toFixed(2)} cash top-up for ${date} - reason: ${reason.replace('_', ' ')}`,
+          id,
+          date
+        );
+      }
+    }
+
+    return c.json({ success: true, request: topupRequest });
+  } catch (error) {
+    console.log('Error creating cash top-up request:', error);
+    return c.json({ error: 'Failed to create cash top-up request' }, 500);
+  }
+});
+
+// Approve a cash top-up request (cluster head only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/approve', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can approve cash top-up requests' }, 403);
+    }
+
+    const requestId = c.req.param('id');
+    const key = `cash-topup:${requestId}`;
+    const existingRequest = await kv.get(key);
+
+    if (!existingRequest) {
+      return c.json({ error: 'Cash top-up request not found' }, 404);
+    }
+    if (existingRequest.status !== 'pending') {
+      return c.json({ error: 'This request has already been resolved' }, 400);
+    }
+
+    // Find that day's sales record for the store and bump usedOnlineMoney - this is the
+    // exact lever expectedCashInHand/calculatePaytmBalance already use to move money
+    // between the offline and online pools (see SalesManagement.tsx).
+    const allSales = await kv.getByPrefix('sales:');
+    const salesRecord = allSales.find((s: any) => s.storeId === existingRequest.storeId && s.date === existingRequest.date);
+
+    if (!salesRecord) {
+      return c.json({ error: `No sales record found for ${existingRequest.date} to credit the top-up against` }, 404);
+    }
+
+    const salesKey = `sales:${salesRecord.userId}:${salesRecord.id}`;
+    const updatedSales = {
+      ...salesRecord,
+      usedOnlineMoney: (salesRecord.usedOnlineMoney || 0) + existingRequest.requestedAmount
+    };
+    await kv.set(salesKey, updatedSales);
+
+    const approvedRequest = {
+      ...existingRequest,
+      status: 'approved',
+      approvedBy: authResult.user.email,
+      approvedAt: getNowIST()
+    };
+    await kv.set(key, approvedRequest);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existingRequest.requestedByUserId) {
+      await notifyUser(
+        existingRequest.requestedByUserId,
+        'cash_topup_approved',
+        'Cash Top-up Approved ✓',
+        `${clusterHeadName} approved your ₹${existingRequest.requestedAmount.toFixed(2)} cash top-up for ${existingRequest.date}`,
+        requestId,
+        existingRequest.date
+      );
+    }
+
+    return c.json({ success: true, request: approvedRequest });
+  } catch (error) {
+    console.log('Error approving cash top-up request:', error);
+    return c.json({ error: 'Failed to approve cash top-up request' }, 500);
+  }
+});
+
+// Reject a cash top-up request (cluster head only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/reject', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can reject cash top-up requests' }, 403);
+    }
+
+    const requestId = c.req.param('id');
+    const { reason } = await c.req.json();
+    const key = `cash-topup:${requestId}`;
+    const existingRequest = await kv.get(key);
+
+    if (!existingRequest) {
+      return c.json({ error: 'Cash top-up request not found' }, 404);
+    }
+    if (existingRequest.status !== 'pending') {
+      return c.json({ error: 'This request has already been resolved' }, 400);
+    }
+
+    const rejectedRequest = {
+      ...existingRequest,
+      status: 'rejected',
+      rejectedBy: authResult.user.email,
+      rejectedAt: getNowIST(),
+      rejectionReason: reason || ''
+    };
+    await kv.set(key, rejectedRequest);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existingRequest.requestedByUserId) {
+      await notifyUser(
+        existingRequest.requestedByUserId,
+        'cash_topup_rejected',
+        'Cash Top-up Rejected ✗',
+        `${clusterHeadName} rejected your ₹${existingRequest.requestedAmount.toFixed(2)} cash top-up request for ${existingRequest.date}${reason ? `. Reason: ${reason}` : ''}`,
+        requestId,
+        existingRequest.date
+      );
+    }
+
+    return c.json({ success: true, request: rejectedRequest });
+  } catch (error) {
+    console.log('Error rejecting cash top-up request:', error);
+    return c.json({ error: 'Failed to reject cash top-up request' }, 500);
   }
 });
 
@@ -2447,7 +2701,6 @@ app.post('/make-server-c2dd9b9d/online-sales', async (c) => {
   try {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
-
     if (role !== 'manager' || designation !== 'store_incharge') {
       return c.json({ error: 'Only store incharges can log online sales' }, 403);
     }
@@ -2859,34 +3112,42 @@ app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
 
 // ===== Attendance & Leave Management =====
 
+// Leave policy reset: on Aug 1, 2026 all prior leave balances/usage were wiped and the
+// monthly credit increased from 3 to 4 days/month (still carried forward, resets yearly on Jan 1).
+const LEAVE_POLICY_RESET_DATE = '2026-08-01';
+const LEAVES_PER_MONTH = 4;
+
 // Helper function to calculate leave balance
 // usedLeaves can be a decimal (e.g., 1.5 for one full day + one half day)
 function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number {
-  const joining = new Date(joiningDate);
+  const policyReset = new Date(LEAVE_POLICY_RESET_DATE);
+  const actualJoining = new Date(joiningDate);
+  // Nobody accrues leave for time before the Aug 1, 2026 policy reset
+  const joining = actualJoining < policyReset ? policyReset : actualJoining;
   const now = new Date();
-  
+
   // Normalize dates to start of month for accurate comparison
   const joiningMonthStart = new Date(joining.getFullYear(), joining.getMonth(), 1);
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  
+
   // If joining date is in the future, no leaves yet
   if (joining > now) {
     return 0;
   }
-  
+
   // Calculate months in current year only (leaves reset on Jan 1st each year)
   const startYear = joiningMonthStart.getFullYear();
   const startMonth = joiningMonthStart.getMonth();
   const currentYear = currentMonthStart.getFullYear();
   const currentMonth = currentMonthStart.getMonth();
-  
+
   // Current year start date
   const currentYearStart = new Date(now.getFullYear(), 0, 1);
-  
+
   let monthsToCount = 0;
-  
+
   if (joining.getFullYear() === now.getFullYear()) {
-    // Joined this year - count from joining month to current month (within this year)
+    // Joined (or policy-reset) this year - count from that month to current month (within this year)
     monthsToCount = (currentMonth - startMonth) + 1;
   } else if (joining < currentYearStart) {
     // Joined in previous years - only count months from Jan 1 of current year to now
@@ -2895,10 +3156,10 @@ function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number 
     // This shouldn't happen but just in case
     monthsToCount = 1;
   }
-  
-  // Total credited leaves = 3 leaves per month (within current year, carries forward monthly, resets yearly)
-  const totalCredited = monthsToCount * 3;
-  
+
+  // Total credited leaves = 4 leaves per month (within current year, carries forward monthly, resets yearly)
+  const totalCredited = monthsToCount * LEAVES_PER_MONTH;
+
   // Available balance (can be negative if advance leaves are taken)
   // Negative balance will be carried forward and deducted from next month's allocation
   return totalCredited - usedLeaves;
@@ -3242,8 +3503,9 @@ app.get('/make-server-c2dd9b9d/leaves/:employeeId/balance', async (c) => {
     
     // Get all approved leaves
     const allLeaves = await kv.getByPrefix(`leave:${employeeId}:`);
-    const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved');
-    
+    // Only leaves from the Aug 1, 2026 policy reset onward count against the balance
+    const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved' && l.leaveDate >= LEAVE_POLICY_RESET_DATE);
+
     // Calculate total leave days used (full day = 1, half day = 0.5)
     // Old leaves without leaveType default to 'full' for backward compatibility
     const totalLeaveDaysUsed = approvedLeaves.reduce((total: number, leave: any) => {
@@ -3275,27 +3537,42 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
     
     await kv.set(key, savedLeave);
     
-    // Notify cluster heads about pending leave
+    // Route the approval notification: regular leave (and advance leave up to the
+    // escalation threshold) goes to the employee's own manager - matching who can
+    // actually act on it in the Approve Leaves screen (manager sees their own
+    // employees' leaves, cluster head sees their managers' leaves). Advance leave
+    // past the threshold is escalated straight to the cluster head instead.
     if (leave.status === 'pending') {
-      const clusterHeads = await getAllClusterHeads();
-      const employees = await kv.getByPrefix('attendance-employee:');
-      const employee = employees.find((e: any) => e.id === leave.employeeId);
-      const employeeName = employee?.name || leave.employeeId;
-      
-      for (const clusterHead of clusterHeads) {
-        if (clusterHead.authUserId) {
-          await notifyUser(
-            clusterHead.authUserId,
-            'leave_pending',
-            'Leave Approval Needed',
-            `${employeeName} applied for leave from ${leave.startDate} to ${leave.endDate}`,
-            id,
-            leave.startDate
-          );
+      // attendance-employee: is a legacy/unused collection - real employee records
+      // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
+      const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
+      const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
+      const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
+
+      const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
+      const message = escalateToClusterHead
+        ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
+        : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
+
+      let recipients: any[] = [];
+      if (escalateToClusterHead) {
+        recipients = await getAllClusterHeads();
+      } else if (applicant?.managerId) {
+        const manager = await kv.get(`unified-employee:${applicant.managerId}`);
+        if (manager) recipients = [manager];
+      }
+      // No manager on file - fall back to cluster heads so the request isn't stranded
+      if (recipients.length === 0) {
+        recipients = await getAllClusterHeads();
+      }
+
+      for (const recipient of recipients) {
+        if (recipient.authUserId) {
+          await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate);
         }
       }
     }
-    
+
     return c.json({ success: true, id });
   } catch (error) {
     console.log('Error applying leave:', error);
@@ -3327,16 +3604,15 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/approve', async (c) => {
     await kv.set(key, approvedLeave);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === leave.employeeId);
+    const employee = await kv.get(`unified-employee:${leave.employeeId}`);
     if (employee?.authUserId) {
       await notifyUser(
         employee.authUserId,
         'leave_approved',
         'Leave Approved ✓',
-        `Your leave from ${leave.startDate} to ${leave.endDate} has been approved by ${managerName}`,
+        `Your leave on ${leave.leaveDate} has been approved by ${managerName}`,
         leaveId,
-        leave.startDate
+        leave.leaveDate
       );
     }
     
@@ -3372,16 +3648,15 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/reject', async (c) => {
     await kv.set(key, rejectedLeave);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === leave.employeeId);
+    const employee = await kv.get(`unified-employee:${leave.employeeId}`);
     if (employee?.authUserId) {
       await notifyUser(
         employee.authUserId,
         'leave_rejected',
         'Leave Rejected ✗',
-        `Your leave from ${leave.startDate} to ${leave.endDate} was rejected by ${managerName}. Reason: ${reason}`,
+        `Your leave on ${leave.leaveDate} was rejected by ${managerName}. Reason: ${reason}`,
         leaveId,
-        leave.startDate
+        leave.leaveDate
       );
     }
     
@@ -5014,7 +5289,7 @@ app.put('/make-server-c2dd9b9d/stores/:storeId', async (c) => {
     }
 
     const storeId = c.req.param('storeId');
-    const { name, location } = await c.req.json();
+    const { name, location, ciferonStoreId } = await c.req.json();
 
     const allStores = await kv.getByPrefix('store:');
     const store = allStores.find((s: any) => s.id === storeId);
@@ -5027,6 +5302,7 @@ app.put('/make-server-c2dd9b9d/stores/:storeId', async (c) => {
       ...store,
       name: name || store.name,
       location: location !== undefined ? location : store.location,
+      ciferonStoreId: ciferonStoreId !== undefined ? ciferonStoreId : store.ciferonStoreId,
       updatedAt: new Date().toISOString()
     };
 
@@ -5461,7 +5737,47 @@ async function getStoreIncharge(storeId: string) {
 // PRODUCTION REQUESTS ROUTES
 // ============================================
 
-// Get all production requests
+// Fetch production requests whose requestDate >= fromDate (optional upper bound), paginated
+// and filtered in Postgres (not pulled into memory and filtered here) so the query stays cheap
+// as the table grows. With no fromDate, defaults are applied by the caller.
+async function getProductionRequestsFrom(fromDate?: string, toDate?: string): Promise<any[]> {
+  const pageSize = 1000;
+  let allResults: any[] = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value')
+      .like('key', 'production_request_%');
+
+    if (fromDate) {
+      query = query.gte('value->>requestDate', fromDate);
+    }
+    if (toDate) {
+      query = query.lte('value->>requestDate', toDate);
+    }
+
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (!data || data.length === 0) break;
+
+    allResults = allResults.concat(data.map((d) => d.value));
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allResults;
+}
+
+// Get production requests, scoped to a date range so the page doesn't load the
+// entire history on every visit. Accepts ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional).
+// With no `from`, defaults to the start of last month (covers the current month view
+// plus the previous-month comparison used by the stats cards); `to` is left open-ended
+// so future/advance requests are never excluded.
 app.get('/make-server-c2dd9b9d/production-requests', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
@@ -5469,14 +5785,24 @@ app.get('/make-server-c2dd9b9d/production-requests', async (c) => {
   }
 
   try {
-    const requests = await kv.getByPrefix('production_request_') || [];
-    
+    const requestedFrom = c.req.query('from');
+    const requestedTo = c.req.query('to');
+
+    let fromDate = requestedFrom;
+    if (!fromDate) {
+      const now = new Date();
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      fromDate = lastMonthStart.toISOString().split('T')[0];
+    }
+
+    const requests = await getProductionRequestsFrom(fromDate, requestedTo);
+
     // Sort by request date descending (newest first)
     const sortedRequests = requests.sort((a: any, b: any) => {
       return new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime();
     });
-    
-    return c.json({ requests: sortedRequests });
+
+    return c.json({ requests: sortedRequests, from: fromDate, to: requestedTo || null });
   } catch (error: any) {
     console.error('Error fetching production requests:', error);
     return c.json({ error: error.message }, 500);
@@ -8314,6 +8640,430 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
 });
 
 // ============================================
+// POS NIGHTLY AUTO-SYNC (Ciferon)
+// ============================================
+// Runs nightly via pg_cron at 10:30 PM IST (17:00 UTC) - see
+// supabase/migrations/20260728000000_pos_nightly_sync_cron.sql. No user session exists at
+// cron time, so this route is gated by a shared secret header instead of verifyUser,
+// matching the reminder-job routes above but with an added secret check since this route
+// writes financial/stock data rather than just sending notifications.
+//
+// Two independent steps per store (each isolated so one failing doesn't block the other):
+//   Step A (reliable): official SaleDetails API -> cash/paytm/zomato/swiggy totals for the
+//     day, written into that day's sales: record (posOnlineSales/posOfflineSales/
+//     cashAmount/paytmAmount) and online_sales: record (swiggySales/zomatoSales).
+//   Step B (fragile): undocumented OrderReport/v2/SaleCount endpoint, which needs a live
+//     admin-panel login (no long-lived key exists for item-wise data - confirmed by
+//     testing the integration key against it directly, which fails) - item-wise sold
+//     quantities classified into the 7 finished-product categories and written as a
+//     SalesDataRecord via the same path manual sales-sheet uploads use, so
+//     ProductionRequests.tsx's Opening+Received-Sold reconciliation picks it up unchanged.
+// Shared sync logic - called by both the cron-secret-gated nightly route and the
+// verifyUser-gated manual "Sync Now" button, so there is exactly one implementation.
+async function runPosSync() {
+  const today = getTodayIST();
+  const todayRfc1123 = new Date(`${today}T00:00:00Z`).toUTCString();
+  const results: any[] = [];
+
+  try {
+    const allStores = await kv.getByPrefix('store:');
+    const storesWithCiferon = (allStores || []).filter((s: any) => s.ciferonStoreId);
+
+    for (const store of storesWithCiferon) {
+      const storeResult: any = { storeId: store.id, storeName: store.name, date: today };
+
+      // ---- Step A: reliable cash/online sync via SaleDetails ----
+      try {
+        const apiKey = Deno.env.get('CIFERON_API_KEY');
+        if (!apiKey) throw new Error('CIFERON_API_KEY not configured');
+
+        const saleDetailsRes = await fetch('https://api.ciferon.com/api/LoginApi/SaleDetails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ StartDate: today, EndDate: today })
+        });
+
+        if (!saleDetailsRes.ok) {
+          throw new Error(`SaleDetails returned HTTP ${saleDetailsRes.status}`);
+        }
+        const saleDetailsData = await saleDetailsRes.json();
+        if (!saleDetailsData.IsSuccess) {
+          throw new Error('SaleDetails responded with IsSuccess=false');
+        }
+
+        const allOrders = saleDetailsData.Result?.orderList || [];
+        // Exclude cancelled orders - Ciferon still returns them in the day's orderList with
+        // their original BillAmount, which would otherwise inflate every total below.
+        const orders = allOrders.filter((order: any) => {
+          const status = (order.TransactionStatus || '').toLowerCase();
+          return !status.includes('cancel');
+        });
+        let cashTotal = 0, paytmTotal = 0, zomatoTotal = 0, swiggyTotal = 0;
+        for (const order of orders) {
+          const mode = (order.PaymentMode && order.PaymentMode[0]) || 'Unknown';
+          const amount = order.BillAmount || 0;
+          if (mode === 'Cash') cashTotal += amount;
+          else if (mode === 'Zomato') zomatoTotal += amount;
+          else if (mode === 'Swiggy') swiggyTotal += amount;
+          else paytmTotal += amount; // Paytm/PhonePe/Card/Google Pay/Razorpay - all digital counter payments
+        }
+
+        const posOfflineSales = cashTotal + paytmTotal;
+        const posOnlineSales = zomatoTotal + swiggyTotal;
+
+        const storeIncharge = await getStoreIncharge(store.id);
+        if (!storeIncharge || !storeIncharge.authUserId) {
+          throw new Error('No store incharge with an auth account found for this store');
+        }
+        const userId = storeIncharge.authUserId;
+
+        const allSales = await kv.getByPrefix('sales:');
+        const existingSale = (allSales || []).find((s: any) => s.storeId === store.id && s.date === today);
+
+        if (existingSale) {
+          const key = `sales:${existingSale.userId}:${existingSale.id}`;
+          await kv.set(key, {
+            ...existingSale,
+            offlineSales: posOfflineSales, // BUG FIX: this was left stale on re-sync, only cashAmount/paytmAmount updated
+            cashAmount: cashTotal,
+            paytmAmount: paytmTotal,
+            posOnlineSales,
+            posOfflineSales
+          });
+        } else {
+          const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const key = `sales:${userId}:${itemId}`;
+          await kv.set(key, {
+            id: itemId,
+            userId,
+            storeId: store.id,
+            date: today,
+            offlineSales: posOfflineSales,
+            paytmAmount: paytmTotal,
+            cashAmount: cashTotal,
+            onlineSales: 0,
+            onlineSalesCommission: 0,
+            employeeSalary: 0,
+            posOnlineSales,
+            posOfflineSales,
+            approvalStatus: 'pending',
+            actualCashInHand: 0,
+            cashOffset: 0,
+            approvalRequired: false,
+            approvedBy: null,
+            approvedAt: null,
+            approvalRequested: false,
+            approvalRequestedAt: null,
+            requestedCashInHand: null,
+            requestedOffset: null,
+            rejectedBy: null,
+            rejectedAt: null,
+            rejectionReason: null,
+            previousCashInHand: 0,
+            usedOnlineMoney: 0,
+            actualPaytmBalance: 0,
+            paytmOffset: 0,
+            createdBy: 'pos-sync',
+            createdByName: 'Ciferon POS Auto-Sync'
+          });
+        }
+
+        // Upsert online_sales: record (Zomato/Swiggy split), same as the manual OnlineSalesTab entry
+        const allOnlineSales = await kv.getByPrefix('online_sales:');
+        const existingOnlineSales = (allOnlineSales || []).find((s: any) => s.storeId === store.id && s.date === today);
+        if (existingOnlineSales) {
+          await kv.set(`online_sales:${existingOnlineSales.id}`, {
+            ...existingOnlineSales,
+            swiggySales: swiggyTotal,
+            zomatoSales: zomatoTotal
+          });
+        } else {
+          const entryId = `ONLINE-SALES-POS-${Date.now()}`;
+          await kv.set(`online_sales:${entryId}`, {
+            id: entryId,
+            date: today,
+            swiggySales: swiggyTotal,
+            zomatoSales: zomatoTotal,
+            storeId: store.id,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        storeResult.stepA = { success: true, cashTotal, paytmTotal, zomatoTotal, swiggyTotal, orderCount: orders.length };
+      } catch (stepAError: any) {
+        storeResult.stepA = { success: false, error: stepAError?.message || String(stepAError) };
+        console.error(`[pos-sync] Step A failed for store ${store.id}:`, stepAError);
+      }
+
+      // ---- Step B: fragile item-wise stock sync ----
+      try {
+        const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+        const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+        if (!adminEmail || !adminPassword) throw new Error('CIFERON_ADMIN_EMAIL/PASSWORD not configured');
+
+        const loginRes = await fetch('https://api.ciferon.com/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+        });
+        if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
+        const loginData = await loginRes.json();
+        // Field name unconfirmed for a scripted login (only observed via localStorage after
+        // an interactive login) - check the common shapes defensively rather than assume one.
+        const authkey =
+          loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+          loginData?.AuthKey || loginData?.token || loginData?.Token;
+        if (!authkey) {
+          throw new Error(`Ciferon login did not return a recognizable authkey. Response keys: ${Object.keys(loginData || {}).join(', ')}`);
+        }
+
+        const saleCountUrl = `https://api.ciferon.com/Api/OrderReport/v2/SaleCount?StartDate=${encodeURIComponent(todayRfc1123)}&EndDate=${encodeURIComponent(todayRfc1123)}&StoreIds=undefined&IsInit=false&searchString=undefined&CompanyBrandId=0&FoodType=undefined&TerminalId=0&IsTallyMode=false&isSuperCategory=false&FloorId=0`;
+        const saleCountRes = await fetch(saleCountUrl, {
+          headers: {
+            'Authorization': `Bearer ${authkey}`,
+            'StoreId': String(store.ciferonStoreId),
+            'BrandId': '0',
+            'Accept': 'application/json'
+          }
+        });
+        if (!saleCountRes.ok) throw new Error(`SaleCount returned HTTP ${saleCountRes.status}`);
+        const saleCountData = await saleCountRes.json();
+        if (!saleCountData.IsSuccess) throw new Error('SaleCount responded with IsSuccess=false');
+
+        // Flatten CategoryList[].ProductList[] into a single product array
+        const categoryList = saleCountData.Result?.lists || [];
+        const products: Array<{ ProductName: string; Quantity: number }> = [];
+        for (const cat of categoryList) {
+          for (const prod of (cat.ProductList || [])) {
+            products.push({ ProductName: prod.ProductName, Quantity: prod.Quantity });
+          }
+        }
+
+        const categoryTotals = classifyAndSumProducts(products);
+
+        // Upsert (not duplicate) today's pos-sync-originated SalesDataRecord for this store
+        const allSalesData = await kv.getByPrefix('sales_data_');
+        const existingRecord = (allSalesData || []).find(
+          (r: any) => r.storeId === store.id && r.date === today && r.uploadedBy === 'pos-sync'
+        );
+        const recordId = existingRecord?.id || `POS-SYNC-${store.id}-${today}`;
+        await kv.set(`sales_data_${recordId}`, {
+          id: recordId,
+          date: today,
+          storeId: store.id,
+          storeName: store.name,
+          data: categoryTotals,
+          uploadedBy: 'pos-sync',
+          uploadedAt: new Date().toISOString()
+        });
+
+        storeResult.stepB = { success: true, categoryTotals, productCount: products.length };
+      } catch (stepBError: any) {
+        storeResult.stepB = { success: false, error: stepBError?.message || String(stepBError) };
+        console.error(`[pos-sync] Step B failed for store ${store.id}:`, stepBError);
+
+        // Step B is known-fragile - alert so the manual /sales-data upload is used as a
+        // fallback for today, rather than silently having no item-wise data at all.
+        try {
+          const clusterHeads = await getAllClusterHeads();
+          const opsManagers = await getOperationsManagers(store.id);
+          const recipients = [...clusterHeads, ...opsManagers];
+          for (const recipient of recipients) {
+            if (recipient.authUserId) {
+              await notifyUser(
+                recipient.authUserId,
+                'pos_sync_stock_failed',
+                'POS Item-wise Sync Failed',
+                `Tonight's item-wise stock sync failed for ${store.name}: ${stepBError?.message || String(stepBError)}. Please use manual sales-data upload for ${today}.`,
+                store.id,
+                today
+              );
+            }
+          }
+        } catch (notifyError) {
+          console.error('[pos-sync] Failed to send Step B failure notification:', notifyError);
+        }
+      }
+
+      // ---- Step C: low-stock alert (opening + this month's received - this month's sold,
+      // same formula ProductionRequests.tsx's "Store Stock Status" uses, simplified to
+      // skip its mid-month-recalibration-override edge case) ----
+      try {
+        const CATEGORY_KEYS: Array<{ camelKey: string; legacyKey: string }> = [
+          { camelKey: 'chicken', legacyKey: 'Chicken Momos' },
+          { camelKey: 'chickenCheese', legacyKey: 'Chicken Cheese Momos' },
+          { camelKey: 'veg', legacyKey: 'Veg Momos' },
+          { camelKey: 'paneer', legacyKey: 'Paneer Momos' },
+          { camelKey: 'cheeseCorn', legacyKey: 'Corn Cheese Momos' },
+          { camelKey: 'chickenKurkure', legacyKey: 'Chicken Kurkure Momos' },
+          { camelKey: 'vegKurkure', legacyKey: 'Veg Kurkure Momos' },
+        ];
+        const currentMonth = today.substring(0, 7);
+        const monthStart = `${currentMonth}-01`;
+
+        // Opening balance from this month's most recent store recalibration, if any
+        const allRecalibrations = await kv.getByPrefix('recalibration_');
+        const storeRecalibrations = (allRecalibrations || [])
+          .filter((r: any) => r.locationId === store.id && r.locationType === 'store' && r.date?.startsWith(currentMonth))
+          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const latestRecal = storeRecalibrations[0];
+
+        const openingBalance: Record<string, number> = {};
+        if (latestRecal?.items) {
+          const allInventoryItems = await kv.getByPrefix('inventory_item_');
+          for (const item of latestRecal.items) {
+            const invItem = (allInventoryItems || []).find((i: any) => i.id === item.itemId || i.name === item.itemId);
+            if (invItem) {
+              const camelKey = invItem.name.replace(/_([a-z])/g, (_: string, c: string) => c.toUpperCase());
+              openingBalance[camelKey] = item.actualQuantity;
+            }
+          }
+        }
+
+        // This month's delivered/partially-delivered production requests for this store.
+        // Real records use statuses like "delivered", "partially-delivered", or
+        // "partially-shipped" - deliveredAt being set is the reliable signal that some
+        // quantity actually reached the store, regardless of the exact status string. The
+        // real shipped amount lives in shippedQuantities (falls back to the requested
+        // top-level field for older records that predate that field).
+        const monthRequests = await getProductionRequestsFrom(monthStart);
+        const deliveredRequests = (monthRequests || []).filter((r: any) => r.storeId === store.id && !!r.deliveredAt);
+        const received: Record<string, number> = {};
+        for (const key of CATEGORY_KEYS) {
+          received[key.camelKey] = deliveredRequests.reduce((sum: number, r: any) => {
+            const shipped = r.shippedQuantities?.[key.camelKey];
+            const qty = shipped !== undefined ? shipped : ((r[key.camelKey] || 0) + (r[key.camelKey + 's'] || 0));
+            return sum + qty;
+          }, 0);
+        }
+
+        // This month's sold, from SalesDataRecords - includes tonight's Step B write
+        const monthSalesRecords = (await kv.getByPrefix('sales_data_') || [])
+          .filter((r: any) => r.storeId === store.id && r.date?.startsWith(currentMonth));
+        const sold: Record<string, number> = {};
+        for (const key of CATEGORY_KEYS) {
+          sold[key.camelKey] = monthSalesRecords.reduce(
+            (sum: number, r: any) => sum + (r.data?.[key.legacyKey] || 0), 0
+          );
+        }
+
+        const thresholdsRecord = (await kv.get(`stock-thresholds:${store.id}`)) || {};
+        const lowCategories: string[] = [];
+        for (const key of CATEGORY_KEYS) {
+          const stock = (openingBalance[key.camelKey] || 0) + received[key.camelKey] - sold[key.camelKey];
+          const thresholds = (thresholdsRecord as any)[key.camelKey] || { high: 600, medium: 300, low: 150 };
+          if (stock <= thresholds.low) {
+            lowCategories.push(`${key.legacyKey} (${stock} left)`);
+          }
+        }
+
+        // NOTE: notification-sending is intentionally disabled for now. A live test against
+        // this store's real data showed the received-quantity calc below doesn't yet match
+        // real production-request records, which use statuses like "partially-delivered"/
+        // "partially-shipped" (not just "delivered") and store the actual shipped amount in
+        // a separate shippedQuantities sub-object, not the top-level requested-quantity
+        // fields this reads today - so lowCategories can be wrong. Fix that calc and verify
+        // it against ProductionRequests.tsx's real on-screen numbers for this store before
+        // re-enabling the notifyUser block below (kept, commented, to make re-enabling easy).
+        if (lowCategories.length > 0) {
+          console.log(`[pos-sync] Step C would have alerted for ${store.name}:`, lowCategories);
+          /*
+          const recipients: any[] = [];
+          const storeIncharge = await getStoreIncharge(store.id);
+          if (storeIncharge) recipients.push(storeIncharge);
+          recipients.push(...(await getOperationsManagers(store.id)));
+          if (store.productionHouseId) {
+            const productionHouse = await kv.get(`production_house_${store.productionHouseId}`);
+            if (productionHouse?.productionHeadId) {
+              const productionHead = await kv.get(`unified-employee:${productionHouse.productionHeadId}`);
+              if (productionHead) recipients.push(productionHead);
+            }
+          }
+          recipients.push(...(await getAllClusterHeads()));
+
+          const notified = new Set<string>();
+          for (const recipient of recipients) {
+            if (recipient?.authUserId && !notified.has(recipient.authUserId)) {
+              notified.add(recipient.authUserId);
+              await notifyUser(
+                recipient.authUserId,
+                'low_stock_alert',
+                '⚠️ Low Stock Alert',
+                `${store.name} is running low on: ${lowCategories.join(', ')}`,
+                store.id,
+                today
+              );
+            }
+          }
+          */
+        }
+
+        storeResult.stepC = { success: true, lowCategories };
+      } catch (stepCError: any) {
+        storeResult.stepC = { success: false, error: stepCError?.message || String(stepCError) };
+        console.error(`[pos-sync] Step C failed for store ${store.id}:`, stepCError);
+      }
+
+      // Per-store audit log so failures are diagnosable without digging through function logs
+      await kv.set(`pos-sync-log:${today}:${store.id}`, {
+        date: today,
+        storeId: store.id,
+        storeName: store.name,
+        stepA: storeResult.stepA,
+        stepB: storeResult.stepB,
+        stepC: storeResult.stepC,
+        ranAt: new Date().toISOString()
+      });
+
+      results.push(storeResult);
+    }
+
+    return { success: true, date: today, results };
+  } catch (error: any) {
+    console.error('[pos-sync] Unexpected error:', error);
+    return { success: false, error: error?.message || 'pos-sync failed', results, status: 500 };
+  }
+}
+
+// Nightly cron-invoked entrypoint - no user session exists at cron time, so this is
+// gated by a shared secret header instead of verifyUser (see the migration referenced
+// above), with an added secret check since this route writes financial/stock data
+// rather than just sending notifications like the reminder-job routes above.
+app.post('/make-server-c2dd9b9d/pos-sync', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const result = await runPosSync();
+  return c.json(result, (result as any).status || 200);
+});
+
+// Manual "Sync Now" button entrypoint - lets a cluster head or operations manager
+// trigger today's sync early instead of waiting for the 10:30 PM cron, e.g. to check
+// figures before closing. Same underlying logic as the cron route above.
+app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (role !== 'cluster_head' && !isOperationsManager) {
+    return c.json({ error: 'Only operations managers and cluster heads can trigger a manual POS sync' }, 403);
+  }
+
+  const result = await runPosSync();
+  return c.json(result, (result as any).status || 200);
+});
+
+// ============================================
 // PRODUCTION DATA CLEANUP
 // ============================================
 // Selective cleanup for production launch - removes ALL transactional data
@@ -9007,11 +9757,33 @@ app.delete('/make-server-c2dd9b9d/investors/:id', async (c) => {
 // ONLINE LOANS (Paytm/Online Cash Loans)
 // ============================================
 
-// Apply for a new loan
+// Request a new loan - raised by an operations manager or cluster head for expenses over
+// ₹5,000, requires cluster-head approval before it counts toward Paytm cash-in-hand (see
+// the approve/reject routes below and calculatePaytmBalance's status gate).
 app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isClusterHead = role === 'cluster_head';
+
+    if (!isOperationsManager && !isClusterHead) {
+      return c.json({ error: 'Only operations managers and cluster heads can request a loan' }, 403);
+    }
+
     const loanData = await c.req.json();
-    
+    if (!loanData.loanAmount || loanData.loanAmount <= 5000) {
+      return c.json({ error: 'Loans must be for more than ₹5,000' }, 400);
+    }
+    if (!loanData.storeId) {
+      return c.json({ error: 'storeId is required' }, 400);
+    }
+
     // Get investor name if investorId is provided
     let investorName = null;
     if (loanData.investorId) {
@@ -9020,32 +9792,167 @@ app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
         investorName = investor.name;
       }
     }
-    
+
     // Generate unique ID
     const timestamp = Date.now();
     const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
     const loanId = `ONLINE-LOAN-${loanData.storeId}-${timestamp}-${randomStr}`;
-    
+    const requestedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
     const loan = {
       ...loanData,
       id: loanId,
-      status: 'active',
+      status: 'pending',
       repaidAmount: 0,
       repaymentDate: null,
       repaymentType: null,
       investorName,
+      requestedByName,
+      requestedByUserId: authResult.user.id,
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null,
       createdAt: getNowIST(),
     };
-    
+
     const key = `online-loan:${loanData.storeId}:${loanId}`;
     await kvWithRetry.set(key, loan);
-    
-    console.log(`✅ Online loan created: ${key}`, loan);
-    
+
+    console.log(`✅ Online loan requested: ${key}`, loan);
+
+    // Notify all cluster heads (mirrors the Cash Top-up Request pattern)
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'loan_requested',
+          'Loan Approval Needed',
+          `${requestedByName} requested a loan of ₹${loanData.loanAmount.toLocaleString()} for ${loanData.storeName || loanData.storeId}`,
+          loanId,
+          loanData.loanDate
+        );
+      }
+    }
+
     return c.json({ success: true, loan });
   } catch (error) {
     console.error('❌ Error creating online loan:', error);
     return c.json({ error: 'Failed to create loan', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Approve a pending loan (cluster head only) - counts toward Paytm cash-in-hand from here
+app.post('/make-server-c2dd9b9d/online-loans/:id/approve', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can approve loans' }, 403);
+    }
+
+    const loanId = c.req.param('id');
+    const idParts = loanId.split('-');
+    if (idParts.length < 4) {
+      return c.json({ error: 'Invalid loan ID format' }, 400);
+    }
+    const storeId = idParts.slice(2, -2).join('-');
+    const key = `online-loan:${storeId}:${loanId}`;
+
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      return c.json({ error: 'Loan not found' }, 404);
+    }
+    if (existing.status !== 'pending') {
+      return c.json({ error: 'This loan has already been resolved' }, 400);
+    }
+
+    const approved = {
+      ...existing,
+      status: 'active',
+      approvedBy: authResult.user.email,
+      approvedAt: getNowIST(),
+    };
+    await kvWithRetry.set(key, approved);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existing.requestedByUserId) {
+      await notifyUser(
+        existing.requestedByUserId,
+        'loan_approved',
+        'Loan Approved ✓',
+        `${clusterHeadName} approved your loan request of ₹${existing.loanAmount.toLocaleString()}`,
+        loanId,
+        existing.loanDate
+      );
+    }
+
+    return c.json({ success: true, loan: approved });
+  } catch (error) {
+    console.error('❌ Error approving loan:', error);
+    return c.json({ error: 'Failed to approve loan' }, 500);
+  }
+});
+
+// Reject a pending loan (cluster head only)
+app.post('/make-server-c2dd9b9d/online-loans/:id/reject', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can reject loans' }, 403);
+    }
+
+    const loanId = c.req.param('id');
+    const { reason } = await c.req.json();
+    const idParts = loanId.split('-');
+    if (idParts.length < 4) {
+      return c.json({ error: 'Invalid loan ID format' }, 400);
+    }
+    const storeId = idParts.slice(2, -2).join('-');
+    const key = `online-loan:${storeId}:${loanId}`;
+
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      return c.json({ error: 'Loan not found' }, 404);
+    }
+    if (existing.status !== 'pending') {
+      return c.json({ error: 'This loan has already been resolved' }, 400);
+    }
+
+    const rejected = {
+      ...existing,
+      status: 'rejected',
+      rejectedBy: authResult.user.email,
+      rejectedAt: getNowIST(),
+      rejectionReason: reason || '',
+    };
+    await kvWithRetry.set(key, rejected);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existing.requestedByUserId) {
+      await notifyUser(
+        existing.requestedByUserId,
+        'loan_rejected',
+        'Loan Rejected ✗',
+        `${clusterHeadName} rejected your loan request of ₹${existing.loanAmount.toLocaleString()}${reason ? `: ${reason}` : ''}`,
+        loanId,
+        existing.loanDate
+      );
+    }
+
+    return c.json({ success: true, loan: rejected });
+  } catch (error) {
+    console.error('❌ Error rejecting loan:', error);
+    return c.json({ error: 'Failed to reject loan' }, 500);
   }
 });
 

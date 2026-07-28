@@ -25,6 +25,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
   // Edit form
   const [editName, setEditName] = useState('');
   const [editLocation, setEditLocation] = useState('');
+  const [editCiferonStoreId, setEditCiferonStoreId] = useState('');
   const [updating, setUpdating] = useState(false);
   
   // Manager assignment
@@ -105,6 +106,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     setEditingStore(store.id);
     setEditName(store.name);
     setEditLocation(store.location);
+    setEditCiferonStoreId(store.ciferonStoreId || '');
   };
 
   const handleSaveEdit = async (storeId: string) => {
@@ -115,7 +117,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
 
     setUpdating(true);
     try {
-      await api.updateStore(storeId, editName, editLocation);
+      await api.updateStore(storeId, editName, editLocation, editCiferonStoreId.trim() || null);
       setEditingStore(null);
       await loadStores();
     } catch (error: any) {
@@ -130,6 +132,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     setEditingStore(null);
     setEditName('');
     setEditLocation('');
+    setEditCiferonStoreId('');
   };
 
   const handleStartAssignManager = (store: api.Store) => {
@@ -345,6 +348,19 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                       onChange={(e) => setEditLocation(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Ciferon POS Store ID</label>
+                    <input
+                      type="text"
+                      value={editCiferonStoreId}
+                      onChange={(e) => setEditCiferonStoreId(e.target.value)}
+                      placeholder="e.g. 5909"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enables the nightly POS auto-sync for this store. Leave blank to skip.
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <button

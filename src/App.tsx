@@ -57,6 +57,8 @@ export type InventoryItem = {
  costPerUnit: number;
  totalCost: number;
  storeId?: string; // Optional storeId for multi-store filtering
+ entityType?: 'store' | 'production_house'; // Which entity this expense belongs to
+ productionHouseId?: string; // Set when entityType is 'production_house'
  createdBy?: string; // User ID who created this entry
  createdByName?: string; // User name who created this entry
  createdByEmail?: string; // User email who created this entry
@@ -73,6 +75,8 @@ export type OverheadItem = {
  description: string;
  amount: number;
  storeId?: string; // Optional storeId for multi-store filtering
+ entityType?: 'store' | 'production_house'; // Which entity this expense belongs to
+ productionHouseId?: string; // Set when entityType is 'production_house'
  employeeId?: string; // For personal_expense category
  employeeName?: string; // For personal_expense category
  employeeIds?: string[]; // For breakfast/lunch/evening_snacks: which employees this meal covered
@@ -91,6 +95,8 @@ export type FixedCostItem = {
  date: string;
  userId: string;
  storeId?: string;
+ entityType?: 'store' | 'production_house'; // Which entity this expense belongs to
+ productionHouseId?: string; // Set when entityType is 'production_house'
  // LPG Gas specific fields
  units?: number;
  unitPrice?: number;
@@ -131,6 +137,10 @@ export type SalesData = {
  usedOnlineMoney?: number;
  actualPaytmBalance?: number; // Actual Paytm balance reconciliation
  paytmOffset?: number; // Paytm discrepancy/offset
+ // POS integration placeholder: manually entered until the POS API is connected,
+ // at which point these two fields become auto-fetched instead of typed in.
+ posOnlineSales?: number;
+ posOfflineSales?: number;
 };
 
 export type MonthlyCommission = {
@@ -276,6 +286,10 @@ export type InventoryContextType = {
  cancelStockRequest: (id: string) => Promise<void>;
  isManager: boolean;
  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | null } | null;
+ // Force-refreshes all context data in place (bypassing cache) - lets a child component
+ // pull in fresh data after a server-side action (e.g. a manual POS sync) without a full
+ // page reload, same underlying loadData() the nav bar's "Refresh data" button already uses.
+ refreshData: () => Promise<void>;
 };
 
 export default function App() {
@@ -736,20 +750,25 @@ export default function App() {
  checkSession();
  }, []); // Empty dependency array - only run once on mount
 
- // Shared by both the web-push (service worker) and native (Capacitor/FCM) navigation paths.
+ // Shared by both the web-push (service worker) and native (Capacitor/FCM) navigation paths,
+ // and by the in-app notification bell (Notifications.tsx) - one resolver, so every entry
+ // point lands on the same place.
  const applyNavigationTarget = useCallback((target: { view: string; tab?: string; highlightRequestId?: string }) => {
  console.log('🔔 [nav] applyNavigationTarget called with:', target);
  if (!target?.view) {
  console.log('🔔 [nav] No view on target, bailing out');
  return;
  }
- setActiveView(target.view as typeof activeView);
+ // Only plain "employee"-role users have a standalone Attendance tab; managers and
+ // cluster heads reach the same screens through Employee Management's Attendance sub-tab.
+ const view = target.view === 'attendance' && user?.role !== 'employee' ? 'employees' : target.view;
+ setActiveView(view as typeof activeView);
  setHighlightTab(target.tab || null);
  if (target.highlightRequestId) {
  setHighlightRequestId(target.highlightRequestId);
  }
- console.log('🔔 [nav] Applied: view=', target.view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
- }, [setActiveView]);
+ console.log('🔔 [nav] Applied: view=', view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
+ }, [setActiveView, user]);
 
  // Initialize push notifications when user logs in
  useEffect(() => {
@@ -1553,16 +1572,35 @@ export default function App() {
  fulfillStockRequest,
  cancelStockRequest,
  isManager: user?.role === 'manager',
- user
+ user,
+ refreshData: handleRefreshData
  };
 
  // Show loading state while checking auth
  if (isCheckingAuth) {
+ const momoCount = 6;
  return (
- <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+ <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F49D1A' }}>
  <div className="text-center">
- <Package className="w-12 h-12 text-[#B0A8D8] mx-auto mb-4 animate-pulse" />
- <p className="text-gray-600">Loading...</p>
+ <div className="relative w-64 h-14 mx-auto mb-6">
+ <div className="absolute inset-0 flex items-center justify-between px-1">
+ {Array.from({ length: momoCount }).map((_, i) => (
+ <span
+ key={i}
+ className="text-2xl momo-eaten"
+ style={{ animationDelay: `${(i / (momoCount - 1)) * 2.4 - 0.35}s` }}
+ >
+ 🥟
+ </span>
+ ))}
+ </div>
+ <img
+ src="/bunny-logo.png"
+ alt=""
+ className="w-12 h-12 absolute top-1/2 bunny-walk"
+ />
+ </div>
+ <p className="text-white font-medium">Loading...</p>
  </div>
  </div>
  );
@@ -1825,30 +1863,7 @@ export default function App() {
  )}
  {/* Notification Button for Store Incharge and Production Head */}
  {isAnyIncharge && (
- <Notifications onNavigate={(path, date, requestId) => {
- if (path === 'sales') {
- setActiveView('sales');
- setHighlightRequestId(null);
- }
- if (path === 'production') {
- setActiveView('production');
- setHighlightRequestId(null);
- }
- if (path === 'attendance') {
- setActiveView('employees');
- setHighlightRequestId(null);
- }
- if (path === 'production-requests') {
- console.log('🔔 Production request notification clicked, requestId:', requestId);
- // Clear first to ensure the effect triggers even if it's the same ID
- setHighlightRequestId(null);
- // Use setTimeout to ensure the clear happens first
- setTimeout(() => {
- setHighlightRequestId(requestId || null);
- setActiveView('analytics');
- }, 0);
- }
- }} />
+ <Notifications onNavigate={(view, tab, highlightRequestId) => applyNavigationTarget({ view, tab, highlightRequestId })} />
  )}
  <button
  onClick={handleRefreshData}
@@ -2069,7 +2084,7 @@ export default function App() {
  ) : activeView === 'sales' && isAnyIncharge ? (
  <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
  ) : activeView === 'production' && canViewProduction ? (
- <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} />
+ <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} initialTab={highlightTab} />
  ) : activeView === 'payroll' ? (
  isAnyIncharge ? (
  <PayrollManagement 
@@ -2103,7 +2118,7 @@ export default function App() {
  currentUserId={user.email}
  />
  ) : activeView === 'stock-requests' && isAnyIncharge ? (
- <StockRequestManagement context={contextValue} stores={stores} />
+ <StockRequestManagement context={contextValue} stores={stores} initialTab={highlightTab} />
  ) : activeView === 'advanced-inventory' && isManager ? (
  <AdvancedInventoryManagement 
  context={contextValue} 
@@ -2149,34 +2164,7 @@ export default function App() {
  {/* Notifications Bell & Mobile Menu Button */}
  <div className="flex items-center gap-3">
  {/* Notifications - Always visible */}
- <Notifications onNavigate={(path, date, requestId) => {
- if (path === 'sales') {
- setActiveView('sales');
- setHighlightRequestId(null);
- }
- else if (path === 'attendance') {
- setActiveView('employees');
- setHighlightRequestId(null);
- }
- else if (path === 'leave') {
- setActiveView('employees');
- setHighlightRequestId(null);
- }
- else if (path === 'production') {
- setActiveView('production');
- setHighlightRequestId(null);
- }
- else if (path === 'production-requests') {
- console.log('🔔 Production request notification clicked (mobile), requestId:', requestId);
- // Clear first to ensure the effect triggers even if it's the same ID
- setHighlightRequestId(null);
- // Use setTimeout to ensure the clear happens first
- setTimeout(() => {
- setHighlightRequestId(requestId || null);
- setActiveView('analytics');
- }, 0);
- }
- }} />
+ <Notifications onNavigate={(view, tab, highlightRequestId) => applyNavigationTarget({ view, tab, highlightRequestId })} />
  
  {/* Mobile Menu Button */}
  <button
@@ -2675,10 +2663,11 @@ export default function App() {
  <main className="pb-6">
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'sales' ? (
- // Store incharge logs sales; operations manager reconciles cash/Paytm and aggregator
- // payouts against it (same screen, field-level permissions inside); everyone else
- // (cluster head, etc.) gets a fully read-only view.
- (isStoreInchargeManager || isOperationsManager) ? (
+ // Store incharge validates the day's sales (POS-reported once live) against the
+ // cash they counted and owns reconciliation; everyone else (operations manager,
+ // cluster head, etc.) gets a read-only view - the operations manager additionally
+ // gets the cash top-up request capability from there.
+ isStoreInchargeManager ? (
  <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
  ) : (
  <SalesView context={contextValue} selectedStoreId={selectedStoreId} />
@@ -2709,7 +2698,7 @@ export default function App() {
  ) : activeView === 'backup' ? (
  <BackupRestore context={contextValue} />
  ) : activeView === 'employees' ? (
- <EmployeeManagement 
+ <EmployeeManagement
  user={{
  role: user.role,
  email: user.email,
@@ -2719,6 +2708,7 @@ export default function App() {
  accessToken: user.accessToken
  }}
  selectedStoreId={selectedStoreId}
+ initialAttendanceTab={highlightTab}
  />
  ) : activeView === 'assets' ? (
  <AssetsManagement 
@@ -2728,9 +2718,9 @@ export default function App() {
  onRefreshStores={loadStores}
  />
  ) : activeView === 'production' && canViewProduction ? (
- <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} />
+ <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} initialTab={highlightTab} />
  ) : activeView === 'stock-requests' ? (
- <StockRequestManagement context={contextValue} stores={stores} />
+ <StockRequestManagement context={contextValue} stores={stores} initialTab={highlightTab} />
  ) : activeView === 'advanced-inventory' ? (
  <AdvancedInventoryManagement 
  context={contextValue} 

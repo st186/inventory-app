@@ -3,6 +3,7 @@ node_modules/
 dist/
 typecheck-output.txt
 supabase/.temp/
+.claude/
 
 # Android / Capacitor
 android/app/build/

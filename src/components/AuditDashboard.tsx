@@ -91,6 +91,7 @@ export function AuditDashboard({
  cancelStockRequest: async () => {}, // No-op for audit
  isManager: false,
  user: user,
+ refreshData: () => onDataUpdate(user.accessToken),
  };
 
  const navItems = [

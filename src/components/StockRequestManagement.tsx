@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { Package, Send, CheckCircle, XCircle, Clock, AlertCircle, TrendingUp } from 'lucide-react';
@@ -6,10 +6,19 @@ import { Package, Send, CheckCircle, XCircle, Clock, AlertCircle, TrendingUp } f
 type Props = {
   context: InventoryContextType;
   stores: api.Store[];
+  // Notification deep-link: 'pending-fulfillment' jumps straight to that tab (production heads).
+  initialTab?: string | null;
 };
 
-export function StockRequestManagement({ context, stores }: Props) {
-  const [activeTab, setActiveTab] = useState<'my-requests' | 'pending-fulfillment'>('my-requests');
+export function StockRequestManagement({ context, stores, initialTab = null }: Props) {
+  const [activeTab, setActiveTab] = useState<'my-requests' | 'pending-fulfillment'>(initialTab === 'pending-fulfillment' ? 'pending-fulfillment' : 'my-requests');
+
+  // A notification click arriving while this component is already mounted should still switch tabs
+  useEffect(() => {
+    if (initialTab === 'pending-fulfillment') {
+      setActiveTab('pending-fulfillment');
+    }
+  }, [initialTab]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [fulfillmentForm, setFulfillmentForm] = useState<{
     requestId: string | null;

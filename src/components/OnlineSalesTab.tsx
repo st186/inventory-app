@@ -180,7 +180,7 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
           Aggregator Payout Reconciliation (Swiggy & Zomato)
         </h2>
         <p className="text-gray-600 text-sm">
-          Record what Swiggy and Zomato actually paid out against the store incharge's logged online sales. Extra payouts automatically add to Online Cash in Hand (Paytm).
+          Record what Swiggy and Zomato actually paid out against the operations manager's logged online sales. Extra payouts automatically add to Online Cash in Hand (Paytm).
         </p>
       </div>
 
@@ -224,9 +224,9 @@ export function OnlineSalesTab({ context, selectedStoreId, selectedDate, onDateC
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Sales Section - read-only, logged by the store incharge */}
+          {/* Sales Section - read-only, logged by the operations manager */}
           <div className="space-y-4">
-            <h4 className="font-semibold text-gray-700 border-b pb-2">Sales Data (logged by store incharge)</h4>
+            <h4 className="font-semibold text-gray-700 border-b pb-2">Sales Data (logged by operations manager)</h4>
 
             <div className="bg-green-50 p-3 rounded-lg">
               <p className="text-sm font-medium text-gray-700">Total Online Sales</p>

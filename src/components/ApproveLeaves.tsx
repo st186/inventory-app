@@ -17,6 +17,11 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
   const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const isClusterHead = role === 'cluster_head';
+  // Advance leave requests over the escalation threshold skip the normal manager
+  // hierarchy and go straight to the cluster head, even for employees who don't
+  // otherwise report to them - so this queue is fetched separately, system-wide.
+  const [escalatedLeaves, setEscalatedLeaves] = useState<any[]>([]);
+  const [escalatedLoading, setEscalatedLoading] = useState(false);
 
   console.log('ApproveLeaves: managerId prop =', managerId);
   console.log('ApproveLeaves: role prop =', role);
@@ -46,7 +51,22 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
 
   useEffect(() => {
     loadEmployees();
+    if (isClusterHead) {
+      loadEscalatedLeaves();
+    }
   }, []);
+
+  const loadEscalatedLeaves = async () => {
+    try {
+      setEscalatedLoading(true);
+      const allLeaves = await api.getAllLeaves();
+      setEscalatedLeaves(allLeaves.filter((l: any) => l.status === 'pending' && l.isAdvanceLeave && l.approverRole === 'cluster_head'));
+    } catch (error) {
+      console.error('Error loading escalated leaves:', error);
+    } finally {
+      setEscalatedLoading(false);
+    }
+  };
 
   // Update selected employee when filtered list changes
   useEffect(() => {
@@ -111,11 +131,9 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
   const handleApprove = async (leaveId: string) => {
     try {
       setLoading(true);
-      console.log('Attempting to approve leave:', leaveId);
-      console.log('api.approveLeave function exists?', typeof api.approveLeave);
-      console.log('Available API functions:', Object.keys(api).filter(k => k.includes('Leave')));
       await api.approveLeave(leaveId, managerId, managerName);
       await loadLeaves();
+      if (isClusterHead) await loadEscalatedLeaves();
       alert('Leave approved successfully');
     } catch (error) {
       console.error('Error approving leave:', error);
@@ -133,12 +151,44 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
       setLoading(true);
       await api.rejectLeave(leaveId, managerId, managerName, reason);
       await loadLeaves();
+      if (isClusterHead) await loadEscalatedLeaves();
       alert('Leave rejected');
     } catch (error) {
       console.error('Error rejecting leave:', error);
       alert('Error rejecting leave');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApproveEscalated = async (leaveId: string) => {
+    try {
+      setEscalatedLoading(true);
+      await api.approveLeave(leaveId, managerId, managerName);
+      await loadEscalatedLeaves();
+      alert('Leave approved successfully');
+    } catch (error) {
+      console.error('Error approving leave:', error);
+      alert('Error approving leave');
+    } finally {
+      setEscalatedLoading(false);
+    }
+  };
+
+  const handleRejectEscalated = async (leaveId: string) => {
+    const reason = prompt('Enter rejection reason:');
+    if (!reason) return;
+
+    try {
+      setEscalatedLoading(true);
+      await api.rejectLeave(leaveId, managerId, managerName, reason);
+      await loadEscalatedLeaves();
+      alert('Leave rejected');
+    } catch (error) {
+      console.error('Error rejecting leave:', error);
+      alert('Error rejecting leave');
+    } finally {
+      setEscalatedLoading(false);
     }
   };
 
@@ -162,6 +212,58 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
             }
           </p>
         </div>
+
+        {/* Escalated Advance Leave Requests - cluster head only, spans all employees
+            regardless of the manager-hierarchy selector below */}
+        {isClusterHead && (
+          <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-xl overflow-hidden">
+            <div className="px-6 py-4 bg-purple-100 border-b border-purple-200">
+              <h3 className="text-lg text-purple-900">Escalated Advance Leave Requests</h3>
+              <p className="text-sm text-purple-700">Advance leave requests over 4 days, escalated past the employee's manager for your direct approval</p>
+            </div>
+            {escalatedLoading ? (
+              <div className="p-6 text-center text-gray-500 text-sm">Loading...</div>
+            ) : escalatedLeaves.length === 0 ? (
+              <div className="p-6 text-center text-gray-500 text-sm">No escalated advance leave requests</div>
+            ) : (
+              <div className="divide-y divide-purple-100">
+                {escalatedLeaves.map((leave, index) => (
+                  <div key={index} className="p-4">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {leave.employeeId} · {new Date(leave.leaveDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', weekday: 'short' })}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
+                        {leave.advanceDaysRequested && (
+                          <p className="text-xs text-purple-700 mt-0.5">{leave.advanceDaysRequested} day(s) requested in this application</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleApproveEscalated(leave.id)}
+                        disabled={escalatedLoading}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleRejectEscalated(leave.id)}
+                        disabled={escalatedLoading}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Pending Count Badge */}
         {pendingCount > 0 && (
@@ -267,13 +369,20 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
                     </div>
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
-                      (leave.leaveType || 'full') === 'full'
-                        ? 'bg-orange-100 text-orange-800'
-                        : 'bg-blue-100 text-blue-800'
-                    }`}>
-                      {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                    </span>
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        (leave.leaveType || 'full') === 'full'
+                          ? 'bg-orange-100 text-orange-800'
+                          : 'bg-blue-100 text-blue-800'
+                      }`}>
+                        {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                      </span>
+                      {leave.isAdvanceLeave && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                          Advance{leave.advanceDaysRequested ? ` (${leave.advanceDaysRequested}d)` : ''}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="text-xs text-gray-400 mb-2">
                     Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}

@@ -9,13 +9,22 @@ import { logger } from '../utils/logger';
 type Props = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
+  // Notification deep-link: 'approvals' jumps straight to the Pending Approvals tab.
+  initialTab?: string | null;
 };
 
-export function ProductionManagement({ context, selectedStoreId }: Props) {
+export function ProductionManagement({ context, selectedStoreId, initialTab = null }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
-  const [activeTab, setActiveTab] = useState<'entry' | 'approvals'>('entry');
+  const [activeTab, setActiveTab] = useState<'entry' | 'approvals'>(initialTab === 'approvals' ? 'approvals' : 'entry');
+
+  // A notification click arriving while this component is already mounted should still switch tabs
+  useEffect(() => {
+    if (initialTab === 'approvals') {
+      setActiveTab('approvals');
+    }
+  }, [initialTab]);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
   const [cleaning, setCleaning] = useState(false);

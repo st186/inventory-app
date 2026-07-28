@@ -19,10 +19,21 @@ interface EmployeeManagementProps {
     accessToken?: string;
   };
   selectedStoreId?: string | null;
+  // Notification deep-link: jumps straight to the Attendance sub-tab and forwards
+  // this value into AttendancePortal's own tab (e.g. 'approve-leave', 'timesheet').
+  initialAttendanceTab?: string | null;
 }
 
-export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagementProps) {
+export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab = null }: EmployeeManagementProps) {
   const [activeTab, setActiveTab] = useState<'employees' | 'hierarchy' | 'payroll' | 'attendance'>('employees');
+
+  // A notification deep-link arriving for the Attendance sub-tab should switch to it
+  // immediately, even if some other tab is currently active.
+  useEffect(() => {
+    if (initialAttendanceTab) {
+      setActiveTab('attendance');
+    }
+  }, [initialAttendanceTab]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [archivedEmployees, setArchivedEmployees] = useState<any[]>([]);
   const [showPastEmployees, setShowPastEmployees] = useState(false);
@@ -726,6 +737,7 @@ New Password: ${result.credentials.password}
               role: user.role
             }}
             selectedStoreId={selectedStoreId}
+            initialTab={initialAttendanceTab}
           />
         ) : (
           <>

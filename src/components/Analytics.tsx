@@ -256,8 +256,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Analytics Mode: 'store' or 'production'
  // Production incharges default to production analytics
  // Store incharges default to store analytics
+ // A production-request notification always overrides that default: "Stock Requests"
+ // (the production-requests tab) lives under Store Analytics, not Production Analytics.
  const [analyticsMode, setAnalyticsMode] = useState<'store' | 'production'>(
- isProductionIncharge ? 'production' : 'store'
+ highlightRequestId ? 'store' : (isProductionIncharge ? 'production' : 'store')
  );
  
  // Local store selector for Store Analytics mode
@@ -297,10 +299,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  }, [activeView]);
  
  // When switching analytics mode, change the active view
+ // Note: 'production-requests' (Stock Requests) is a Store Analytics tab, not a
+ // Production Analytics one - it must not be reset away from when switching to 'store'.
  useEffect(() => {
- if (analyticsMode === 'production' && activeView !== 'production' && activeView !== 'recalibration-reports' && activeView !== 'production-requests') {
+ if (analyticsMode === 'production' && activeView !== 'production' && activeView !== 'recalibration-reports') {
  setActiveView('production');
- } else if ((activeView === 'production' || activeView === 'recalibration-reports' || activeView === 'production-requests') && analyticsMode === 'store') {
+ } else if ((activeView === 'production' || activeView === 'recalibration-reports') && analyticsMode === 'store') {
  setActiveView('profit');
  } else if (activeView === 'store-recalibration' && analyticsMode === 'production') {
  setActiveView('production');
@@ -1514,11 +1518,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  loadTodayLeaves();
  }, [context.user]);
 
- // Auto-switch to production-requests tab when notification is clicked
+ // Auto-switch to production-requests tab when notification is clicked - this tab only
+ // exists under Store Analytics, so force that mode even for a production incharge whose
+ // default view is Production Analytics.
  useEffect(() => {
  console.log('📊 Analytics - highlightRequestId changed:', highlightRequestId);
  if (highlightRequestId) {
  console.log('📊 Analytics - Switching to production-requests tab');
+ setAnalyticsMode('store');
  setActiveView('production-requests');
  }
  }, [highlightRequestId]);

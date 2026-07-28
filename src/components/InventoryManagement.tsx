@@ -30,6 +30,15 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [showSearchModal, setShowSearchModal] = useState(false);
  const [searchQuery, setSearchQuery] = useState('');
 
+ const isProductionIncharge = context.user?.designation === 'production_incharge';
+ const [activeTab, setActiveTab] = useState<'store' | 'production'>(
+ isProductionIncharge ? 'production' : 'store'
+ );
+ // Items saved before this split lack entityType — treat those as store expenses.
+ const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: 'store' | 'production') =>
+ tab === 'production' ? item.entityType === 'production_house' : item.entityType !== 'production_house';
+ const canAddOnActiveTab = activeTab === 'production' ? isProductionIncharge : (context.isManager && !isProductionIncharge);
+
  const changeDate = (days: number) => {
  const current = new Date(selectedDate);
  current.setDate(current.getDate() + days);
@@ -51,21 +60,21 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  (item) => {
  const dateMatch = item.date === selectedDate;
  const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
+ return dateMatch && storeMatch && belongsToTab(item, activeTab);
  }
  );
  const filteredOverheads = context.overheads.filter(
  (item) => {
  const dateMatch = item.date === selectedDate;
  const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
+ return dateMatch && storeMatch && belongsToTab(item, activeTab);
  }
  );
  const filteredFixedCosts = context.fixedCosts.filter(
  (item) => {
  const dateMatch = item.date === selectedDate;
  const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
+ return dateMatch && storeMatch && belongsToTab(item, activeTab);
  }
  );
 
@@ -90,10 +99,10 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  .filter(item => {
  const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
  const nameMatch = item.itemName.toLowerCase().includes(q);
- return storeMatch && nameMatch;
+ return storeMatch && nameMatch && belongsToTab(item, activeTab);
  })
  .sort((a, b) => b.date.localeCompare(a.date));
- }, [searchQuery, context.inventory, effectiveStoreId]);
+ }, [searchQuery, context.inventory, effectiveStoreId, activeTab]);
 
  // Group search results by item name for summary
  const searchSummary = useMemo(() => {
@@ -115,8 +124,32 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  onDateChange={setSelectedDate}
  />
 
+ {/* Store vs Production House tabs */}
+ <div className="flex gap-2 mt-6">
+ <button
+ onClick={() => setActiveTab('store')}
+ className={`px-5 py-2.5 rounded-lg font-medium transition-colors ${
+ activeTab === 'store'
+ ? 'bg-blue-600 text-white shadow-md'
+ : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+ }`}
+ >
+ Store Expense
+ </button>
+ <button
+ onClick={() => setActiveTab('production')}
+ className={`px-5 py-2.5 rounded-lg font-medium transition-colors ${
+ activeTab === 'production'
+ ? 'bg-green-600 text-white shadow-md'
+ : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+ }`}
+ >
+ Production Expense
+ </button>
+ </div>
+
  {/* Summary Cards */}
- <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 mb-6">
+ <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4 mb-6">
  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/30">
  <p className="text-sm text-blue-100 uppercase tracking-wide">Inventory Cost</p>
  <p className="text-white text-2xl mt-2">₹{totalInventoryCost.toLocaleString()}</p>
@@ -148,27 +181,27 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  </button>
  <button
  onClick={() => setShowInventoryForm(true)}
- disabled={!context.isManager}
+ disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!context.isManager ? 'Only managers can add inventory items' : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} inventory items` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Inventory Item
  </button>
  <button
  onClick={() => setShowOverheadForm(true)}
- disabled={!context.isManager}
+ disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!context.isManager ? 'Only managers can add overhead costs' : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} overhead costs` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Overhead
  </button>
  <button
  onClick={() => setShowFixedCostForm(true)}
- disabled={!context.isManager}
+ disabled={!canAddOnActiveTab}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!context.isManager ? 'Only managers can add fixed costs' : ''}
+ title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge' : 'store-side managers'} can add ${activeTab === 'production' ? 'production' : 'store'} fixed costs` : ''}
  >
  <Plus className="w-4 h-4" />
  Add Fixed Cost
@@ -195,7 +228,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  setShowFixedCostForm(true);
  }}
  onDeleteFixedCost={context.deleteFixedCostItem}
- isManager={context.isManager}
+ isManager={canAddOnActiveTab}
  />
 
  {/* Search Modal */}

@@ -4,15 +4,20 @@ import { DateSelector } from './DateSelector';
 import { MonthlyCommissionEntry } from './MonthlyCommissionEntry';
 import { OnlineCashRecalibration } from './OnlineCashRecalibration';
 import { OnlineSalesTab } from './OnlineSalesTab';
-import { ApplyLoanModal } from './ApplyLoanModal';
-import { RepayLoanModal } from './RepayLoanModal';
-import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2, Calendar, CreditCard, ArrowRightLeft } from 'lucide-react';
+import { LoanManagementSection } from './LoanManagementSection';
+import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2, Calendar, CreditCard, ArrowRightLeft, IndianRupee, PlusCircle, Clock, RefreshCw } from 'lucide-react';
 import * as api from '../utils/api';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
 
 type Props = {
  context: InventoryContextType;
  selectedStoreId?: string | null;
+};
+
+const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
+ store_inventory: 'Store Inventory',
+ production_inventory: 'Production House Inventory',
+ other: 'Other',
 };
 
 export function SalesManagement({ context, selectedStoreId }: Props) {
@@ -46,7 +51,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  previousCashInHand: '',
  usedOnlineMoney: '',
  actualCashInHand: '',
- actualPaytmBalance: ''
+ actualPaytmBalance: '',
+ // POS integration placeholder - manually entered until the POS API is connected
+ posOnlineSales: '',
+ posOfflineSales: ''
  });
 
  // Single combined online sales figure (Swiggy + Zomato). Payout/commission reconciliation
@@ -73,9 +81,15 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Loan Management State
  const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
  const [isLoadingLoans, setIsLoadingLoans] = useState(false);
- const [showApplyLoanModal, setShowApplyLoanModal] = useState(false);
- const [showRepayLoanModal, setShowRepayLoanModal] = useState(false);
- const [selectedLoanForRepayment, setSelectedLoanForRepayment] = useState<api.OnlineLoan | null>(null);
+
+ // Cash Top-up Request State - store incharge asking the cluster head for more physical
+ // cash when the offline till is running low (see plan: "give all managers the liberty").
+ const [topupRequests, setTopupRequests] = useState<api.CashTopupRequest[]>([]);
+ const [showTopupModal, setShowTopupModal] = useState(false);
+ const [topupAmount, setTopupAmount] = useState('');
+ const [topupReason, setTopupReason] = useState<api.CashTopupReason>('store_inventory');
+ const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
+ const [isSyncingPos, setIsSyncingPos] = useState(false);
  
  const isClusterHead = context.user?.role === 'cluster_head';
  const isManager = context.user?.role === 'manager';
@@ -83,13 +97,18 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const isProductionIncharge = context.user?.designation === 'production_incharge';
  const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge; // Operations manager (not store/production incharge)
  const isShopManager = isStoreIncharge || isProductionIncharge; // Store or production incharge
- const canEditSales = isManager && isStoreIncharge; // Only the store incharge can enter/edit sales
- const canReconcileCash = isOperationsManager; // Only the operations manager counts/reconciles actual cash & Paytm
+ const canEditSales = isManager && isStoreIncharge; // Store incharge validates the day's sales (POS-reported once live) against the cash they counted
+ const canReconcileCash = isStoreIncharge; // Store incharge owns cash reconciliation as part of the same validation workflow
  const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
  
  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
  // This allows cluster heads to view data for any selected store
  const effectiveStoreId = selectedStoreId || context.user?.storeId;
+
+ // The production house that supplies this store - its expenses now count against this
+ // store's cash-in-hand too (reversing an earlier decision that kept them P&L-only),
+ // since the store's till/Paytm is what actually funds production house purchases in practice.
+ const effectiveProductionHouseId = context.stores?.find(s => s.id === effectiveStoreId)?.productionHouseId || null;
  
  // Contract worker payout state
  const [contractWorkers, setContractWorkers] = useState<any[]>([]);
@@ -274,6 +293,65 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  };
 
+ const loadTopupRequests = async () => {
+ if (!context.user?.accessToken) return;
+ try {
+ const requests = await api.fetchCashTopupRequests(context.user.accessToken);
+ setTopupRequests(requests);
+ } catch (error) {
+ console.error('Error loading cash top-up requests:', error);
+ }
+ };
+
+ useEffect(() => {
+ loadTopupRequests();
+ }, [context.user?.accessToken]);
+
+ const myPendingTopups = topupRequests.filter(
+ (r) => r.status === 'pending' && (!effectiveStoreId || r.storeId === effectiveStoreId)
+ );
+
+ const handleSyncPosNow = async () => {
+ if (!context.user?.accessToken) return;
+ setIsSyncingPos(true);
+ try {
+ const result = await api.triggerPosSync(context.user.accessToken);
+ if (result?.success) {
+ await context.refreshData();
+ alert('POS sync complete');
+ } else {
+ alert(result?.error || 'POS sync ran but reported an error - check the results');
+ }
+ } catch (error: any) {
+ alert(error?.message || 'Failed to trigger POS sync');
+ } finally {
+ setIsSyncingPos(false);
+ }
+ };
+
+ const handleRequestTopup = async () => {
+ const amount = parseFloat(topupAmount);
+ if (!amount || amount <= 0) {
+ alert('Please enter a valid amount');
+ return;
+ }
+ if (!context.user?.accessToken) return;
+
+ setIsSubmittingTopup(true);
+ try {
+ await api.requestCashTopup(context.user.accessToken, selectedDate, amount, topupReason);
+ alert('Cash top-up request sent to the cluster head');
+ setShowTopupModal(false);
+ setTopupAmount('');
+ setTopupReason('store_inventory');
+ loadTopupRequests();
+ } catch (error: any) {
+ alert(error?.message || 'Failed to send cash top-up request');
+ } finally {
+ setIsSubmittingTopup(false);
+ }
+ };
+
  const handleAddContractWorker = () => {
  setContractPayouts([...contractPayouts, { employeeId: '', amount: '' }]);
  };
@@ -364,7 +442,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const inventoryCost = context.inventory
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.totalCost, 0);
@@ -373,7 +454,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const allOverheadCosts = context.overheads
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.amount, 0);
@@ -382,20 +466,26 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const allFixedCosts = context.fixedCosts
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.amount, 0);
  
  return inventoryCost + allOverheadCosts + allFixedCosts;
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId]);
+ }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Calculate fixed costs paid via cash (to deduct from Expected Cash in Hand)
  const fixedCostsCash = useMemo(() => {
  return context.fixedCosts
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => {
@@ -406,14 +496,17 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  return sum;
  }, 0);
- }, [context.fixedCosts, selectedDate, effectiveStoreId]);
+ }, [context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Calculate fixed costs paid via online/Paytm (to deduct from Online Cash in Hand)
  const fixedCostsOnline = useMemo(() => {
  return context.fixedCosts
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => {
@@ -424,14 +517,17 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  return sum;
  }, 0);
- }, [context.fixedCosts, selectedDate, effectiveStoreId]);
+ }, [context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Calculate overhead costs paid via cash (to deduct from Expected Cash in Hand)
  const overheadCostsCash = useMemo(() => {
  return context.overheads
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => {
@@ -443,14 +539,17 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  return sum;
  }, 0);
- }, [context.overheads, selectedDate, effectiveStoreId]);
+ }, [context.overheads, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Calculate overhead costs paid via online/Paytm (to deduct from Online Cash in Hand)
  const overheadCostsOnline = useMemo(() => {
  return context.overheads
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => {
@@ -461,7 +560,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  return sum;
  }, 0);
- }, [context.overheads, selectedDate, effectiveStoreId]);
+ }, [context.overheads, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Calculate expected closing cash balance
  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number, contractPayouts: number) => {
@@ -486,7 +585,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return actual - expectedCashInHand;
  }, [formData.actualCashInHand, expectedCashInHand]);
 
- const needsApproval = Math.abs(cashDiscrepancy) > 500; // Changed from 200 to 500
+ const needsApproval = Math.abs(cashDiscrepancy) > 200;
 
  // Calculate cumulative Paytm/Online balance from all days up to selected date
  const calculatePaytmBalance = useMemo(() => {
@@ -524,22 +623,35 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
  
  // Add today's Online Payouts (Swiggy + Zomato) - Get actual payout data
- const storeFilteredPayouts = effectiveStoreId 
+ const storeFilteredPayouts = effectiveStoreId
  ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
  : onlinePayoutData;
  const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
- const todaysOnlinePayouts = todaysPayoutData 
+ const todaysOnlinePayouts = todaysPayoutData
  ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
  : 0;
- 
+
+ // Add today's approved loans (a loan only counts once a cluster head approves it -
+ // see status gate) and subtract any loan that became fully repaid today. This branch
+ // wasn't accounting for loans at all before - Branch B (cumulative, below) already did.
+ const storeFilteredLoansForToday = effectiveStoreId
+ ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
+ : onlineLoans;
+ const todaysLoansReceived = storeFilteredLoansForToday
+ .filter(l => l.loanDate === selectedDate && (l.status === 'active' || l.status === 'repaid'))
+ .reduce((sum, l) => sum + l.loanAmount, 0);
+ const todaysLoanRepayments = storeFilteredLoansForToday
+ .filter(l => l.status === 'repaid' && l.repaymentDate === selectedDate)
+ .reduce((sum, l) => sum + l.repaidAmount, 0);
+
  // Subtract today's used online money
  const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
- 
+
  // Subtract today's employee payouts (contract workers)
  const todaysEmployeePayouts = totalContractPayout;
- 
- const finalBalance = startingBalance + todaysPaytm + todaysOnlinePayouts - todaysUsedOnlineMoney - todaysEmployeePayouts;
- 
+
+ const finalBalance = startingBalance + todaysPaytm + todaysOnlinePayouts + todaysLoansReceived - todaysUsedOnlineMoney - todaysLoanRepayments - todaysEmployeePayouts;
+
  console.log('📊 ONLINE CASH BALANCE (from previous day actual):', {
  effectiveStoreId,
  selectedDate,
@@ -547,6 +659,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  startingBalance,
  todaysPaytm,
  todaysOnlinePayouts,
+ todaysLoansReceived,
+ todaysLoanRepayments,
  todaysUsedOnlineMoney,
  todaysEmployeePayouts,
  finalBalance
@@ -681,9 +795,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
  : onlineLoans;
  
- // Loans received (adds to balance) - FROM recalibration date onwards and BEFORE today (not including today)
+ // Loans received (adds to balance) - FROM recalibration date onwards and BEFORE today (not
+ // including today). Only counts loans a cluster head has actually approved ('active' =
+ // approved and outstanding, 'repaid' = approved and since repaid) - a 'pending' or
+ // 'rejected' loan hasn't touched real cash yet.
  const loansReceived = storeFilteredLoans
- .filter(l => l.loanDate >= startDate && l.loanDate < selectedDate)
+ .filter(l => l.loanDate >= startDate && l.loanDate < selectedDate && (l.status === 'active' || l.status === 'repaid'))
  .reduce((sum, l) => sum + l.loanAmount, 0);
  
  // Loan repayments (reduces balance) - FROM recalibration date onwards and BEFORE today (not including today)
@@ -749,7 +866,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return actual - calculatePaytmBalance;
  }, [formData.actualPaytmBalance, calculatePaytmBalance]);
  
- const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 500;
+ const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 200;
 
  // Calculate today's actual online payout (Swiggy + Zomato)
  const todaysActualOnlinePayout = useMemo(() => {
@@ -1166,7 +1283,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  previousCashInHand: (salesForDate.previousCashInHand ?? 0).toString(),
  usedOnlineMoney: totalOnlineExpenses.toString(), // Always use calculated value (includes contract payouts)
  actualCashInHand: (salesForDate.actualCashInHand ?? 0).toString(),
- actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString()
+ actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString(),
+ posOnlineSales: (salesForDate.posOnlineSales ?? 0).toString(),
+ posOfflineSales: (salesForDate.posOfflineSales ?? 0).toString()
  });
  setIsEditing(true);
  setEditingId(salesForDate.id);
@@ -1187,7 +1306,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  previousCashInHand: prevCash.toString(),
  usedOnlineMoney: totalOnlineExpenses.toString(), // Auto-populate from inventory + overhead + fixed costs
  actualCashInHand: '',
- actualPaytmBalance: ''
+ actualPaytmBalance: '',
+ posOnlineSales: '',
+ posOfflineSales: ''
  });
  setIsEditing(false);
  setEditingId(null);
@@ -1342,6 +1463,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  cashOffset: offset,
  actualPaytmBalance: actualPaytm,
  paytmOffset: paytmOffset,
+ posOnlineSales: parseFloat(formData.posOnlineSales) || 0,
+ posOfflineSales: parseFloat(formData.posOfflineSales) || 0,
  // CRITICAL: Preserve the original salesDiscrepancy if it exists (locked at first settlement), otherwise set to current offset
  // This ensures that once a discrepancy is locked (either at initial settlement or after approval), it NEVER changes
  salesDiscrepancy: salesForDate?.salesDiscrepancy !== undefined 
@@ -1622,9 +1745,35 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const offlinePaymentTotal = paytm + cash;
  const paymentMismatch = Math.abs(offlineSalesTotal - offlinePaymentTotal) > 0.01;
 
+ // POS validation placeholder: total POS-reported sales (online + offline) must match the
+ // total cash the store incharge actually counted. Online/offline split can differ - only
+ // the combined total is enforced, per the target POS reconciliation workflow.
+ const posOnlineTotal = parseFloat(formData.posOnlineSales) || 0;
+ const posOfflineTotal = parseFloat(formData.posOfflineSales) || 0;
+ const posTotal = posOnlineTotal + posOfflineTotal;
+ const actualCountedTotal = (parseFloat(formData.actualCashInHand) || 0) + (parseFloat(formData.actualPaytmBalance) || 0);
+ const hasPosData = posOnlineTotal > 0 || posOfflineTotal > 0;
+ const posTotalMismatch = hasPosData && Math.abs(posTotal - actualCountedTotal) > 0.01;
+
  return (
  <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/30 to-rose-50/30">
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+ {/* Sync Now - store incharge lives on this page, not SalesView.tsx, so the sync
+ button needs to be here too (not just on the read-only view others land on). */}
+ {canEditSales && (
+ <div className="flex justify-end mb-3">
+ <button
+ onClick={handleSyncPosNow}
+ disabled={isSyncingPos}
+ className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50"
+ title="Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
+ >
+ <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
+ {isSyncingPos ? 'Syncing...' : 'Sync POS Now'}
+ </button>
+ </div>
+ )}
+
  {/* Date Selector */}
  <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
  
@@ -1804,6 +1953,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <h2 className="text-base font-semibold text-gray-800">Sales Entry</h2>
  </div>
 
+ {/* Total Sales - shown first, per the requested order (Total → Offline → Online) */}
+ <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 shadow-sm">
+ <p className="text-xs text-green-100 uppercase tracking-wide">Total Sales (Offline + Online)</p>
+ <p className="text-white text-2xl font-semibold mt-1">₹{(offlineSalesTotal + onlineSalesTotal).toFixed(2)}</p>
+ </div>
+
  <form onSubmit={handleSubmit} className="space-y-4">
  {/* Offline Sales Section */}
  <div className="bg-gradient-to-br from-blue-50/80 to-blue-100/50 rounded-2xl p-5 border border-blue-200/50 shadow-sm hover:shadow-md transition-all">
@@ -1815,7 +1970,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  
  <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">Total Offline Sales (₹)</label>
+ <label className="block text-xs font-medium text-gray-600 mb-2">
+ Total Offline Sales (₹)
+ {!canEditSales && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
+ </label>
  <input
  type="number"
  step="0.01"
@@ -1829,7 +1987,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  </div>
 
- {/* Payment Mode Distribution */}
+ {/* Payment Mode Distribution - the Offline Sales total's Cash/Paytm split, shown right
+ after the total per the requested order (Total → Offline total+split → Online split). */}
  <div className="bg-gradient-to-br from-amber-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
  <div className="flex items-center gap-2 mb-4">
  <div className="p-2 bg-orange-500/10 rounded-lg">
@@ -1837,7 +1996,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  <h3 className="text-sm font-semibold text-gray-700">Payment Mode Distribution</h3>
  </div>
- 
+
  <div className="grid grid-cols-2 gap-3 mb-3">
  <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
  <label className="block text-xs font-medium text-gray-600 mb-2">Paytm (₹)</label>
@@ -1852,7 +2011,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  placeholder="Enter Paytm amount"
  />
  </div>
- 
+
  <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
  <label className="block text-xs font-medium text-gray-600 mb-2">Cash (₹)</label>
  <input
@@ -1881,6 +2040,91 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <span className="text-xs">✓ Payment modes match total sales</span>
  </div>
  )}
+ </div>
+
+ {/* POS Sales Data - auto-synced nightly from Ciferon at 10:30 PM (see pos-sync route);
+ total (online + offline) must match the cash actually counted below; the
+ online/offline split itself is informational only. Still editable in case the
+ nightly sync failed or the store incharge needs to correct a figure. */}
+ <div className="bg-gradient-to-br from-purple-50/80 to-purple-100/50 rounded-2xl p-5 border border-purple-200/50 shadow-sm hover:shadow-md transition-all">
+ <div className="flex items-center gap-2 mb-1">
+ <div className="p-2 bg-purple-500/10 rounded-lg">
+ <Smartphone className="w-5 h-5 text-purple-600" />
+ </div>
+ <h3 className="text-sm font-semibold text-gray-700">POS Sales Data</h3>
+ {salesForDate?.createdBy === 'pos-sync' && (
+ <span className="ml-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-medium rounded-full border border-purple-300/50">
+ ✓ Auto-synced from POS
+ </span>
+ )}
+ </div>
+ <p className="text-xs text-gray-500 mb-3 ml-11">
+ {salesForDate?.createdBy === 'pos-sync'
+ ? "Auto-fetched from Ciferon last night. Review and correct if needed."
+ : "Auto-fetched nightly from Ciferon. Enter manually if not yet synced for today."}
+ </p>
+
+ <div className="grid grid-cols-2 gap-3">
+ <div className="bg-white/70 p-3 rounded-xl border border-purple-200/50">
+ <label className="block text-xs font-medium text-gray-600 mb-2">POS Online Sales (₹)</label>
+ <input
+ type="number"
+ step="0.01"
+ value={formData.posOnlineSales}
+ onChange={(e) => setFormData({ ...formData, posOnlineSales: e.target.value })}
+ className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
+ disabled={!canEditSales}
+ placeholder="0.00"
+ />
+ </div>
+ <div className="bg-white/70 p-3 rounded-xl border border-purple-200/50">
+ <label className="block text-xs font-medium text-gray-600 mb-2">POS Offline Sales (₹)</label>
+ <input
+ type="number"
+ step="0.01"
+ value={formData.posOfflineSales}
+ onChange={(e) => setFormData({ ...formData, posOfflineSales: e.target.value })}
+ className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
+ disabled={!canEditSales}
+ placeholder="0.00"
+ />
+ </div>
+ </div>
+
+ {hasPosData && (
+ posTotalMismatch ? (
+ <div className="mt-3 bg-red-100/80 border border-red-300/50 text-red-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
+ <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+ POS total (₹{posTotal.toFixed(2)}) doesn't match cash counted (₹{actualCountedTotal.toFixed(2)}). Online/offline split can differ, but the total must match - raise a discrepancy below if it doesn't resolve.
+ </div>
+ ) : (
+ <div className="mt-3 bg-green-100/80 border border-green-300/50 text-green-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
+ <CheckCircle className="w-3.5 h-3.5" />
+ ✓ POS total matches cash counted
+ </div>
+ )
+ )}
+ </div>
+
+ {/* Online Sales - read-only reference to the Zomato/Swiggy split already logged in the
+ Online Sales tab, so the full total → offline → online picture is visible here too. */}
+ <div className="bg-gradient-to-br from-sky-50/80 to-sky-100/50 rounded-2xl p-5 border border-sky-200/50 shadow-sm hover:shadow-md transition-all">
+ <div className="flex items-center gap-2 mb-4">
+ <div className="p-2 bg-sky-500/10 rounded-lg">
+ <Smartphone className="w-5 h-5 text-sky-600" />
+ </div>
+ <h3 className="text-sm font-semibold text-gray-700">Online Sales</h3>
+ </div>
+ <div className="grid grid-cols-2 gap-3">
+ <div className="bg-white/70 p-3 rounded-xl border border-sky-200/50">
+ <label className="block text-xs font-medium text-gray-600 mb-2">Zomato (₹)</label>
+ <p className="text-base font-semibold text-gray-800">₹{(onlineSalesEntryForDate?.zomatoSales || 0).toFixed(2)}</p>
+ </div>
+ <div className="bg-white/70 p-3 rounded-xl border border-sky-200/50">
+ <label className="block text-xs font-medium text-gray-600 mb-2">Swiggy (₹)</label>
+ <p className="text-base font-semibold text-gray-800">₹{(onlineSalesEntryForDate?.swiggySales || 0).toFixed(2)}</p>
+ </div>
+ </div>
  </div>
 
  {/* Contract Worker Payout Section */}
@@ -2015,7 +2259,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div>
  <label className="block text-xs font-medium text-gray-600 mb-2">
  Amount Used from Paytm (₹)
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
+ {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
  {totalOnlineExpenses > 0 && (
  <span className="ml-2 text-xs bg-blue-100/70 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200/50">
  Auto: ₹{inventoryOnlineTotal.toFixed(2)}(Inv) + ₹{overheadOnlineTotal.toFixed(2)}(OH) + ₹{fixedCostOnlineTotal.toFixed(2)}(FC) + ₹{totalContractPayout.toFixed(2)}(CP)
@@ -2170,7 +2414,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Only count CASH inventory items, not ALL inventory
  const cashInventory = context.inventory.filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  }).reduce((sum, item) => {
  if (item.paymentMethod === 'cash' || !item.paymentMethod) {
@@ -2184,7 +2431,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  })()} (cash: ₹{(() => {
  const cashInventory = context.inventory.filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  }).reduce((sum, item) => {
  if (item.paymentMethod === 'cash' || !item.paymentMethod) {
@@ -2202,7 +2452,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Only count CASH overheads, not ALL overheads
  const cashOverheads = context.overheads.filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  }).reduce((sum, item) => {
  if (item.paymentMethod === 'cash' || !item.paymentMethod) {
@@ -2216,7 +2469,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  })()} (cash: ₹{(() => {
  const cashOverheads = context.overheads.filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  }).reduce((sum, item) => {
  if (item.paymentMethod === 'cash' || !item.paymentMethod) {
@@ -2234,7 +2490,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Only count CASH fixed costs, not ALL fixed costs
  const cashFixed = context.fixedCosts.filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Production house spend now also counts against this store's cash, since the store's
+ // till/Paytm is what actually funds it in practice (see effectiveProductionHouseId above).
+ const isThisStoresProductionHouseSpend = !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  }).reduce((sum, item) => {
  if (item.paymentMethod === 'cash' || !item.paymentMethod) {
@@ -2257,7 +2516,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div>
  <label className="block text-xs font-medium text-gray-600 mb-2">
  Actual Cash in Hand (₹) <span className="text-red-500">*</span>
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
+ {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
  </label>
  <input
  type="number"
@@ -2285,8 +2544,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  {cashDiscrepancy > 0 ? 'Cash Excess' : 'Cash Shortage'}: ₹{Math.abs(cashDiscrepancy).toFixed(2)}
  </p>
  <p className="text-xs text-gray-600 mt-1">
- {Math.abs(cashDiscrepancy) > 500 
- ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
+ {Math.abs(cashDiscrepancy) > 200
+ ? '⚠️ High discrepancy - you can save but cluster head approval will be required'
  : 'Discrepancy will be noted in records'}
  </p>
  </div>
@@ -2348,7 +2607,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div>
  <label className="block text-xs font-medium text-gray-600 mb-2">
  Actual Paytm Balance (₹) <span className="text-red-500">*</span>
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
+ {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
  </label>
  <input
  type="number"
@@ -2376,8 +2635,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  {paytmDiscrepancy > 0 ? 'Paytm Excess' : 'Paytm Shortage'}: ₹{Math.abs(paytmDiscrepancy).toFixed(2)}
  </p>
  <p className="text-xs text-gray-600 mt-1">
- {Math.abs(paytmDiscrepancy) > 500 
- ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
+ {Math.abs(paytmDiscrepancy) > 200
+ ? '⚠️ High discrepancy - you can save but cluster head approval will be required'
  : 'Discrepancy will be noted in records'}
  </p>
  </div>
@@ -2476,7 +2735,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </button>
  
  {/* Request Approval Button - Only show when editing with high discrepancy */}
- {isEditing && editingId && (needsApproval || needsPaytmApproval) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+ {isEditing && editingId && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
  <button
  type="button"
  onClick={handleRequestApproval}
@@ -2740,137 +2999,104 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  </div>
 
- {/* Loan Management Section */}
+ {/* Cash Top-up Request - store incharge can ask the cluster head for more physical
+ cash when the offline till is running low. Shown before Loan Management per request. */}
  <div className="mt-6">
  <div className="bg-white rounded-2xl border border-gray-100 p-5">
  <div className="flex items-center justify-between gap-3 mb-5">
  <div className="flex items-center gap-3 min-w-0">
- <div className="w-9 h-9 rounded-lg bg-orange-50 flex items-center justify-center text-orange-600 flex-shrink-0">
- <DollarSign className="w-4 h-4" />
+ <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 flex-shrink-0">
+ <IndianRupee className="w-4 h-4" />
  </div>
  <div className="min-w-0">
- <h2 className="text-sm font-semibold text-gray-900">Loan management</h2>
- <p className="text-xs text-gray-500">Track loans taken and repayments made</p>
+ <h2 className="text-sm font-semibold text-gray-900">Cash top-up</h2>
+ <p className="text-xs text-gray-500">Ask the cluster head for more physical cash</p>
  </div>
  </div>
  <button
- onClick={() => setShowApplyLoanModal(true)}
- className="flex-shrink-0 px-3.5 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
+ onClick={() => setShowTopupModal(true)}
+ className="flex-shrink-0 px-3.5 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
  >
- <Plus className="w-3.5 h-3.5" />
- Apply loan
+ <PlusCircle className="w-3.5 h-3.5" />
+ Request Top-up
  </button>
  </div>
-
- {/* Active Loans Summary */}
- {(() => {
- const activeLoans = onlineLoans.filter(l => l.status === 'active');
- const totalActiveLoans = activeLoans.reduce((sum, l) => sum + l.loanAmount, 0);
- const totalRepaid = activeLoans.reduce((sum, l) => sum + l.repaidAmount, 0);
- const totalRemaining = activeLoans.reduce((sum, l) => sum + (l.loanAmount - l.repaidAmount), 0);
-
- return activeLoans.length > 0 && (
- <div className="grid grid-cols-3 gap-2 mb-5">
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Active loans</p>
- <p className="text-base font-semibold text-gray-900 mt-0.5">₹{totalActiveLoans.toLocaleString()}</p>
- </div>
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Repaid</p>
- <p className="text-base font-semibold text-green-700 mt-0.5">₹{totalRepaid.toLocaleString()}</p>
- </div>
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Remaining</p>
- <p className="text-base font-semibold text-red-600 mt-0.5">₹{totalRemaining.toLocaleString()}</p>
- </div>
- </div>
- );
- })()}
-
- {/* Loans List */}
- {isLoadingLoans ? (
- <div className="flex items-center justify-center py-8 text-gray-400">
- <Loader2 className="w-5 h-5 animate-spin" />
- <span className="ml-2 text-sm">Loading loans...</span>
- </div>
- ) : onlineLoans.length === 0 ? (
- <div className="text-center py-8">
- <DollarSign className="w-8 h-8 text-gray-300 mx-auto mb-2" />
- <p className="text-sm text-gray-500">No loans recorded yet</p>
- <p className="text-xs text-gray-400 mt-0.5">Tap "Apply loan" to add one</p>
- </div>
+ {myPendingTopups.length === 0 ? (
+ <p className="text-sm text-gray-500">No pending top-up requests.</p>
  ) : (
  <div className="space-y-2">
- {onlineLoans.map(loan => {
- const remaining = loan.loanAmount - loan.repaidAmount;
- const progress = (loan.repaidAmount / loan.loanAmount) * 100;
-
- return (
- <div
- key={loan.id}
- className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5"
- >
- <div className="flex items-start justify-between gap-3 mb-2.5">
- <div className="min-w-0">
- <div className="flex items-center gap-2 mb-1">
- <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
- loan.status === 'active'
- ? 'bg-blue-100 text-blue-700'
- : 'bg-green-100 text-green-700'
- }`}>
- {loan.status === 'active' ? 'Active' : 'Repaid'}
- </span>
- <span className="text-xs text-gray-500">
- {new Date(loan.loanDate).toLocaleDateString('en-IN')}
+ {myPendingTopups.map((r) => (
+ <div key={r.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center justify-between">
+ <div>
+ <p className="text-sm text-gray-900">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
+ <p className="text-xs text-gray-500">{TOPUP_REASON_LABELS[r.reason]}</p>
+ </div>
+ <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">
+ <Clock className="w-3.5 h-3.5" /> Pending
  </span>
  </div>
- <p className="text-xs text-gray-500 truncate">{loan.notes || 'No notes'}</p>
+ ))}
  </div>
- <p className="text-base font-semibold text-gray-900 flex-shrink-0">₹{loan.loanAmount.toLocaleString()}</p>
+ )}
+ </div>
  </div>
 
- {/* Progress Bar */}
- <div className="mb-2.5">
- <div className="flex justify-between text-[11px] text-gray-500 mb-1">
- <span>Repaid ₹{loan.repaidAmount.toLocaleString()}</span>
- <span>Remaining ₹{remaining.toLocaleString()}</span>
- </div>
- <div className="w-full bg-gray-200 rounded-full h-1.5">
- <div
- className={`h-1.5 rounded-full transition-all ${
- loan.status === 'repaid' ? 'bg-green-500' : 'bg-blue-500'
- }`}
- style={{ width: `${progress}%` }}
+ {/* Cash Top-up Request Modal */}
+ {showTopupModal && (
+ <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+ <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-gray-200">
+ <h3 className="text-gray-900 mb-4 font-semibold">Request Cash Top-up</h3>
+ <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹)</label>
+ <input
+ type="number"
+ step="0.01"
+ value={topupAmount}
+ onChange={(e) => setTopupAmount(e.target.value)}
+ className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3"
+ placeholder="Enter amount needed"
+ autoFocus
  />
- </div>
- </div>
-
- {/* Repay Button */}
- {loan.status === 'active' && (
- <button
- onClick={() => {
- setSelectedLoanForRepayment(loan);
- setShowRepayLoanModal(true);
- }}
- className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium"
+ <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+ <select
+ value={topupReason}
+ onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
+ className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4"
  >
- <CreditCard className="w-3.5 h-3.5" />
- Repay loan
+ <option value="store_inventory">Store Inventory</option>
+ <option value="production_inventory">Production House Inventory</option>
+ <option value="other">Other</option>
+ </select>
+ <div className="flex gap-2">
+ <button
+ onClick={() => setShowTopupModal(false)}
+ className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+ >
+ Cancel
  </button>
+ <button
+ onClick={handleRequestTopup}
+ disabled={isSubmittingTopup}
+ className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition-colors disabled:opacity-50"
+ >
+ {isSubmittingTopup ? 'Sending...' : 'Send Request'}
+ </button>
+ </div>
+ </div>
+ </div>
  )}
 
- {loan.status === 'repaid' && loan.repaymentDate && (
- <div className="flex items-center justify-center gap-1 text-xs text-green-700">
- <CheckCircle className="w-3.5 h-3.5" />
- Fully repaid on {new Date(loan.repaymentDate).toLocaleDateString('en-IN')}
- </div>
- )}
- </div>
- );
- })}
- </div>
- )}
- </div>
+ {/* Loan Management Section */}
+ <div className="mt-6">
+ <LoanManagementSection
+ context={context}
+ effectiveStoreId={effectiveStoreId}
+ selectedDate={selectedDate}
+ loans={onlineLoans}
+ isLoading={isLoadingLoans}
+ onReload={loadOnlineLoans}
+ canApply={isOperationsManager || isClusterHead}
+ canApprove={isClusterHead}
+ />
  </div>
 
  {/* Paytm Daily Breakdown Modal */}
@@ -3093,34 +3319,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  )}
 
- {/* Apply Loan Modal */}
- {showApplyLoanModal && (
- <ApplyLoanModal
- context={context}
- selectedStoreId={effectiveStoreId}
- selectedDate={selectedDate}
- onClose={() => setShowApplyLoanModal(false)}
- onSaveSuccess={async () => {
- await loadOnlineLoans();
- }}
- />
- )}
-
- {/* Repay Loan Modal */}
- {showRepayLoanModal && selectedLoanForRepayment && (
- <RepayLoanModal
- context={context}
- loan={selectedLoanForRepayment}
- selectedDate={selectedDate}
- onClose={() => {
- setShowRepayLoanModal(false);
- setSelectedLoanForRepayment(null);
- }}
- onSaveSuccess={async () => {
- await loadOnlineLoans();
- }}
- />
- )}
 
  {/* Cash Conversion Modal */}
  {showCashConversion && (

@@ -1379,7 +1379,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     
                     {/* Upload Info */}
                     <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between text-sm text-gray-500">
-                      <span>Uploaded by {record.uploadedBy}</span>
+                      {record.uploadedBy === 'pos-sync' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full border border-purple-300/50">
+                          ✓ Auto-synced from Ciferon POS
+                        </span>
+                      ) : (
+                        <span>Uploaded by {record.uploadedBy}</span>
+                      )}
                       <span>{new Date(record.uploadedAt).toLocaleString()}</span>
                     </div>
                   </div>
