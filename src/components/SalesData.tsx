@@ -22,6 +22,22 @@ interface CategoryData {
   'Veg Kurkure Momos': number;
 }
 
+// Shared between RULE 1 (Mania Combo) and RULE 4 (standard items) below, so both classify
+// an item's momo filling the exact same way.
+function classifyMomoCategory(nameLower: string): keyof CategoryData | null {
+  if (nameLower.includes('kurkure')) {
+    if (nameLower.includes('chicken')) return 'Chicken Kurkure Momos';
+    if (nameLower.includes('veg')) return 'Veg Kurkure Momos';
+    return null;
+  }
+  if (nameLower.includes('paneer')) return 'Paneer Momos';
+  if (nameLower.includes('corn') && nameLower.includes('cheese')) return 'Corn Cheese Momos';
+  if (nameLower.includes('chicken') && nameLower.includes('cheese')) return 'Chicken Cheese Momos';
+  if (nameLower.includes('chicken')) return 'Chicken Momos';
+  if (nameLower.includes('veg')) return 'Veg Momos';
+  return null;
+}
+
 interface SalesRecord {
   id: string;
   date: string;
@@ -175,12 +191,17 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       const nameLower = itemName.toLowerCase();
       
       // -------------------------------------------------
-      // RULE 1: Mania Combos (Exclude)
+      // RULE 1: Mania Combos - 8 momos direct + 2 moburgers (2 momos each, so 4 more) of
+      // that same momo type, plus a coke - 12 momos total per combo unit sold.
       // -------------------------------------------------
       if (nameLower.includes('mania') && nameLower.includes('combo')) {
+        const category = classifyMomoCategory(nameLower);
+        if (category) {
+          result[category] += 12 * qty;
+        }
         return;
       }
-      
+
       // -------------------------------------------------
       // RULE 2: Platters (Split Logic)
       // -------------------------------------------------
@@ -242,34 +263,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       }
       
       // Identify Category
-      let category: keyof CategoryData | 'Other' = 'Other';
-      
-      // Priority: Kurkure
-      if (nameLower.includes('kurkure')) {
-        if (nameLower.includes('chicken')) {
-          category = 'Chicken Kurkure Momos';
-        } else if (nameLower.includes('veg')) {
-          category = 'Veg Kurkure Momos';
-        }
-      }
-      // Specific Fillings
-      else if (nameLower.includes('paneer')) {
-        category = 'Paneer Momos';
-      } else if (nameLower.includes('corn') && nameLower.includes('cheese')) {
-        category = 'Corn Cheese Momos';
-      } else if (nameLower.includes('chicken') && nameLower.includes('cheese')) {
-        category = 'Chicken Cheese Momos';
-      }
-      // General Fillings
-      else if (nameLower.includes('chicken')) {
-        category = 'Chicken Momos';
-      } else if (nameLower.includes('veg')) {
-        category = 'Veg Momos';
-      }
-      
+      const category = classifyMomoCategory(nameLower);
+
       // Add to total if it matches a tracked category
-      if (category in result) {
-        result[category as keyof CategoryData] += totalPieces;
+      if (category) {
+        result[category] += totalPieces;
       }
     });
     

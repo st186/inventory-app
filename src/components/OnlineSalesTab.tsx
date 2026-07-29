@@ -245,6 +245,20 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settlements, filterPreset, appliedCustomStart, appliedCustomEnd]);
 
+  const byAggregator = useMemo(() => {
+    const build = (aggregator: 'zomato' | 'swiggy') => {
+      const rows = filteredSettlements.filter(s => s.aggregator === aggregator);
+      const orders = rows.reduce((sum, s) => sum + s.orderCount, 0);
+      const grossSales = rows.reduce((sum, s) => sum + s.grossSales, 0);
+      const netPayout = rows.reduce((sum, s) => sum + s.netPayout, 0);
+      const netCommission = rows.reduce((sum, s) => sum + s.netCommission, 0);
+      const commissionPct = grossSales > 0 ? (netCommission / grossSales) * 100 : 0;
+      return { orders, grossSales, netPayout, netCommission, commissionPct };
+    };
+    return { zomato: build('zomato'), swiggy: build('swiggy') };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settlements, filterPreset, appliedCustomStart, appliedCustomEnd]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -343,6 +357,40 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           <p className="text-2xl font-bold text-orange-600">₹{filteredStats.totalCommission.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">Gross Sales - Net Payout</p>
         </div>
+      </div>
+
+      {/* Per-aggregator breakdown - same date filter as the summary cards above */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {(['zomato', 'swiggy'] as const).map(agg => {
+          const stats = byAggregator[agg];
+          return (
+            <div key={agg} className={`bg-white rounded-lg p-5 border-2 shadow-sm ${agg === 'zomato' ? 'border-red-200' : 'border-orange-200'}`}>
+              <h3 className="text-base font-semibold text-gray-800 capitalize mb-3">{agg} ({FILTER_LABELS[filterPreset]})</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-gray-500">Orders</p>
+                  <p className="text-lg font-semibold text-gray-900">{stats.orders}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Gross Sales</p>
+                  <p className="text-lg font-semibold text-gray-900">₹{stats.grossSales.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Net Payout</p>
+                  <p className="text-lg font-semibold text-blue-600">₹{stats.netPayout.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Net Commission</p>
+                  <p className={`text-lg font-semibold ${stats.netCommission >= 0 ? 'text-orange-600' : 'text-red-600'}`}>₹{stats.netCommission.toFixed(2)}</p>
+                </div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+                <span className="text-xs text-gray-500">Net Commission %</span>
+                <span className={`text-sm font-semibold ${stats.commissionPct >= 0 ? 'text-orange-600' : 'text-red-600'}`}>{stats.commissionPct.toFixed(1)}%</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Settlement History - collapsible, uses the date filter above */}

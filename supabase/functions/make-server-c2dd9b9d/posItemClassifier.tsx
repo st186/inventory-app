@@ -38,12 +38,27 @@ function extractPiecesPerUnit(productName: string): number {
   const nameLower = productName.toLowerCase();
   const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
 
+  // Mania Combo = 8 momos direct + 2 moburgers (each of which itself consumes 2 momos, so
+  // 4 more) + a coke - 12 momos of the combo's momo type per unit sold. Checked before the
+  // generic "burger" branch below, since a combo's product name may also mention burger.
+  // Matched narrowly on "mania" + "combo" together (not just "combo") to avoid catching an
+  // unrelated future item that happens to have "combo" in its name.
+  if (nameLower.includes('mania') && nameLower.includes('combo')) {
+    const momosDirect = 8;
+    const moburgersPerCombo = 2;
+    const momosPerMoburger = 2;
+    const combosPerUnit = pcsMatch ? parseInt(pcsMatch[1]) : 1;
+    return combosPerUnit * (momosDirect + moburgersPerCombo * momosPerMoburger);
+  }
+
+  // Moburger = 2 momos of that type + a coke.
   if (nameLower.includes('burger')) {
     const momosPerBurger = 2;
     const burgersPerPlate = pcsMatch ? parseInt(pcsMatch[1]) : 1;
     return burgersPerPlate * momosPerBurger;
   }
 
+  // Platter (and any other plain "N pcs/pieces" item) = N momos of that type.
   if (pcsMatch) {
     let count = parseInt(pcsMatch[1]);
     const packMatch = productName.match(/pack of\s*(\d+)/i);
