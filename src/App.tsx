@@ -141,6 +141,14 @@ export type SalesData = {
  // at which point these two fields become auto-fetched instead of typed in.
  posOnlineSales?: number;
  posOfflineSales?: number;
+ // Discount/cancellation stats from the POS sync, split offline (Cash/Paytm counter
+ // orders) vs online (Zomato/Swiggy) - only present on POS-synced records.
+ offlineDiscount?: number;
+ onlineDiscount?: number;
+ offlineCancelledAmount?: number;
+ offlineCancelledCount?: number;
+ onlineCancelledAmount?: number;
+ onlineCancelledCount?: number;
 };
 
 export type MonthlyCommission = {

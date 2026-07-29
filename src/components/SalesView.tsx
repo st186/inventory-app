@@ -296,34 +296,140 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
           {entry && (
             <>
-              {/* Offline Sales: total, then Cash/Paytm split */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4">
+              {/* Offline Sales: gross → discount/cancellations → net, then Cash/Paytm split */}
+              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
                       <Wallet className="w-4 h-4" />
                     </div>
-                    <h2 className="text-foreground">Offline Sales</h2>
+                    <div>
+                      <h2 className="text-foreground font-medium">Offline Sales</h2>
+                      <p className="text-xs text-muted-foreground">Counter orders - Cash & Paytm</p>
+                    </div>
                   </div>
-                  <span className="text-sm text-primary">₹{(entry?.offlineSales || 0).toLocaleString()}</span>
+                  <span className="text-lg font-semibold text-primary">₹{(entry?.offlineSales || 0).toLocaleString()}</span>
                 </div>
-                <div className="space-y-2">
-                  <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                    <span className="inline-flex items-center gap-2 text-sm text-foreground">
-                      <Banknote className="w-4 h-4 text-green-600" /> Cash received
-                    </span>
-                    <span className="text-sm text-primary">₹{entry.cashAmount.toLocaleString()}</span>
+
+                {(entry.offlineDiscount !== undefined || entry.offlineCancelledAmount !== undefined) && (
+                  <div className="rounded-xl border border-border overflow-hidden mb-3">
+                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-background">
+                      <span className="text-muted-foreground">Gross sales</span>
+                      <span className="text-foreground">₹{((entry.offlineSales || 0) + (entry.offlineDiscount || 0)).toLocaleString()}</span>
+                    </div>
+                    {(entry.offlineDiscount ?? 0) > 0 && (
+                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
+                        <span className="text-muted-foreground">Discounts</span>
+                        <span className="text-red-600">− ₹{entry.offlineDiscount!.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {(entry.offlineCancelledCount ?? 0) > 0 && (
+                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
+                        <span className="text-muted-foreground">Cancelled orders ({entry.offlineCancelledCount})</span>
+                        <span className="text-red-600">₹{(entry.offlineCancelledAmount || 0).toLocaleString()} excluded</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-secondary/40 border-t border-border/60 font-medium">
+                      <span className="text-foreground">Net offline sales</span>
+                      <span className="text-primary">₹{(entry?.offlineSales || 0).toLocaleString()}</span>
+                    </div>
                   </div>
-                  <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                    <span className="inline-flex items-center gap-2 text-sm text-foreground">
-                      <Smartphone className="w-4 h-4 text-primary" /> Paytm received
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-border bg-background p-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Banknote className="w-3.5 h-3.5 text-green-600" /> Cash
                     </span>
-                    <span className="text-sm text-primary">₹{entry.paytmAmount.toLocaleString()}</span>
+                    <p className="text-sm text-foreground mt-1">₹{entry.cashAmount.toLocaleString()}</p>
                   </div>
+                  <div className="rounded-xl border border-border bg-background p-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Smartphone className="w-3.5 h-3.5 text-primary" /> Paytm
+                    </span>
+                    <p className="text-sm text-foreground mt-1">₹{entry.paytmAmount.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Online Sales: gross → discount/cancellations → net, then Zomato/Swiggy split */}
+              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h2 className="text-foreground font-medium">Online Sales</h2>
+                      <p className="text-xs text-muted-foreground">Zomato & Swiggy</p>
+                    </div>
+                  </div>
+                  <span className="text-lg font-semibold text-primary">₹{onlineSalesTotal.toLocaleString()}</span>
+                </div>
+
+                {(entry.onlineDiscount !== undefined || entry.onlineCancelledAmount !== undefined) && (
+                  <div className="rounded-xl border border-border overflow-hidden mb-3">
+                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-background">
+                      <span className="text-muted-foreground">Gross sales</span>
+                      <span className="text-foreground">₹{(onlineSalesTotal + (entry.onlineDiscount || 0)).toLocaleString()}</span>
+                    </div>
+                    {(entry.onlineDiscount ?? 0) > 0 && (
+                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
+                        <span className="text-muted-foreground">Discounts</span>
+                        <span className="text-red-600">− ₹{entry.onlineDiscount!.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {(entry.onlineCancelledCount ?? 0) > 0 && (
+                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
+                        <span className="text-muted-foreground">Cancelled orders ({entry.onlineCancelledCount})</span>
+                        <span className="text-red-600">₹{(entry.onlineCancelledAmount || 0).toLocaleString()} excluded</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-secondary/40 border-t border-border/60 font-medium">
+                      <span className="text-foreground">Net online sales</span>
+                      <span className="text-primary">₹{onlineSalesTotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  {(() => {
+                    const filtered = effectiveStoreId ? onlineSalesData.filter((s) => s.storeId === effectiveStoreId) : onlineSalesData;
+                    const forDate = filtered.find((s) => s.date === selectedDate);
+                    return (
+                      <>
+                        <div className="rounded-xl border border-border bg-background p-3">
+                          <span className="text-xs text-muted-foreground">Zomato</span>
+                          <p className="text-sm text-foreground mt-1">₹{(forDate?.zomatoSales || 0).toLocaleString()}</p>
+                        </div>
+                        <div className="rounded-xl border border-border bg-background p-3">
+                          <span className="text-xs text-muted-foreground">Swiggy</span>
+                          <p className="text-sm text-foreground mt-1">₹{(forDate?.swiggySales || 0).toLocaleString()}</p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Cash Reconciliation: expected-vs-actual formula breakdown, kept separate from
+                  the raw sales figures above so each card stays focused on one concern. */}
+              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+                    <IndianRupee className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-foreground font-medium">Cash Reconciliation</h2>
+                    <p className="text-xs text-muted-foreground">Expected vs. actual, cash and Paytm</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
                   <div className="rounded-xl border border-border bg-background p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-foreground">Actual cash in hand</span>
-                      <span className="text-sm text-primary">₹{entry.actualCashInHand.toLocaleString()}</span>
+                      <span className="text-sm font-medium text-primary">₹{entry.actualCashInHand.toLocaleString()}</span>
                     </div>
                     {(() => {
                       const prevCash = entry.previousCashInHand ?? 0;
@@ -341,7 +447,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
                   </div>
                   <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
                     <span className="text-sm text-foreground">Cash discrepancy</span>
-                    <span className={`text-sm ${Math.abs(discrepancy) > 0 ? 'text-red-600' : 'text-primary'}`}>
+                    <span className={`text-sm font-medium ${Math.abs(discrepancy) > 0 ? 'text-red-600' : 'text-primary'}`}>
                       ₹{Math.abs(discrepancy).toLocaleString()}
                     </span>
                   </div>
@@ -349,7 +455,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
                     <div className="rounded-xl border border-border bg-background p-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-foreground">Actual online cash in hand (Paytm)</span>
-                        <span className="text-sm text-primary">₹{entry.actualPaytmBalance.toLocaleString()}</span>
+                        <span className="text-sm font-medium text-primary">₹{entry.actualPaytmBalance.toLocaleString()}</span>
                       </div>
                       {(() => {
                         const previousDate = new Date(selectedDate);
@@ -368,37 +474,6 @@ export function SalesView({ context, selectedStoreId }: Props) {
                       })()}
                     </div>
                   )}
-                </div>
-              </div>
-
-              {/* Online Sales: Zomato/Swiggy split */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                      <Smartphone className="w-4 h-4" />
-                    </div>
-                    <h2 className="text-foreground">Online Sales</h2>
-                  </div>
-                  <span className="text-sm text-primary">₹{onlineSalesTotal.toLocaleString()}</span>
-                </div>
-                <div className="space-y-2">
-                  {(() => {
-                    const filtered = effectiveStoreId ? onlineSalesData.filter((s) => s.storeId === effectiveStoreId) : onlineSalesData;
-                    const forDate = filtered.find((s) => s.date === selectedDate);
-                    return (
-                      <>
-                        <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                          <span className="text-sm text-foreground">Zomato</span>
-                          <span className="text-sm text-primary">₹{(forDate?.zomatoSales || 0).toLocaleString()}</span>
-                        </div>
-                        <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                          <span className="text-sm text-foreground">Swiggy</span>
-                          <span className="text-sm text-primary">₹{(forDate?.swiggySales || 0).toLocaleString()}</span>
-                        </div>
-                      </>
-                    );
-                  })()}
                 </div>
               </div>
 

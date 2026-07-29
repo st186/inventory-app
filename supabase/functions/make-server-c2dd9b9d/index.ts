@@ -8822,20 +8822,34 @@ async function runPosSync(targetDate?: string) {
         // which silently inflated "today"'s totals with tomorrow's not-yet-closed sales. Since
         // each order carries its own TransactionTime, filtering on that directly is a safe fix
         // regardless of whatever Ciferon's date-range filter is actually doing server-side.
-        const orders = allOrders.filter((order: any) => {
-          const status = (order.TransactionStatus || '').toLowerCase();
-          if (status.includes('cancel')) return false;
-          const orderDate = (order.TransactionTime || '').substring(0, 10);
-          return orderDate === today;
-        });
+        // Only orders whose real TransactionTime falls on `today` (see note above) - this
+        // pre-filter set (todaysOrders) still includes cancelled orders, since discount and
+        // cancellation stats need to be reported for the day regardless of settlement status.
+        const todaysOrders = allOrders.filter((order: any) => (order.TransactionTime || '').substring(0, 10) === today);
+        const isOnlineMode = (mode: string) => mode === 'Zomato' || mode === 'Swiggy';
+
+        const orders = todaysOrders.filter((order: any) => !(order.TransactionStatus || '').toLowerCase().includes('cancel'));
         let cashTotal = 0, paytmTotal = 0, zomatoTotal = 0, swiggyTotal = 0;
+        let offlineDiscount = 0, onlineDiscount = 0;
         for (const order of orders) {
           const mode = (order.PaymentMode && order.PaymentMode[0]) || 'Unknown';
           const amount = order.BillAmount || 0;
-          if (mode === 'Cash') cashTotal += amount;
-          else if (mode === 'Zomato') zomatoTotal += amount;
-          else if (mode === 'Swiggy') swiggyTotal += amount;
-          else paytmTotal += amount; // Paytm/PhonePe/Card/Google Pay/Razorpay - all digital counter payments
+          const discount = order.DiscountAmount || 0;
+          if (mode === 'Cash') { cashTotal += amount; offlineDiscount += discount; }
+          else if (mode === 'Zomato') { zomatoTotal += amount; onlineDiscount += discount; }
+          else if (mode === 'Swiggy') { swiggyTotal += amount; onlineDiscount += discount; }
+          else { paytmTotal += amount; offlineDiscount += discount; } // Paytm/PhonePe/Card/Google Pay/Razorpay - all digital counter payments
+        }
+
+        // Cancelled orders, split the same way, so the day's cancellation impact is visible
+        // per offline/online instead of just silently dropped from every total.
+        const cancelledOrders = todaysOrders.filter((order: any) => (order.TransactionStatus || '').toLowerCase().includes('cancel'));
+        let offlineCancelledAmount = 0, offlineCancelledCount = 0, onlineCancelledAmount = 0, onlineCancelledCount = 0;
+        for (const order of cancelledOrders) {
+          const mode = (order.PaymentMode && order.PaymentMode[0]) || 'Unknown';
+          const amount = order.BillAmount || 0;
+          if (isOnlineMode(mode)) { onlineCancelledAmount += amount; onlineCancelledCount++; }
+          else { offlineCancelledAmount += amount; offlineCancelledCount++; }
         }
 
         const posOfflineSales = cashTotal + paytmTotal;
@@ -8858,7 +8872,13 @@ async function runPosSync(targetDate?: string) {
             cashAmount: cashTotal,
             paytmAmount: paytmTotal,
             posOnlineSales,
-            posOfflineSales
+            posOfflineSales,
+            offlineDiscount,
+            onlineDiscount,
+            offlineCancelledAmount,
+            offlineCancelledCount,
+            onlineCancelledAmount,
+            onlineCancelledCount
           });
         } else {
           const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -8876,6 +8896,12 @@ async function runPosSync(targetDate?: string) {
             employeeSalary: 0,
             posOnlineSales,
             posOfflineSales,
+            offlineDiscount,
+            onlineDiscount,
+            offlineCancelledAmount,
+            offlineCancelledCount,
+            onlineCancelledAmount,
+            onlineCancelledCount,
             approvalStatus: 'pending',
             actualCashInHand: 0,
             cashOffset: 0,
