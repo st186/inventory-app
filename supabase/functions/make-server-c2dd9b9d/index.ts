@@ -4,7 +4,7 @@ import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
-import { classifyAndSumProducts } from './posItemClassifier.tsx';
+import { classifyAndSumProductsByChannel } from './posItemClassifier.tsx';
 
 // ============================================
 // IST TIMEZONE UTILITIES (GMT+5:30)
@@ -9051,16 +9051,20 @@ async function runPosSync(targetDate?: string) {
         const saleCountData = await saleCountRes.json();
         if (!saleCountData.IsSuccess) throw new Error('SaleCount responded with IsSuccess=false');
 
-        // Flatten CategoryList[].ProductList[] into a single product array
+        // Flatten CategoryList[].ProductList[] into a single product array, keeping each
+        // product's PlatformList (per-channel qty/revenue) alongside it. Result.Columns
+        // gives the channel name for each PlatformList index (e.g. ["POS","Zomato","Swiggy",
+        // "Contactless"] - PlatformList[1] is that product's Zomato figures).
         const categoryList = saleCountData.Result?.lists || [];
-        const products: Array<{ ProductName: string; Quantity: number }> = [];
+        const channelNames: string[] = saleCountData.Result?.Columns || [];
+        const products: Array<{ ProductName: string; Quantity: number; PlatformList?: Array<{ Value: string | number; Text: string | number }> }> = [];
         for (const cat of categoryList) {
           for (const prod of (cat.ProductList || [])) {
-            products.push({ ProductName: prod.ProductName, Quantity: prod.Quantity });
+            products.push({ ProductName: prod.ProductName, Quantity: prod.Quantity, PlatformList: prod.PlatformList });
           }
         }
 
-        const categoryTotals = classifyAndSumProducts(products);
+        const { totals: categoryTotals, byChannel } = classifyAndSumProductsByChannel(products, channelNames);
 
         // Upsert (not duplicate) today's pos-sync-originated SalesDataRecord for this store
         const allSalesData = await kv.getByPrefix('sales_data_');
@@ -9074,6 +9078,9 @@ async function runPosSync(targetDate?: string) {
           storeId: store.id,
           storeName: store.name,
           data: categoryTotals,
+          // Per-channel (POS/Zomato/Swiggy/...) pieces + revenue per momo category - lets
+          // Category Sales compute a real revenue-per-momo figure instead of an assumed price.
+          channelBreakdown: byChannel,
           uploadedBy: 'pos-sync',
           uploadedAt: new Date().toISOString()
         });
@@ -9351,9 +9358,49 @@ app.post('/make-server-c2dd9b9d/pos-sync/admin-raw-fetch', async (c) => {
   }
 
   const body = await c.req.json().catch(() => ({}));
-  const { date } = body || {};
+  const { date, mode, storeId } = body || {};
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return c.json({ error: 'Provide date in YYYY-MM-DD format' }, 400);
+  }
+
+  if (mode === 'salecount') {
+    // Same login + endpoint Step B uses - dumped raw and unprocessed, to check whether the
+    // response actually carries any per-order or per-channel (Zomato/Swiggy/offline) detail
+    // beyond the day-level ProductName+Quantity totals the classifier currently reads.
+    const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+    const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+    if (!adminEmail || !adminPassword) return c.json({ error: 'CIFERON_ADMIN_EMAIL/PASSWORD not configured' }, 500);
+
+    const allStores = await kv.getByPrefix('store:');
+    const store = storeId
+      ? (allStores || []).find((s: any) => s.id === storeId)
+      : (allStores || []).find((s: any) => s.ciferonStoreId);
+    if (!store?.ciferonStoreId) return c.json({ error: 'No store with a ciferonStoreId found' }, 400);
+
+    const loginRes = await fetch('https://api.ciferon.com/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+    });
+    if (!loginRes.ok) return c.json({ error: `Ciferon login returned HTTP ${loginRes.status}` }, 502);
+    const loginData = await loginRes.json();
+    const authkey =
+      loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+      loginData?.AuthKey || loginData?.token || loginData?.Token;
+    if (!authkey) return c.json({ error: 'No authkey in Ciferon login response', loginDataKeys: Object.keys(loginData || {}) }, 502);
+
+    const dateRfc1123 = new Date(`${date}T00:00:00Z`).toUTCString();
+    const saleCountUrl = `https://api.ciferon.com/Api/OrderReport/v2/SaleCount?StartDate=${encodeURIComponent(dateRfc1123)}&EndDate=${encodeURIComponent(dateRfc1123)}&StoreIds=undefined&IsInit=false&searchString=undefined&CompanyBrandId=0&FoodType=undefined&TerminalId=0&IsTallyMode=false&isSuperCategory=false&FloorId=0`;
+    const saleCountRes = await fetch(saleCountUrl, {
+      headers: {
+        'Authorization': `Bearer ${authkey}`,
+        'StoreId': String(store.ciferonStoreId),
+        'BrandId': '0',
+        'Accept': 'application/json'
+      }
+    });
+    const data = await saleCountRes.json().catch(() => null);
+    return c.json({ requestedDate: date, httpStatus: saleCountRes.status, raw: data });
   }
 
   const apiKey = Deno.env.get('CIFERON_API_KEY');

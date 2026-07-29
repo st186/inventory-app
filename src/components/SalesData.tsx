@@ -38,12 +38,17 @@ function classifyMomoCategory(nameLower: string): keyof CategoryData | null {
   return null;
 }
 
+// Per-channel (POS/Zomato/Swiggy/...) pieces + real revenue for a momo category, straight
+// from Ciferon's per-product PlatformList - only present on pos-sync-originated records.
+type ChannelBreakdown = Record<keyof CategoryData, Record<string, { pieces: number; revenue: number }>>;
+
 interface SalesRecord {
   id: string;
   date: string;
   storeId: string;
   storeName?: string;
   data: CategoryData;
+  channelBreakdown?: ChannelBreakdown;
   uploadedBy: string;
   uploadedAt: string;
 }
@@ -1141,6 +1146,94 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Revenue Per Momo By Channel - real per-item, per-channel figures from Ciferon's
+          SaleCount PlatformList (POS/Zomato/Swiggy/...), not an estimate. Only covers dates
+          synced via "Sync from POS" - manually-uploaded XLSX records have no channel detail
+          (Item/Total Quantity columns only), so they're excluded here. */}
+      {salesRecords.length > 0 && (() => {
+        const { start, end } = getDateRange(timeFilter, timeFilter === 'custom' ? dateRange : undefined);
+        const periodRecords = salesRecords.filter(r => r.date >= start && r.date <= end && r.channelBreakdown);
+        const categories = Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>;
+
+        // channel -> category -> { pieces, revenue, dailyAvg[] } (dailyAvg tracks each day's
+        // own revenue/piece so we can show the variance across the period, not just one
+        // blended number for the whole range)
+        const channelSet = new Set<string>();
+        const agg: Record<string, Record<string, { pieces: number; revenue: number; dailyAvgs: number[] }>> = {};
+        categories.forEach(cat => { agg[cat] = {}; });
+
+        periodRecords.forEach(r => {
+          categories.forEach(cat => {
+            const byChannel = r.channelBreakdown?.[cat] || {};
+            Object.entries(byChannel).forEach(([channel, v]) => {
+              channelSet.add(channel);
+              if (!agg[cat][channel]) agg[cat][channel] = { pieces: 0, revenue: 0, dailyAvgs: [] };
+              agg[cat][channel].pieces += v.pieces;
+              agg[cat][channel].revenue += v.revenue;
+              if (v.pieces > 0) agg[cat][channel].dailyAvgs.push(v.revenue / v.pieces);
+            });
+          });
+        });
+
+        const channels = Array.from(channelSet);
+        const hasData = periodRecords.length > 0 && channels.length > 0;
+
+        return (
+          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+            <h2 className="text-2xl text-gray-900 mb-2 flex items-center gap-3">
+              <TrendingUp className="w-7 h-7 text-teal-600" />
+              Revenue Per Momo By Channel
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Real per-item revenue from Ciferon (not an estimate) - only covers dates synced via "Sync from POS" above.
+              Multiply by pieces/plate in Plate Config to get a real plate price per channel.
+            </p>
+            {!hasData ? (
+              <p className="text-sm text-gray-500">No POS-synced data with channel detail in this period yet - use "Sync from POS" above.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-gray-200">
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Momo Type</th>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Channel</th>
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Pieces</th>
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Revenue</th>
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Avg ₹/Momo</th>
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Daily Range (₹/Momo)</th>
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Suggested Plate Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categories.map(cat => channels.map(channel => {
+                      const v = agg[cat][channel];
+                      if (!v || v.pieces === 0) return null;
+                      const avg = v.revenue / v.pieces;
+                      const dailyMin = Math.min(...v.dailyAvgs);
+                      const dailyMax = Math.max(...v.dailyAvgs);
+                      const plates = piecesPerPlate[cat] || 6;
+                      return (
+                        <tr key={`${cat}-${channel}`} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-3 text-gray-900">{cat}</td>
+                          <td className="py-2 px-3 text-gray-700">{channel}</td>
+                          <td className="py-2 px-3 text-right text-gray-700">{v.pieces.toFixed(0)}</td>
+                          <td className="py-2 px-3 text-right text-gray-700">₹{v.revenue.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-semibold text-gray-900">₹{avg.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right text-gray-500">
+                            {v.dailyAvgs.length > 1 ? `₹${dailyMin.toFixed(2)} - ₹${dailyMax.toFixed(2)}` : '-'}
+                          </td>
+                          <td className="py-2 px-3 text-right font-semibold text-teal-700">₹{(avg * plates).toFixed(2)}</td>
+                        </tr>
+                      );
+                    }))}
                   </tbody>
                 </table>
               </div>

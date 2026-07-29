@@ -69,13 +69,8 @@ function extractPiecesPerUnit(productName: string): number {
   return 6; // Default plate size, matching SalesData.tsx's fallback
 }
 
-// Given Ciferon's OrderReport/v2/SaleCount response's flattened product list
-// (each with ProductName + Quantity), returns totals per category in the shape
-// SalesDataRecord.data expects.
-export function classifyAndSumProducts(
-  products: Array<{ ProductName: string; Quantity: number }>
-): Record<MomoCategory, number> {
-  const result: Record<MomoCategory, number> = {
+function emptyCategoryTotals(): Record<MomoCategory, number> {
+  return {
     'Chicken Momos': 0,
     'Chicken Cheese Momos': 0,
     'Veg Momos': 0,
@@ -84,13 +79,53 @@ export function classifyAndSumProducts(
     'Chicken Kurkure Momos': 0,
     'Veg Kurkure Momos': 0,
   };
+}
+
+export type ChannelBreakdown = Record<MomoCategory, Record<string, { pieces: number; revenue: number }>>;
+
+// Same classification, but also splits pieces + revenue by sales channel (POS/Zomato/
+// Swiggy/Contactless etc.) using each product's PlatformList - a per-product array whose
+// indices line up with the response's top-level Columns array (e.g. Columns[1] = "Zomato"
+// means PlatformList[1] is that product's Zomato quantity/revenue). Revenue (PlatformList's
+// "Text" field) isn't scaled by piecesPerUnit - it's the real ₹ paid for that many *units*
+// (plates/burgers/combos), not per individual momo piece.
+export function classifyAndSumProductsByChannel(
+  products: Array<{ ProductName: string; Quantity: number; PlatformList?: Array<{ Value: string | number; Text: string | number }> }>,
+  channelNames: string[]
+): { totals: Record<MomoCategory, number>; byChannel: ChannelBreakdown } {
+  const totals = emptyCategoryTotals();
+  const byChannel: ChannelBreakdown = {
+    'Chicken Momos': {},
+    'Chicken Cheese Momos': {},
+    'Veg Momos': {},
+    'Paneer Momos': {},
+    'Corn Cheese Momos': {},
+    'Chicken Kurkure Momos': {},
+    'Veg Kurkure Momos': {},
+  };
+  channelNames.forEach((name) => {
+    (Object.keys(byChannel) as MomoCategory[]).forEach((cat) => {
+      byChannel[cat][name] = { pieces: 0, revenue: 0 };
+    });
+  });
 
   for (const product of products) {
     const category = classifyProductName(product.ProductName || '');
     if (!category) continue;
     const piecesPerUnit = extractPiecesPerUnit(product.ProductName || '');
-    result[category] += (product.Quantity || 0) * piecesPerUnit;
+    totals[category] += (product.Quantity || 0) * piecesPerUnit;
+
+    (product.PlatformList || []).forEach((entry, i) => {
+      const channelName = channelNames[i];
+      if (!channelName) return;
+      const units = parseFloat(String(entry.Value)) || 0;
+      const revenue = parseFloat(String(entry.Text)) || 0;
+      if (units === 0 && revenue === 0) return;
+      if (!byChannel[category][channelName]) byChannel[category][channelName] = { pieces: 0, revenue: 0 };
+      byChannel[category][channelName].pieces += units * piecesPerUnit;
+      byChannel[category][channelName].revenue += revenue;
+    });
   }
 
-  return result;
+  return { totals, byChannel };
 }
