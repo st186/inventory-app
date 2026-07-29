@@ -78,9 +78,9 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadAggregator, setUploadAggregator] = useState<'zomato' | 'swiggy'>('zomato');
-  const [parsedSettlements, setParsedSettlements] = useState<ParsedSettlement[] | null>(null);
-  const [sourceFileName, setSourceFileName] = useState('');
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [parsedSettlements, setParsedSettlements] = useState<(ParsedSettlement & { sourceFileName: string })[] | null>(null);
+  const [parseErrors, setParseErrors] = useState<{ fileName: string; message: string }[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -120,21 +120,29 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   }, [context.user?.accessToken, effectiveStoreId]);
 
 
-  const handleFileSelected = async (file: File) => {
-    setParseError(null);
-    setParsedSettlements(null);
-    setSourceFileName(file.name);
+  const handleFilesSelected = async (files: File[]) => {
+    setSaveError(null);
+    setParseErrors([]);
     setIsParsing(true);
-    try {
-      const parsed = uploadAggregator === 'zomato'
-        ? await parseZomatoSettlementFile(file)
-        : await parseSwiggySettlementFile(file);
-      setParsedSettlements(parsed);
-    } catch (error: any) {
-      setParseError(error?.message || 'Failed to parse this file');
-    } finally {
-      setIsParsing(false);
+    const newSettlements: (ParsedSettlement & { sourceFileName: string })[] = [];
+    const errors: { fileName: string; message: string }[] = [];
+
+    for (const file of files) {
+      try {
+        const parsed = uploadAggregator === 'zomato'
+          ? await parseZomatoSettlementFile(file)
+          : await parseSwiggySettlementFile(file);
+        parsed.forEach(s => newSettlements.push({ ...s, sourceFileName: file.name }));
+      } catch (error: any) {
+        errors.push({ fileName: file.name, message: error?.message || 'Failed to parse this file' });
+      }
     }
+
+    // Append to whatever's already been parsed this session, so picking another batch of
+    // files doesn't discard settlements already queued up for review.
+    setParsedSettlements(prev => [...(prev || []), ...newSettlements]);
+    setParseErrors(prev => [...prev, ...errors]);
+    setIsParsing(false);
   };
 
   const handleConfirmSave = async () => {
@@ -153,16 +161,16 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           netPayout: settlement.netPayout,
           netCommission: settlement.netCommission,
           orderCount: settlement.orderCount,
-          sourceFileName,
+          sourceFileName: settlement.sourceFileName,
         });
       }
       await loadSettlements();
       if (context.refreshData) await context.refreshData();
       setShowUploadModal(false);
       setParsedSettlements(null);
-      setSourceFileName('');
+      setParseErrors([]);
     } catch (error: any) {
-      setParseError(error?.message || 'Failed to save settlement(s)');
+      setSaveError(error?.message || 'Failed to save settlement(s)');
     } finally {
       setIsSaving(false);
     }
@@ -219,7 +227,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           </div>
           {canEdit && (
             <button
-              onClick={() => { setShowUploadModal(true); setParsedSettlements(null); setParseError(null); }}
+              onClick={() => { setShowUploadModal(true); setParsedSettlements(null); setParseErrors([]); setSaveError(null); }}
               className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-semibold hover:from-orange-700 hover:to-red-700 transition-all shadow-lg"
             >
               <Upload className="w-4 h-4" />
@@ -394,7 +402,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   {(['zomato', 'swiggy'] as const).map(agg => (
                     <button
                       key={agg}
-                      onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseError(null); }}
+                      onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseErrors([]); setSaveError(null); }}
                       className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium capitalize transition-colors ${
                         uploadAggregator === agg ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
@@ -406,15 +414,24 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Settlement File (.xlsx)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Settlement File(s) (.xlsx)</label>
                 <label className="flex items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-orange-400 hover:bg-orange-50/50 transition-colors">
                   <Upload className="w-5 h-5 text-gray-400" />
-                  <span className="text-sm text-gray-600">{sourceFileName || 'Click to choose the settlement report'}</span>
+                  <span className="text-sm text-gray-600">
+                    {parsedSettlements && parsedSettlements.length > 0
+                      ? `${new Set(parsedSettlements.map(s => s.sourceFileName)).size} file(s) parsed - click to add more`
+                      : 'Click to choose one or more settlement reports'}
+                  </span>
                   <input
                     type="file"
                     accept=".xlsx,.xls"
+                    multiple
                     className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelected(f); }}
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length > 0) handleFilesSelected(files);
+                      e.target.value = '';
+                    }}
                   />
                 </label>
               </div>
@@ -422,24 +439,50 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               {isParsing && (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
-                  Parsing file...
+                  Parsing file(s)...
                 </div>
               )}
 
-              {parseError && (
+              {parseErrors.length > 0 && (
+                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 space-y-1.5">
+                  <div className="flex gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                    <p className="text-sm font-semibold text-red-800">
+                      {parseErrors.length} file{parseErrors.length !== 1 ? 's' : ''} couldn't be parsed:
+                    </p>
+                  </div>
+                  <ul className="text-sm text-red-800 list-disc list-inside pl-8">
+                    {parseErrors.map((e, i) => (
+                      <li key={i}><span className="font-medium">{e.fileName}</span>: {e.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {saveError && (
                 <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 flex gap-3">
                   <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-800">{parseError}</p>
+                  <p className="text-sm text-red-800">{saveError}</p>
                 </div>
               )}
 
               {parsedSettlements && parsedSettlements.length > 0 && (
                 <div className="space-y-3">
                   <p className="text-sm font-semibold text-gray-700">
-                    Found {parsedSettlements.length} settlement{parsedSettlements.length !== 1 ? 's' : ''} - review before saving:
+                    Found {parsedSettlements.length} settlement{parsedSettlements.length !== 1 ? 's' : ''} from {new Set(parsedSettlements.map(s => s.sourceFileName)).size} file(s) - review before saving:
                   </p>
                   {parsedSettlements.map((s, i) => (
                     <div key={i} className="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs text-gray-500 truncate">{s.sourceFileName}</span>
+                        <button
+                          onClick={() => setParsedSettlements(prev => (prev || []).filter((_, idx) => idx !== i))}
+                          className="p-1 text-gray-400 hover:text-red-600 rounded flex-shrink-0"
+                          title="Remove this settlement from the queue"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Settlement Date</span>
                         <span className="font-medium text-gray-900">{new Date(s.settlementDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
