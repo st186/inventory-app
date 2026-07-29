@@ -8814,9 +8814,19 @@ async function runPosSync(targetDate?: string) {
         const allOrders = saleDetailsData.Result?.orderList || [];
         // Exclude cancelled orders - Ciferon still returns them in the day's orderList with
         // their original BillAmount, which would otherwise inflate every total below.
+        //
+        // Also exclude anything whose real TransactionTime isn't actually `today` - Ciferon's
+        // SaleDetails endpoint doesn't reliably honor EndDate for the most recent day: a
+        // request for {StartDate: today, EndDate: today} was confirmed (via the raw response)
+        // to also include orders from the following day up through the moment of the request,
+        // which silently inflated "today"'s totals with tomorrow's not-yet-closed sales. Since
+        // each order carries its own TransactionTime, filtering on that directly is a safe fix
+        // regardless of whatever Ciferon's date-range filter is actually doing server-side.
         const orders = allOrders.filter((order: any) => {
           const status = (order.TransactionStatus || '').toLowerCase();
-          return !status.includes('cancel');
+          if (status.includes('cancel')) return false;
+          const orderDate = (order.TransactionTime || '').substring(0, 10);
+          return orderDate === today;
         });
         let cashTotal = 0, paytmTotal = 0, zomatoTotal = 0, swiggyTotal = 0;
         for (const order of orders) {
@@ -9239,6 +9249,38 @@ app.post('/make-server-c2dd9b9d/pos-sync/admin-bulk-backfill', async (c) => {
   }
 
   return c.json({ success: true, days: results.length, results });
+});
+
+// One-off debug utility - returns Ciferon's raw SaleDetails response for a single date,
+// unprocessed, so a discrepancy between our aggregated totals and Ciferon's own dashboard
+// can be inspected order-by-order instead of guessing. Same admin-secret gate as the bulk
+// backfill above - never exposed in the frontend.
+app.post('/make-server-c2dd9b9d/pos-sync/admin-raw-fetch', async (c) => {
+  const adminSecret = c.req.header('X-Admin-Secret');
+  const expectedSecret = Deno.env.get('ADMIN_TOOLS_SECRET');
+  if (!expectedSecret || adminSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { date } = body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'Provide date in YYYY-MM-DD format' }, 400);
+  }
+
+  const apiKey = Deno.env.get('CIFERON_API_KEY');
+  if (!apiKey) return c.json({ error: 'CIFERON_API_KEY not configured' }, 500);
+
+  const res = await fetch('https://api.ciferon.com/api/LoginApi/SaleDetails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ StartDate: date, EndDate: date })
+  });
+  const data = await res.json();
+  return c.json({ requestedDate: date, httpStatus: res.status, raw: data });
 });
 
 // ============================================
