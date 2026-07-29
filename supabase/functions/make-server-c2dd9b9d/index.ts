@@ -8083,6 +8083,54 @@ app.post('/make-server-c2dd9b9d/stock-thresholds/:storeId', async (c) => {
   }
 });
 
+// Shared (not per-store) momo plate configuration - pieces per plate and menu selling
+// price per plate, for each finished-product category. Used to convert POS-synced piece
+// counts into plates and revenue for the Category Sales profitability breakdown.
+// Keyed by the same category labels used in sales_data_ records (SalesDataRecord.data /
+// MomoCategory), not the camelKey convention used elsewhere in this file, so Category
+// Sales can read this config with no translation layer.
+const DEFAULT_MOMO_PLATE_CONFIG: Record<string, { piecesPerPlate: number; pricePerPlate: number }> = {
+  'Chicken Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Chicken Cheese Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Veg Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Paneer Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Corn Cheese Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Chicken Kurkure Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Veg Kurkure Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+};
+
+app.get('/make-server-c2dd9b9d/momo-plate-config', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  try {
+    const config = await kv.get('momo-plate-config:global');
+    return c.json({ config: config || DEFAULT_MOMO_PLATE_CONFIG });
+  } catch (error: any) {
+    console.error('Error fetching momo plate config:', error);
+    return c.json({ config: DEFAULT_MOMO_PLATE_CONFIG });
+  }
+});
+
+app.post('/make-server-c2dd9b9d/momo-plate-config', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can update plate configuration' }, 403);
+  }
+  try {
+    const { config } = await c.req.json();
+    await kv.set('momo-plate-config:global', config);
+    return c.json({ success: true, config });
+  } catch (error: any) {
+    console.error('Error saving momo plate config:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // ============================================
 // CLUSTER MANAGEMENT ROUTES
 // ============================================
@@ -8966,10 +9014,9 @@ async function runPosSync(targetDate?: string) {
         console.error(`[pos-sync] Step A failed for store ${store.id}:`, stepAError);
       }
 
-      // ---- Step B: fragile item-wise stock sync ----
-      if (isBackfill) {
-        storeResult.stepB = { success: true, skipped: true, reason: 'backfill only re-runs Step A' };
-      } else
+      // ---- Step B: item-wise category sync (Category Sales / Store Stock Status). Also
+      // runs during a backfill now (the classifier's Mania Combo bug is fixed, and Category
+      // Sales needs to be able to pull historical dates via the API, not just "today") ----
       try {
         const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
         const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');

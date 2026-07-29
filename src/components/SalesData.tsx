@@ -61,6 +61,16 @@ const DEFAULT_PIECES_PER_PLATE: Record<keyof CategoryData, number> = {
   'Veg Kurkure Momos': 6
 };
 
+const DEFAULT_PRICE_PER_PLATE: Record<keyof CategoryData, number> = {
+  'Chicken Momos': 0,
+  'Chicken Cheese Momos': 0,
+  'Veg Momos': 0,
+  'Paneer Momos': 0,
+  'Corn Cheese Momos': 0,
+  'Chicken Kurkure Momos': 0,
+  'Veg Kurkure Momos': 0
+};
+
 export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,6 +84,8 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(new Date().getDay()); // 0-6 for Sun-Sat
   const [showPlateConfig, setShowPlateConfig] = useState(false);
   const [piecesPerPlate, setPiecesPerPlate] = useState<Record<keyof CategoryData, number>>(DEFAULT_PIECES_PER_PLATE);
+  const [pricePerPlate, setPricePerPlate] = useState<Record<keyof CategoryData, number>>(DEFAULT_PRICE_PER_PLATE);
+  const [isSavingPlateConfig, setIsSavingPlateConfig] = useState(false);
   const [collapsedRecords, setCollapsedRecords] = useState<Set<string>>(new Set());
   
   const effectiveStoreId = selectedStoreId || context.user?.storeId || null;
@@ -91,28 +103,97 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     });
   };
 
-  // Load plate configuration from localStorage on mount
+  // Load plate configuration (pieces + selling price per plate) from the backend on mount -
+  // shared across everyone (store incharge here, Analytics' Category Sales elsewhere),
+  // not per-browser like the old localStorage version was.
   useEffect(() => {
-    const savedConfig = localStorage.getItem('momoPlateConfig');
-    if (savedConfig) {
-      try {
-        setPiecesPerPlate(JSON.parse(savedConfig));
-      } catch (e) {
-        console.error('Failed to load plate config:', e);
-      }
-    }
-  }, []);
+    if (!context.user?.accessToken) return;
+    api.getMomoPlateConfig(context.user.accessToken).then((config) => {
+      const pieces = { ...DEFAULT_PIECES_PER_PLATE };
+      const price = { ...DEFAULT_PRICE_PER_PLATE };
+      (Object.keys(pieces) as Array<keyof CategoryData>).forEach((category) => {
+        if (config[category]) {
+          pieces[category] = config[category].piecesPerPlate ?? pieces[category];
+          price[category] = config[category].pricePerPlate ?? price[category];
+        }
+      });
+      setPiecesPerPlate(pieces);
+      setPricePerPlate(price);
+    }).catch((e) => console.error('Failed to load plate config:', e));
+  }, [context.user?.accessToken]);
 
-  // Save plate configuration to localStorage whenever it changes
+  const savePlateConfigToBackend = async (pieces: typeof piecesPerPlate, price: typeof pricePerPlate) => {
+    if (!context.user?.accessToken) return;
+    setIsSavingPlateConfig(true);
+    try {
+      const config: Record<string, { piecesPerPlate: number; pricePerPlate: number }> = {};
+      (Object.keys(pieces) as Array<keyof CategoryData>).forEach((category) => {
+        config[category] = { piecesPerPlate: pieces[category], pricePerPlate: price[category] };
+      });
+      await api.saveMomoPlateConfig(context.user.accessToken, config);
+    } catch (e) {
+      console.error('Failed to save plate config:', e);
+      toast.error('Failed to save plate configuration');
+    } finally {
+      setIsSavingPlateConfig(false);
+    }
+  };
+
   const updatePlateConfig = (category: keyof CategoryData, pieces: number) => {
     const newConfig = { ...piecesPerPlate, [category]: pieces };
     setPiecesPerPlate(newConfig);
-    localStorage.setItem('momoPlateConfig', JSON.stringify(newConfig));
+    savePlateConfigToBackend(newConfig, pricePerPlate);
+  };
+
+  const updatePriceConfig = (category: keyof CategoryData, price: number) => {
+    const newConfig = { ...pricePerPlate, [category]: price };
+    setPricePerPlate(newConfig);
+    savePlateConfigToBackend(piecesPerPlate, newConfig);
   };
 
   useEffect(() => {
     loadSalesData();
   }, [effectiveStoreId]);
+
+  // Aggregator settlements - used to work out a blended commission rate for whatever
+  // period is currently selected, for the profitability-after-commission breakdown below.
+  const [aggregatorSettlements, setAggregatorSettlements] = useState<api.AggregatorSettlement[]>([]);
+  useEffect(() => {
+    if (!context.user?.accessToken) return;
+    const storeIdParam = effectiveStoreId || undefined;
+    api.getAggregatorSettlements(context.user.accessToken, storeIdParam).then(setAggregatorSettlements).catch(() => {});
+  }, [context.user?.accessToken, effectiveStoreId]);
+
+  // Pulls momo-category sales for the selected period straight from Ciferon (via the same
+  // POS sync used for cash/Paytm figures elsewhere), instead of requiring a manual XLSX
+  // upload for every day. Cluster-head only (matches the backfill route's own gate).
+  const [isSyncingCategoryData, setIsSyncingCategoryData] = useState(false);
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const handleSyncFromPOS = async () => {
+    if (!context.user?.accessToken) return;
+    const { start, end } = getDateRange(timeFilter, timeFilter === 'custom' ? dateRange : undefined);
+    if (!start || !end) return;
+    setIsSyncingCategoryData(true);
+    try {
+      let cursor = new Date(`${start}T00:00:00Z`);
+      const last = new Date(`${end}T00:00:00Z`);
+      let successCount = 0;
+      while (cursor <= last) {
+        const date = cursor.toISOString().substring(0, 10);
+        try {
+          await api.backfillPosSync(context.user.accessToken, date);
+          successCount++;
+        } catch (e) {
+          console.error(`Failed to sync category data for ${date}:`, e);
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      toast.success(`Synced ${successCount} day(s) from POS`);
+      await loadSalesData();
+    } finally {
+      setIsSyncingCategoryData(false);
+    }
+  };
 
   const loadSalesData = async () => {
     try {
@@ -630,7 +711,19 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <Settings className="w-4 h-4" />
               <span className="font-medium">Plate Config</span>
             </button>
-            
+
+            {isClusterHead && (
+              <button
+                onClick={handleSyncFromPOS}
+                disabled={isSyncingCategoryData}
+                className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                title="Pull momo category counts for the selected period straight from Ciferon POS, instead of uploading an XLSX for each day"
+              >
+                <Package className="w-4 h-4" />
+                <span className="font-medium">{isSyncingCategoryData ? 'Syncing...' : 'Sync from POS'}</span>
+              </button>
+            )}
+
             <label className={`px-6 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Upload className="w-4 h-4" />
               <span className="font-medium">{uploading ? 'Uploading...' : 'Upload XLSX'}</span>
@@ -690,19 +783,34 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     />
                     <label className="text-gray-900 font-medium">{category}</label>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={piecesPerPlate[category]}
-                      onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
-                      className="w-20 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
-                    />
-                    <span className="text-gray-600 text-sm">pieces/plate</span>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={piecesPerPlate[category]}
+                        onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
+                        className="w-20 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                      />
+                      <span className="text-gray-600 text-sm">pcs/plate</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-600 text-sm">₹</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pricePerPlate[category]}
+                        onChange={(e) => updatePriceConfig(category, parseFloat(e.target.value) || 0)}
+                        className="w-24 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                      />
+                      <span className="text-gray-600 text-sm">/plate</span>
+                    </div>
                   </div>
                 </div>
               ))}
+              {isSavingPlateConfig && <p className="text-xs text-gray-400">Saving...</p>}
             </div>
             
             <div className="p-6 bg-blue-50 border-t-2 border-blue-200">
@@ -991,6 +1099,132 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           </div>
         </div>
       )}
+
+      {/* Momos Sold Per Day - same period filter as the trends above */}
+      {salesRecords.length > 0 && (() => {
+        const { start, end } = getDateRange(timeFilter, timeFilter === 'custom' ? dateRange : undefined);
+        const rows = [...salesRecords]
+          .filter(r => r.date >= start && r.date <= end)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        const categories = Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>;
+
+        return (
+          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+            <h2 className="text-2xl text-gray-900 mb-4 flex items-center gap-3">
+              <Package className="w-7 h-7 text-teal-600" />
+              Momos Sold Per Day
+            </h2>
+            {rows.length === 0 ? (
+              <p className="text-sm text-gray-500">No records in this period</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-gray-200">
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Date</th>
+                      {categories.map(cat => (
+                        <th key={cat} className="text-right py-2 px-3 font-semibold text-gray-700 whitespace-nowrap">{cat.replace(' Momos', '')}</th>
+                      ))}
+                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => {
+                      const rowTotal = categories.reduce((sum, cat) => sum + (r.data[cat] || 0), 0);
+                      return (
+                        <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-3 text-gray-700">{new Date(r.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                          {categories.map(cat => (
+                            <td key={cat} className="py-2 px-3 text-right text-gray-700">{(r.data[cat] || 0).toLocaleString()}</td>
+                          ))}
+                          <td className="py-2 px-3 text-right font-semibold text-gray-900">{rowTotal.toLocaleString()}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Profitability After Commission - estimated, using the plate config's selling price
+          and a blended commission rate (this period's total netCommission / grossSales from
+          uploaded aggregator settlements) applied per type. Item-level commission isn't
+          available from Swiggy/Zomato's settlement reports (order-level only, no per-item
+          breakdown), so this is a period-wide rate applied uniformly, not an exact figure. */}
+      {salesRecords.length > 0 && (() => {
+        const { start, end } = getDateRange(timeFilter, timeFilter === 'custom' ? dateRange : undefined);
+        const periodRecords = salesRecords.filter(r => r.date >= start && r.date <= end);
+        const categoryTotals: Record<string, number> = {};
+        (Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).forEach(cat => { categoryTotals[cat] = 0; });
+        periodRecords.forEach(r => {
+          Object.entries(r.data).forEach(([category, count]) => {
+            if (category in categoryTotals) categoryTotals[category] += count;
+          });
+        });
+
+        const periodSettlements = aggregatorSettlements.filter(s => s.settlementDate >= start && s.settlementDate <= end);
+        const totalGross = periodSettlements.reduce((sum, s) => sum + s.grossSales, 0);
+        const totalCommission = periodSettlements.reduce((sum, s) => sum + s.netCommission, 0);
+        const blendedCommissionRate = totalGross > 0 ? totalCommission / totalGross : 0;
+
+        const hasAnyPrice = Object.values(pricePerPlate).some(p => p > 0);
+
+        return (
+          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+            <h2 className="text-2xl text-gray-900 mb-2 flex items-center gap-3">
+              <TrendingUp className="w-7 h-7 text-orange-600" />
+              Profitability After Commission
+            </h2>
+            <p className="text-sm text-gray-600 mb-1">
+              Estimated - {periodSettlements.length > 0
+                ? `blended commission rate for this period: ${(blendedCommissionRate * 100).toFixed(1)}%`
+                : 'no aggregator settlements uploaded for this period yet, so commission is assumed to be 0%'}
+            </p>
+            {!hasAnyPrice && (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                Set a selling price per plate in Plate Config to see real revenue and profit figures below - they're ₹0 until then.
+              </p>
+            )}
+            <div className="overflow-x-auto mt-3">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b-2 border-gray-200">
+                    <th className="text-left py-2 px-3 font-semibold text-gray-700">Momo Type</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Plates Sold</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Price/Plate</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Est. Revenue</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Est. Commission</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Profit/Plate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => {
+                    const pieces = categoryTotals[cat] || 0;
+                    const plates = piecesPerPlate[cat] > 0 ? pieces / piecesPerPlate[cat] : 0;
+                    const price = pricePerPlate[cat] || 0;
+                    const revenue = plates * price;
+                    const commission = revenue * blendedCommissionRate;
+                    const profitPerPlate = price - (price * blendedCommissionRate);
+                    return (
+                      <tr key={cat} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-2 px-3 text-gray-900">{cat}</td>
+                        <td className="py-2 px-3 text-right text-gray-700">{plates.toFixed(1)}</td>
+                        <td className="py-2 px-3 text-right text-gray-700">₹{price.toFixed(2)}</td>
+                        <td className="py-2 px-3 text-right text-gray-700">₹{revenue.toFixed(2)}</td>
+                        <td className="py-2 px-3 text-right text-red-600">₹{commission.toFixed(2)}</td>
+                        <td className="py-2 px-3 text-right font-semibold text-green-700">₹{profitPerPlate.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Day of Week Analysis */}
       {salesRecords.length > 0 && (() => {

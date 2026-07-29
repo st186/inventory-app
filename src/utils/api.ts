@@ -2531,6 +2531,24 @@ export async function saveStockThresholds(accessToken: string, storeId: string, 
   return response;
 }
 
+// ============================================
+// MOMO PLATE CONFIG (pieces + selling price per plate, shared across the business)
+// ============================================
+
+export type MomoPlateConfig = Record<string, { piecesPerPlate: number; pricePerPlate: number }>;
+
+export async function getMomoPlateConfig(accessToken: string): Promise<MomoPlateConfig> {
+  const response = await fetchWithAuth(`${API_BASE}/momo-plate-config`, accessToken);
+  return response.config;
+}
+
+export async function saveMomoPlateConfig(accessToken: string, config: MomoPlateConfig): Promise<any> {
+  return fetchWithAuth(`${API_BASE}/momo-plate-config`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ config }),
+  });
+}
+
 export async function getMonthlyWastageReport(accessToken: string, month: string, locationId?: string, locationType?: string) {
   let url = `${API_BASE}/stock-recalibration/wastage-report?month=${month}`;
   if (locationId) {
