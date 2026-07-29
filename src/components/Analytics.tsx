@@ -2972,7 +2972,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  >
  <div className="flex flex-col items-center gap-2">
  <ShoppingCart className={`w-6 h-6 ${activeView === 'sales' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Sales</span>
+ <span className="font-semibold text-sm">Sales Analytics</span>
  </div>
  {activeView === 'sales' && (
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
@@ -3995,27 +3995,37 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <h3 className="text-base sm:text-lg text-gray-900">Performance Insights</h3>
  </div>
  <div className="space-y-3">
+ {(() => {
+ // Derived from profitChartData (same data the Daily Performance/Profitability
+ // charts use) rather than recomputing from filteredSalesData directly - that
+ // older path only summed sale.onlineSales (a legacy field that's always 0 now
+ // that online sales are tracked separately) and divided by the count of sales:
+ // records rather than actual days in the period, so it silently excluded every
+ // Zomato/Swiggy sale and skewed the daily averages.
+ const dayCount = profitChartData.length;
+ const avgRevenue = dayCount > 0 ? profitChartData.reduce((sum, d) => sum + d.revenue, 0) / dayCount : 0;
+ const avgProfit = dayCount > 0 ? profitChartData.reduce((sum, d) => sum + d.profit, 0) / dayCount : 0;
+ const bestDay = dayCount > 0 ? Math.max(...profitChartData.map(d => d.revenue)) : 0;
+ return (
+ <>
  <div className="bg-orange-50 p-4 rounded-lg">
  <div className="text-xs text-gray-600 mb-1">Daily Revenue Average</div>
- <div className="text-xl text-gray-900">
- ₹{filteredSalesData.length > 0 ? (metrics.totalRevenue / filteredSalesData.length).toFixed(0) : 0}
- </div>
+ <div className="text-xl text-gray-900">₹{avgRevenue.toFixed(0)}</div>
  <div className="text-xs text-gray-600 mt-1">Per day</div>
  </div>
  <div className="bg-rose-50 p-4 rounded-lg">
  <div className="text-xs text-gray-600 mb-1">Daily Profit Average</div>
- <div className="text-xl text-gray-900">
- ₹{filteredSalesData.length > 0 ? (metrics.netProfit / filteredSalesData.length).toFixed(0) : 0}
- </div>
+ <div className="text-xl text-gray-900">₹{avgProfit.toFixed(0)}</div>
  <div className="text-xs text-gray-600 mt-1">Per day</div>
  </div>
  <div className="bg-blue-50 p-4 rounded-lg">
  <div className="text-xs text-gray-600 mb-1">Best Performing Day</div>
- <div className="text-xl text-gray-900">
- ₹{filteredSalesData.length > 0 ? Math.max(...filteredSalesData.map(sale => (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0))).toLocaleString() : 0}
- </div>
+ <div className="text-xl text-gray-900">₹{bestDay.toLocaleString()}</div>
  <div className="text-xs text-gray-600 mt-1">Highest daily revenue</div>
  </div>
+ </>
+ );
+ })()}
  </div>
  </div>
  </div>
