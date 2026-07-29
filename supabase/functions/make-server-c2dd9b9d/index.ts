@@ -2856,6 +2856,21 @@ app.post('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
       }
     }
 
+    // Reject an exact re-upload of the same settlement (same store/aggregator/date/UTR) -
+    // the frontend already checks this before offering the upload, but this is the last
+    // line of defense against double-crediting Paytm from a duplicate save (e.g. two people
+    // uploading the same file around the same time).
+    const existingSettlements = await kv.getByPrefix('aggregator-settlement:');
+    const duplicate = (existingSettlements || []).find((s: any) =>
+      s.storeId === body.storeId &&
+      s.aggregator === body.aggregator &&
+      s.settlementDate === body.settlementDate &&
+      (s.bankUTR || '') === (body.bankUTR || '')
+    );
+    if (duplicate) {
+      return c.json({ error: `A ${body.aggregator} settlement for ${body.settlementDate} (UTR ${body.bankUTR || 'n/a'}) has already been uploaded` }, 409);
+    }
+
     const id = `AGG-SETTLE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const settlement = {
       id,

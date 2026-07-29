@@ -81,6 +81,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   const [parsedSettlements, setParsedSettlements] = useState<(ParsedSettlement & { sourceFileName: string })[] | null>(null);
   const [parseErrors, setParseErrors] = useState<{ fileName: string; message: string }[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [skippedDuplicates, setSkippedDuplicates] = useState<{ fileName: string; settlementDate: string }[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -120,19 +121,39 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   }, [context.user?.accessToken, effectiveStoreId]);
 
 
+  // A settlement's real identity - same aggregator, same settlement date, same bank UTR -
+  // used to catch the same file (or an overlapping settlement period) being uploaded twice.
+  const settlementKey = (s: { aggregator: string; settlementDate: string; bankUTR: string }) =>
+    `${s.aggregator}|${s.settlementDate}|${s.bankUTR}`;
+
   const handleFilesSelected = async (files: File[]) => {
     setSaveError(null);
     setParseErrors([]);
+    setSkippedDuplicates([]);
     setIsParsing(true);
     const newSettlements: (ParsedSettlement & { sourceFileName: string })[] = [];
     const errors: { fileName: string; message: string }[] = [];
+    const duplicates: { fileName: string; settlementDate: string }[] = [];
+
+    // Already-saved settlements for this store, plus whatever's already queued in this
+    // modal session - anything matching one of these keys is a duplicate, not a new upload.
+    const existingKeys = new Set(settlements.map(settlementKey));
+    (parsedSettlements || []).forEach(s => existingKeys.add(settlementKey(s)));
 
     for (const file of files) {
       try {
         const parsed = uploadAggregator === 'zomato'
           ? await parseZomatoSettlementFile(file)
           : await parseSwiggySettlementFile(file);
-        parsed.forEach(s => newSettlements.push({ ...s, sourceFileName: file.name }));
+        for (const s of parsed) {
+          const key = settlementKey(s);
+          if (existingKeys.has(key)) {
+            duplicates.push({ fileName: file.name, settlementDate: s.settlementDate });
+            continue;
+          }
+          existingKeys.add(key); // also catches duplicates within this same batch of files
+          newSettlements.push({ ...s, sourceFileName: file.name });
+        }
       } catch (error: any) {
         errors.push({ fileName: file.name, message: error?.message || 'Failed to parse this file' });
       }
@@ -142,6 +163,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     // files doesn't discard settlements already queued up for review.
     setParsedSettlements(prev => [...(prev || []), ...newSettlements]);
     setParseErrors(prev => [...prev, ...errors]);
+    setSkippedDuplicates(prev => [...prev, ...duplicates]);
     setIsParsing(false);
   };
 
@@ -149,8 +171,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     if (!context.user?.accessToken || !parsedSettlements || !effectiveStoreId) return;
     const store = context.stores?.find(s => s.id === effectiveStoreId);
     setIsSaving(true);
-    try {
-      for (const settlement of parsedSettlements) {
+    // Save each settlement independently - a rejected duplicate (the server's own
+    // safety-net check) shouldn't also block every other settlement in the same batch.
+    const failures: string[] = [];
+    const stillPending: typeof parsedSettlements = [];
+    for (const settlement of parsedSettlements) {
+      try {
         await api.createAggregatorSettlement(context.user.accessToken, {
           storeId: effectiveStoreId,
           storeName: store?.name || '',
@@ -163,17 +189,26 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           orderCount: settlement.orderCount,
           sourceFileName: settlement.sourceFileName,
         });
+      } catch (error: any) {
+        failures.push(`${settlement.sourceFileName} (${settlement.settlementDate}): ${error?.message || 'failed to save'}`);
+        stillPending.push(settlement);
       }
-      await loadSettlements();
-      if (context.refreshData) await context.refreshData();
+    }
+
+    await loadSettlements();
+    if (context.refreshData) await context.refreshData();
+
+    if (failures.length === 0) {
       setShowUploadModal(false);
       setParsedSettlements(null);
       setParseErrors([]);
-    } catch (error: any) {
-      setSaveError(error?.message || 'Failed to save settlement(s)');
-    } finally {
-      setIsSaving(false);
+    } else {
+      // Only the ones that failed stay queued - already-saved settlements shouldn't be
+      // offered for a retry, which would just trigger the duplicate check again.
+      setParsedSettlements(stillPending);
+      setSaveError(`${failures.length} settlement(s) couldn't be saved:\n${failures.join('\n')}`);
     }
+    setIsSaving(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -227,7 +262,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           </div>
           {canEdit && (
             <button
-              onClick={() => { setShowUploadModal(true); setParsedSettlements(null); setParseErrors([]); setSaveError(null); }}
+              onClick={() => { setShowUploadModal(true); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
               className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-semibold hover:from-orange-700 hover:to-red-700 transition-all shadow-lg"
             >
               <Upload className="w-4 h-4" />
@@ -402,7 +437,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   {(['zomato', 'swiggy'] as const).map(agg => (
                     <button
                       key={agg}
-                      onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseErrors([]); setSaveError(null); }}
+                      onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
                       className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium capitalize transition-colors ${
                         uploadAggregator === agg ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
@@ -462,7 +497,23 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               {saveError && (
                 <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 flex gap-3">
                   <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-800">{saveError}</p>
+                  <p className="text-sm text-red-800 whitespace-pre-line">{saveError}</p>
+                </div>
+              )}
+
+              {skippedDuplicates.length > 0 && (
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 space-y-1.5">
+                  <div className="flex gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                    <p className="text-sm font-semibold text-amber-800">
+                      {skippedDuplicates.length} duplicate settlement{skippedDuplicates.length !== 1 ? 's' : ''} skipped (already saved or already queued):
+                    </p>
+                  </div>
+                  <ul className="text-sm text-amber-800 list-disc list-inside pl-8">
+                    {skippedDuplicates.map((d, i) => (
+                      <li key={i}><span className="font-medium">{d.fileName}</span> - settlement date {new Date(d.settlementDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
