@@ -2,11 +2,53 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { StockThresholdSettings } from './StockThresholdSettings';
+
+type StockFilterPreset = 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom';
+
+// Shared with the "Stock Requests by Momo Type" filter below - returns YYYY-MM-DD bounds.
+function getStockFilterRange(preset: StockFilterPreset, customRange: { from: string; to: string }): { start: string; end: string } {
+  const now = new Date();
+  const toISO = (d: Date) => d.toISOString().split('T')[0];
+  const startOfWeek = (d: Date) => {
+    const copy = new Date(d);
+    copy.setDate(copy.getDate() - copy.getDay());
+    return copy;
+  };
+
+  switch (preset) {
+    case 'today':
+      return { start: toISO(now), end: toISO(now) };
+    case 'yesterday': {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      return { start: toISO(y), end: toISO(y) };
+    }
+    case 'thisWeek':
+      return { start: toISO(startOfWeek(now)), end: toISO(now) };
+    case 'lastWeek': {
+      const thisWeekStart = startOfWeek(now);
+      const lastWeekEnd = new Date(thisWeekStart);
+      lastWeekEnd.setDate(lastWeekEnd.getDate() - 1);
+      const lastWeekStart = new Date(lastWeekEnd);
+      lastWeekStart.setDate(lastWeekStart.getDate() - 6);
+      return { start: toISO(lastWeekStart), end: toISO(lastWeekEnd) };
+    }
+    case 'thisMonth':
+      return { start: toISO(new Date(now.getFullYear(), now.getMonth(), 1)), end: toISO(now) };
+    case 'lastMonth':
+      return {
+        start: toISO(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+        end: toISO(new Date(now.getFullYear(), now.getMonth(), 0)),
+      };
+    case 'custom':
+      return { start: customRange.from, end: customRange.to };
+  }
+}
 
 interface ProductionRequestsProps {
   context: InventoryContextType;
@@ -79,10 +121,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Store recalibration modal state
   const [showStoreRecalibration, setShowStoreRecalibration] = useState(false);
   
-  // Which month "Store Stock Status" shows - defaults to the current month, but the
-  // opening-balance/recalibration logic below is inherently monthly (recalibration happens
-  // 1st-5th of each month), so a month picker fits it better than an arbitrary date range.
-  const [selectedStockMonth, setSelectedStockMonth] = useState<string>(new Date().toISOString().substring(0, 7));
+  // Date range "Store Stock Status" shows - same preset filter used by "Stock Requests by
+  // Momo Type" below, for a consistent filtering experience across this page.
+  const [stockFilter, setStockFilter] = useState<'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom'>('thisMonth');
+  const [stockCustomRange, setStockCustomRange] = useState({ from: new Date().toISOString().split('T')[0], to: new Date().toISOString().split('T')[0] });
 
   // Store opening balance state
   const [storeOpeningBalance, setStoreOpeningBalance] = useState<any>(null);
@@ -240,7 +282,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       setMostRecentRecalibration(null);
       loadStoreOpeningBalance();
     }
-  }, [salesData, context.user, selectedStoreId, context.inventoryItems, selectedStockMonth]);
+  }, [salesData, context.user, selectedStoreId, context.inventoryItems, stockFilter, stockCustomRange.from, stockCustomRange.to]);
 
   // Daily 3 PM reminder to submit stock request
   useEffect(() => {
@@ -454,357 +496,93 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     }
   };
 
-  const loadStoreOpeningBalance = async () => {
-    const effectiveStoreId = selectedStoreId || context.user?.storeId;
-    // For "All Stores" view, we need to aggregate across all stores
-    const isAllStores = !effectiveStoreId || effectiveStoreId === 'all';
-    
-    if (!context.user?.accessToken) return;
-    
-    console.log('🏪 ============================================');
-    console.log('🏪 loadStoreOpeningBalance called');
-    console.log('  selectedStoreId:', selectedStoreId);
-    console.log('  context.user.storeId:', context.user?.storeId);
-    console.log('  effectiveStoreId:', effectiveStoreId);
-    console.log('  isAllStores:', isAllStores);
-    console.log('  context.stores count:', context.stores?.length || 0);
-    console.log('  Current salesData length:', salesData.length);
-    console.log('🏪 ============================================');
-    
-    try {
-      const currentMonth = selectedStockMonth; // "2026-01"
+  // Maps a recalibration record's items to a { camelKey: quantity } stock object.
+  const recalToStock = (recal: any): Record<string, number> => {
+    const stock: Record<string, number> = {};
+    (recal.items || []).forEach((item: any) => {
+      const inventoryItem = context.inventoryItems?.find(invItem =>
+        invItem.id === item.itemId || invItem.name === item.itemId
+      );
+      if (inventoryItem) {
+        const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+        stock[camelKey] = item.actualQuantity;
+      }
+    });
+    return stock;
+  };
 
-      if (isAllStores) {
-        // For "All Stores", aggregate opening balance across all stores
-        console.log('  📊 Calculating aggregate opening balance for all stores');
-        
-        const allStores = context.stores || [];
-        console.log('  📋 All stores to aggregate:', allStores.map(s => ({ id: s.id, name: s.name })));
-        let aggregatedBalance: Record<string, number> = {};
-        finishedProducts.forEach(({ camelKey }) => {
-          aggregatedBalance[camelKey] = 0;
-        });
-        
-        for (const store of allStores) {
-          console.log(`  🏪 Processing store: ${store.name} (${store.id})`);
-          // Try to get recalibration history for each store to find OPENING BALANCE
-          try {
-            const recalHistory = await api.getRecalibrationHistory(
-              context.user.accessToken,
-              store.id,
-              'store'
-            );
-            
-            if (recalHistory?.history && recalHistory.history.length > 0) {
-              // Find the OPENING BALANCE recalibration from current month (isOpeningBalance: true)
-              const openingBalanceRecal = recalHistory.history.find((r: any) => {
-                const recalMonth = r.date.substring(0, 7);
-                return recalMonth === currentMonth && r.isOpeningBalance === true;
-              });
-              
-              if (openingBalanceRecal) {
-                // Use current month OPENING BALANCE recalibration
-                console.log(`    ✅ Found OPENING BALANCE recalibration for ${store.name}, date: ${openingBalanceRecal.date}`);
-                openingBalanceRecal.items.forEach((item: any) => {
-                  // Map itemId to camelKey - itemId can be either UUID or snake_case name
-                  const inventoryItem = context.inventoryItems?.find(invItem => 
-                    invItem.id === item.itemId || invItem.name === item.itemId
-                  );
-                  if (inventoryItem) {
-                    const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-                    console.log(`      Adding ${item.actualQuantity} ${camelKey} from ${store.name}`);
-                    aggregatedBalance[camelKey as keyof typeof aggregatedBalance] += item.actualQuantity;
-                  }
-                });
-              } else {
-                // No opening balance recalibration - calculate from previous month
-                console.log(`    ⚠️ No opening balance recalibration for ${store.name}, calculating from previous month`);
-                const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
-                console.log(`      Previous month balance for ${store.name}:`, balance);
-                Object.keys(balance).forEach(key => {
-                  aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
-                });
-              }
-            } else {
-              // No recalibration history - calculate from previous month
-              console.log(`    ⚠️ No recalibration history for ${store.name}, calculating from previous month`);
-              const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
-              console.log(`      Previous month balance for ${store.name}:`, balance);
-              Object.keys(balance).forEach(key => {
-                aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
-              });
-            }
-          } catch (error) {
-            console.error(`    ❌ Error loading recalibration for ${store.name}:`, error);
-            // On error, calculate from previous month
-            const balance = await calculatePreviousMonthStoreStock(store.id, currentMonth);
-            console.log(`      Previous month balance for ${store.name} (fallback):`, balance);
-            Object.keys(balance).forEach(key => {
-              aggregatedBalance[key as keyof typeof aggregatedBalance] += balance[key];
-            });
-          }
-          console.log(`    Running total after ${store.name}:`, aggregatedBalance);
-        }
-        
-        console.log('  ✅ FINAL Aggregated opening balance for all stores:', aggregatedBalance);
-        setStoreOpeningBalance(aggregatedBalance);
-        return;
-      }
-      
-      // Single store logic (existing code)
-      // Try to fetch last recalibration for STORE (not production house)
-      if (!effectiveStoreId) {
-        console.log('  ⚠️ No effectiveStoreId available, skipping recalibration fetch');
-        setStoreOpeningBalance({});
-        return;
-      }
-      
-      // CRITICAL FIX: We need to find the opening balance recalibration (isOpeningBalance: true)
-      // from the current month, not just the most recent recalibration
-      // The most recent one could be a mid-month audit (isOpeningBalance: false)
-      
-      try {
-        // Fetch ALL recalibrations for this store to find the opening balance one
-        const recalHistory = await api.getRecalibrationHistory(
-          context.user.accessToken,
-          effectiveStoreId,
-          'store'
-        );
-        
-        console.log('🔄 Recalibration Check:');
-        console.log('  Total recalibrations found:', recalHistory?.history?.length || 0);
-        
-        if (recalHistory?.history && recalHistory.history.length > 0) {
-          // Find the opening balance recalibration from the current month (isOpeningBalance: true)
-          const openingBalanceRecal = recalHistory.history.find((r: any) => {
-            const recalMonth = r.date.substring(0, 7);
-            return recalMonth === currentMonth && r.isOpeningBalance === true;
-          });
-          
-          // ALSO find the MOST RECENT recalibration (could be mid-month audit)
-          const currentMonthRecals = recalHistory.history.filter((r: any) => {
-            const recalMonth = r.date.substring(0, 7);
-            return recalMonth === currentMonth;
-          }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          
-          const mostRecentRecal = currentMonthRecals[0]; // Most recent one
-          
-          // If no opening balance found, try to find ANY recalibration from current month without the flag
-          // (for backward compatibility with old records)
-          const anyCurrentMonthRecal = !openingBalanceRecal ? recalHistory.history.find((r: any) => {
-            const recalMonth = r.date.substring(0, 7);
-            return recalMonth === currentMonth && r.isOpeningBalance === undefined;
-          }) : null;
-          
-          const recalToUse = openingBalanceRecal || anyCurrentMonthRecal;
-          
-          if (recalToUse) {
-            console.log('  ✅ Found opening balance recalibration:');
-            console.log('  Recalibration date:', recalToUse.date);
-            console.log('  Recalibration month:', recalToUse.date.substring(0, 7));
-            console.log('  Recalibration locationType:', recalToUse.locationType);
-            console.log('  Recalibration locationName:', recalToUse.locationName);
-            console.log('  Recalibration isOpeningBalance:', recalToUse.isOpeningBalance);
-            console.log('  Current month:', currentMonth);
-            
-            // Use this recalibration as opening balance
-            const balance: any = {};
-            console.log('  📝 Processing recalibration items:', recalToUse.items.length);
-            console.log('  📝 Available inventory items:', context.inventoryItems?.length || 0);
-            
-            recalToUse.items.forEach((item: any) => {
-              // Map itemId to camelKey - itemId can be either UUID or snake_case name
-              const inventoryItem = context.inventoryItems?.find(invItem => 
-                invItem.id === item.itemId || invItem.name === item.itemId
-              );
-              if (inventoryItem) {
-                const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-                balance[camelKey] = item.actualQuantity;
-              }
-            });
-            console.log('  ✅ Using opening balance from recalibration:', balance);
-            setStoreOpeningBalance(balance);
-            
-            // ALSO store the most recent recalibration (for stock calculation)
-            if (mostRecentRecal && mostRecentRecal.date !== recalToUse.date) {
-              console.log('  🔄 Found MORE RECENT recalibration (mid-month):');
-              console.log('    Date:', mostRecentRecal.date);
-              console.log('    isOpeningBalance:', mostRecentRecal.isOpeningBalance);
-              
-              // Convert to stock object
-              const mostRecentStock: any = {};
-              mostRecentRecal.items.forEach((item: any) => {
-                const inventoryItem = context.inventoryItems?.find(invItem => 
-                  invItem.id === item.itemId || invItem.name === item.itemId
-                );
-                if (inventoryItem) {
-                  const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-                  mostRecentStock[camelKey] = item.actualQuantity;
-                }
-              });
-              setMostRecentRecalibration({
-                date: mostRecentRecal.date,
-                stock: mostRecentStock
-              });
-              console.log('    Stock:', mostRecentStock);
-            } else {
-              // No more recent recalibration
-              setMostRecentRecalibration(null);
-            }
-            
-            return;
-          } else {
-            console.log('  ⚠️ No opening balance recalibration found for current month, calculating from previous month');
-          }
-        } else {
-          console.log('  ❌ No recalibration records found');
-        }
-      } catch (recalError) {
-        console.error('⚠️ Error fetching recalibration history (will calculate from previous month):', recalError);
-        // Continue to calculate from previous month
-      }
-      
-      // No current month recalibration - calculate from previous month
-      const balance = await calculatePreviousMonthStoreStock(effectiveStoreId, currentMonth);
-      setStoreOpeningBalance(balance);
+  // Opening balance for a store = the most recent recalibration on or before the range's
+  // start date (zero if the store has never been recalibrated). A recalibration that falls
+  // WITHIN the range (after start, on/before end) is returned separately as a mid-range
+  // override, since received/sold before that point shouldn't be double-counted against it.
+  const loadStoreRecalBaseline = async (storeId: string, rangeStart: string, rangeEnd: string) => {
+    const zeroBalance: Record<string, number> = {};
+    finishedProducts.forEach(({ camelKey }) => { zeroBalance[camelKey] = 0; });
+
+    if (!context.user?.accessToken || !storeId) return { opening: zeroBalance, midRange: null as { date: string; stock: Record<string, number> } | null };
+
+    try {
+      const recalHistory = await api.getRecalibrationHistory(context.user.accessToken, storeId, 'store');
+      const history = recalHistory?.history || [];
+      if (history.length === 0) return { opening: zeroBalance, midRange: null };
+
+      const sorted = [...history].sort((a: any, b: any) => b.date.localeCompare(a.date));
+      const baseline = sorted.find((r: any) => r.date.substring(0, 10) <= rangeStart);
+      const midRange = sorted.find((r: any) => r.date.substring(0, 10) > rangeStart && r.date.substring(0, 10) <= rangeEnd);
+
+      return {
+        opening: baseline ? recalToStock(baseline) : zeroBalance,
+        midRange: midRange ? { date: midRange.date, stock: recalToStock(midRange) } : null,
+      };
     } catch (error) {
-      console.error('Error loading opening balance:', error);
-      // Set to zero balance on error
-      const zeroBalance: Record<string, number> = {};
-      finishedProducts.forEach(({ camelKey }) => {
-        zeroBalance[camelKey] = 0;
-      });
-      setStoreOpeningBalance(zeroBalance);
+      console.error(`Error loading recalibration history for store ${storeId}:`, error);
+      return { opening: zeroBalance, midRange: null };
     }
   };
 
-  const calculatePreviousMonthStoreStock = async (storeId: string, currentMonth: string): Promise<any> => {
-    // Return zero balance if storeId is not provided
-    if (!storeId) {
-      console.warn('  ⚠️ calculatePreviousMonthStoreStock called with empty storeId');
-      const zeroBalance: Record<string, number> = {};
-      finishedProducts.forEach(({ camelKey }) => {
-        zeroBalance[camelKey] = 0;
-      });
-      return zeroBalance;
-    }
-    
-    // Get previous month
-    const [year, month] = currentMonth.split('-').map(Number);
-    let prevYear = year;
-    let prevMonth = month - 1;
-    
-    if (prevMonth === 0) {
-      prevMonth = 12;
-      prevYear = year - 1;
-    }
-    
-    const previousMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
-    
-    console.log('📊 Store Opening Balance Calculation:');
-    console.log('  Store ID:', storeId);
-    console.log('  Previous Month:', previousMonthStr);
-    
-    // First, try to get recalibration from the previous month
-    let prevMonthOpeningBalance: Record<string, number> = {};
-    
+  const loadStoreOpeningBalance = async () => {
+    const effectiveStoreId = selectedStoreId || context.user?.storeId;
+    const isAllStores = !effectiveStoreId || effectiveStoreId === 'all';
+    if (!context.user?.accessToken) return;
+
+    const { start, end } = getStockFilterRange(stockFilter, stockCustomRange);
+
     try {
-      const prevRecalResponse = await api.getLastRecalibration(
-        context.user?.accessToken || '',
-        storeId,
-        'store'
-      );
-      
-      if (prevRecalResponse?.record) {
-        const recalMonth = prevRecalResponse.record.date.substring(0, 7);
-        console.log('  📦 Found recalibration from:', recalMonth);
-        
-        if (recalMonth === previousMonthStr) {
-          // Perfect! We have recalibration from the previous month
-          prevRecalResponse.record.items.forEach((item: any) => {
-            // Map itemId to camelKey - itemId can be either UUID or snake_case name
-            const inventoryItem = context.inventoryItems?.find(invItem => 
-              invItem.id === item.itemId || invItem.name === item.itemId
-            );
-            if (inventoryItem) {
-              const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-              prevMonthOpeningBalance[camelKey] = item.actualQuantity;
-            }
-          });
-          console.log('  ✅ Using previous month recalibration as opening:', prevMonthOpeningBalance);
-        } else {
-          console.log('  ���️ Recalibration is from different month, assuming zero opening balance');
-          finishedProducts.forEach(({ camelKey }) => {
-            prevMonthOpeningBalance[camelKey] = 0;
+      if (isAllStores) {
+        const allStores = context.stores || [];
+        const aggregatedBalance: Record<string, number> = {};
+        finishedProducts.forEach(({ camelKey }) => { aggregatedBalance[camelKey] = 0; });
+
+        for (const store of allStores) {
+          const { opening } = await loadStoreRecalBaseline(store.id, start, end);
+          Object.keys(opening).forEach(key => {
+            aggregatedBalance[key] = (aggregatedBalance[key] || 0) + opening[key];
           });
         }
-      } else {
-        console.log('  ⚠️ No recalibration found, assuming zero opening balance');
-        finishedProducts.forEach(({ camelKey }) => {
-          prevMonthOpeningBalance[camelKey] = 0;
-        });
+
+        setStoreOpeningBalance(aggregatedBalance);
+        // Mid-range recalibration overrides aren't meaningfully aggregable across multiple
+        // stores at once, so "All Stores" always uses the plain opening+received-sold path.
+        setMostRecentRecalibration(null);
+        return;
       }
+
+      if (!effectiveStoreId) {
+        setStoreOpeningBalance({});
+        setMostRecentRecalibration(null);
+        return;
+      }
+
+      const { opening, midRange } = await loadStoreRecalBaseline(effectiveStoreId, start, end);
+      setStoreOpeningBalance(opening);
+      setMostRecentRecalibration(midRange);
     } catch (error) {
-      console.error('  ❌ Error fetching recalibration:', error);
-      finishedProducts.forEach(({ camelKey }) => {
-        prevMonthOpeningBalance[camelKey] = 0;
-      });
+      console.error('Error loading opening balance:', error);
+      const zeroBalance: Record<string, number> = {};
+      finishedProducts.forEach(({ camelKey }) => { zeroBalance[camelKey] = 0; });
+      setStoreOpeningBalance(zeroBalance);
+      setMostRecentRecalibration(null);
     }
-    
-    // Calculate from previous month's deliveries and sales
-    const prevReceived = (context.productionRequests || [])
-      .filter(req => {
-        if (req.status !== 'delivered') return false;
-        if (req.storeId !== storeId) return false;
-        const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
-        return requestDate && requestDate.startsWith(previousMonthStr);
-      })
-      .reduce((acc, req) => {
-        // Dynamically accumulate all finished product quantities
-        // Support both new format (chickenMomo) and old format (chickenMomos with 's')
-        finishedProducts.forEach(({ camelKey }) => {
-          const newFormat = (req as any)[camelKey] || 0;
-          const oldFormat = (req as any)[camelKey + 's'] || 0; // Old requests have 's' at end
-          acc[camelKey] = (acc[camelKey] || 0) + newFormat + oldFormat;
-        });
-        return acc;
-      }, {} as Record<string, number>);
-    
-    const prevSalesFiltered = (salesData || [])
-      .filter(sale => {
-        if (sale.storeId !== storeId) return false;
-        return sale.date && sale.date.startsWith(previousMonthStr);
-      });
-    
-    const prevSold = prevSalesFiltered
-      .reduce((acc, sale) => {
-        // Dynamically accumulate sales for all finished products
-        finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-          // Get value from the legacySalesKey
-          let salesValue = sale.data?.[legacySalesKey] || 0;
-          
-          // Backward compatibility: Check for old "Corn Cheese Momos" naming
-          if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) {
-            salesValue = sale.data?.['Corn Cheese Momos'] || 0;
-          }
-          
-          acc[camelKey] = (acc[camelKey] || 0) + salesValue;
-        });
-        return acc;
-      }, {} as Record<string, number>);
-    
-    // Calculate closing stock = Opening Balance + Received - Sold (FIXED!)
-    const closingStock: Record<string, number> = {};
-    finishedProducts.forEach(({ camelKey }) => {
-      closingStock[camelKey] = (prevMonthOpeningBalance[camelKey] || 0) + (prevReceived[camelKey] || 0) - (prevSold[camelKey] || 0);
-    });
-    
-    console.log('  Previous Month Opening Balance:', prevMonthOpeningBalance);
-    console.log('  Previous Month Received:', prevReceived);
-    console.log('  Previous Month Sold:', prevSold);
-    console.log('  Calculated Closing Stock (= Opening + Received - Sold):', closingStock);
-    
-    return closingStock;
   };
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
@@ -1174,140 +952,129 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         <>
         {/* Currently Viewing Banner */}
         {(() => {
-          const effectiveStoreId = selectedStoreId || context.user?.storeId;
-          const isCurrentMonth = selectedStockMonth === new Date().toISOString().substring(0, 7);
-          const monthLabel = new Date(`${selectedStockMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-          const shiftMonth = (delta: number) => {
-            const [y, m] = selectedStockMonth.split('-').map(Number);
-            const d = new Date(y, m - 1 + delta, 1);
-            setSelectedStockMonth(d.toISOString().substring(0, 7));
-          };
+          const filterOptions: { value: typeof stockFilter; label: string }[] = [
+            { value: 'today', label: 'Today' },
+            { value: 'yesterday', label: 'Yesterday' },
+            { value: 'thisWeek', label: 'This Week' },
+            { value: 'lastWeek', label: 'Last Week' },
+            { value: 'thisMonth', label: 'This Month' },
+            { value: 'lastMonth', label: 'Last Month' },
+            { value: 'custom', label: 'Custom' },
+          ];
+          const activeLabel = filterOptions.find(f => f.value === stockFilter)?.label || '';
 
           return (
             <div className="bg-gradient-to-r from-green-100 to-green-50 border-l-4 border-green-600 rounded-lg p-3 mb-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="flex flex-col gap-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-green-700 flex-shrink-0" />
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Calendar className="w-5 h-5 text-green-700 flex-shrink-0" />
+                  <div className="min-w-0">
                     <p className="text-sm font-semibold text-green-900">
-                      Store Stock Status ({monthLabel})
+                      Store Stock Status ({activeLabel})
+                    </p>
+                    <p className="text-xs text-green-700">
+                      Opening balance + Received in period − Sold in period
                     </p>
                   </div>
-                  <p className="text-xs text-green-700 sm:ml-7">
-                    Opening balance + Received this month - Sold this month
-                  </p>
                 </div>
+                {/* Small icon-only sync button, tucked in the corner rather than a big CTA */}
+                <button
+                  onClick={handleSyncPosNow}
+                  disabled={isSyncingPos}
+                  className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all shadow-sm disabled:opacity-50 flex-shrink-0"
+                  title={isSyncingPos ? 'Syncing...' : "Sync Now - fetch today's sales/stock from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingPos ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {/* Month picker */}
-                  <div className="flex items-center gap-1 bg-white/70 border border-green-300 rounded-lg p-0.5">
-                    <button
-                      onClick={() => shiftMonth(-1)}
-                      className="p-1.5 rounded-md hover:bg-green-100 text-green-700 transition-colors"
-                      title="Previous month"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <span className="text-xs font-medium text-green-900 px-1 whitespace-nowrap min-w-[6.5rem] text-center">{monthLabel}</span>
-                    <button
-                      onClick={() => shiftMonth(1)}
-                      className="p-1.5 rounded-md hover:bg-green-100 text-green-700 transition-colors"
-                      title="Next month"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {!isCurrentMonth && (
-                    <button
-                      onClick={() => setSelectedStockMonth(new Date().toISOString().substring(0, 7))}
-                      className="text-xs font-medium text-green-700 underline underline-offset-2 hover:text-green-900"
-                    >
-                      Jump to current month
-                    </button>
-                  )}
-                  {/* Small icon-only sync button, tucked in the corner rather than a big CTA */}
+              {/* Date filter - mobile select, desktop pills (same pattern as "Stock Requests by Momo Type" below) */}
+              <select
+                value={stockFilter}
+                onChange={(e) => setStockFilter(e.target.value as typeof stockFilter)}
+                className="sm:hidden w-full px-3 py-2.5 border border-green-300 rounded-lg text-sm bg-white text-gray-900 mb-2"
+              >
+                {filterOptions.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+              <div className="hidden sm:flex gap-2 overflow-x-auto pb-1 mb-2">
+                {filterOptions.map(({ value, label }) => (
                   <button
-                    onClick={handleSyncPosNow}
-                    disabled={isSyncingPos}
-                    className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all shadow-sm disabled:opacity-50 flex-shrink-0"
-                    title={isSyncingPos ? 'Syncing...' : "Sync Now - fetch today's sales/stock from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
+                    key={value}
+                    onClick={() => setStockFilter(value)}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap flex-shrink-0 ${
+                      stockFilter === value ? 'bg-green-600 text-white' : 'bg-white text-green-800 border border-green-300 hover:bg-green-100'
+                    }`}
                   >
-                    <RefreshCw className={`w-4 h-4 ${isSyncingPos ? 'animate-spin' : ''}`} />
+                    {label}
                   </button>
-                  {isClusterHead && (
-                    <button
-                      onClick={() => setShowThresholdSettings(true)}
-                      className="flex items-center justify-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all flex-1 sm:flex-none"
-                    >
-                      <Settings className="w-4 h-4" />
-                      <span className="text-sm font-semibold whitespace-nowrap">Alert Settings</span>
-                    </button>
-                  )}
-                  {isClusterHead && (
-                    <button
-                      onClick={() => setShowPlateConfigModal(true)}
-                      className="flex items-center justify-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-900 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
-                    >
-                      <Settings className="w-4 h-4" />
-                      <span className="text-sm font-semibold whitespace-nowrap">Plate Config</span>
-                    </button>
-                  )}
-                  {onNavigateToManageItems && isClusterHead && (
-                    <button
-                      onClick={onNavigateToManageItems}
-                      className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
-                    >
-                      <Package className="w-4 h-4" />
-                      <span className="text-sm font-semibold whitespace-nowrap">Manage Items</span>
-                    </button>
-                  )}
+                ))}
+              </div>
+
+              {stockFilter === 'custom' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
+                  <DatePicker
+                    label="From Date"
+                    value={stockCustomRange.from}
+                    onChange={(date) => setStockCustomRange({ ...stockCustomRange, from: date })}
+                  />
+                  <DatePicker
+                    label="To Date"
+                    value={stockCustomRange.to}
+                    onChange={(date) => setStockCustomRange({ ...stockCustomRange, to: date })}
+                  />
                 </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {isClusterHead && (
+                  <button
+                    onClick={() => setShowThresholdSettings(true)}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border-2 border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-all flex-1 sm:flex-none"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span className="text-sm font-semibold whitespace-nowrap">Alert Settings</span>
+                  </button>
+                )}
+                {isClusterHead && (
+                  <button
+                    onClick={() => setShowPlateConfigModal(true)}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-900 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span className="text-sm font-semibold whitespace-nowrap">Plate Config</span>
+                  </button>
+                )}
+                {onNavigateToManageItems && isClusterHead && (
+                  <button
+                    onClick={onNavigateToManageItems}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none"
+                  >
+                    <Package className="w-4 h-4" />
+                    <span className="text-sm font-semibold whitespace-nowrap">Manage Items</span>
+                  </button>
+                )}
               </div>
             </div>
           );
         })()}
 
         {(() => {
-          // Calculate Store Stock Status (MONTHLY)
-          // Store Stock = Opening Balance + Current Month Received - Current Month Sold
-          
+          // Calculate Store Stock Status for the selected date range:
+          // Store Stock = Opening Balance + Received in period - Sold in period
+
           const effectiveStoreId = selectedStoreId || context.user?.storeId;
+          const { start: rangeStart, end: rangeEnd } = getStockFilterRange(stockFilter, stockCustomRange);
+          const inRange = (dateStr: string | undefined) => !!dateStr && dateStr.substring(0, 10) >= rangeStart && dateStr.substring(0, 10) <= rangeEnd;
 
-          // Whichever month is selected in the picker above (defaults to current month)
-          const currentMonth = selectedStockMonth;
-
-          // Get current month's delivered production requests for this store
-          console.log('📦 Stock Status Calculation Debug:', {
-            currentMonth,
-            totalRequests: context.productionRequests?.length || 0,
-            deliveredRequests: context.productionRequests?.filter(r => r.status === 'delivered').length || 0,
-            requestStatuses: context.productionRequests?.map(r => ({ id: r.id.slice(0, 8), status: r.status, date: r.requestDate })) || []
-          });
-          
           const deliveredRequests = context.productionRequests?.filter(req => {
             // Count both delivered and pending requests (pending means delivery confirmation is pending, but stock was received)
             if (req.status !== 'delivered' && req.status !== 'pending') return false;
-            
-            // Filter by current month
+
             const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
-            const matchesMonth = deliveryDate && deliveryDate.startsWith(currentMonth);
-            
-            // Debug log for chicken momo discrepancies
-            console.log('🔍 Delivered Request:', {
-              id: req.id.slice(0, 8),
-              status: req.status,
-              chicken: (req as any).chicken,
-              chickenMomo: (req as any).chickenMomo,
-              chickenMomos: (req as any).chickenMomos,
-              chickenKurkure: (req as any).chickenKurkure,
-              chickenKurkureMomo: (req as any).chickenKurkureMomo,
-              chickenKurkureMomos: (req as any).chickenKurkureMomos,
-              deliveryDate,
-              matchesMonth
-            });
-            
-            if (!matchesMonth) return false;
-            
+            if (!inRange(deliveryDate)) return false;
+
             if (!effectiveStoreId || effectiveStoreId === 'all') {
               // Show all stores
               return true;
@@ -1315,8 +1082,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             // Show specific store
             return req.storeId === effectiveStoreId;
           }) || [];
-          
-          // Aggregate current month's received quantities
+
+          // Aggregate the period's received quantities
           const totalReceived = deliveredRequests.reduce((acc, req) => {
             // Dynamically accumulate all finished product quantities
             // Support both new format (chickenMomo) and old format (chickenMomos with 's')
@@ -1327,15 +1094,11 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             });
             return acc;
           }, {} as Record<string, number>);
-          
-          console.log('📊 After aggregation - deliveredRequests count:', deliveredRequests.length);
-          console.log('📊 After aggregation - totalReceived:', totalReceived);
-          
-          // Get current month's sales data for this store
+
+          // Get the period's sales data for this store
           const storeSales = salesData.filter((s: any) => {
-            // Filter by current month
-            if (!s.date || !s.date.startsWith(currentMonth)) return false;
-            
+            if (!inRange(s.date)) return false;
+
             if (!effectiveStoreId || effectiveStoreId === 'all') {
               // Show all stores
               return true;
@@ -1385,7 +1148,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 <div className="flex items-center gap-2 mb-4">
                   <Calendar className="w-5 h-5 text-green-700" />
                   <p className="text-sm font-semibold text-green-900">
-                    Store Stock Status (Current Month)
+                    Store Stock Status
                   </p>
                 </div>
                 <div className="flex items-center justify-center py-8">
@@ -1483,7 +1246,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             return (
               <div className="bg-gray-50 rounded-lg p-8 text-center">
                 <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-600">No inventory available for {currentMonth}</p>
+                <p className="text-gray-600">No inventory available for this period ({rangeStart} to {rangeEnd})</p>
                 <p className="text-sm text-gray-500 mt-2">
                   Stock will appear here once:
                 </p>
