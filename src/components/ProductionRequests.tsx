@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
@@ -79,6 +79,11 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   // Store recalibration modal state
   const [showStoreRecalibration, setShowStoreRecalibration] = useState(false);
   
+  // Which month "Store Stock Status" shows - defaults to the current month, but the
+  // opening-balance/recalibration logic below is inherently monthly (recalibration happens
+  // 1st-5th of each month), so a month picker fits it better than an arbitrary date range.
+  const [selectedStockMonth, setSelectedStockMonth] = useState<string>(new Date().toISOString().substring(0, 7));
+
   // Store opening balance state
   const [storeOpeningBalance, setStoreOpeningBalance] = useState<any>(null);
   
@@ -235,7 +240,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       setMostRecentRecalibration(null);
       loadStoreOpeningBalance();
     }
-  }, [salesData, context.user, selectedStoreId, context.inventoryItems]);
+  }, [salesData, context.user, selectedStoreId, context.inventoryItems, selectedStockMonth]);
 
   // Daily 3 PM reminder to submit stock request
   useEffect(() => {
@@ -467,8 +472,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     console.log('🏪 ============================================');
     
     try {
-      const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
-      
+      const currentMonth = selectedStockMonth; // "2026-01"
+
       if (isAllStores) {
         // For "All Stores", aggregate opening balance across all stores
         console.log('  📊 Calculating aggregate opening balance for all stores');
@@ -1169,8 +1174,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         <>
         {/* Currently Viewing Banner */}
         {(() => {
-          const today = new Date();
           const effectiveStoreId = selectedStoreId || context.user?.storeId;
+          const isCurrentMonth = selectedStockMonth === new Date().toISOString().substring(0, 7);
+          const monthLabel = new Date(`${selectedStockMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+          const shiftMonth = (delta: number) => {
+            const [y, m] = selectedStockMonth.split('-').map(Number);
+            const d = new Date(y, m - 1 + delta, 1);
+            setSelectedStockMonth(d.toISOString().substring(0, 7));
+          };
 
           return (
             <div className="bg-gradient-to-r from-green-100 to-green-50 border-l-4 border-green-600 rounded-lg p-3 mb-4">
@@ -1179,22 +1190,49 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   <div className="flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-green-700 flex-shrink-0" />
                     <p className="text-sm font-semibold text-green-900">
-                      Store Stock Status (Current Month)
+                      Store Stock Status ({monthLabel})
                     </p>
                   </div>
                   <p className="text-xs text-green-700 sm:ml-7">
-                    Opening balance + Current month received - Current month sold
+                    Opening balance + Received this month - Sold this month
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Month picker */}
+                  <div className="flex items-center gap-1 bg-white/70 border border-green-300 rounded-lg p-0.5">
+                    <button
+                      onClick={() => shiftMonth(-1)}
+                      className="p-1.5 rounded-md hover:bg-green-100 text-green-700 transition-colors"
+                      title="Previous month"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs font-medium text-green-900 px-1 whitespace-nowrap min-w-[6.5rem] text-center">{monthLabel}</span>
+                    <button
+                      onClick={() => shiftMonth(1)}
+                      className="p-1.5 rounded-md hover:bg-green-100 text-green-700 transition-colors"
+                      title="Next month"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {!isCurrentMonth && (
+                    <button
+                      onClick={() => setSelectedStockMonth(new Date().toISOString().substring(0, 7))}
+                      className="text-xs font-medium text-green-700 underline underline-offset-2 hover:text-green-900"
+                    >
+                      Jump to current month
+                    </button>
+                  )}
+                  {/* Small icon-only sync button, tucked in the corner rather than a big CTA */}
                   <button
                     onClick={handleSyncPosNow}
                     disabled={isSyncingPos}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all shadow-md hover:shadow-lg flex-1 sm:flex-none disabled:opacity-50"
-                    title="Fetch today's sales/stock from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
+                    className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all shadow-sm disabled:opacity-50 flex-shrink-0"
+                    title={isSyncingPos ? 'Syncing...' : "Sync Now - fetch today's sales/stock from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
                   >
                     <RefreshCw className={`w-4 h-4 ${isSyncingPos ? 'animate-spin' : ''}`} />
-                    <span className="text-sm font-semibold whitespace-nowrap">{isSyncingPos ? 'Syncing...' : 'Sync Now'}</span>
                   </button>
                   {isClusterHead && (
                     <button
@@ -1234,13 +1272,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           // Store Stock = Opening Balance + Current Month Received - Current Month Sold
           
           const effectiveStoreId = selectedStoreId || context.user?.storeId;
-          
-          // Get current month in IST (UTC+5:30)
-          const now = new Date();
-          const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-          const istDate = new Date(now.getTime() + istOffset);
-          const currentMonth = istDate.toISOString().substring(0, 7); // "2026-01"
-          
+
+          // Whichever month is selected in the picker above (defaults to current month)
+          const currentMonth = selectedStockMonth;
+
           // Get current month's delivered production requests for this store
           console.log('📦 Stock Status Calculation Debug:', {
             currentMonth,
