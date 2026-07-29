@@ -2323,6 +2323,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const onlineSales = (sale.swiggySales || 0) + (sale.zomatoSales || 0);
  if (!dailyData[date].onlineSales) dailyData[date].onlineSales = 0;
  dailyData[date].onlineSales += onlineSales;
+ // BUG FIX: this was only tracked for the commission calc below and never actually
+ // added to revenue, so the Revenue/Profit lines only ever reflected offline (cash +
+ // Paytm) sales - online/aggregator sales were silently missing from both charts.
+ dailyData[date].revenue += onlineSales;
  });
 
  filteredOnlinePayouts.forEach(payout => {
