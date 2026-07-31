@@ -142,7 +142,7 @@ export function OnlineCashRecalibration({
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-xl p-8">
           <div className="flex items-center gap-3">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
             <p className="text-gray-700">Loading recalibration data...</p>
           </div>
         </div>
@@ -162,14 +162,14 @@ export function OnlineCashRecalibration({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 text-white">
+        <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Smartphone className="w-6 h-6" />
                 Online Cash Recalibration
               </h2>
-              <p className="text-purple-100 mt-1">
+              <p className="text-orange-100 mt-1">
                 {storeName} - {currentMonth}
               </p>
             </div>
@@ -252,17 +252,17 @@ export function OnlineCashRecalibration({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* System Balance (Read-only) */}
-          <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border-2 border-purple-200">
+          <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200">
             <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-purple-600" />
-              <label className="text-sm font-semibold text-purple-900 uppercase tracking-wide">
+              <TrendingUp className="w-5 h-5 text-orange-600" />
+              <label className="text-sm font-semibold text-orange-900 uppercase tracking-wide">
                 System Calculated Balance
               </label>
             </div>
-            <p className="text-4xl font-bold text-purple-900">
+            <p className="text-4xl font-bold text-orange-900">
               ₹{systemBalance.toLocaleString()}
             </p>
-            <p className="text-xs text-purple-700 mt-2">
+            <p className="text-xs text-orange-700 mt-2">
               This is the balance calculated from all your Paytm receipts, online sales, expenses, and commissions up to today.
             </p>
           </div>
@@ -279,7 +279,7 @@ export function OnlineCashRecalibration({
                 step="0.01"
                 value={actualBalance}
                 onChange={(e) => setActualBalance(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-lg"
+                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
                 placeholder="Enter actual balance from Paytm app"
                 required
               />
@@ -301,7 +301,7 @@ export function OnlineCashRecalibration({
                 value={manualDate || today}
                 onChange={(e) => setManualDate(e.target.value)}
                 max={today}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-lg"
+                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
                 required
               />
             </div>
@@ -344,7 +344,7 @@ export function OnlineCashRecalibration({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               placeholder="Optional: Explain any discrepancies or special situations..."
             />
           </div>
@@ -357,7 +357,7 @@ export function OnlineCashRecalibration({
             <select
               value={discrepancyType}
               onChange={(e) => setDiscrepancyType(e.target.value as 'none' | 'mistake' | 'loan')}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
             >
               <option value="none">None</option>
               <option value="mistake">Mistake</option>
@@ -378,7 +378,7 @@ export function OnlineCashRecalibration({
                   step="0.01"
                   value={loanAmount}
                   onChange={(e) => setLoanAmount(e.target.value)}
-                  className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-lg"
+                  className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
                   placeholder="Enter loan amount"
                 />
               </div>
@@ -412,7 +412,7 @@ export function OnlineCashRecalibration({
             <button
               type="submit"
               disabled={saving || !actualBalance}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <>

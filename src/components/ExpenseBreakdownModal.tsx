@@ -26,15 +26,18 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
   const itemAnalysis: ItemAnalysis[] = Object.values(
     items.reduce((acc, item) => {
       // Handle both inventory items (itemName) and overhead items (description)
-      const name = item.itemName || item.description || 'Unknown';
+      const rawName = item.itemName || item.description || 'Unknown';
+      // Normalize the grouping key so trivial differences (whitespace/casing) in
+      // free-text names don't fragment the same real-world item into separate rows
+      const name = rawName.trim().toLowerCase();
       const unitPrice = item.unitPrice || (item.amount || 0);
       const quantity = item.quantity || 1;
       // Inventory items use totalCost, overhead items use amount
       const totalPrice = item.totalCost || item.totalPrice || item.amount || 0;
-      
+
       if (!acc[name]) {
         acc[name] = {
-          itemName: name,
+          itemName: rawName.trim(),
           totalSpent: 0,
           quantity: 0,
           avgUnitPrice: 0,
@@ -97,13 +100,13 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 flex justify-between items-center">
+        <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold flex items-center gap-2">
               <BarChart3 className="w-7 h-7" />
               {category} Breakdown
             </h2>
-            <p className="text-purple-100 mt-1">
+            <p className="text-orange-100 mt-1">
               Total Spent: ₹{totalAmount.toFixed(2)} • {items.length} transactions • {topItems.length} unique items
             </p>
           </div>
@@ -119,7 +122,7 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Top Items by Spend */}
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-6 border-2 border-blue-200">
+            <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-lg p-6 border-2 border-blue-200">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Package className="w-5 h-5 text-blue-600" />
                 Top Items by Spend
@@ -149,7 +152,7 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
                       <div className="mt-2">
                         <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full"
+                            className="h-full bg-gradient-to-r from-blue-500 to-sky-500 rounded-full"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>
@@ -222,9 +225,9 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
           </div>
 
           {/* Summary Statistics */}
-          <div className="mt-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border-2 border-purple-200">
+          <div className="mt-6 bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-purple-600" />
+              <DollarSign className="w-5 h-5 text-orange-600" />
               Summary Statistics
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

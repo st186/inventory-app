@@ -299,7 +299,7 @@ export function PushNotificationStatus({ userId }: PushNotificationStatusProps) 
           <button
             onClick={handleEnableNotifications}
             disabled={status.loading || status.permission === 'denied'}
-            className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <Bell className="w-4 h-4" />
             <span>Enable Push Notifications</span>

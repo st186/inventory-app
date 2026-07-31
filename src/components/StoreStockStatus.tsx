@@ -181,7 +181,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
   return (
     <div className="space-y-6">
       {/* Info Banner about Dynamic Inventory Items */}
-      <Card className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200">
+      <Card className="p-4 bg-gradient-to-r from-blue-50 to-sky-50 border-2 border-blue-200">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -217,7 +217,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
           {(context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
             <button
               onClick={() => setShowPlateConfig(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-lg hover:from-blue-700 hover:to-blue-700 transition-all shadow-md hover:shadow-lg"
             >
               <Settings className="w-4 h-4" />
               <span className="text-sm font-semibold">Plate Config</span>
@@ -226,7 +226,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
           {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
             <button
               onClick={onNavigateToManageItems}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
             >
               <Package className="w-4 h-4" />
               <span className="text-sm font-semibold">Manage Items</span>
@@ -290,7 +290,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
       {showPlateConfig && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+            <div className="bg-gradient-to-r from-blue-600 to-sky-600 p-6 text-white rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
@@ -341,7 +341,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
             <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
               <button
                 onClick={() => setShowPlateConfig(false)}
-                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl hover:from-blue-700 hover:to-blue-700 transition-all shadow-lg"
               >
                 Done
               </button>
@@ -358,7 +358,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
               {/* Store Header */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+                  <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
                     <Store className="h-5 w-5 text-white" />
                   </div>
                   <div>

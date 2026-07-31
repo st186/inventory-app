@@ -103,22 +103,29 @@ function getNavigationTarget(data) {
 
 // Handle notification clicks
 self.addEventListener('notificationclick', (event) => {
-  console.log('Notification clicked:', event);
+  console.log('Notification clicked. data =', event.notification.data);
 
   const target = getNavigationTarget(event.notification.data);
+  console.log('Computed navigation target:', target);
   event.notification.close();
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      console.log('Found', clientList.length, 'open client(s), scope =', self.registration.scope);
       // If app is already open in some tab, focus it and tell it where to navigate
       for (const client of clientList) {
+        console.log('Checking client url:', client.url);
         if (client.url.includes(self.registration.scope) && 'focus' in client) {
           if (target && 'postMessage' in client) {
+            console.log('Posting navigation target to existing client:', target);
             client.postMessage({ type: 'notification-navigate', target });
+          } else {
+            console.log('No target to post, or client has no postMessage (target=', target, ')');
           }
           return client.focus();
         }
       }
+      console.log('No matching open client found, will open a new window');
       // Otherwise open a new window, passing the target as query params
       if (clients.openWindow) {
         if (target) {

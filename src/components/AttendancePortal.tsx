@@ -52,8 +52,15 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
     setRefreshKey(prev => prev + 1);
   };
 
+  const tabButtonClass = (tab: string) =>
+    `flex items-center gap-2 px-4 py-2.5 rounded-full text-sm transition-colors whitespace-nowrap flex-shrink-0 ${
+      activeTab === tab
+        ? 'bg-primary text-primary-foreground'
+        : 'bg-secondary text-foreground hover:opacity-80'
+    }`;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       {/* Debug Info Banner (only for managers/cluster heads without employeeId) */}
       {(isManager || isClusterHead) && !user.employeeId && (
         <div className="bg-red-50 border-b border-red-200 p-4">
@@ -83,42 +90,21 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
       )}
 
       {/* Tab Navigation */}
-      <div className="bg-white shadow-sm sticky top-0 z-40">
+      <div className="bg-card border-b border-border sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center overflow-x-auto py-4 gap-2 scrollbar-hide">
+          <div className="flex items-center flex-wrap py-4 gap-2">
             {/* Employee Tabs */}
             {isEmployee && (
               <>
-                <button
-                  onClick={() => setActiveTab('timesheet')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'timesheet'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('timesheet')} className={tabButtonClass('timesheet')}>
                   <Clock className="w-4 h-4" />
-                  Update Timesheet
+                  Update timesheet
                 </button>
-                <button
-                  onClick={() => setActiveTab('leave')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'leave'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('leave')} className={tabButtonClass('leave')}>
                   <Calendar className="w-4 h-4" />
-                  Apply for Leave
+                  Apply for leave
                 </button>
-                <button
-                  onClick={() => setActiveTab('hierarchy')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'hierarchy'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('hierarchy')} className={tabButtonClass('hierarchy')}>
                   <Network className="w-4 h-4" />
                   Hierarchy
                 </button>
@@ -128,60 +114,25 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
             {/* Manager Tabs */}
             {isManager && (
               <>
-                <button
-                  onClick={() => setActiveTab('timesheet')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'timesheet'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('timesheet')} className={tabButtonClass('timesheet')}>
                   <Clock className="w-4 h-4" />
-                  My Timesheet
+                  My timesheet
                 </button>
-                <button
-                  onClick={() => setActiveTab('leave')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'leave'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('leave')} className={tabButtonClass('leave')}>
                   <Calendar className="w-4 h-4" />
-                  My Leave
+                  My leave
                 </button>
-                <button
-                  onClick={() => setActiveTab('approve-timesheet')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'approve-timesheet'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('approve-timesheet')} className={tabButtonClass('approve-timesheet')}>
                   <CheckSquare className="w-4 h-4" />
-                  Approve Timesheets
+                  Approve timesheets
                 </button>
-                <button
-                  onClick={() => setActiveTab('approve-leave')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'approve-leave'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('approve-leave')} className={tabButtonClass('approve-leave')}>
                   <CheckSquare className="w-4 h-4" />
-                  Approve Leaves
+                  Approve leaves
                 </button>
-                <button
-                  onClick={() => setActiveTab('team')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'team'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('team')} className={tabButtonClass('team')}>
                   <Users className="w-4 h-4" />
-                  My Team
+                  My team
                 </button>
               </>
             )}
@@ -189,49 +140,21 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
             {/* Cluster Head Tabs */}
             {isClusterHead && (
               <>
-                <button
-                  onClick={() => setActiveTab('approve-timesheet')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'approve-timesheet'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('approve-timesheet')} className={tabButtonClass('approve-timesheet')}>
                   <CheckSquare className="w-4 h-4" />
-                  Approve Manager Timesheets
+                  Approve manager timesheets
                 </button>
-                <button
-                  onClick={() => setActiveTab('approve-leave')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'approve-leave'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('approve-leave')} className={tabButtonClass('approve-leave')}>
                   <CheckSquare className="w-4 h-4" />
-                  Approve Manager Leaves
+                  Approve manager leaves
                 </button>
-                <button
-                  onClick={() => setActiveTab('managers')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'managers'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('managers')} className={tabButtonClass('managers')}>
                   <Users className="w-4 h-4" />
-                  Manager Overview
+                  Manager overview
                 </button>
-                <button
-                  onClick={() => setActiveTab('assign-managers')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all whitespace-nowrap flex-shrink-0 ${
-                    activeTab === 'assign-managers'
-                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
+                <button onClick={() => setActiveTab('assign-managers')} className={tabButtonClass('assign-managers')}>
                   <UserCheck className="w-4 h-4" />
-                  Assign Managers
+                  Assign managers
                 </button>
               </>
             )}

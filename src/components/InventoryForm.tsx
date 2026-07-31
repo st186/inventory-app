@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { InventoryItem } from '../App';
-import { INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
-import { X, Loader2, Search, ChevronDown } from 'lucide-react';
+import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
+import { X, Loader2, Search, ChevronDown, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
+import { findSimilarItem } from '../utils/stringSimilarity';
 
 type Props = {
   selectedDate: string;
@@ -33,10 +34,12 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   });
 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
+  const [allCustomItems, setAllCustomItems] = useState<api.CustomItem[]>([]);
   const [loadingCustomItems, setLoadingCustomItems] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState(''); // NEW: Search state
   const [isDropdownOpen, setIsDropdownOpen] = useState(false); // Track dropdown state
+  const [duplicateWarning, setDuplicateWarning] = useState<{ match: api.CustomItem; similarity: number; exact: boolean } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Load custom items on mount
@@ -64,6 +67,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   const loadCustomItems = async () => {
     try {
       const items = await api.getCustomItems();
+      setAllCustomItems(items);
       // Transform array to Record<category, itemName[]>
       const itemsByCategory: Record<string, string[]> = {};
       items.forEach((item) => {
@@ -121,16 +125,33 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       const cashAmt = parseFloat(formData.cashAmount) || 0;
       const onlineAmt = parseFloat(formData.onlineAmount) || 0;
       const total = parseFloat(formData.totalCost) || 0;
-      
+
       if (Math.abs((cashAmt + onlineAmt) - total) > 0.01) {
         alert(`⚠️ Split payment amounts (₹${cashAmt.toFixed(2)} + ₹${onlineAmt.toFixed(2)} = ₹${(cashAmt + onlineAmt).toFixed(2)}) must equal total cost (₹${total.toFixed(2)})`);
         return;
       }
     }
-    
+
+    // If adding a brand-new item name, check for a likely duplicate before proceeding —
+    // against both existing custom items and the category's built-in item list.
+    if (formData.customItem && formData.itemName) {
+      const builtInsAsItems: api.CustomItem[] = (CATEGORY_ITEMS[formData.category] || []).map((name) => ({
+        id: '', category: formData.category, itemName: name,
+      }));
+      const match = findSimilarItem(formData.itemName, [...builtInsAsItems, ...allCustomItems], (item) => item.itemName);
+      if (match) {
+        setDuplicateWarning(match);
+        return;
+      }
+    }
+
+    await proceedWithSubmit();
+  };
+
+  const proceedWithSubmit = async () => {
     console.log('📝 [INVENTORY FORM] Form data validated, setting isSubmitting=true');
     setIsSubmitting(true);
-    
+
     const quantity = parseFloat(formData.quantity);
     const totalCost = parseFloat(formData.totalCost);
     const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
@@ -218,14 +239,21 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     }
   };
 
-  // Merge base items with custom items for the selected category
-  // Remove duplicates by converting to Set and back to array, then sort alphabetically
-  const allCategoryItems = [
-    ...new Set([
-      ...CATEGORY_ITEMS[formData.category],
-      ...(customItems[formData.category] || [])
-    ])
-  ].sort((a, b) => a.localeCompare(b)); // Sort alphabetically
+  // Merge base items with custom items for the selected category.
+  // Dedupe by normalized (trim+lowercase) name so whitespace/casing variants of the
+  // same item (e.g. built-in "Onion" vs a custom "Onion ") don't both show up —
+  // built-ins take priority since their spelling/casing is canonical.
+  const dedupedItemsMap = new Map<string, string>();
+  for (const name of CATEGORY_ITEMS[formData.category] || []) {
+    dedupedItemsMap.set(name.trim().toLowerCase(), name);
+  }
+  for (const name of customItems[formData.category] || []) {
+    const key = name.trim().toLowerCase();
+    if (!dedupedItemsMap.has(key)) {
+      dedupedItemsMap.set(key, name.trim());
+    }
+  }
+  const allCategoryItems = [...dedupedItemsMap.values()].sort((a, b) => a.localeCompare(b));
 
   // Filter items based on search query
   const filteredCategoryItems = searchQuery.trim()
@@ -264,11 +292,17 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             >
-              {Object.entries(INVENTORY_CATEGORIES).map(([key, label]) => (
+              {Object.entries(SELECTABLE_INVENTORY_CATEGORIES).map(([key, label]) => (
                 <option key={key} value={key}>
                   {label}
                 </option>
               ))}
+              {/* If editing an item whose category is legacy/no longer offered, keep it visible */}
+              {editingItem && !(editingItem.category in SELECTABLE_INVENTORY_CATEGORIES) && (
+                <option value={editingItem.category}>
+                  {(INVENTORY_CATEGORIES as Record<string, string>)[editingItem.category] || editingItem.category}
+                </option>
+              )}
             </select>
           </div>
 
@@ -310,21 +344,26 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
                     {filteredCategoryItems.length === 0 && searchQuery ? (
                       <div className="px-3 py-2 text-gray-500 text-sm">No items found</div>
                     ) : (
-                      filteredCategoryItems.map((item) => (
-                        <div
-                          key={item}
-                          onClick={() => {
-                            setFormData({ ...formData, itemName: item });
-                            setSearchQuery('');
-                            setIsDropdownOpen(false);
-                          }}
-                          className={`px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors ${
-                            formData.itemName === item ? 'bg-blue-100 font-medium' : ''
-                          }`}
-                        >
-                          {item}
-                        </div>
-                      ))
+                      filteredCategoryItems.map((item) => {
+                        const meta = allCustomItems.find(
+                          (ci) => ci.category === formData.category && ci.itemName.trim().toLowerCase() === item.trim().toLowerCase()
+                        );
+                        return (
+                          <div
+                            key={item}
+                            onClick={() => {
+                              setFormData({ ...formData, itemName: item });
+                              setSearchQuery('');
+                              setIsDropdownOpen(false);
+                            }}
+                            className={`px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors ${
+                              formData.itemName === item ? 'bg-blue-100 font-medium' : ''
+                            }`}
+                          >
+                            {meta?.emoji ? `${meta.emoji} ` : ''}{item}{meta?.itemNameBengali ? ` (${meta.itemNameBengali})` : ''}
+                          </div>
+                        );
+                      })
                     )}
                     <div
                       onClick={() => {
@@ -532,6 +571,52 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
           </div>
         </form>
       </div>
+
+      {duplicateWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="bg-amber-500 p-6 text-white rounded-t-2xl flex items-center gap-3">
+              <AlertTriangle className="w-8 h-8 flex-shrink-0" />
+              <h3 className="text-xl font-bold">Possible Duplicate Item</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-gray-700">
+                "{formData.itemName}" looks {duplicateWarning.exact ? 'identical to' : 'very similar to'} the existing item{' '}
+                <span className="font-semibold">"{duplicateWarning.match.itemName}"</span> under{' '}
+                <span className="font-semibold">{(INVENTORY_CATEGORIES as Record<string, string>)[duplicateWarning.match.category] || duplicateWarning.match.category}</span>.
+              </p>
+              <p className="text-sm text-gray-500 mt-2">Use the existing item to avoid splitting cost history across two entries, or add this as a genuinely new item.</p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-b-2xl flex flex-col sm:flex-row justify-end gap-2">
+              <button
+                onClick={() => setDuplicateWarning(null)}
+                className="px-4 py-2.5 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const match = duplicateWarning.match;
+                  setFormData({ ...formData, itemName: match.itemName, category: match.category as InventoryItem['category'], customItem: false });
+                  setDuplicateWarning(null);
+                }}
+                className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Use Existing Item
+              </button>
+              <button
+                onClick={async () => {
+                  setDuplicateWarning(null);
+                  await proceedWithSubmit();
+                }}
+                className="px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+              >
+                Add Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

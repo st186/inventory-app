@@ -12,11 +12,11 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
       <div className="max-w-3xl w-full space-y-6">
         {/* Hero Section */}
         <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 mb-4">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 mb-4">
             <Package className="w-10 h-10 text-white" />
           </div>
           
-          <div className="flex items-center justify-center gap-2 text-sm text-purple-600">
+          <div className="flex items-center justify-center gap-2 text-sm text-orange-600">
             <Sparkles className="w-4 h-4" />
             <span className="font-semibold">NEW FEATURE</span>
             <Sparkles className="w-4 h-4" />
@@ -34,8 +34,8 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
 
         {/* Features Grid */}
         <div className="grid md:grid-cols-3 gap-4 my-8">
-          <Card className="p-6 border-2 border-purple-200 bg-purple-50/30">
-            <div className="w-12 h-12 rounded-full bg-purple-500 flex items-center justify-center mb-4">
+          <Card className="p-6 border-2 border-orange-200 bg-orange-50/30">
+            <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center mb-4">
               <Check className="w-6 h-6 text-white" />
             </div>
             <h3 className="font-semibold mb-2">Unlimited Items</h3>
@@ -44,8 +44,8 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
             </p>
           </Card>
 
-          <Card className="p-6 border-2 border-pink-200 bg-pink-50/30">
-            <div className="w-12 h-12 rounded-full bg-pink-500 flex items-center justify-center mb-4">
+          <Card className="p-6 border-2 border-rose-200 bg-rose-50/30">
+            <div className="w-12 h-12 rounded-full bg-rose-500 flex items-center justify-center mb-4">
               <Check className="w-6 h-6 text-white" />
             </div>
             <h3 className="font-semibold mb-2">Smart Linking</h3>
@@ -54,8 +54,8 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
             </p>
           </Card>
 
-          <Card className="p-6 border-2 border-indigo-200 bg-indigo-50/30">
-            <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center mb-4">
+          <Card className="p-6 border-2 border-blue-200 bg-blue-50/30">
+            <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center mb-4">
               <Check className="w-6 h-6 text-white" />
             </div>
             <h3 className="font-semibold mb-2">Easy Management</h3>
@@ -71,7 +71,7 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
           
           <div className="space-y-4">
             <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white">
                 1
               </div>
               <div>
@@ -84,7 +84,7 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
             </div>
 
             <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white">
                 2
               </div>
               <div>
@@ -97,7 +97,7 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
             </div>
 
             <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white">
                 3
               </div>
               <div>
@@ -113,7 +113,7 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
 
         {/* Categories Preview */}
         <div className="grid md:grid-cols-3 gap-3">
-          <div className="p-4 rounded-lg border-2 border-purple-200 bg-purple-50 text-center">
+          <div className="p-4 rounded-lg border-2 border-orange-200 bg-orange-50 text-center">
             <div className="text-3xl mb-2">🥟</div>
             <div className="text-sm">
               <strong>Finished Products</strong>
@@ -142,7 +142,7 @@ export function InventoryItemsWelcome({ onGetStarted, onViewGuide }: Props) {
         <div className="flex gap-4 justify-center pt-4">
           <button
             onClick={onGetStarted}
-            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:shadow-xl transition-all text-lg"
+            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:shadow-xl transition-all text-lg"
           >
             Get Started
             <ArrowRight className="w-5 h-5" />

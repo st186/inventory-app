@@ -3,3 +3,17 @@ node_modules/
 dist/
 typecheck-output.txt
 supabase/.temp/
+
+# Android / Capacitor
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/captures/
+android/.idea/
+android/app/release/
+*.keystore
+*.jks
+android/keystore.properties
+android/keystore/
+android/app/google-services.json

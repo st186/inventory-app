@@ -81,7 +81,7 @@ export function FixMissingItemNames({ context }: Props) {
 
   return (
     <div className="fixed top-32 left-1/2 transform -translate-x-1/2 z-50">
-      <div className="bg-gradient-to-r from-red-500 to-pink-500 text-white px-6 py-4 rounded-lg shadow-2xl border-4 border-red-300">
+      <div className="bg-gradient-to-r from-red-500 to-rose-500 text-white px-6 py-4 rounded-lg shadow-2xl border-4 border-red-300">
         <div className="flex items-center gap-3">
           <AlertTriangle className="w-6 h-6 animate-pulse" />
           <div>

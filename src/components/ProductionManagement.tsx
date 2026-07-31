@@ -393,7 +393,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
                       <p className="text-sm text-gray-600 mb-1">Total Wastage</p>
                       <p className="text-2xl text-gray-900">{totalWastage.toFixed(2)} kg</p>
                     </div>
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4">
                       <p className="text-sm text-gray-600 mb-1">Kurkure Production</p>
                       <p className="text-2xl text-gray-900">
                         {production.vegKurkureMomos.final + production.chickenKurkureMomos.final} pcs
@@ -775,7 +775,7 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
         {/* Kurkure Momos Section */}
         <div className="bg-white rounded-xl shadow-lg p-6">
           <h2 className="text-gray-900 mb-6 flex items-center gap-2">
-            <Factory className="w-6 h-6 text-purple-600" />
+            <Factory className="w-6 h-6 text-orange-600" />
             Kurkure Momos (Batter + Coating)
           </h2>
 
@@ -950,11 +950,11 @@ export function ProductionManagement({ context, selectedStoreId }: Props) {
         {/* Sauces and Chutneys Section */}
         <div className="bg-white rounded-xl shadow-lg p-6">
           <h2 className="text-gray-900 mb-6 flex items-center gap-2">
-            <Soup className="w-6 h-6 text-pink-600" />
+            <Soup className="w-6 h-6 text-rose-600" />
             Sauces & Chutneys
           </h2>
 
-          <div className="bg-gradient-to-br from-pink-50 to-pink-100 rounded-lg p-4">
+          <div className="bg-gradient-to-br from-rose-50 to-rose-100 rounded-lg p-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Panfried Sauce (L)</label>

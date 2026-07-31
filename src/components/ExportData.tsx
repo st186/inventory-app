@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Download, FileText, Table, FileSpreadsheet, Calendar, X } from 'lucide-react';
+import { Download, FileText, Table, FileSpreadsheet, Calendar, X, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
+import { OverheadItem } from '../App';
+import { OVERHEAD_CATEGORY_META } from '../utils/inventoryData';
 import { getSupabaseClient } from '../utils/supabase/client';
+import { ItemCatalogCleanup } from './ItemCatalogCleanup';
 
 interface ExportDataProps {
   userRole: 'manager' | 'cluster_head';
@@ -22,6 +25,13 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
   const [previewData, setPreviewData] = useState<any>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
+  // Miscellaneous recategorization (Cluster Head only)
+  const [miscItems, setMiscItems] = useState<OverheadItem[] | null>(null);
+  const [miscLoading, setMiscLoading] = useState(false);
+  const [miscSaving, setMiscSaving] = useState<string | null>(null);
+  const [miscNewCategory, setMiscNewCategory] = useState<Record<string, string>>({});
+  const [showItemCleanup, setShowItemCleanup] = useState(false);
+
   const supabaseClient = getSupabaseClient();
 
   useEffect(() => {
@@ -33,6 +43,34 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     };
     getToken();
   }, []);
+
+  const loadMiscItems = async () => {
+    if (!accessToken) return;
+    setMiscLoading(true);
+    try {
+      const all = await api.fetchOverheads(accessToken);
+      setMiscItems(all.filter((item) => item.category === 'miscellaneous'));
+    } catch (error: any) {
+      alert(`❌ Failed to load miscellaneous items: ${error.message}`);
+    } finally {
+      setMiscLoading(false);
+    }
+  };
+
+  const saveMiscRecategorization = async (item: OverheadItem) => {
+    const newCategory = miscNewCategory[item.id];
+    if (!newCategory || !accessToken) return;
+    setMiscSaving(item.id);
+    try {
+      const { id, ...rest } = item;
+      await api.updateOverhead(accessToken, id, { ...rest, category: newCategory as OverheadItem['category'] });
+      setMiscItems((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev));
+    } catch (error: any) {
+      alert(`❌ Failed to update item: ${error.message}`);
+    } finally {
+      setMiscSaving(null);
+    }
+  };
 
   const getDateRangeValues = () => {
     const today = new Date();
@@ -448,7 +486,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
           <h1 className="text-3xl text-gray-900 mb-2">Export Data</h1>
           <p className="text-gray-600">Download comprehensive reports in multiple formats</p>
           {selectedStoreId && (
-            <div className="mt-2 inline-block bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm">
+            <div className="mt-2 inline-block bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
               Store: {selectedStoreId}
             </div>
           )}
@@ -459,7 +497,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
           {/* Date Range Selection */}
           <div className="mb-6">
             <h2 className="text-lg text-gray-900 mb-4 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-purple-600" />
+              <Calendar className="w-5 h-5 text-orange-600" />
               Select Date Range
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -467,8 +505,8 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                 onClick={() => setDateRange('today')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   dateRange === 'today'
-                    ? 'border-purple-500 bg-purple-50 text-purple-700'
-                    : 'border-gray-200 hover:border-purple-300'
+                    ? 'border-orange-500 bg-orange-50 text-orange-700'
+                    : 'border-gray-200 hover:border-orange-300'
                 }`}
               >
                 <div className="font-medium">Today</div>
@@ -478,8 +516,8 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                 onClick={() => setDateRange('weekly')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   dateRange === 'weekly'
-                    ? 'border-purple-500 bg-purple-50 text-purple-700'
-                    : 'border-gray-200 hover:border-purple-300'
+                    ? 'border-orange-500 bg-orange-50 text-orange-700'
+                    : 'border-gray-200 hover:border-orange-300'
                 }`}
               >
                 <div className="font-medium">Last 7 Days</div>
@@ -489,8 +527,8 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                 onClick={() => setDateRange('monthly')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   dateRange === 'monthly'
-                    ? 'border-purple-500 bg-purple-50 text-purple-700'
-                    : 'border-gray-200 hover:border-purple-300'
+                    ? 'border-orange-500 bg-orange-50 text-orange-700'
+                    : 'border-gray-200 hover:border-orange-300'
                 }`}
               >
                 <div className="font-medium">This Month</div>
@@ -500,8 +538,8 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                 onClick={() => setDateRange('custom')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   dateRange === 'custom'
-                    ? 'border-purple-500 bg-purple-50 text-purple-700'
-                    : 'border-gray-200 hover:border-purple-300'
+                    ? 'border-orange-500 bg-orange-50 text-orange-700'
+                    : 'border-gray-200 hover:border-orange-300'
                 }`}
               >
                 <div className="font-medium">Custom</div>
@@ -510,7 +548,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </div>
 
             {dateRange === 'custom' && (
-              <div className="mt-4 p-4 bg-purple-50 rounded-lg">
+              <div className="mt-4 p-4 bg-orange-50 rounded-lg">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm text-gray-700 mb-2">Start Date</label>
@@ -600,7 +638,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             <button
               onClick={handlePreview}
               disabled={loading}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 border-2 border-purple-600 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 border-2 border-orange-600 text-orange-700 rounded-lg hover:bg-orange-50 transition-colors disabled:opacity-50"
             >
               <FileText className="w-5 h-5" />
               Preview Data
@@ -608,7 +646,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             <button
               onClick={handleExport}
               disabled={loading}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-colors disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-blue-600 text-white rounded-lg hover:from-orange-700 hover:to-blue-700 transition-colors disabled:opacity-50"
             >
               <Download className="w-5 h-5" />
               {loading ? 'Generating...' : 'Export Data'}
@@ -633,6 +671,87 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </div>
           </div>
         </div>
+
+        {/* Item Catalog Cleanup - Cluster Heads Only */}
+        {userRole === 'cluster_head' && (
+          <div className="mt-6 bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-lg">🧹</span>
+              </div>
+              <div className="flex-1">
+                <h4 className="font-medium text-blue-900 mb-2">Item Catalog Cleanup</h4>
+                <p className="text-sm text-blue-800 mb-4">
+                  Review duplicate/misspelled inventory items and add emoji + Bengali names — nothing changes until you approve each row.
+                </p>
+                <button
+                  onClick={() => setShowItemCleanup(true)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Open Item Catalog Cleanup
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Recategorize Miscellaneous Expenses - Cluster Heads Only */}
+        {userRole === 'cluster_head' && (
+          <div className="mt-6 bg-amber-50 border-2 border-amber-200 rounded-lg p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-medium text-amber-900 mb-2">Recategorize Miscellaneous Expenses</h4>
+                <p className="text-sm text-amber-800 mb-4">
+                  "Miscellaneous" is no longer offered when logging a new expense — assign these old entries to a proper category.
+                </p>
+                {miscItems === null ? (
+                  <button
+                    onClick={loadMiscItems}
+                    disabled={miscLoading || !accessToken}
+                    className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
+                  >
+                    {miscLoading ? 'Loading...' : 'Load Miscellaneous Items'}
+                  </button>
+                ) : miscItems.length === 0 ? (
+                  <p className="text-sm text-green-800">✅ No miscellaneous items left to recategorize.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {miscItems.map((item) => (
+                      <div key={item.id} className="bg-white rounded-lg border border-amber-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{item.description || 'No description'}</p>
+                          <p className="text-xs text-gray-500">{item.date} • ₹{item.amount.toFixed(2)}</p>
+                        </div>
+                        <select
+                          value={miscNewCategory[item.id] || ''}
+                          onChange={(e) => setMiscNewCategory((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        >
+                          <option value="">Choose new category...</option>
+                          {Object.entries(OVERHEAD_CATEGORY_META)
+                            .filter(([value]) => value !== 'miscellaneous')
+                            .map(([value, meta]) => (
+                              <option key={value} value={value}>{meta.label}</option>
+                            ))}
+                        </select>
+                        <button
+                          onClick={() => saveMiscRecategorization(item)}
+                          disabled={!miscNewCategory[item.id] || miscSaving === item.id}
+                          className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 text-sm whitespace-nowrap"
+                        >
+                          {miscSaving === item.id ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Production Launch Cleanup - Cluster Heads Only */}
         {userRole === 'cluster_head' && (
@@ -714,7 +833,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </div>
             <div className="p-6">
               {/* Summary */}
-              <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg p-6 mb-6">
+              <div className="bg-gradient-to-br from-blue-50 to-orange-50 rounded-lg p-6 mb-6">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Summary</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
@@ -734,7 +853,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
                     <div className="text-xl text-gray-900">₹{previewData.summary.totalPayouts.toLocaleString()}</div>
                   </div>
                 </div>
-                <div className="mt-4 pt-4 border-t border-purple-200">
+                <div className="mt-4 pt-4 border-t border-orange-200">
                   <div className="flex justify-between items-center">
                     <span className="font-medium text-gray-900">Net Profit/Loss:</span>
                     <span className={`text-xl font-bold ${
@@ -781,6 +900,8 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
           </div>
         </div>
       )}
+
+      {showItemCleanup && <ItemCatalogCleanup onClose={() => setShowItemCleanup(false)} />}
     </div>
   );
 }

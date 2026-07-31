@@ -414,7 +414,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       '#22c55e', // green - Veg Momos
       '#3b82f6', // blue - Paneer Momos
       '#eab308', // yellow - Corn Cheese Momos
-      '#8b5cf6', // purple - Chicken Kurkure Momos
+      '#14b8a6', // purple - Chicken Kurkure Momos
       '#06b6d4'  // cyan - Veg Kurkure Momos
     ];
     return colors[index % colors.length];
@@ -596,7 +596,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading sales data...</p>
         </div>
       </div>
@@ -606,11 +606,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   return (
     <div className="space-y-6">
       {/* Header & Upload Section */}
-      <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl shadow-lg p-6 border border-purple-100">
+      <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-2xl shadow-lg p-6 border border-orange-100">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <h2 className="text-2xl text-gray-900 mb-2 flex items-center gap-3">
-              <FileSpreadsheet className="w-7 h-7 text-purple-600" />
+              <FileSpreadsheet className="w-7 h-7 text-orange-600" />
               Daily Sales Data
             </h2>
             <p className="text-sm text-gray-600">
@@ -627,13 +627,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             
             <button
               onClick={() => setShowPlateConfig(!showPlateConfig)}
-              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl hover:from-blue-700 hover:to-blue-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
             >
               <Settings className="w-4 h-4" />
               <span className="font-medium">Plate Config</span>
             </button>
             
-            <label className={`px-6 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`px-6 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Upload className="w-4 h-4" />
               <span className="font-medium">{uploading ? 'Uploading...' : 'Upload XLSX'}</span>
               <input
@@ -667,7 +667,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       {showPlateConfig && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+            <div className="bg-gradient-to-r from-blue-600 to-sky-600 p-6 text-white rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
@@ -724,7 +724,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
               <button
                 onClick={() => setShowPlateConfig(false)}
-                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl hover:from-blue-700 hover:to-blue-700 transition-all shadow-lg"
               >
                 Done
               </button>
@@ -966,14 +966,14 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     </p>
                     <p className="text-xs text-gray-500 mt-1">pieces</p>
                   </div>
-                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border-2 border-purple-200">
+                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border-2 border-orange-200">
                     <p className="text-sm text-gray-600 mb-1">Top Category</p>
                     <p className="text-lg text-gray-900" style={{ fontWeight: '600' }}>
                       {topCategory?.[0]?.split(' ')[0] || 'N/A'}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">{topCategory?.[1]?.toLocaleString() || 0} pcs</p>
                   </div>
-                  <div className="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl p-4 border-2 border-pink-200">
+                  <div className="bg-gradient-to-br from-rose-50 to-rose-100 rounded-xl p-4 border-2 border-rose-200">
                     <p className="text-sm text-gray-600 mb-1">Avg per Period</p>
                     <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
                       {filteredRecords.length > 0 ? Math.round(grandTotal / filteredRecords.length).toLocaleString() : 0}
@@ -1067,7 +1067,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
             <div className="mb-6">
               <h2 className="text-2xl text-gray-900 mb-2 flex items-center gap-3">
-                <TrendingUp className="w-7 h-7 text-indigo-600" />
+                <TrendingUp className="w-7 h-7 text-blue-600" />
                 Weekly Pattern Analysis
               </h2>
               <p className="text-sm text-gray-600 mb-4">
@@ -1082,7 +1082,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     onClick={() => setSelectedDayOfWeek(day.num)}
                     className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform hover:scale-105 ${
                       selectedDayOfWeek === day.num
-                        ? 'bg-gradient-to-r from-indigo-500 to-indigo-600 text-white shadow-lg'
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
@@ -1251,7 +1251,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                       </p>
                       <p className="text-xs text-gray-500 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
                     </div>
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border-2 border-purple-200">
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border-2 border-orange-200">
                       <p className="text-sm text-gray-600 mb-1">⭐ Top Seller Today</p>
                       <p className="text-base text-gray-900" style={{ fontWeight: '600' }}>
                         {topItemOnSelectedDay?.[0] || 'N/A'}
@@ -1291,7 +1291,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <div key={record.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
                 {/* Header */}
                 <div 
-                  className="bg-gradient-to-r from-purple-500 to-pink-500 p-4 text-white cursor-pointer"
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 p-4 text-white cursor-pointer"
                   onClick={() => toggleRecordCollapse(record.id)}
                 >
                   <div className="flex items-center justify-between">
@@ -1306,7 +1306,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                             day: 'numeric' 
                           })}
                         </h3>
-                        <p className="text-sm text-purple-100">
+                        <p className="text-sm text-orange-100">
                           {displayStoreName} • Total: {totalPieces.toLocaleString()} pieces
                         </p>
                       </div>

@@ -16,13 +16,13 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
   return (
     <div className="relative">
       {/* Enhanced Store Selector with Gradient Background */}
-      <div className="bg-gradient-to-r from-purple-600 via-purple-500 to-pink-500 rounded-xl shadow-lg p-[2px]">
+      <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-rose-500 rounded-xl shadow-lg p-[2px]">
         <div className="bg-white rounded-[10px] p-4">
           <div className="flex items-center gap-4">
             {/* Icon Section */}
             <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 rounded-xl flex items-center justify-center">
-                <Store className="w-6 h-6 text-purple-600" />
+              <div className="w-12 h-12 bg-gradient-to-br from-orange-100 to-amber-100 rounded-xl flex items-center justify-center">
+                <Store className="w-6 h-6 text-orange-600" />
               </div>
             </div>
 
@@ -47,7 +47,7 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-purple-600 pointer-events-none" />
+                <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-orange-600 pointer-events-none" />
               </div>
               {/* Location Display */}
               {selectedStore?.location && (
@@ -60,9 +60,9 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
 
             {/* Store Count Badge */}
             <div className="flex-shrink-0">
-              <div className="bg-gradient-to-br from-purple-50 to-pink-50 px-4 py-2 rounded-lg border border-purple-200">
+              <div className="bg-gradient-to-br from-orange-50 to-rose-50 px-4 py-2 rounded-lg border border-orange-200">
                 <div className="text-xs text-gray-600 text-center">Total Stores</div>
-                <div className="text-2xl font-bold text-purple-600 text-center">{stores.length}</div>
+                <div className="text-2xl font-bold text-orange-600 text-center">{stores.length}</div>
               </div>
             </div>
           </div>
@@ -76,7 +76,7 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
                   {isAllStores ? 'Viewing all store data' : `Viewing ${selectedStore?.name || 'store'} only`}
                 </span>
               </div>
-              <span className="text-purple-600 font-medium">
+              <span className="text-orange-600 font-medium">
                 {isAllStores ? stores.length : 1} store{(isAllStores && stores.length !== 1) || (!isAllStores && false) ? 's' : ''} active
               </span>
             </div>
@@ -92,7 +92,7 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
               onClick={() => onStoreChange(null)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                 isAllStores
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                  ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
@@ -105,7 +105,7 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
               onClick={() => onStoreChange(store.id)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                 selectedStoreId === store.id
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                  ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >

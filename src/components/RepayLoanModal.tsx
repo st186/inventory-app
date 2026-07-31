@@ -146,8 +146,8 @@ export function RepayLoanModal({
         )}
 
         {/* Loan Info */}
-        <div className="m-6 p-4 bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-lg">
-          <h3 className="font-semibold text-purple-900 mb-3">Loan Details</h3>
+        <div className="m-6 p-4 bg-gradient-to-br from-orange-50 to-rose-50 border-2 border-orange-200 rounded-lg">
+          <h3 className="font-semibold text-orange-900 mb-3">Loan Details</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-700">Original Loan:</span>
@@ -163,9 +163,9 @@ export function RepayLoanModal({
               <span className="text-gray-700">Already Repaid:</span>
               <span className="font-semibold text-green-700">₹{loan.repaidAmount.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between pt-2 border-t border-purple-300">
+            <div className="flex justify-between pt-2 border-t border-orange-300">
               <span className="text-gray-700 font-semibold">Remaining Principal:</span>
-              <span className="font-bold text-purple-900">₹{remainingAmount.toLocaleString()}</span>
+              <span className="font-bold text-orange-900">₹{remainingAmount.toLocaleString()}</span>
             </div>
             {loan.interestRate && loan.interestRate > 0 && (
               <>
@@ -174,7 +174,7 @@ export function RepayLoanModal({
                   <span className="font-semibold text-orange-700">₹{interestAccrued.toFixed(2)}</span>
                 </div>
                 {interestAccrued > 0 && (
-                  <div className="flex justify-between pt-2 border-t-2 border-purple-400">
+                  <div className="flex justify-between pt-2 border-t-2 border-orange-400">
                     <span className="text-gray-900 font-bold">Total Amount (with interest):</span>
                     <span className="font-bold text-red-700 text-lg">₹{totalAmountWithInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
@@ -186,7 +186,7 @@ export function RepayLoanModal({
                 )}
               </>
             )}
-            <div className="flex justify-between text-xs pt-2 border-t border-purple-200">
+            <div className="flex justify-between text-xs pt-2 border-t border-orange-200">
               <span className="text-gray-600">Loan Date:</span>
               <span className="text-gray-800">{new Date(loan.loanDate).toLocaleDateString('en-IN')}</span>
             </div>
@@ -220,7 +220,7 @@ export function RepayLoanModal({
               <button
                 type="button"
                 onClick={() => setRepaymentAmount(totalAmountWithInterest.toString())}
-                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                className="text-xs text-orange-600 hover:text-orange-700 font-medium"
               >
                 Pay Full Amount
               </button>

@@ -1002,20 +1002,18 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       }, 403);
     }
 
-    // Only allow operations managers to add sales data
+    // Only store incharges add sales data (operations managers get a read-only view)
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
-    const isProductionIncharge = designation === 'production_incharge';
-    const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge;
-    
-    if (!isOperationsManager) {
+
+    if (!isManager || !isStoreIncharge) {
       console.log('ERROR: User is not authorized. Current role:', role, 'Designation:', designation);
-      return c.json({ 
-        error: `Only operations managers can add sales data. Your current role: ${role}`,
+      return c.json({
+        error: `Only store incharges can add sales data. Your current role: ${role}`,
         debug: {
           currentRole: role,
           currentDesignation: designation,
-          requiredRole: 'operations manager (manager without store/production designation)'
+          requiredRole: 'store incharge'
         }
       }, 403);
     }
@@ -1080,39 +1078,81 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
 
-    // Only allow operations managers to update sales data
+    // Store incharges log the day's sales; operations managers reconcile cash/Paytm against it.
+    // Each can only touch their own half of the record - enforced below, not just in the UI.
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
-    const isProductionIncharge = designation === 'production_incharge';
-    const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge;
-    
-    if (!isOperationsManager) {
-      return c.json({ error: 'Only operations managers can update sales data' }, 403);
+    const isOperationsManager = isManager && designation !== 'store_incharge' && designation !== 'production_incharge';
+
+    if (!isStoreIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only store incharges or operations managers can update sales data' }, 403);
     }
 
     const itemId = c.req.param('id');
     const updates = await c.req.json();
-    
+
     // Find the sales item with this ID (look through all users' sales)
     const allSales = await kv.getByPrefix('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
-    
+
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
     }
-    
+
     // Use the key from the existing sale
     const key = `sales:${existingSale.userId}:${itemId}`;
-    
-    const salesItem = {
-      ...updates,
-      id: itemId,
-      userId: existingSale.userId
-    };
+
+    let salesItem;
+    if (isStoreIncharge) {
+      // Store incharge can edit sales-entry fields, but cash/Paytm reconciliation
+      // (entered by the operations manager) is preserved as-is.
+      salesItem = {
+        ...updates,
+        usedOnlineMoney: existingSale.usedOnlineMoney,
+        actualCashInHand: existingSale.actualCashInHand,
+        actualPaytmBalance: existingSale.actualPaytmBalance,
+        cashOffset: existingSale.cashOffset,
+        paytmOffset: existingSale.paytmOffset,
+        salesDiscrepancy: existingSale.salesDiscrepancy,
+        approvalRequired: existingSale.approvalRequired,
+        approvalStatus: existingSale.approvalStatus,
+        approvedBy: existingSale.approvedBy,
+        approvedAt: existingSale.approvedAt,
+        approvalRequested: existingSale.approvalRequested,
+        approvalRequestedAt: existingSale.approvalRequestedAt,
+        requestedCashInHand: existingSale.requestedCashInHand,
+        requestedOffset: existingSale.requestedOffset,
+        rejectedBy: existingSale.rejectedBy,
+        rejectedAt: existingSale.rejectedAt,
+        rejectionReason: existingSale.rejectionReason,
+        id: itemId,
+        userId: existingSale.userId
+      };
+    } else {
+      // Operations manager can only touch cash/Paytm reconciliation fields -
+      // the sales figures the store incharge logged are preserved untouched.
+      salesItem = {
+        ...existingSale,
+        usedOnlineMoney: updates.usedOnlineMoney,
+        actualCashInHand: updates.actualCashInHand,
+        actualPaytmBalance: updates.actualPaytmBalance,
+        cashOffset: updates.cashOffset,
+        paytmOffset: updates.paytmOffset,
+        salesDiscrepancy: updates.salesDiscrepancy,
+        approvalRequired: updates.approvalRequired,
+        approvalStatus: updates.approvalStatus,
+        approvedBy: updates.approvedBy,
+        approvedAt: updates.approvedAt,
+        approvalRequested: updates.approvalRequested,
+        approvalRequestedAt: updates.approvalRequestedAt,
+        id: itemId,
+        userId: existingSale.userId
+      };
+    }
 
     await kvWithRetry.set(key, salesItem);
     console.log('✅ Sales data updated successfully:', key);
-    
+
     return c.json({ success: true, item: salesItem });
   } catch (error) {
     console.log('Error updating sales data:', error);
@@ -2380,6 +2420,11 @@ app.delete('/make-server-c2dd9b9d/payouts/:id', async (c) => {
 
 // Get all online sales
 app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
     const sales = await kvWithRetry.getByPrefix('online_sales:');
     return c.json({ success: true, sales });
@@ -2392,16 +2437,28 @@ app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
   }
 });
 
-// Save online sales entry
+// Save online sales entry (store incharge only, same as offline sales)
 app.post('/make-server-c2dd9b9d/online-sales', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+
+    if (role !== 'manager' || designation !== 'store_incharge') {
+      return c.json({ error: 'Only store incharges can log online sales' }, 403);
+    }
+
     const entry = await c.req.json();
     console.log('Saving online sales entry:', entry);
-    
+
     const key = `online_sales:${entry.id}`;
     await kv.set(key, entry);
     console.log('Online sales entry saved successfully');
-    
+
     return c.json({ success: true, entry });
   } catch (error) {
     console.log('Error saving online sales:', error);
@@ -2411,6 +2468,11 @@ app.post('/make-server-c2dd9b9d/online-sales', async (c) => {
 
 // Get all online payouts
 app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
     const payouts = await kvWithRetry.getByPrefix('online_payout:');
     return c.json({ success: true, payouts });
@@ -2423,16 +2485,63 @@ app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
   }
 });
 
-// Save online payout entry
+// Save online payout entry (aggregator settlement reconciliation - operations manager / cluster head only,
+// NOT the store incharge, since this reveals commission structure)
 app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+
+    if (!isOperationsManager && role !== 'cluster_head') {
+      return c.json({ error: 'Only operations managers or cluster heads can record payout data' }, 403);
+    }
+
     const entry = await c.req.json();
     console.log('Saving online payout entry:', entry);
-    
+
     const key = `online_payout:${entry.id}`;
     await kv.set(key, entry);
     console.log('Online payout entry saved successfully');
-    
+
+    // If the aggregator paid out more than the recorded online sales for this day,
+    // the excess goes into the store's Paytm cash-in-hand. This adjusts the sales
+    // record server-side (under the operations manager's own authorization) since
+    // the sales record itself can otherwise only be edited by the store incharge.
+    try {
+      const allOnlineSales = await kv.getByPrefix('online_sales:');
+      const salesEntry = (allOnlineSales || []).find((s: any) =>
+        s.date === entry.date && (!entry.storeId || s.storeId === entry.storeId)
+      );
+      const totalOnlineSales = (salesEntry?.swiggySales || 0) + (salesEntry?.zomatoSales || 0);
+      const totalPayout = (entry.swiggyPayout || 0) + (entry.zomatoPayout || 0);
+      const extraPayout = totalPayout - totalOnlineSales;
+
+      if (extraPayout > 0) {
+        const allSales = await kv.getByPrefix('sales:');
+        const existingSale = (allSales || []).find((s: any) =>
+          s.date === entry.date && (!entry.storeId || s.storeId === entry.storeId)
+        );
+
+        if (existingSale) {
+          const salesKey = `sales:${existingSale.userId}:${existingSale.id}`;
+          await kv.set(salesKey, {
+            ...existingSale,
+            paytmAmount: (existingSale.paytmAmount || 0) + extraPayout
+          });
+          console.log(`Applied extra payout of ₹${extraPayout} to Paytm cash-in-hand for ${entry.date}`);
+        }
+      }
+    } catch (adjustError) {
+      // Don't fail the payout save if this best-effort adjustment fails
+      console.log('Warning: failed to apply extra payout to sales Paytm amount:', adjustError);
+    }
+
     return c.json({ success: true, entry });
   } catch (error) {
     console.log('Error saving online payout:', error);
@@ -4555,6 +4664,15 @@ app.delete('/make-server-c2dd9b9d/cluster-heads/by-email/:email', async (c) => {
 
 // ===== Custom Inventory Items Management =====
 
+// Keep in sync with src/utils/inventoryData.ts INVENTORY_CATEGORIES keys.
+// Prevents orphaned category values (e.g. a stray "gas_utilities" found in the data)
+// from entering the catalog again.
+const VALID_INVENTORY_CATEGORIES = new Set([
+  'fresh_produce', 'spices_seasonings', 'dairy', 'meat', 'packaging',
+  'beverages', 'cleaning_sanitation', 'equipment_smallwares', 'staff_welfare_ppe', 'office_admin_supplies',
+  'staff_essentials', // legacy — still valid on historical data
+]);
+
 // Get all custom items
 app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
   try {
@@ -4578,9 +4696,11 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
       id: item.key.replace('custom-item:', ''),
       category: item.value.category,
       itemName: item.value.itemName,
+      itemNameBengali: item.value.itemNameBengali,
+      emoji: item.value.emoji,
       createdAt: item.value.createdAt
     }));
-    
+
     return c.json({ customItems });
   } catch (error) {
     console.log('Error fetching custom items:', error);
@@ -4592,11 +4712,14 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
 app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
   try {
     const { category, itemName } = await c.req.json();
-    
+
     if (!category || !itemName) {
       return c.json({ error: 'Category and item name are required' }, 400);
     }
-    
+    if (!VALID_INVENTORY_CATEGORIES.has(category)) {
+      return c.json({ error: `Unknown category "${category}"` }, 400);
+    }
+
     // Check if this custom item already exists - query database directly
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -4642,6 +4765,43 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
   } catch (error) {
     console.log('Error adding custom item:', error);
     return c.json({ error: 'Failed to add custom item' }, 500);
+  }
+});
+
+// Update a custom item (rename, recategorize, add emoji/Bengali name)
+app.put('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const updates = await c.req.json();
+    const key = `custom-item:${id}`;
+    const existing = await kv.get(key);
+
+    if (!existing) {
+      return c.json({ error: 'Custom item not found' }, 404);
+    }
+    if (updates.category && !VALID_INVENTORY_CATEGORIES.has(updates.category)) {
+      return c.json({ error: `Unknown category "${updates.category}"` }, 400);
+    }
+
+    const updated = { ...existing, ...updates };
+    await kv.set(key, updated);
+
+    return c.json({ customItem: { id, ...updated } });
+  } catch (error) {
+    console.log('Error updating custom item:', error);
+    return c.json({ error: 'Failed to update custom item' }, 500);
+  }
+});
+
+// Delete a custom item (used when merging away a duplicate)
+app.delete('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    await kv.del(`custom-item:${id}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting custom item:', error);
+    return c.json({ error: 'Failed to delete custom item' }, 500);
   }
 });
 
@@ -7681,6 +7841,48 @@ app.post('/make-server-c2dd9b9d/push/unsubscribe', async (c) => {
     });
   } catch (error: any) {
     console.error('Error unsubscribing from push notifications:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Subscribe to native (Android/FCM) push notifications
+app.post('/make-server-c2dd9b9d/push/subscribe-fcm', async (c) => {
+  try {
+    const { token, userId } = await c.req.json();
+
+    if (!token || !userId) {
+      return c.json({ error: 'token and userId are required' }, 400);
+    }
+
+    await push.storeFcmToken(userId, token);
+
+    return c.json({
+      success: true,
+      message: 'Successfully subscribed to native push notifications'
+    });
+  } catch (error: any) {
+    console.error('Error subscribing to native push notifications:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Unsubscribe from native (Android/FCM) push notifications
+app.post('/make-server-c2dd9b9d/push/unsubscribe-fcm', async (c) => {
+  try {
+    const { userId } = await c.req.json();
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    await push.removeFcmToken(userId);
+
+    return c.json({
+      success: true,
+      message: 'Successfully unsubscribed from native push notifications'
+    });
+  } catch (error: any) {
+    console.error('Error unsubscribing from native push notifications:', error);
     return c.json({ error: error.message }, 500);
   }
 });

@@ -33,20 +33,20 @@ const generatePayslip = (
         .payslip-container {
           max-width: 800px;
           margin: 0 auto;
-          border: 2px solid #9333ea;
+          border: 2px solid #ea580c;
           padding: 30px;
-          background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+          background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
         }
         .header {
           text-align: center;
-          border-bottom: 3px solid #9333ea;
+          border-bottom: 3px solid #ea580c;
           padding-bottom: 20px;
           margin-bottom: 30px;
         }
         .company-name {
           font-size: 32px;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
           margin-bottom: 5px;
         }
         .company-tagline {
@@ -56,7 +56,7 @@ const generatePayslip = (
         }
         .payslip-title {
           font-size: 24px;
-          color: #9333ea;
+          color: #ea580c;
           margin: 20px 0 10px 0;
           font-weight: bold;
         }
@@ -77,7 +77,7 @@ const generatePayslip = (
           display: table-cell;
           padding: 10px 0;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
           width: 40%;
         }
         .info-value {
@@ -93,7 +93,7 @@ const generatePayslip = (
           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .payment-table th {
-          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
           color: white;
           padding: 12px;
           text-align: left;
@@ -107,10 +107,10 @@ const generatePayslip = (
           border-bottom: none;
         }
         .payment-table tr:nth-child(even) {
-          background: #faf5ff;
+          background: #fff7ed;
         }
         .total-section {
-          background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%);
+          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
           color: white;
           padding: 20px;
           margin-top: 30px;
@@ -128,7 +128,7 @@ const generatePayslip = (
         .footer {
           margin-top: 40px;
           padding-top: 20px;
-          border-top: 2px solid #9333ea;
+          border-top: 2px solid #ea580c;
           text-align: center;
           font-size: 12px;
           color: #666;
@@ -143,11 +143,11 @@ const generatePayslip = (
           width: 45%;
         }
         .signature-line {
-          border-top: 2px solid #9333ea;
+          border-top: 2px solid #ea580c;
           margin-top: 50px;
           padding-top: 10px;
           font-weight: bold;
-          color: #9333ea;
+          color: #ea580c;
         }
         @media print {
           body {
@@ -511,49 +511,66 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
     );
   }
 
+  const firstName = employee.name.split(' ')[0];
+  const initials = employee.name
+    .split(' ')
+    .map((n: string) => n[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  const greeting = (() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  })();
+
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-background p-4 md:p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl text-gray-900 mb-2">Welcome, {employee.name}!</h1>
-          <p className="text-gray-600">View your payout history and employee details</p>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <p className="text-sm text-muted-foreground">{greeting}</p>
+            <h1 className="text-2xl text-foreground">{firstName}</h1>
+          </div>
+          <div className="w-11 h-11 rounded-full bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+            {initials}
+          </div>
         </div>
 
         {/* Employee Info Card */}
-        <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl shadow-sm p-6 mb-6">
-          <h2 className="text-lg text-gray-900 mb-4">Employee Information</h2>
+        <div className="bg-card rounded-2xl border border-border p-5 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-xs text-muted-foreground uppercase tracking-wide">Your details</span>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
-              <div className="text-sm text-gray-600">Employee ID</div>
-              <div className="font-medium text-gray-900">{employee.employeeId}</div>
+              <div className="text-xs text-muted-foreground">Employee ID</div>
+              <div className="text-sm text-foreground mt-0.5">{employee.employeeId}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Name</div>
-              <div className="font-medium text-gray-900">{employee.name}</div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-600">Type</div>
-              <div className="font-medium text-gray-900">
-                {employee.type === 'fulltime' ? '👔 Permanent' : '📝 Contract'}
+              <div className="text-xs text-muted-foreground">Type</div>
+              <div className="text-sm text-foreground mt-0.5">
+                {employee.type === 'fulltime' ? 'Permanent' : 'Contract'}
               </div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Role</div>
-              <div className="font-medium text-gray-900">{employee.role || 'N/A'}</div>
+              <div className="text-xs text-muted-foreground">Role</div>
+              <div className="text-sm text-foreground mt-0.5">{employee.role || 'N/A'}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Phone</div>
-              <div className="font-medium text-gray-900">{employee.phone}</div>
+              <div className="text-xs text-muted-foreground">Phone</div>
+              <div className="text-sm text-foreground mt-0.5">{employee.phone}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Email</div>
-              <div className="font-medium text-gray-900">{employee.email || 'N/A'}</div>
+              <div className="text-xs text-muted-foreground">Email</div>
+              <div className="text-sm text-foreground mt-0.5">{employee.email || 'N/A'}</div>
             </div>
             {employee.dailyRate && (
               <div>
-                <div className="text-sm text-gray-600">Daily Rate</div>
-                <div className="font-medium text-gray-900">₹{employee.dailyRate}</div>
+                <div className="text-xs text-muted-foreground">Daily rate</div>
+                <div className="text-sm text-foreground mt-0.5">₹{employee.dailyRate}</div>
               </div>
             )}
           </div>
@@ -570,7 +587,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 onClick={() => setActiveTab('payouts')}
                 className={`px-6 py-2 rounded-lg transition-colors ${
                   activeTab === 'payouts'
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
@@ -583,7 +600,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 onClick={() => setActiveTab('advance')}
                 className={`px-6 py-2 rounded-lg transition-colors ${
                   activeTab === 'advance'
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
@@ -596,7 +613,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 onClick={() => setActiveTab('manager')}
                 className={`px-6 py-2 rounded-lg transition-colors ${
                   activeTab === 'manager'
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
@@ -658,10 +675,10 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     <div className="text-xs text-gray-500 mt-1">Per payment</div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border border-purple-200">
+                  <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-lg p-6 border border-teal-200">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-sm text-gray-600">Payment Days</div>
-                      <Wallet className="w-5 h-5 text-purple-600" />
+                      <Wallet className="w-5 h-5 text-teal-600" />
                     </div>
                     <div className="text-2xl text-gray-900">{filteredPayouts.length}</div>
                     <div className="text-xs text-gray-500 mt-1">This month</div>
@@ -728,7 +745,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 <div className="bg-gray-50 rounded-xl overflow-hidden">
                   <div className="p-4 bg-white border-b border-gray-200">
                     <div className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-purple-600" />
+                      <FileText className="w-5 h-5 text-teal-600" />
                       <h3 className="text-lg text-gray-900">Monthly Payslips</h3>
                     </div>
                     <p className="text-sm text-gray-600 mt-2">
@@ -743,7 +760,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                           key={index}
                           className={`border-2 rounded-xl p-4 transition-all ${
                             slip.isAvailable && slip.payouts.length > 0
-                              ? 'border-purple-300 bg-gradient-to-br from-purple-50 to-pink-50 hover:shadow-lg'
+                              ? 'border-teal-300 bg-gradient-to-br from-teal-50 to-rose-50 hover:shadow-lg'
                               : 'border-gray-200 bg-gray-50 opacity-60'
                           }`}
                         >
@@ -764,7 +781,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                                   slip.payouts,
                                   employee.type
                                 )}
-                                className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                                className="flex items-center gap-2 px-3 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm"
                                 title="Download Payslip"
                               >
                                 <Download className="w-4 h-4" />
@@ -807,7 +824,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                       disabled={salaryAdvances.some(adv => 
                         adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
                       )}
-                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <CreditCard className="w-5 h-5" />
                       <span>Apply for Advance</span>
@@ -994,15 +1011,15 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 {managerDetails ? (
                   <div className="space-y-6">
                     {/* Manager Profile Card */}
-                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-200">
+                    <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-xl p-6 border-2 border-teal-200">
                       <div className="flex items-start gap-4">
-                        <div className="w-20 h-20 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
+                        <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
                           {managerDetails.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1">
                           <h3 className="text-2xl text-gray-900 mb-1">{managerDetails.name}</h3>
-                          <p className="text-sm text-purple-700 font-medium mb-3">Your Manager / Incharge</p>
-                          <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                          <p className="text-sm text-teal-700 font-medium mb-3">Your Manager / Incharge</p>
+                          <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
                             {managerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
                           </div>
                         </div>
@@ -1066,15 +1083,15 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
                     {/* Senior Manager Profile Card */}
                     {seniorManagerDetails && (
-                      <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-200">
+                      <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-xl p-6 border-2 border-teal-200">
                         <div className="flex items-start gap-4">
-                          <div className="w-20 h-20 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
+                          <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
                             {seniorManagerDetails.name.charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1">
                             <h3 className="text-2xl text-gray-900 mb-1">{seniorManagerDetails.name}</h3>
-                            <p className="text-sm text-purple-700 font-medium mb-3">Senior Manager / Incharge</p>
-                            <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            <p className="text-sm text-teal-700 font-medium mb-3">Senior Manager / Incharge</p>
+                            <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
                               {seniorManagerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
                             </div>
                           </div>
@@ -1201,9 +1218,9 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
               <div className="space-y-4 mb-6">
                 {/* Monthly Salary Info */}
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                  <p className="text-sm text-purple-700 mb-1">Your Monthly Salary</p>
-                  <p className="text-2xl font-semibold text-purple-900">
+                <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+                  <p className="text-sm text-teal-700 mb-1">Your Monthly Salary</p>
+                  <p className="text-2xl font-semibold text-teal-900">
                     ₹{employee.monthlySalary?.toLocaleString('en-IN') || 'N/A'}
                   </p>
                 </div>
@@ -1219,7 +1236,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     onChange={(e) => setAdvanceAmount(e.target.value)}
                     placeholder="Enter amount"
                     max={employee.monthlySalary || 0}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     Maximum: ₹{employee.monthlySalary?.toLocaleString('en-IN')}
@@ -1282,7 +1299,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 <button
                   onClick={handleApplySalaryAdvance}
                   disabled={!advanceAmount || parseFloat(advanceAmount) <= 0 || parseFloat(advanceAmount) > (employee.monthlySalary || 0)}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   Submit Request
                 </button>

@@ -106,7 +106,7 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
               disabled={myAdvances.some(adv => 
                 adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
               )}
-              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CreditCard className="w-5 h-5" />
               <span>Apply for Advance</span>
@@ -240,7 +240,7 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <CreditCard className="w-6 h-6 text-purple-600" />
+                <CreditCard className="w-6 h-6 text-orange-600" />
                 <h2 className="text-xl text-gray-900 font-semibold">Apply for Salary Advance</h2>
               </div>
               <button
@@ -255,12 +255,12 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-purple-600 mt-0.5" />
+                  <AlertCircle className="w-5 h-5 text-orange-600 mt-0.5" />
                   <div>
-                    <p className="text-sm text-purple-800 font-medium mb-1">Recovery Terms</p>
-                    <p className="text-sm text-purple-700">
+                    <p className="text-sm text-orange-800 font-medium mb-1">Recovery Terms</p>
+                    <p className="text-sm text-orange-700">
                       The advance will be automatically deducted from your salary over the next 4 months in equal installments.
                     </p>
                   </div>
@@ -274,14 +274,14 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
                   value={advanceAmount}
                   onChange={(e) => setAdvanceAmount(e.target.value)}
                   placeholder="Enter amount (e.g., 10000)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
 
               {advanceAmount && !isNaN(parseFloat(advanceAmount)) && parseFloat(advanceAmount) > 0 && (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                   <p className="text-sm text-gray-700 mb-2">Monthly Deduction Preview:</p>
-                  <p className="text-2xl font-bold text-purple-600">
+                  <p className="text-2xl font-bold text-orange-600">
                     ₹{(parseFloat(advanceAmount) / 4).toLocaleString('en-IN')}/month
                   </p>
                   <p className="text-xs text-gray-600 mt-1">for 4 months</p>
@@ -302,7 +302,7 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
               <button
                 onClick={handleApplySalaryAdvance}
                 disabled={!advanceAmount || isNaN(parseFloat(advanceAmount)) || parseFloat(advanceAmount) <= 0}
-                className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Submit Request
               </button>

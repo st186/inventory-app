@@ -63,14 +63,14 @@ export function InventoryItemsHelp() {
       </div>
 
       {/* How It Works */}
-      <Card className="p-6 bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200">
+      <Card className="p-6 bg-gradient-to-r from-orange-50 to-rose-50 border-2 border-orange-200">
         <h3 className="text-xl mb-4 flex items-center gap-2">
-          <Package className="w-6 h-6 text-purple-600" />
+          <Package className="w-6 h-6 text-orange-600" />
           How the System Works
         </h3>
         <div className="space-y-3 text-sm text-gray-700">
           <div className="flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
+            <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
               1
             </div>
             <div>
@@ -78,7 +78,7 @@ export function InventoryItemsHelp() {
             </div>
           </div>
           <div className="flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
+            <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
               2
             </div>
             <div>
@@ -86,7 +86,7 @@ export function InventoryItemsHelp() {
             </div>
           </div>
           <div className="flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
+            <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
               3
             </div>
             <div>
@@ -94,7 +94,7 @@ export function InventoryItemsHelp() {
             </div>
           </div>
           <div className="flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
+            <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center flex-shrink-0 text-xs">
               4
             </div>
             <div>
@@ -106,7 +106,7 @@ export function InventoryItemsHelp() {
 
       {/* Categories */}
       <div className="grid md:grid-cols-3 gap-4">
-        <Card className="p-4 text-center border-2 border-purple-200">
+        <Card className="p-4 text-center border-2 border-orange-200">
           <div className="text-3xl mb-2">🥟</div>
           <h4 className="font-semibold mb-1">Finished Products</h4>
           <p className="text-xs text-gray-600">
@@ -161,11 +161,11 @@ export function InventoryItemsHelp() {
       </Card>
 
       {/* Access Info */}
-      <Card className="p-6 bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200">
+      <Card className="p-6 bg-gradient-to-r from-blue-50 to-orange-50 border-2 border-blue-200">
         <h3 className="text-lg mb-3"><strong>Who Can Manage Items?</strong></h3>
         <div className="grid md:grid-cols-2 gap-4 text-sm">
           <div>
-            <h4 className="font-semibold text-purple-600 mb-2">✅ Full Access</h4>
+            <h4 className="font-semibold text-orange-600 mb-2">✅ Full Access</h4>
             <ul className="space-y-1 text-gray-700">
               <li>• Operations Managers</li>
               <li>• Cluster Heads</li>
@@ -189,7 +189,7 @@ export function InventoryItemsHelp() {
         <div className="flex gap-3 justify-center flex-wrap">
           <button 
             onClick={() => window.location.hash = '#manage-items'}
-            className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg transition-all"
+            className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg transition-all"
           >
             Go to Manage Items
           </button>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Bhandar-IMS</string>
+    <string name="title_activity_main">Bhandar-IMS</string>
+    <string name="package_name">com.bunnymomos.inventory</string>
+    <string name="custom_url_scheme">com.bunnymomos.inventory</string>
+</resources>

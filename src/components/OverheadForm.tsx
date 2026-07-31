@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
+import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup } from '../utils/inventoryData';
 import { X, Loader2 } from 'lucide-react';
+import { EmployeeMultiSelect } from './EmployeeMultiSelect';
+import { AutocompleteInput } from './AutocompleteInput';
 
 type Props = {
   selectedDate: string;
@@ -9,39 +12,49 @@ type Props = {
   onSubmit: (item: Omit<OverheadItem, 'id'>) => void | Promise<void>;
   onClose: () => void;
   employees: Employee[];
+  existingOverheads?: OverheadItem[];
 };
 
-const overheadCategories = [
-  { value: 'fuel', label: '⛽ Fuel Cost' },
-  { value: 'travel', label: '🚗 Travel by Employee' },
-  { value: 'transportation', label: '🚛 Goods Transportation Cost' },
-  { value: 'marketing', label: '📢 Marketing Cost' },
-  { value: 'service_charge', label: '🍔 Service Charge (Food Aggregators)' },
-  { value: 'repair', label: '🔧 Repair Cost' },
-  { value: 'party', label: '🎉 Party Cost' },
-  { value: 'lunch', label: '🍽️ Lunch Cost' },
-  { value: 'emergency_online', label: '🛒 Emergency Online Order (Blinkit)' },
-  { value: 'personal_expense', label: '👤 Personal Expense By an Employee' },
-  { value: 'utensils', label: '🍴 Utensils' },
-  { value: 'equipments', label: '🔨 Equipments' },
-  { value: 'license', label: '📜 License Cost' },
-  { value: 'water_jar', label: '💧 Water Jar' },
-  { value: 'evening_snacks', label: '🍿 Evening Snacks' },
-  { value: 'miscellaneous', label: '📝 Miscellaneous Cost' }
-] as const;
+const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
+  operating: 'Operating Expenses',
+  meals: 'Staff Meals',
+  payroll_linked: 'Fixed & Payroll-Linked',
+};
 
-export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees }: Props) {
+// Selectable categories, grouped for the <optgroup> UI. 'miscellaneous' and 'commission'
+// are intentionally excluded — they remain valid on historical data but are no longer
+// offered when creating/editing an entry. 'personal_expense' is also excluded: it's a
+// salary advance/loan, not an operating cost — use the Salary Advance flow in Payroll instead.
+const selectableCategoriesByGroup: Record<OverheadCategoryGroup, { value: string; label: string }[]> = { operating: [], meals: [], payroll_linked: [] };
+for (const [value, meta] of Object.entries(OVERHEAD_CATEGORY_META)) {
+  if (value === 'miscellaneous' || value === 'personal_expense') continue;
+  selectableCategoriesByGroup[meta.group].push({ value, label: meta.label });
+}
+
+function isMealCategory(category: string): boolean {
+  return (MEAL_CATEGORIES as string[]).includes(category);
+}
+
+export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [] }: Props) {
   const [formData, setFormData] = useState({
     category: editingItem ? editingItem.category : 'fuel' as OverheadItem['category'],
     description: editingItem ? editingItem.description : '',
     amount: editingItem ? editingItem.amount.toString() : '',
     employeeId: editingItem?.employeeId || '',
     employeeName: editingItem?.employeeName || '',
+    employeeIds: editingItem?.employeeIds || [] as string[],
     expenseMonth: editingItem?.expenseMonth || selectedDate.slice(0, 7), // Default to current month (YYYY-MM)
     paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
   });
+
+  // Suggestions for the description autocomplete: previously-used descriptions
+  // for this same category, most-recent-first.
+  const descriptionSuggestions = existingOverheads
+    .filter((o) => o.category === formData.category && o.description)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    .map((o) => o.description);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -115,6 +128,11 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
       submissionData.expenseMonth = formData.expenseMonth;
     }
 
+    // Tag which employees a shared meal expense covered
+    if (isMealCategory(formData.category) && formData.employeeIds.length > 0) {
+      submissionData.employeeIds = formData.employeeIds;
+    }
+
     // Calculate payment method amounts
     let paymentData: Partial<OverheadItem> = {
       paymentMethod: formData.paymentMethod
@@ -168,19 +186,42 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
                   category: e.target.value as OverheadItem['category'],
                   // Reset employee fields when category changes
                   employeeId: '',
-                  employeeName: ''
+                  employeeName: '',
+                  employeeIds: []
                 })
               }
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             >
-              {overheadCategories.map((cat) => (
-                <option key={cat.value} value={cat.value}>
-                  {cat.label}
-                </option>
-              ))}
+              {(Object.entries(selectableCategoriesByGroup) as [OverheadCategoryGroup, { value: string; label: string }[]][]).map(
+                ([group, categories]) =>
+                  categories.length > 0 && (
+                    <optgroup key={group} label={GROUP_LABELS[group]}>
+                      {categories.map((cat) => (
+                        <option key={cat.value} value={cat.value}>
+                          {cat.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )
+              )}
+              {/* If editing a historical entry whose category is no longer offered for new entries, keep it visible */}
+              {editingItem && OVERHEAD_CATEGORY_META[editingItem.category] &&
+                !Object.values(selectableCategoriesByGroup).flat().some((c) => c.value === editingItem.category) && (
+                  <option value={editingItem.category}>
+                    {OVERHEAD_CATEGORY_META[editingItem.category].label} (historical)
+                  </option>
+                )}
             </select>
           </div>
+
+          {isMealCategory(formData.category) && (
+            <EmployeeMultiSelect
+              employees={employees}
+              selectedIds={formData.employeeIds}
+              onChange={(ids) => setFormData({ ...formData, employeeIds: ids })}
+            />
+          )}
 
           {formData.category === 'personal_expense' && (
             <>
@@ -236,13 +277,10 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
 
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Expense Description</label>
-                <textarea
+                <AutocompleteInput
                   value={formData.description}
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  rows={3}
+                  onChange={(v) => setFormData({ ...formData, description: v })}
+                  suggestions={descriptionSuggestions}
                   placeholder="What was the expense for?"
                   required
                 />
@@ -253,13 +291,10 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
           {formData.category !== 'personal_expense' && (
             <div>
               <label className="block text-sm text-gray-700 mb-1">Description</label>
-              <textarea
+              <AutocompleteInput
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                rows={3}
+                onChange={(v) => setFormData({ ...formData, description: v })}
+                suggestions={descriptionSuggestions}
                 required
               />
             </div>
@@ -332,8 +367,8 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
 
           {/* Split Payment Amounts */}
           {formData.paymentMethod === 'both' && totalAmount > 0 && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-medium text-purple-900">Split Payment Details</p>
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-medium text-orange-900">Split Payment Details</p>
               
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Cash Amount (₹)</label>
@@ -377,7 +412,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
                 />
               </div>
 
-              <div className="flex justify-between text-sm pt-2 border-t border-purple-300">
+              <div className="flex justify-between text-sm pt-2 border-t border-orange-300">
                 <span className="text-gray-700">Total:</span>
                 <span className={`font-medium ${splitAmountsValid() ? 'text-green-600' : 'text-red-600'}`}>
                   ₹{(parseFloat(formData.cashAmount || '0') + parseFloat(formData.onlineAmount || '0')).toFixed(2)} / ₹{totalAmount.toFixed(2)}

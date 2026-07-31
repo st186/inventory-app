@@ -160,7 +160,7 @@ export function StorePerformanceComparison({ context, stores }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
             <Trophy className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -198,19 +198,19 @@ export function StorePerformanceComparison({ context, stores }: Props) {
           
           return (
             <Card key={store.storeId} className="p-6 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-purple-500/10 to-pink-500/10 rounded-bl-full" />
+              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-orange-500/10 to-rose-500/10 rounded-bl-full" />
               <div className="relative">
                 <div className="flex items-center justify-between mb-4">
                   <Badge className={`${rankBadge.color} border text-lg px-3 py-1`}>
                     {rankBadge.label}
                   </Badge>
-                  <RankIcon className="h-8 w-8 text-purple-600" />
+                  <RankIcon className="h-8 w-8 text-orange-600" />
                 </div>
                 <h3 className="text-xl mb-4">{store.storeName}</h3>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Overall Score</span>
-                    <span className="text-purple-600">{store.overallScore.toFixed(1)}/100</span>
+                    <span className="text-orange-600">{store.overallScore.toFixed(1)}/100</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Sales</span>
@@ -243,16 +243,16 @@ export function StorePerformanceComparison({ context, stores }: Props) {
               <Radar 
                 name={storeMetrics[0]?.storeName} 
                 dataKey={storeMetrics[0]?.storeName} 
-                stroke="#8b5cf6" 
-                fill="#8b5cf6" 
+                stroke="#14b8a6" 
+                fill="#14b8a6" 
                 fillOpacity={0.6} 
               />
               {storeMetrics[1] && (
                 <Radar 
                   name={storeMetrics[1].storeName} 
                   dataKey={storeMetrics[1].storeName} 
-                  stroke="#ec4899" 
-                  fill="#ec4899" 
+                  stroke="#f43f5e" 
+                  fill="#f43f5e" 
                   fillOpacity={0.6} 
                 />
               )}
@@ -281,8 +281,8 @@ export function StorePerformanceComparison({ context, stores }: Props) {
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
               <Tooltip />
               <Legend />
-              <Bar yAxisId="left" dataKey="sales" fill="#8b5cf6" name="Sales (₹)" />
-              <Bar yAxisId="right" dataKey="score" fill="#ec4899" name="Score" />
+              <Bar yAxisId="left" dataKey="sales" fill="#14b8a6" name="Sales (₹)" />
+              <Bar yAxisId="right" dataKey="score" fill="#f43f5e" name="Score" />
             </BarChart>
           </ResponsiveContainer>
         </Card>
@@ -317,7 +317,7 @@ export function StorePerformanceComparison({ context, stores }: Props) {
                     </td>
                     <td className="py-3 px-2">{store.storeName}</td>
                     <td className="text-right py-3 px-2">
-                      <span className="text-purple-600">{store.overallScore.toFixed(1)}</span>
+                      <span className="text-orange-600">{store.overallScore.toFixed(1)}</span>
                     </td>
                     <td className="text-right py-3 px-2">₹{store.totalSales.toLocaleString()}</td>
                     <td className="text-right py-3 px-2">

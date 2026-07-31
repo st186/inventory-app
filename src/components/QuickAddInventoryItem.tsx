@@ -95,7 +95,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
         )}
         <button
           onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-md transition-all text-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:shadow-md transition-all text-sm"
         >
           <Plus className="w-4 h-4" />
           Add New {category.replace('_', ' ')} Item
@@ -105,7 +105,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
   }
 
   return (
-    <Card className="p-4 mb-4 border-2 border-purple-200 bg-purple-50/30">
+    <Card className="p-4 mb-4 border-2 border-orange-200 bg-orange-50/30">
       <h3 className="text-sm mb-3 flex items-center gap-2">
         <Plus className="w-4 h-4" />
         Add New Item to {entityName}
@@ -126,19 +126,19 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
             value={formData.displayName}
             onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
             placeholder="e.g., Schezwan Momo"
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             required
             disabled={loading}
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs mb-1 text-gray-700">Unit *</label>
             <select
               value={formData.unit}
               onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               required
               disabled={loading}
             >
@@ -155,7 +155,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
             <select
               value={formData.linkType}
               onChange={(e) => setFormData({ ...formData, linkType: e.target.value as 'specific' | 'global' })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               disabled={loading}
             >
               <option value="specific">Only {entityName}</option>
@@ -179,7 +179,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
           </button>
           <button
             type="submit"
-            className="px-4 py-2 text-sm bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
             disabled={loading}
           >
             {loading ? 'Adding...' : 'Add Item'}

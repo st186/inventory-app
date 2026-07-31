@@ -21,6 +21,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showDuplicateDateConfirm, setShowDuplicateDateConfirm] = useState(false);
   const [updatingRequestId, setUpdatingRequestId] = useState<string | null>(null);
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -116,7 +117,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const sauceItems = [
     'Pan-Fried Sauce', 'Butter Makhani Sauce', 'Chilli Chicken Sauce',
     'Korean Sauce', 'Red Sauce', 'Green Sauce', 'Soup Premix', 'Tandoori Sauce',
-    'Jhol Momo Gravy'
+    'Jhol Momo Gravy', 'Hot Garlic Sauce'
   ];
 
   // Utilities list
@@ -762,10 +763,25 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     // Time restriction removed - requests can be submitted anytime
     console.log('📝 Submitting request for date:', requestDate);
 
+    // Warn if this store already has a request for the same date
+    const existingSameDateRequest = requests.some(
+      (req) => req.storeId === context.user?.storeId && req.requestDate === requestDate
+    );
+    if (existingSameDateRequest) {
+      setShowDuplicateDateConfirm(true);
+      return;
+    }
+
+    await performSubmitRequest();
+  };
+
+  const performSubmitRequest = async () => {
+    if (!context.user?.accessToken || !context.user?.employeeId || !context.user?.storeId) return;
+
     try {
       setSubmitting(true);
       console.log('✅ Validation passed, submitting request...');
-      
+
       // Backend will automatically fetch and populate storeName from storeId
       // Spread dynamic momo quantities into the request
       await api.createProductionRequest(context.user.accessToken, {
@@ -783,7 +799,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
       console.log('✅ Request submitted successfully');
       toast.success('Production request submitted successfully');
-      
+
       // Reset form
       setMomoQuantities({});
       setKitchenUtilities({});
@@ -791,7 +807,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       setUtilities({});
       setNotes('');
       setRequestDate(getDefaultRequestDate());
-      
+      setShowDuplicateDateConfirm(false);
+
       // Reload requests
       await loadRequests();
     } catch (error: any) {
@@ -932,8 +949,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
       case 'accepted': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'in-preparation': return 'bg-purple-100 text-purple-800 border-purple-300';
-      case 'prepared': return 'bg-indigo-100 text-indigo-800 border-indigo-300';
+      case 'in-preparation': return 'bg-teal-100 text-teal-800 border-teal-300';
+      case 'prepared': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'shipped': return 'bg-orange-100 text-orange-800 border-orange-300';
       case 'partially-shipped': return 'bg-amber-100 text-amber-800 border-amber-300';
       case 'delivered': return 'bg-green-100 text-green-800 border-green-300';
@@ -1190,7 +1207,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600"></div>
       </div>
     );
   }
@@ -1198,9 +1215,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg shadow-lg p-4 sm:p-6 text-white">
+      <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-lg shadow-lg p-4 sm:p-6 text-white">
         <h1 className="text-2xl sm:text-3xl mb-2">Daily Stock Requests</h1>
-        <p className="text-sm sm:text-base text-purple-100">
+        <p className="text-sm sm:text-base text-teal-100">
           {isStoreIncharge && 'Submit your daily stock requirements before 9:00 AM'}
           {isProductionHead && 'Manage incoming stock requests and track fulfillment'}
           {(isOperationsHead || isClusterHead) && 'Monitor stock request workflow across stores'}
@@ -1265,7 +1282,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   {(isOperationsHead || isClusterHead) && (
                     <button
                       onClick={() => setShowPlateConfigModal(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+                      className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-900 transition-all shadow-md hover:shadow-lg"
                     >
                       <Settings className="w-4 h-4" />
                       <span className="text-sm font-semibold">Plate Config</span>
@@ -1274,7 +1291,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   {onNavigateToManageItems && (isOperationsHead || isClusterHead) && (
                     <button
                       onClick={onNavigateToManageItems}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md hover:shadow-lg"
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
                     >
                       <Package className="w-4 h-4" />
                       <span className="text-sm font-semibold">Manage Items</span>
@@ -1491,7 +1508,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           console.log('  storeStock calculated:', storeStock);
           
           // Color palette for momo cards
-          const colorPalette = ['purple', 'pink', 'green', 'yellow', 'blue', 'teal', 'red', 'indigo', 'orange', 'cyan'];
+          const colorPalette = ['violet', 'fuchsia', 'green', 'yellow', 'blue', 'teal', 'red', 'sky', 'orange', 'cyan'];
           
           const totalReceivedSum = Object.values(totalReceived).reduce((sum: number, val: any) => sum + val, 0);
           const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum: number, val: any) => sum + val, 0);
@@ -1638,7 +1655,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       {isStoreIncharge && (
         <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
           <h2 className="text-lg sm:text-xl text-gray-900 mb-4 flex items-center gap-2">
-            <Send className="w-5 h-5 text-purple-600" />
+            <Send className="w-5 h-5 text-teal-600" />
             Submit Stock Request
           </h2>
           
@@ -1674,7 +1691,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
             <div>
               <h3 className="text-base text-gray-900 mb-3 flex items-center gap-2">
-                <Package className="w-5 h-5 text-purple-600" />
+                <Package className="w-5 h-5 text-teal-600" />
                 Momos Quantities
               </h3>
               <div className="space-y-3 sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3">
@@ -1695,7 +1712,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                           ...momoQuantities,
                           [camelKey]: parseInt(e.target.value) || 0
                         })}
-                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
                       />
                       <div className="flex gap-2 mt-2 flex-wrap">
                         {presetValues.map(val => (
@@ -1706,7 +1723,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                               ...momoQuantities,
                               [camelKey]: val
                             })}
-                            className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors"
+                            className="px-3 py-1.5 bg-teal-100 hover:bg-teal-200 text-teal-700 rounded-lg text-sm transition-colors"
                           >
                             {val}
                           </button>
@@ -1721,7 +1738,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             {/* Kitchen Utilities Section */}
             <div className="border-t pt-6">
               <h3 className="text-base text-gray-900 mb-4 flex items-center gap-2">
-                <Package className="w-5 h-5 text-purple-600" />
+                <Package className="w-5 h-5 text-teal-600" />
                 Kitchen Utilities (Optional)
               </h3>
               <div className="space-y-3">
@@ -1749,7 +1766,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             setKitchenUtilities(newUtils);
                           }
                         }}
-                        className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
+                        className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
                         placeholder={`Quantity in ${item.unit}`}
                       />
                       <div className="flex items-center px-4 py-3 bg-gray-100 border-2 border-gray-300 rounded-lg text-gray-700 text-base font-medium min-w-[80px] justify-center">
@@ -1764,14 +1781,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             {/* Sauces Section */}
             <div className="border-t pt-6">
               <h3 className="text-base text-gray-900 mb-4 flex items-center gap-2">
-                <Package className="w-5 h-5 text-pink-600" />
+                <Package className="w-5 h-5 text-rose-600" />
                 Sauces (Select Required Sauces)
               </h3>
               <div className="space-y-2 sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0">
                 {sauceItems.map((sauce) => (
                   <label
                     key={sauce}
-                    className="flex items-center gap-3 p-3 border-2 border-gray-300 rounded-lg hover:border-purple-500 cursor-pointer transition-colors active:bg-purple-50"
+                    className="flex items-center gap-3 p-3 border-2 border-gray-300 rounded-lg hover:border-teal-500 cursor-pointer transition-colors active:bg-teal-50"
                   >
                     <input
                       type="checkbox"
@@ -1785,7 +1802,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                           setSauces(newSauces);
                         }
                       }}
-                      className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500 flex-shrink-0"
+                      className="w-5 h-5 text-teal-600 rounded focus:ring-orange-500 flex-shrink-0"
                     />
                     <span className="text-sm text-gray-700">{sauce}</span>
                   </label>
@@ -1796,7 +1813,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             {/* Utilities Section */}
             <div className="border-t pt-6">
               <h3 className="text-base text-gray-900 mb-4 flex items-center gap-2">
-                <Package className="w-5 h-5 text-indigo-600" />
+                <Package className="w-5 h-5 text-blue-600" />
                 Utilities (Quantity in Pieces)
               </h3>
               <div className="space-y-3 sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0">
@@ -1817,7 +1834,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                           setUtilities(newUtils);
                         }
                       }}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
                       placeholder="Pieces"
                     />
                   </div>
@@ -1831,7 +1848,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none resize-none"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none resize-none"
                 placeholder="Any special requirements or notes..."
               />
             </div>
@@ -1839,7 +1856,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             <button
               type="submit"
               disabled={submitting}
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-4 rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base font-medium shadow-lg active:scale-95"
+              className="w-full bg-gradient-to-r from-orange-600 to-red-600 text-white py-4 rounded-lg hover:from-orange-700 hover:to-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base font-medium shadow-lg active:scale-95"
             >
               {submitting ? (
                 <>
@@ -1873,7 +1890,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none text-base"
+              className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-base"
             >
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
@@ -1891,7 +1908,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   setFilterDate('');
                   setFilterStatus('all');
                 }}
-                className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm text-purple-600 hover:text-purple-900 underline font-medium"
+                className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm text-teal-600 hover:text-teal-900 underline font-medium"
               >
                 Clear Filters
               </button>
@@ -1910,7 +1927,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             <div className="absolute top-8 left-0 right-0 h-1 bg-gray-200" style={{ zIndex: 0 }}></div>
             
             {/* Status Cards */}
-            <div className="relative grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" style={{ zIndex: 1 }}>
+            <div className="relative grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" style={{ zIndex: 1 }}>
               {/* Pending */}
               <div className="flex flex-col items-center">
                 <div className="w-16 h-16 rounded-full bg-yellow-500 text-white flex items-center justify-center shadow-lg mb-3">
@@ -1943,30 +1960,30 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
               {/* In Preparation */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-purple-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-16 h-16 rounded-full bg-teal-500 text-white flex items-center justify-center shadow-lg mb-3">
                   <div className="text-center">
                     <div className="text-2xl">{groupedByStatus['in-preparation'].length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-purple-50 border-2 border-purple-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-teal-50 border-2 border-teal-200 rounded-lg p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <Package className="w-3 h-3 text-purple-600" />
-                    <p className="text-xs text-purple-800">In Prep</p>
+                    <Package className="w-3 h-3 text-teal-600" />
+                    <p className="text-xs text-teal-800">In Prep</p>
                   </div>
                 </div>
               </div>
 
               {/* Prepared */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow-lg mb-3">
+                <div className="w-16 h-16 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg mb-3">
                   <div className="text-center">
                     <div className="text-2xl">{groupedByStatus.prepared.length}</div>
                   </div>
                 </div>
-                <div className="w-full bg-indigo-50 border-2 border-indigo-200 rounded-lg p-3 text-center">
+                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-lg p-3 text-center">
                   <div className="flex items-center justify-center gap-1 mb-1">
-                    <CheckCircle className="w-3 h-3 text-indigo-600" />
-                    <p className="text-xs text-indigo-800">Prepared</p>
+                    <CheckCircle className="w-3 h-3 text-blue-600" />
+                    <p className="text-xs text-blue-800">Prepared</p>
                   </div>
                 </div>
               </div>
@@ -2004,7 +2021,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           </div>
 
           {/* Summary Stats */}
-          <div className="mt-6 pt-6 border-t border-gray-200 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="mt-6 pt-6 border-t border-gray-200 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
               <p className="text-2xl text-gray-900">{filteredRequests.length}</p>
               <p className="text-sm text-gray-600">Total Requests</p>
@@ -2014,7 +2031,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               <p className="text-sm text-gray-600">Awaiting Action</p>
             </div>
             <div className="text-center">
-              <p className="text-2xl text-purple-600">
+              <p className="text-2xl text-teal-600">
                 {groupedByStatus.accepted.length + groupedByStatus['in-preparation'].length + groupedByStatus.prepared.length}
               </p>
               <p className="text-sm text-gray-600">In Progress</p>
@@ -2031,7 +2048,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
         <div className="flex flex-col gap-3 sm:gap-4 mb-4 sm:mb-6">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-purple-600" />
+            <TrendingUp className="w-5 h-5 text-teal-600" />
             <h2 className="text-lg sm:text-xl text-gray-900">Stock Requests by Momo Type</h2>
           </div>
           
@@ -2050,7 +2067,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 onClick={() => setChartTimeFilter(filter as any)}
                 className={`px-3 py-2 rounded-lg text-xs sm:text-sm transition-colors flex-1 sm:flex-none ${
                   chartTimeFilter === filter
-                    ? 'bg-purple-600 text-white'
+                    ? 'bg-teal-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -2061,7 +2078,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         </div>
 
         {chartTimeFilter === 'custom' && (
-          <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
             <DatePicker
               label="From Date"
               value={chartCustomRange.from}
@@ -2251,14 +2268,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           });
           
           const colors = [
-            { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300', solid: '#8b5cf6' },
-            { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', solid: '#ec4899' },
+            { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-300', solid: '#8b5cf6' },
+            { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-300', solid: '#c026d3' },
             { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300', solid: '#10b981' },
             { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', solid: '#f59e0b' },
             { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', solid: '#3b82f6' },
             { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300', solid: '#14b8a6' },
             { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', solid: '#ef4444' },
-            { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-300', solid: '#6366f1' },
+            { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-300', solid: '#0ea5e9' },
           ];
           
           return (
@@ -2442,7 +2459,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   className="w-full p-4 sm:p-6 text-left flex items-center justify-between gap-4 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <Calendar className="w-6 h-6 text-purple-600 flex-shrink-0" />
+                    <Calendar className="w-6 h-6 text-teal-600 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base sm:text-lg text-gray-900 truncate">
                         {(() => {
@@ -2475,18 +2492,18 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                 {/* Total Quantities - Always Visible */}
                 <div className="px-4 sm:px-6 pb-4 sm:pb-6">
-                  <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-3 sm:p-4">
+                  <div className="bg-gradient-to-r from-teal-50 to-rose-50 rounded-lg p-3 sm:p-4">
                     <h4 className="text-xs sm:text-sm text-gray-700 mb-3">Total Quantities for this Day</h4>
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2 sm:gap-3">
                         {totalQuantities.chicken > 0 && (
                           <div className="text-center bg-white rounded-lg p-2 sm:p-3">
-                            <p className="text-lg sm:text-xl text-purple-600">{totalQuantities.chicken}</p>
+                            <p className="text-lg sm:text-xl text-teal-600">{totalQuantities.chicken}</p>
                             <p className="text-xs text-gray-600">Chicken</p>
                           </div>
                         )}
                         {totalQuantities.chickenCheese > 0 && (
                           <div className="text-center bg-white rounded-lg p-2 sm:p-3">
-                            <p className="text-lg sm:text-xl text-pink-600">{totalQuantities.chickenCheese}</p>
+                            <p className="text-lg sm:text-xl text-rose-600">{totalQuantities.chickenCheese}</p>
                             <p className="text-xs text-gray-600">Chicken Cheese</p>
                           </div>
                         )}
@@ -2530,7 +2547,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                     {/* Individual Store Requests */}
                     <div className="space-y-4">
                       <h4 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                        <Package className="w-5 h-5 text-purple-600" />
+                        <Package className="w-5 h-5 text-teal-600" />
                         Requests by Store
                       </h4>
                       {dateRequests.map((request) => {
@@ -2545,7 +2562,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             className={`
                               relative overflow-hidden rounded-xl transition-all duration-300 transform hover:scale-[1.01]
                               ${isHighlighted 
-                                ? 'border-4 border-purple-500 bg-gradient-to-br from-purple-50 via-pink-50 to-purple-50 shadow-2xl ring-4 ring-purple-300/50' 
+                                ? 'border-4 border-teal-500 bg-gradient-to-br from-orange-50 via-amber-50 to-orange-50 shadow-2xl ring-4 ring-teal-300/50' 
                                 : isPending
                                 ? 'border-4 border-yellow-400 bg-gradient-to-br from-yellow-50 via-orange-50 to-yellow-50 shadow-xl'
                                 : 'border-2 border-gray-200 bg-white shadow-lg'
@@ -2564,7 +2581,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   px-4 py-2 rounded-full font-semibold shadow-md
                                   ${isPending 
                                     ? 'bg-gradient-to-r from-yellow-400 to-orange-400 text-gray-900' 
-                                    : 'bg-gradient-to-r from-purple-400 to-pink-400 text-white'
+                                    : 'bg-gradient-to-r from-teal-400 to-rose-400 text-white'
                                   }
                                 `}>
                                   <span className="text-sm flex items-center gap-2">
@@ -2572,7 +2589,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   </span>
                                 </div>
                                 {isHighlighted && (
-                                  <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 rounded-full text-sm font-bold animate-bounce shadow-lg">
+                                  <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white px-4 py-2 rounded-full text-sm font-bold animate-bounce shadow-lg">
                                     🔔 New Notification
                                   </div>
                                 )}
@@ -2598,7 +2615,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                     </div>
                                     
                                     <div className="flex items-center gap-2 text-base font-semibold text-gray-700 bg-white px-4 py-2 rounded-lg shadow-md">
-                                      <Store className="w-5 h-5 flex-shrink-0 text-purple-600" />
+                                      <Store className="w-5 h-5 flex-shrink-0 text-teal-600" />
                                       <span className="truncate">{request.storeName || 'Unknown Store'}</span>
                                     </div>
                                   </div>
@@ -2623,7 +2640,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'in-preparation')}
                                     disabled={updatingRequestId === request.id}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 active:bg-teal-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
                                     {updatingRequestId === request.id && (
                                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -2636,7 +2653,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   <button
                                     onClick={() => handleStatusUpdate(request.id, 'prepared')}
                                     disabled={updatingRequestId === request.id}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
+                                    className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                                   >
                                     {updatingRequestId === request.id && (
                                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -2776,8 +2793,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             )}
 
                             {/* Momos Quantities - DYNAMIC */}
-                            <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-xl p-4 mb-4 border-2 border-indigo-200 shadow-md">
-                              <h5 className="text-base font-bold text-indigo-800 mb-4 flex items-center gap-2">
+                            <div className="bg-gradient-to-br from-blue-50 via-teal-50 to-rose-50 rounded-xl p-4 mb-4 border-2 border-blue-200 shadow-md">
+                              <h5 className="text-base font-bold text-blue-800 mb-4 flex items-center gap-2">
                                 <Package className="w-5 h-5" />
                                 Momos Quantities
                               </h5>
@@ -2787,8 +2804,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                   if (!quantity || quantity === 0) return null;
                                   
                                   return (
-                                    <div key={camelKey} className="text-center bg-white rounded-lg p-3 shadow-md border-2 border-indigo-200 hover:border-indigo-400 transition-all transform hover:scale-105">
-                                      <p className="text-2xl font-bold text-indigo-600">{quantity}</p>
+                                    <div key={camelKey} className="text-center bg-white rounded-lg p-3 shadow-md border-2 border-blue-200 hover:border-blue-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-blue-600">{quantity}</p>
                                       <p className="text-xs font-semibold text-gray-700 mt-1">{label.replace(' Momos', '').replace(' Momo', '')}</p>
                                     </div>
                                   );
@@ -2798,15 +2815,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Kitchen Utilities */}
                             {request.kitchenUtilities && Object.keys(request.kitchenUtilities).length > 0 && (
-                              <div className="bg-gradient-to-br from-purple-100 via-purple-50 to-pink-100 rounded-xl p-5 mb-4 border-2 border-purple-300 shadow-lg">
-                                <h5 className="text-base font-bold text-purple-900 mb-4 flex items-center gap-2">
-                                  <Utensils className="w-6 h-6 text-purple-700" />
+                              <div className="bg-gradient-to-br from-teal-100 via-teal-50 to-rose-100 rounded-xl p-5 mb-4 border-2 border-teal-300 shadow-lg">
+                                <h5 className="text-base font-bold text-teal-900 mb-4 flex items-center gap-2">
+                                  <Utensils className="w-6 h-6 text-teal-700" />
                                   Kitchen Utilities
                                 </h5>
                                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                                   {Object.entries(request.kitchenUtilities).map(([item, data]) => (
-                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-purple-200 hover:border-purple-400 transition-all transform hover:scale-105">
-                                      <p className="text-2xl font-bold text-purple-700 mb-1">{data.quantity} <span className="text-sm font-semibold text-purple-600">{data.unit}</span></p>
+                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-teal-200 hover:border-teal-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-teal-700 mb-1">{data.quantity} <span className="text-sm font-semibold text-teal-600">{data.unit}</span></p>
                                       <p className="text-sm font-semibold text-gray-800">{item}</p>
                                     </div>
                                   ))}
@@ -2816,14 +2833,14 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Sauces */}
                             {request.sauces && Object.keys(request.sauces).length > 0 && (
-                              <div className="bg-gradient-to-br from-pink-100 via-pink-50 to-rose-100 rounded-xl p-5 mb-4 border-2 border-pink-300 shadow-lg">
-                                <h5 className="text-base font-bold text-pink-900 mb-4 flex items-center gap-2">
-                                  <Droplet className="w-6 h-6 text-pink-700" />
+                              <div className="bg-gradient-to-br from-rose-100 via-rose-50 to-rose-100 rounded-xl p-5 mb-4 border-2 border-rose-300 shadow-lg">
+                                <h5 className="text-base font-bold text-rose-900 mb-4 flex items-center gap-2">
+                                  <Droplet className="w-6 h-6 text-rose-700" />
                                   Sauces Requested
                                 </h5>
                                 <div className="flex flex-wrap gap-3">
                                   {Object.keys(request.sauces).map((sauce) => (
-                                    <span key={sauce} className="px-5 py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-base font-bold shadow-lg hover:shadow-xl transform hover:scale-110 transition-all">
+                                    <span key={sauce} className="px-5 py-3 bg-gradient-to-r from-rose-400 to-red-400 text-white rounded-xl text-base font-bold shadow-lg hover:shadow-xl transform hover:scale-110 transition-all">
                                       {sauce}
                                     </span>
                                   ))}
@@ -2833,15 +2850,15 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                             {/* Utilities */}
                             {request.utilities && Object.keys(request.utilities).length > 0 && (
-                              <div className="bg-gradient-to-br from-indigo-100 via-indigo-50 to-blue-100 rounded-xl p-5 mb-4 border-2 border-indigo-300 shadow-lg">
-                                <h5 className="text-base font-bold text-indigo-900 mb-4 flex items-center gap-2">
-                                  <Box className="w-6 h-6 text-indigo-700" />
+                              <div className="bg-gradient-to-br from-blue-100 via-blue-50 to-blue-100 rounded-xl p-5 mb-4 border-2 border-blue-300 shadow-lg">
+                                <h5 className="text-base font-bold text-blue-900 mb-4 flex items-center gap-2">
+                                  <Box className="w-6 h-6 text-blue-700" />
                                   Utilities
                                 </h5>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                   {Object.entries(request.utilities).map(([item, quantity]) => (
-                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-indigo-200 hover:border-indigo-400 transition-all transform hover:scale-105">
-                                      <p className="text-2xl font-bold text-indigo-700 mb-1">{quantity} <span className="text-sm font-semibold text-indigo-600">pcs</span></p>
+                                    <div key={item} className="bg-white rounded-lg p-4 shadow-md border-2 border-blue-200 hover:border-blue-400 transition-all transform hover:scale-105">
+                                      <p className="text-2xl font-bold text-blue-700 mb-1">{quantity} <span className="text-sm font-semibold text-blue-600">pcs</span></p>
                                       <p className="text-sm font-semibold text-gray-800">{item}</p>
                                     </div>
                                   ))}
@@ -2903,11 +2920,55 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         />
       )}
 
+      {/* Duplicate Same-Date Request Confirmation */}
+      {showDuplicateDateConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="bg-amber-500 p-6 text-white rounded-t-2xl flex items-center gap-3">
+              <AlertTriangle className="w-8 h-8 flex-shrink-0" />
+              <h3 className="text-xl font-bold">Duplicate Request Date</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-gray-700">
+                You already have a stock request submitted for{' '}
+                <span className="font-semibold">
+                  {new Date(requestDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+                . Are you sure you want to submit another request for the same date?
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-b-2xl flex flex-col sm:flex-row justify-end gap-2">
+              <button
+                onClick={() => setShowDuplicateDateConfirm(false)}
+                disabled={submitting}
+                className="px-4 py-2.5 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performSubmitRequest}
+                disabled={submitting}
+                className="px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  'Yes, Submit Anyway'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plate Configuration Modal */}
       {showPlateConfigModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white rounded-t-2xl">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-stone-800 p-6 text-white rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
@@ -2956,7 +3017,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
               <button
                 onClick={() => setShowPlateConfigModal(false)}
-                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-lg"
+                className="px-6 py-2.5 bg-stone-800 text-white rounded-xl hover:bg-stone-900 transition-all shadow-lg"
               >
                 Done
               </button>
@@ -2969,7 +3030,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       {showShippingDialog && shippingRequest && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
-            <div className="bg-gradient-to-r from-orange-500 to-pink-500 p-6 text-white">
+            <div className="bg-gradient-to-r from-orange-500 to-rose-500 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -3193,7 +3254,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                 ...shippedSauces,
                                 [sauce]: e.target.checked
                               })}
-                              className="w-4 h-4 text-pink-600 rounded"
+                              className="w-4 h-4 text-rose-600 rounded"
                             />
                             <span className={`text-sm font-medium ${isIncluded ? 'text-gray-700' : 'text-red-700'}`}>
                               {sauce}
@@ -3232,7 +3293,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
               <button
                 onClick={handleShipRequest}
                 disabled={!shippingResponsibility}
-                className="px-6 py-2 bg-gradient-to-r from-orange-500 to-pink-500 text-white rounded-lg hover:from-orange-600 hover:to-pink-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-2 bg-gradient-to-r from-orange-500 to-rose-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Confirm Shipping
               </button>

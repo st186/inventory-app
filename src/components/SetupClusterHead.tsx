@@ -48,10 +48,10 @@ export function SetupClusterHead() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
         <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-gradient-to-r from-orange-600 to-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <UserPlus className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">
@@ -88,7 +88,7 @@ export function SetupClusterHead() {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Employee ID:</span>
-                <span className="font-medium text-purple-600">{result.employeeId}</span>
+                <span className="font-medium text-orange-600">{result.employeeId}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Password:</span>
@@ -117,14 +117,14 @@ export function SetupClusterHead() {
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">Role:</span>
-              <span className="font-medium text-purple-600">Cluster Head</span>
+              <span className="font-medium text-orange-600">Cluster Head</span>
             </div>
           </div>
 
           <button
             onClick={handleSetup}
             disabled={loading || success}
-            className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading ? (
               <>

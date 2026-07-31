@@ -129,11 +129,11 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
 
   const getRoleColor = (person: Employee, isCurrentUser: boolean) => {
     if (isCurrentUser) {
-      return 'bg-gradient-to-br from-purple-500 to-pink-500 ring-4 ring-purple-200';
+      return 'bg-gradient-to-br from-orange-500 to-amber-500 ring-4 ring-orange-200';
     }
     
     if (person.role === 'cluster_head') {
-      return 'bg-gradient-to-br from-blue-500 to-indigo-500';
+      return 'bg-gradient-to-br from-blue-500 to-sky-500';
     }
     
     if (person.role === 'manager' || person.designation?.includes('incharge') || person.designation === 'operations_manager') {
@@ -145,11 +145,11 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
 
   const getCardBgColor = (person: Employee, isCurrentUser: boolean) => {
     if (isCurrentUser) {
-      return 'bg-gradient-to-r from-purple-100 to-pink-100 border-purple-300';
+      return 'bg-gradient-to-r from-orange-100 to-amber-100 border-orange-300';
     }
     
     if (person.role === 'cluster_head') {
-      return 'bg-gradient-to-r from-blue-100 to-indigo-100 border-blue-300';
+      return 'bg-gradient-to-r from-blue-100 to-sky-100 border-blue-300';
     }
     
     if (person.role === 'manager' || person.designation?.includes('incharge') || person.designation === 'operations_manager') {
@@ -168,7 +168,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -208,7 +208,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
                           </p>
                           <p className="text-xs text-gray-600 mt-1">{person.employeeId}</p>
                           {isCurrentUser && (
-                            <p className="text-xs text-purple-600 mt-1 font-semibold">(You)</p>
+                            <p className="text-xs text-orange-600 mt-1 font-semibold">(You)</p>
                           )}
                         </div>
                       </div>
@@ -242,11 +242,11 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
           <h3 className="text-sm font-semibold text-gray-700 mb-4">Legend</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 ring-4 ring-purple-200 rounded-lg"></div>
+              <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-amber-500 ring-4 ring-orange-200 rounded-lg"></div>
               <span className="text-sm text-gray-700">You (Current User)</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-lg"></div>
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-sky-500 rounded-lg"></div>
               <span className="text-sm text-gray-700">Cluster Head</span>
             </div>
             <div className="flex items-center gap-3">

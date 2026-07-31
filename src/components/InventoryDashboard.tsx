@@ -6,6 +6,7 @@ import { TrendingUp, TrendingDown, Package, AlertTriangle, Activity, Target, Dol
 import { Card } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
+import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
 
 type Props = {
   context: InventoryContextType;
@@ -156,7 +157,8 @@ export function InventoryDashboard({ context, stores }: Props) {
     context.inventory
       .filter(item => new Date(item.date) >= cutoffDate)
       .forEach(item => {
-        const category = item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const category = (INVENTORY_CATEGORIES as Record<string, string>)[item.category]
+          || item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         inventoryCostByCategory[category] = (inventoryCostByCategory[category] || 0) + item.totalCost;
       });
 
@@ -193,7 +195,7 @@ export function InventoryDashboard({ context, stores }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
             <Activity className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -228,7 +230,7 @@ export function InventoryDashboard({ context, stores }: Props) {
         <Card className="p-6">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm text-muted-foreground">Stock Requests</p>
-            <TrendingUp className="h-5 w-5 text-purple-600" />
+            <TrendingUp className="h-5 w-5 text-teal-600" />
           </div>
           <p className="text-2xl mb-1">{analytics.totalStockRequests.toLocaleString()}</p>
           <div className="flex items-center gap-2">
@@ -269,12 +271,12 @@ export function InventoryDashboard({ context, stores }: Props) {
           <AreaChart data={analytics.comparisonData}>
             <defs>
               <linearGradient id="colorProduction" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                <stop offset="5%" stopColor="#0d9488" stopOpacity={0.8}/>
+                <stop offset="95%" stopColor="#0d9488" stopOpacity={0}/>
               </linearGradient>
               <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#ec4899" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#ec4899" stopOpacity={0}/>
+                <stop offset="5%" stopColor="#e11d48" stopOpacity={0.8}/>
+                <stop offset="95%" stopColor="#e11d48" stopOpacity={0}/>
               </linearGradient>
               <linearGradient id="colorStock" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
@@ -286,9 +288,9 @@ export function InventoryDashboard({ context, stores }: Props) {
             <YAxis tick={{ fontSize: 12 }} />
             <Tooltip />
             <Legend />
-            <Area type="monotone" dataKey="production" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorProduction)" name="Production" />
+            <Area type="monotone" dataKey="production" stroke="#0d9488" fillOpacity={1} fill="url(#colorProduction)" name="Production" />
             <Area type="monotone" dataKey="stockRequests" stroke="#10b981" fillOpacity={1} fill="url(#colorStock)" name="Stock Requests" />
-            <Area type="monotone" dataKey="sales" stroke="#ec4899" fillOpacity={1} fill="url(#colorSales)" name="Sales" />
+            <Area type="monotone" dataKey="sales" stroke="#e11d48" fillOpacity={1} fill="url(#colorSales)" name="Sales" />
           </AreaChart>
         </ResponsiveContainer>
       </Card>
@@ -303,7 +305,7 @@ export function InventoryDashboard({ context, stores }: Props) {
               <div key={house.name} className="p-4 bg-gray-50 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm">{house.name}</h4>
-                  <Badge className="bg-purple-100 text-purple-800">
+                  <Badge className="bg-teal-100 text-teal-800">
                     {house.currentStock} in stock
                   </Badge>
                 </div>
@@ -368,7 +370,7 @@ export function InventoryDashboard({ context, stores }: Props) {
             <YAxis tick={{ fontSize: 12 }} />
             <Tooltip />
             <Legend />
-            <Bar dataKey="value" fill="#ec4899" name="Cost (₹)" />
+            <Bar dataKey="value" fill="#e11d48" name="Cost (₹)" />
           </BarChart>
         </ResponsiveContainer>
       </Card>

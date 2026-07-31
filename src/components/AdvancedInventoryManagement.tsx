@@ -32,7 +32,7 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
+            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg">
               <Package className="h-6 w-6 text-white" />
             </div>
           </div>

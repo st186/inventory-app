@@ -71,14 +71,14 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6 flex items-center justify-center">
         <div className="text-gray-500">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -94,7 +94,7 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg p-6 text-white">
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-6 text-white">
             <div className="flex items-center justify-between mb-4">
               <Users className="w-12 h-12 opacity-80" />
               <div className="text-right">
@@ -120,7 +120,7 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-pink-500 to-pink-600 rounded-xl shadow-lg p-6 text-white">
+          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl shadow-lg p-6 text-white">
             <div className="flex items-center justify-between mb-4">
               <Calendar className="w-12 h-12 opacity-80" />
               <div className="text-right">
@@ -135,7 +135,7 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
 
         {/* Employee/Manager List */}
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-purple-100 to-pink-100 border-b border-gray-200">
+          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
             <h3 className="text-lg text-gray-900">
               {role === 'manager' ? 'Employee List' : 'Manager List'}
             </h3>
@@ -146,7 +146,7 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
               <div key={person.employeeId} className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
                 {/* Avatar */}
                 <div className="flex items-center gap-4 mb-4">
-                  <div className="w-16 h-16 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full flex items-center justify-center text-white text-xl">
+                  <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-rose-400 rounded-full flex items-center justify-center text-white text-xl">
                     {person.name.charAt(0).toUpperCase()}
                   </div>
                   <div>
@@ -177,9 +177,9 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
                             <div className="text-xs text-gray-600 mb-1">Pending Timesheets</div>
                             <div className="text-xl text-yellow-700">{stats[person.employeeId].pendingTimesheets}</div>
                           </div>
-                          <div className="bg-pink-50 rounded-lg p-3">
+                          <div className="bg-rose-50 rounded-lg p-3">
                             <div className="text-xs text-gray-600 mb-1">Pending Leaves</div>
-                            <div className="text-xl text-pink-700">{stats[person.employeeId].pendingLeaves}</div>
+                            <div className="text-xl text-rose-700">{stats[person.employeeId].pendingLeaves}</div>
                           </div>
                           <div className="bg-green-50 rounded-lg p-3">
                             <div className="text-xs text-gray-600 mb-1">Approved Timesheets</div>
@@ -192,9 +192,9 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
                         </>
                       ) : (
                         <>
-                          <div className="bg-purple-50 rounded-lg p-3 col-span-2">
+                          <div className="bg-orange-50 rounded-lg p-3 col-span-2">
                             <div className="text-xs text-gray-600 mb-1">Employees</div>
-                            <div className="text-2xl text-purple-700">{stats[person.employeeId].employeeCount}</div>
+                            <div className="text-2xl text-orange-700">{stats[person.employeeId].employeeCount}</div>
                           </div>
                         </>
                       )}
