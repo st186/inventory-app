@@ -11,6 +11,9 @@ interface TimesheetEntry {
   totalHours: number;
   status: 'pending' | 'approved' | 'rejected';
   isLeave: boolean;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
 }
 
 interface EmployeeTimesheetProps {
@@ -199,7 +202,13 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
 
     try {
       setLoading(true);
-      await api.saveTimesheet(entry);
+      await api.saveTimesheet({
+        ...entry,
+        status: 'pending',
+        rejectedBy: undefined,
+        rejectedAt: undefined,
+        rejectionReason: undefined,
+      } as any);
       await loadTimesheetData();
       alert('Timesheet saved successfully');
     } catch (error) {
@@ -381,7 +390,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
             const isLocked = isApproved || (!!entry.id && entry.status === 'pending');
             const isFuture = isFutureDate(mobileDate);
             const maxTime = getLocalDateString(mobileDate) === getLocalDateString(new Date()) ? getCurrentTimeString() : undefined;
-            const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && isDirty(entry);
+            const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && (isDirty(entry) || entry.status === 'rejected');
 
             return (
               <div className="bg-white rounded-2xl shadow-sm p-4">
@@ -447,6 +456,11 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                         </span>
                       )}
                     </div>
+                    {entry.status === 'rejected' && entry.rejectionReason && (
+                      <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-4">
+                        Reason: {entry.rejectionReason}
+                      </p>
+                    )}
 
                     {/* Time inputs */}
                     <div className="grid grid-cols-2 gap-3 mb-4">
@@ -491,7 +505,11 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                         className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                       >
                         <Save className="w-5 h-5" />
-                        {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry) ? 'Pending approval' : 'Send for approval'}
+                        {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry)
+                          ? 'Pending approval'
+                          : entry.status === 'rejected'
+                            ? 'Resend for approval'
+                            : 'Send for approval'}
                       </button>
                     )}
                   </>
@@ -571,7 +589,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                       const maxTime = getLocalDateString(date) === getLocalDateString(new Date()) ? getCurrentTimeString() : undefined;
                       // Once submitted, locked from further edits until rejected (or approved)
                       const isLocked = entry.status === 'approved' || (!!entry.id && entry.status === 'pending');
-                      const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && isDirty(entry);
+                      const canSubmit = !isLocked && !isFuture && entry.startTime && entry.endTime && (isDirty(entry) || entry.status === 'rejected');
 
                       return (
                         <tr key={index} className={onLeave ? 'bg-yellow-50' : isFuture ? 'bg-gray-50' : index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
@@ -662,7 +680,11 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                                 className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                               >
                                 <Save className="w-4 h-4" />
-                                {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry) ? 'Pending' : 'Save'}
+                                {entry.status === 'pending' && entry.startTime && entry.endTime && !isDirty(entry)
+                                  ? 'Pending'
+                                  : entry.status === 'rejected'
+                                    ? 'Resend'
+                                    : 'Save'}
                               </button>
                             )}
                           </td>
