@@ -167,10 +167,15 @@ export function InvestmentsManagement({ context }: Props) {
  return (
  <div className="space-y-6">
  {/* Header */}
- <div className="flex items-center justify-between">
+ <div className="flex items-center justify-between flex-wrap gap-4">
+ <div className="flex items-center gap-3 sm:gap-4">
+ <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-rose-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
+ <TrendingUp className="w-6 h-6 text-white" />
+ </div>
  <div>
- <h2 className="text-2xl font-bold text-gray-900">Investors & Investment Analytics</h2>
- <p className="text-gray-600 mt-1">Manage investors and track loan repayments</p>
+ <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Investors & Investment Analytics</h1>
+ <p className="text-sm sm:text-base text-gray-500">Manage investors and track loan repayments</p>
+ </div>
  </div>
  <button
  onClick={() => {
@@ -190,7 +195,7 @@ export function InvestmentsManagement({ context }: Props) {
  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600"></div>
  </div>
  ) : investors.length === 0 ? (
- <div className="bg-gray-50 rounded-xl p-12 text-center border-2 border-dashed border-gray-300">
+ <div className="bg-gray-50 rounded-2xl p-12 text-center border-2 border-dashed border-gray-300">
  <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
  <h3 className="text-xl font-semibold text-gray-900 mb-2">No Investors Yet</h3>
  <p className="text-gray-600 mb-6">Add your first investor to start tracking investments and loans</p>
@@ -210,7 +215,7 @@ export function InvestmentsManagement({ context }: Props) {
  {investors.map((investor) => {
  const analytics = getInvestorAnalytics(investor.id);
  return (
- <div key={investor.id} className="bg-white rounded-xl shadow-lg border-2 border-orange-100 overflow-hidden">
+ <div key={investor.id} className="bg-white rounded-2xl shadow-lg border-2 border-orange-100 overflow-hidden">
  {/* Investor Header */}
  <div className="bg-gradient-to-r from-orange-600 to-rose-500 p-6 text-white">
  <div className="flex items-start justify-between">
@@ -259,22 +264,22 @@ export function InvestmentsManagement({ context }: Props) {
  <TrendingUp className="w-4 h-4 text-orange-600" />
  Investment Summary
  </h4>
- <div className="grid grid-cols-2 gap-4 mb-4">
- <div className="bg-blue-50 rounded-lg p-3">
- <p className="text-xs text-gray-600 mb-1">Total Lent</p>
- <p className="text-xl font-bold text-blue-600">₹{analytics.totalLent.toLocaleString()}</p>
+ <div className="grid grid-cols-2 gap-3 mb-4">
+ <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-3 shadow-lg shadow-blue-500/20 text-white">
+ <p className="text-xs uppercase tracking-wide text-blue-100 mb-1">Total Lent</p>
+ <p className="text-xl font-semibold">₹{analytics.totalLent.toLocaleString()}</p>
  </div>
- <div className="bg-green-50 rounded-lg p-3">
- <p className="text-xs text-gray-600 mb-1">Total Repaid</p>
- <p className="text-xl font-bold text-green-600">₹{analytics.totalRepaid.toLocaleString()}</p>
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-3 shadow-lg shadow-emerald-500/20 text-white">
+ <p className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Total Repaid</p>
+ <p className="text-xl font-semibold">₹{analytics.totalRepaid.toLocaleString()}</p>
  </div>
- <div className="bg-amber-50 rounded-lg p-3">
- <p className="text-xs text-gray-600 mb-1">Interest Accrued</p>
- <p className="text-xl font-bold text-amber-600">₹{analytics.totalInterest.toFixed(2)}</p>
+ <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-3 shadow-lg shadow-amber-500/20 text-white">
+ <p className="text-xs uppercase tracking-wide text-amber-100 mb-1">Interest Accrued</p>
+ <p className="text-xl font-semibold">₹{analytics.totalInterest.toFixed(2)}</p>
  </div>
- <div className="bg-red-50 rounded-lg p-3">
- <p className="text-xs text-gray-600 mb-1">Outstanding</p>
- <p className="text-xl font-bold text-red-600">₹{analytics.outstanding.toFixed(2)}</p>
+ <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-3 shadow-lg shadow-red-500/20 text-white">
+ <p className="text-xs uppercase tracking-wide text-red-100 mb-1">Outstanding</p>
+ <p className="text-xl font-semibold">₹{analytics.outstanding.toFixed(2)}</p>
  </div>
  </div>
 
@@ -332,7 +337,7 @@ export function InvestmentsManagement({ context }: Props) {
  }}
  >
  <div
- className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+ className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
  onClick={(e) => e.stopPropagation()}
  >
  {/* Header */}

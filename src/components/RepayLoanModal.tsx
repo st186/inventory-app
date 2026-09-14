@@ -103,19 +103,23 @@ export function RepayLoanModal({
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
-      <div 
-        className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+      <div
+        className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="bg-gradient-to-r from-green-500 to-emerald-500 p-6 text-white">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <TrendingDown className="w-6 h-6" />
-                Repay Loan
-              </h2>
-              <p className="text-green-100 mt-1">{loan.storeName}</p>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">
+                <TrendingDown className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+                  Repay Loan
+                </h2>
+                <p className="text-green-100 mt-1 text-sm">{loan.storeName}</p>
+              </div>
             </div>
             <button
               onClick={onClose}

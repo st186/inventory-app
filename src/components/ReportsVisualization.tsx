@@ -7,6 +7,7 @@ import { Card } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
 import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
+import { getTodayIST } from '../utils/timezone';
 
 type Props = {
   context: InventoryContextType;
@@ -221,7 +222,7 @@ export function ReportsVisualization({ context, stores }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bhandar-report-${reportType}-${dateRange}-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `bhandar-report-${reportType}-${dateRange}-${getTodayIST()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -231,14 +232,14 @@ export function ReportsVisualization({ context, stores }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
-            <FileText className="h-5 w-5 text-white" />
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
+            <FileText className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl">Reports & Analytics</h2>
-            <p className="text-muted-foreground">Comprehensive business insights and reports</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Reports & Analytics</h1>
+            <p className="text-sm sm:text-base text-gray-500">Comprehensive business insights and reports</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -270,41 +271,41 @@ export function ReportsVisualization({ context, stores }: Props) {
         {/* Sales Report */}
         <TabsContent value="sales" className="space-y-6">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Total Revenue</p>
-                <DollarSign className="h-5 w-5 text-green-600" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-emerald-100">Total Revenue</div>
+                <DollarSign className="h-5 w-5 text-emerald-100" />
               </div>
-              <p className="text-2xl mb-1">₹{salesAnalytics.totalRevenue.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-semibold">₹{salesAnalytics.totalRevenue.toLocaleString()}</div>
+              <div className="text-xs text-emerald-100 mt-1">
                 Avg: ₹{Math.round(salesAnalytics.avgDailySales).toLocaleString()}/day
-              </p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Transactions</p>
-                <TrendingUp className="h-5 w-5 text-blue-600" />
               </div>
-              <p className="text-2xl mb-1">{salesAnalytics.totalTransactions}</p>
-              <p className="text-xs text-muted-foreground">Total sales entries</p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Active Stores</p>
-                <Package className="h-5 w-5 text-orange-600" />
+            </div>
+
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-blue-100">Transactions</div>
+                <TrendingUp className="h-5 w-5 text-blue-100" />
               </div>
-              <p className="text-2xl mb-1">{salesAnalytics.storeWiseSales.length}</p>
-              <p className="text-xs text-muted-foreground">Contributing to revenue</p>
-            </Card>
+              <div className="text-2xl font-semibold">{salesAnalytics.totalTransactions}</div>
+              <div className="text-xs text-blue-100 mt-1">Total sales entries</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-amber-100">Active Stores</div>
+                <Package className="h-5 w-5 text-amber-100" />
+              </div>
+              <div className="text-2xl font-semibold">{salesAnalytics.storeWiseSales.length}</div>
+              <div className="text-xs text-amber-100 mt-1">Contributing to revenue</div>
+            </div>
           </div>
 
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="p-6">
-              <h3 className="text-lg mb-4">Sales Trend</h3>
+            <Card className="p-6 rounded-2xl">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Sales Trend</h3>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={salesAnalytics.salesTrend}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -319,8 +320,8 @@ export function ReportsVisualization({ context, stores }: Props) {
               </ResponsiveContainer>
             </Card>
 
-            <Card className="p-6">
-              <h3 className="text-lg mb-4">Store-wise Sales</h3>
+            <Card className="p-6 rounded-2xl">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Store-wise Sales</h3>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -346,39 +347,39 @@ export function ReportsVisualization({ context, stores }: Props) {
 
         {/* Production Report */}
         <TabsContent value="production" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Total Production</p>
-                <Package className="h-5 w-5 text-blue-600" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-blue-100">Total Production</div>
+                <Package className="h-5 w-5 text-blue-100" />
               </div>
-              <p className="text-2xl mb-1">{productionAnalytics.totalProduction.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Total units produced</p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Total Wastage</p>
-                <TrendingUp className="h-5 w-5 text-orange-600" />
+              <div className="text-2xl font-semibold">{productionAnalytics.totalProduction.toLocaleString()}</div>
+              <div className="text-xs text-blue-100 mt-1">Total units produced</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-orange-100">Total Wastage</div>
+                <TrendingUp className="h-5 w-5 text-orange-100" />
               </div>
-              <p className="text-2xl mb-1">{productionAnalytics.totalWastage.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-semibold">{productionAnalytics.totalWastage.toLocaleString()}</div>
+              <div className="text-xs text-orange-100 mt-1">
                 {productionAnalytics.wastagePercentage.toFixed(2)}% of production
-              </p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Product Varieties</p>
-                <Users className="h-5 w-5 text-orange-600" />
               </div>
-              <p className="text-2xl mb-1">{productionAnalytics.productionData.length}</p>
-              <p className="text-xs text-muted-foreground">Types being produced</p>
-            </Card>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 shadow-lg shadow-purple-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-purple-100">Product Varieties</div>
+                <Users className="h-5 w-5 text-purple-100" />
+              </div>
+              <div className="text-2xl font-semibold">{productionAnalytics.productionData.length}</div>
+              <div className="text-xs text-purple-100 mt-1">Types being produced</div>
+            </div>
           </div>
 
-          <Card className="p-6">
-            <h3 className="text-lg mb-4">Production by Product Type</h3>
+          <Card className="p-6 rounded-2xl">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Production by Product Type</h3>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={productionAnalytics.productionData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -394,39 +395,39 @@ export function ReportsVisualization({ context, stores }: Props) {
 
         {/* Inventory Report */}
         <TabsContent value="inventory" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Total Cost</p>
-                <DollarSign className="h-5 w-5 text-red-600" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-rose-100">Total Cost</div>
+                <DollarSign className="h-5 w-5 text-rose-100" />
               </div>
-              <p className="text-2xl mb-1">₹{inventoryAnalytics.totalInventoryCost.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Total inventory spending</p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Items Purchased</p>
-                <Package className="h-5 w-5 text-blue-600" />
+              <div className="text-2xl font-semibold">₹{inventoryAnalytics.totalInventoryCost.toLocaleString()}</div>
+              <div className="text-xs text-rose-100 mt-1">Total inventory spending</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-blue-100">Items Purchased</div>
+                <Package className="h-5 w-5 text-blue-100" />
               </div>
-              <p className="text-2xl mb-1">{inventoryAnalytics.itemCount}</p>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-semibold">{inventoryAnalytics.itemCount}</div>
+              <div className="text-xs text-blue-100 mt-1">
                 Avg: ₹{Math.round(inventoryAnalytics.avgItemCost).toLocaleString()}/item
-              </p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Categories</p>
-                <Calendar className="h-5 w-5 text-orange-600" />
               </div>
-              <p className="text-2xl mb-1">{inventoryAnalytics.categoryData.length}</p>
-              <p className="text-xs text-muted-foreground">Active categories</p>
-            </Card>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-amber-100">Categories</div>
+                <Calendar className="h-5 w-5 text-amber-100" />
+              </div>
+              <div className="text-2xl font-semibold">{inventoryAnalytics.categoryData.length}</div>
+              <div className="text-xs text-amber-100 mt-1">Active categories</div>
+            </div>
           </div>
 
-          <Card className="p-6">
-            <h3 className="text-lg mb-4">Spending by Category</h3>
+          <Card className="p-6 rounded-2xl">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Spending by Category</h3>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={inventoryAnalytics.categoryData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -442,48 +443,48 @@ export function ReportsVisualization({ context, stores }: Props) {
 
         {/* Financial Report */}
         <TabsContent value="financial" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Revenue</p>
-                <DollarSign className="h-5 w-5 text-green-600" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-emerald-100">Revenue</div>
+                <DollarSign className="h-5 w-5 text-emerald-100" />
               </div>
-              <p className="text-2xl mb-1">₹{financialAnalytics.revenue.toLocaleString()}</p>
-              <p className="text-xs text-green-600">+Income</p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Total Costs</p>
-                <DollarSign className="h-5 w-5 text-red-600" />
+              <div className="text-2xl font-semibold">₹{financialAnalytics.revenue.toLocaleString()}</div>
+              <div className="text-xs text-emerald-100 mt-1">+Income</div>
+            </div>
+
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-red-100">Total Costs</div>
+                <DollarSign className="h-5 w-5 text-red-100" />
               </div>
-              <p className="text-2xl mb-1">₹{financialAnalytics.totalCosts.toLocaleString()}</p>
-              <p className="text-xs text-red-600">-Expenses</p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Gross Profit</p>
-                <TrendingUp className="h-5 w-5 text-blue-600" />
+              <div className="text-2xl font-semibold">₹{financialAnalytics.totalCosts.toLocaleString()}</div>
+              <div className="text-xs text-red-100 mt-1">-Expenses</div>
+            </div>
+
+            <div className={`bg-gradient-to-br ${financialAnalytics.grossProfit >= 0 ? 'from-blue-500 to-blue-600 shadow-blue-500/20' : 'from-red-500 to-red-600 shadow-red-500/20'} rounded-xl p-4 shadow-lg text-white`}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-white/80">Gross Profit</div>
+                <TrendingUp className="h-5 w-5 text-white/80" />
               </div>
-              <p className="text-2xl mb-1">₹{financialAnalytics.grossProfit.toLocaleString()}</p>
-              <p className={`text-xs ${financialAnalytics.grossProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className="text-2xl font-semibold">₹{financialAnalytics.grossProfit.toLocaleString()}</div>
+              <div className="text-xs text-white/80 mt-1">
                 Net margin
-              </p>
-            </Card>
-            
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">Profit Margin</p>
-                <TrendingUp className="h-5 w-5 text-orange-600" />
               </div>
-              <p className="text-2xl mb-1">{financialAnalytics.profitMargin.toFixed(1)}%</p>
-              <p className="text-xs text-muted-foreground">Profit ratio</p>
-            </Card>
+            </div>
+
+            <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wide text-amber-100">Profit Margin</div>
+                <TrendingUp className="h-5 w-5 text-amber-100" />
+              </div>
+              <div className="text-2xl font-semibold">{financialAnalytics.profitMargin.toFixed(1)}%</div>
+              <div className="text-xs text-amber-100 mt-1">Profit ratio</div>
+            </div>
           </div>
 
-          <Card className="p-6">
-            <h3 className="text-lg mb-4">Cost Breakdown</h3>
+          <Card className="p-6 rounded-2xl">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Cost Breakdown</h3>
             <ResponsiveContainer width="100%" height={400}>
               <PieChart>
                 <Pie

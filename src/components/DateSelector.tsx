@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, memo } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getTodayIST } from '../utils/timezone';
 
 type Props = {
@@ -15,10 +15,10 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
     };
-    
+
     checkMobile();
     window.addEventListener('resize', checkMobile);
-    
+
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
@@ -27,7 +27,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
     const today = getTodayIST();
     const baseDate = new Date(today);
     baseDate.setDate(baseDate.getDate() + (dateRangeOffset * 7));
-    
+
     const dates = [];
     for (let i = -3; i <= 3; i++) {
       const date = new Date(baseDate);
@@ -57,7 +57,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
   const handlePrevWeek = () => {
     const newOffset = dateRangeOffset - 1;
     setDateRangeOffset(newOffset);
-    
+
     // Calculate the middle date of the new week range
     const today = getTodayIST();
     const baseDate = new Date(today);
@@ -70,7 +70,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
   const handleNextWeek = () => {
     const newOffset = dateRangeOffset + 1;
     setDateRangeOffset(newOffset);
-    
+
     // Calculate the middle date of the new week range
     const today = getTodayIST();
     const baseDate = new Date(today);
@@ -79,17 +79,31 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
     onDateChange(newSelectedDate);
   };
 
+  const dayCellClass = (isSelected: boolean, isToday: boolean) =>
+    `rounded-xl text-center transition-all duration-150 ${
+      isSelected
+        ? 'bg-primary text-primary-foreground shadow-md shadow-primary/25'
+        : isToday
+        ? 'bg-secondary text-primary ring-1 ring-primary/40'
+        : 'bg-muted/60 text-foreground hover:bg-secondary/70'
+    }`;
+
   // Mobile view with native date picker + navigation
   if (isMobile) {
     return (
-      <div className="bg-white rounded-xl shadow-lg p-4 mb-6">
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-4 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-gray-900">Select Date</h2>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+              <Calendar className="w-3.5 h-3.5" />
+            </div>
+            <h2 className="text-sm font-medium text-foreground">Select Date</h2>
+          </div>
           {dateRangeOffset !== 0 && (
             <button
               type="button"
               onClick={jumpToToday}
-              className="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-xs"
+              className="px-3 py-1.5 bg-secondary text-primary rounded-full hover:opacity-80 transition-opacity text-xs font-medium"
             >
               Jump to Today
             </button>
@@ -102,7 +116,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
             type="date"
             value={selectedDate}
             onChange={(e) => onDateChange(e.target.value)}
-            className="w-full px-4 py-3 text-base bg-gray-50 border-2 border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all"
+            className="w-full px-4 py-3 text-base bg-input-background border border-border rounded-xl focus:ring-2 focus:ring-ring focus:border-primary transition-all text-foreground"
           />
         </div>
 
@@ -111,7 +125,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
           <button
             type="button"
             onClick={handlePrevWeek}
-            className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 text-sm"
+            className="flex-1 px-3 py-2 bg-muted/60 text-foreground rounded-full hover:bg-secondary transition-colors flex items-center justify-center gap-1 text-sm"
           >
             <ChevronLeft className="w-4 h-4" />
             <span>Prev Week</span>
@@ -119,7 +133,7 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
           <button
             type="button"
             onClick={handleNextWeek}
-            className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 text-sm"
+            className="flex-1 px-3 py-2 bg-muted/60 text-foreground rounded-full hover:bg-secondary transition-colors flex items-center justify-center gap-1 text-sm"
           >
             <span>Next Week</span>
             <ChevronRight className="w-4 h-4" />
@@ -128,28 +142,22 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
 
         {/* 7-Day Quick Selector - Scrollable on mobile */}
         <div className="overflow-x-auto -mx-4 px-4">
-          <div className="flex gap-2 pb-2 min-w-max">
+          <div className="flex gap-2 pb-1 min-w-max">
             {dateOptions.map((date) => {
               const dateObj = new Date(date);
               const isToday = date === getTodayIST();
               const isSelected = date === selectedDate;
-              
+
               return (
                 <button
                   key={date}
                   type="button"
                   onClick={() => onDateChange(date)}
-                  className={`flex-shrink-0 p-2 rounded-lg text-center transition-all min-w-[60px] ${
-                    isSelected
-                      ? 'bg-orange-600 text-white shadow-lg'
-                      : isToday
-                      ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                      : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                  }`}
+                  className={`flex-shrink-0 p-2.5 min-w-[60px] ${dayCellClass(isSelected, isToday)}`}
                 >
-                  <div className="text-xs uppercase">{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                  <div className="text-base font-medium">{dateObj.getDate()}</div>
-                  <div className="text-xs">{dateObj.toLocaleDateString('en-US', { month: 'short' })}</div>
+                  <div className={`text-[10px] uppercase tracking-wide ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                  <div className="text-base font-semibold">{dateObj.getDate()}</div>
+                  <div className={`text-[10px] ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{dateObj.toLocaleDateString('en-US', { month: 'short' })}</div>
                 </button>
               );
             })}
@@ -161,14 +169,19 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
 
   // Desktop view
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+    <div className="bg-card rounded-2xl border border-border shadow-sm p-5 mb-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-gray-900">Select Date</h2>
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
+            <Calendar className="w-4 h-4" />
+          </div>
+          <h2 className="text-sm font-medium text-foreground">Select Date</h2>
+        </div>
         {dateRangeOffset !== 0 && (
           <button
             type="button"
             onClick={jumpToToday}
-            className="px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
+            className="px-4 py-1.5 bg-secondary text-primary rounded-full hover:opacity-80 transition-opacity text-sm font-medium"
           >
             Jump to Today
           </button>
@@ -178,34 +191,27 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
         <button
           type="button"
           onClick={handlePrevWeek}
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
+          className="w-10 h-10 rounded-full bg-muted/60 text-foreground hover:bg-secondary transition-colors flex items-center justify-center flex-shrink-0"
           title="Previous Week"
         >
-          <ChevronLeft className="w-5 h-5" />
-          <span className="text-sm">Prev</span>
+          <ChevronLeft className="w-4.5 h-4.5" />
         </button>
         <div className="grid grid-cols-7 gap-2 flex-1">
           {dateOptions.map((date) => {
             const dateObj = new Date(date);
             const isToday = date === getTodayIST();
             const isSelected = date === selectedDate;
-            
+
             return (
               <button
                 key={date}
                 type="button"
                 onClick={() => onDateChange(date)}
-                className={`p-3 rounded-lg text-center transition-all ${
-                  isSelected
-                    ? 'bg-orange-600 text-white shadow-lg transform scale-105'
-                    : isToday
-                    ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                }`}
+                className={`py-3 ${dayCellClass(isSelected, isToday)}`}
               >
-                <div className="text-xs uppercase">{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                <div className="text-lg font-medium">{dateObj.getDate()}</div>
-                <div className="text-xs">{dateObj.toLocaleDateString('en-US', { month: 'short' })}</div>
+                <div className={`text-[10px] uppercase tracking-wide ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                <div className="text-lg font-semibold mt-0.5">{dateObj.getDate()}</div>
+                <div className={`text-[10px] ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{dateObj.toLocaleDateString('en-US', { month: 'short' })}</div>
               </button>
             );
           })}
@@ -213,11 +219,10 @@ export const DateSelector = memo(function DateSelector({ selectedDate, onDateCha
         <button
           type="button"
           onClick={handleNextWeek}
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2"
+          className="w-10 h-10 rounded-full bg-muted/60 text-foreground hover:bg-secondary transition-colors flex items-center justify-center flex-shrink-0"
           title="Next Week"
         >
-          <span className="text-sm">Next</span>
-          <ChevronRight className="w-5 h-5" />
+          <ChevronRight className="w-4.5 h-4.5" />
         </button>
       </div>
     </div>

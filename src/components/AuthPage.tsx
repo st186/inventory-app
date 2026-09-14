@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogIn, UserPlus, Package, Loader2 } from 'lucide-react';
+import { LogIn, Loader2, Eye, EyeOff } from 'lucide-react';
 
 type Props = {
   onLogin: (email: string, password: string) => Promise<void>;
@@ -7,144 +7,101 @@ type Props = {
   error: string | null;
 };
 
-export function AuthPage({ onLogin, onSignup, error }: Props) {
-  const [isSignup, setIsSignup] = useState(false);
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    name: '',
-    role: 'employee' as 'manager' | 'cluster_head' | 'employee' | 'audit',
-    employeeId: ''
-  });
+export function AuthPage({ onLogin, error }: Props) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Prevent duplicate submissions
     if (loading) {
       console.log('⚠️ Submission already in progress, ignoring duplicate request');
       return;
     }
-    
+
     setLoading(true);
-    
+
     try {
-      if (isSignup) {
-        await onSignup(formData.email, formData.password, formData.name, formData.role);
-      } else {
-        await onLogin(formData.email, formData.password);
-      }
+      await onLogin(email, password);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 sm:p-8">
+    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-orange-600 via-rose-500 to-orange-600 flex items-center justify-center p-4">
+      {/* Ambient decorative accents */}
+      <div className="pointer-events-none absolute -top-24 -left-24 w-72 h-72 bg-amber-300/30 rounded-full blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 -right-24 w-80 h-80 bg-orange-800/30 rounded-full blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 bg-white/5" />
+
+      <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-8 border border-white/40">
         {/* Logo and Title */}
         <div className="text-center mb-6 sm:mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 bg-orange-600 rounded-full mb-3 sm:mb-4">
-            <Package className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+          <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 shadow-lg shadow-orange-500/30 mb-3 sm:mb-4 overflow-hidden p-2">
+            <img src="/bunny-logo.png" alt="Bunny Momos" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-gray-900 mb-2">Inventory Management</h1>
-          <p className="text-sm sm:text-base text-gray-600">
-            {isSignup ? 'Create your account' : 'Sign in to your account'}
-          </p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight mb-1">Bhandar</h1>
+          <p className="text-sm sm:text-base text-gray-500">Sign in to your Bunny Momos account</p>
         </div>
 
         {/* Error Message */}
         {error && (
-          <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-red-50 border border-red-200 rounded-xl">
             <p className="text-xs sm:text-sm text-red-600">{error}</p>
           </div>
         )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
-          {isSignup && (
-            <>
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
-                  placeholder="Enter your name"
-                  required={isSignup}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Role</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'manager' | 'cluster_head' | 'employee' | 'audit' })}
-                  className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
-                  required={isSignup}
-                >
-                  <option value="employee">Employee (View your payouts)</option>
-                  <option value="manager">Manager (Manage inventory)</option>
-                  <option value="cluster_head">Cluster Head (View & approve)</option>
-                  <option value="audit">Audit (View reports)</option>
-                </select>
-              </div>
-
-              {formData.role === 'employee' && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Employee ID</label>
-                  <input
-                    type="text"
-                    value={formData.employeeId}
-                    onChange={(e) => setFormData({ ...formData, employeeId: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
-                    placeholder="Enter your Employee ID"
-                    required={isSignup && formData.role === 'employee'}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Must match the ID created by your manager
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
+              name="username"
+              id="login-email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base transition-colors"
               placeholder="Enter your email"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Password</label>
-            <input
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base"
-              placeholder="Enter your password"
-              required
-              minLength={6}
-            />
-            {isSignup && (
-              <p className="text-xs text-gray-500 mt-1">
-                Password must be at least 6 characters
-              </p>
-            )}
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                name="password"
+                id="login-password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 pr-11 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent text-base transition-colors"
+                placeholder="Enter your password"
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 touch-manipulation"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 active:bg-orange-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base touch-manipulation"
+            className="w-full px-4 py-3 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-xl hover:shadow-lg hover:shadow-orange-500/30 active:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base font-medium touch-manipulation"
           >
             {loading ? (
               <>
@@ -153,27 +110,12 @@ export function AuthPage({ onLogin, onSignup, error }: Props) {
               </>
             ) : (
               <>
-                {isSignup ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}
-                {isSignup ? 'Create Account' : 'Sign In'}
+                <LogIn className="w-5 h-5" />
+                Sign In
               </>
             )}
           </button>
         </form>
-
-        {/* Toggle Sign In/Sign Up */}
-        <div className="mt-4 sm:mt-6 text-center">
-          <button
-            onClick={() => {
-              setIsSignup(!isSignup);
-              setFormData({ email: '', password: '', name: '', role: 'employee', employeeId: '' });
-            }}
-            className="text-sm text-orange-600 hover:text-orange-700 active:text-orange-800 touch-manipulation"
-          >
-            {isSignup
-              ? 'Already have an account? Sign in'
-              : "Don't have an account? Sign up"}
-          </button>
-        </div>
       </div>
     </div>
   );

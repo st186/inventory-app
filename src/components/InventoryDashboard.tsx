@@ -193,14 +193,14 @@ export function InventoryDashboard({ context, stores }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
-            <Activity className="h-5 w-5 text-white" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+            <Activity className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl">Inventory Dashboard</h2>
-            <p className="text-muted-foreground">Advanced analytics and performance metrics</p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Dashboard</h2>
+            <p className="text-sm sm:text-base text-gray-500">Advanced analytics and performance metrics</p>
           </div>
         </div>
         <select
@@ -216,57 +216,57 @@ export function InventoryDashboard({ context, stores }: Props) {
 
       {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-6">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 shadow-lg shadow-blue-500/20 text-white">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-muted-foreground">Total Production</p>
-            <Package className="h-5 w-5 text-blue-600" />
+            <p className="text-xs uppercase tracking-wide text-blue-100">Total Production</p>
+            <Package className="h-5 w-5 text-blue-100" />
           </div>
-          <p className="text-2xl mb-1">{analytics.totalProduction.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-2xl font-semibold mb-1">{analytics.totalProduction.toLocaleString()}</p>
+          <p className="text-xs text-blue-100">
             Avg: {Math.round(analytics.avgDailyProduction)}/day
           </p>
-        </Card>
+        </div>
 
-        <Card className="p-6">
+        <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-2xl p-6 shadow-lg shadow-teal-500/20 text-white">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-muted-foreground">Stock Requests</p>
-            <TrendingUp className="h-5 w-5 text-teal-600" />
+            <p className="text-xs uppercase tracking-wide text-teal-100">Stock Requests</p>
+            <TrendingUp className="h-5 w-5 text-teal-100" />
           </div>
-          <p className="text-2xl mb-1">{analytics.totalStockRequests.toLocaleString()}</p>
+          <p className="text-2xl font-semibold mb-1">{analytics.totalStockRequests.toLocaleString()}</p>
           <div className="flex items-center gap-2">
-            <div className={`h-2 w-2 rounded-full ${fulfillmentHealth.bg.replace('bg-', 'bg-')}`} />
-            <p className={`text-xs ${fulfillmentHealth.color}`}>
+            <div className="h-2 w-2 rounded-full bg-white" />
+            <p className="text-xs text-teal-100">
               {analytics.fulfillmentRate.toFixed(1)}% fulfilled
             </p>
           </div>
-        </Card>
+        </div>
 
-        <Card className="p-6">
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-6 shadow-lg shadow-emerald-500/20 text-white">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-muted-foreground">Inventory Turnover</p>
-            <Target className="h-5 w-5 text-green-600" />
+            <p className="text-xs uppercase tracking-wide text-emerald-100">Inventory Turnover</p>
+            <Target className="h-5 w-5 text-emerald-100" />
           </div>
-          <p className="text-2xl mb-1">{analytics.inventoryTurnover.toFixed(1)}%</p>
+          <p className="text-2xl font-semibold mb-1">{analytics.inventoryTurnover.toFixed(1)}%</p>
           <div className="flex items-center gap-2">
-            <Badge className={`${turnoverHealth.bg} ${turnoverHealth.color} text-xs`}>
+            <Badge className="bg-white/20 text-white text-xs border-0">
               {turnoverHealth.label}
             </Badge>
           </div>
-        </Card>
+        </div>
 
-        <Card className="p-6">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 shadow-lg shadow-orange-500/20 text-white">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-muted-foreground">Total Sales</p>
-            <DollarSign className="h-5 w-5 text-orange-600" />
+            <p className="text-xs uppercase tracking-wide text-orange-100">Total Sales</p>
+            <DollarSign className="h-5 w-5 text-orange-100" />
           </div>
-          <p className="text-2xl mb-1">₹{analytics.totalSales.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground">Revenue from sales</p>
-        </Card>
+          <p className="text-2xl font-semibold mb-1">₹{analytics.totalSales.toLocaleString()}</p>
+          <p className="text-xs text-orange-100">Revenue from sales</p>
+        </div>
       </div>
 
       {/* Production vs Sales Chart */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4">Production, Sales & Stock Requests Trend</h3>
+      <Card className="p-6 rounded-2xl">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Production, Sales & Stock Requests Trend</h3>
         <ResponsiveContainer width="100%" height={350}>
           <AreaChart data={analytics.comparisonData}>
             <defs>
@@ -298,13 +298,13 @@ export function InventoryDashboard({ context, stores }: Props) {
       {/* Performance Tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Production House Performance */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Production House Performance</h3>
+        <Card className="p-6 rounded-2xl">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Production House Performance</h3>
           <div className="space-y-3">
             {analytics.productionHousePerformance.map(house => (
-              <div key={house.name} className="p-4 bg-gray-50 rounded-lg">
+              <div key={house.name} className="p-4 bg-gray-50 rounded-xl">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm">{house.name}</h4>
+                  <h4 className="text-sm font-bold text-gray-900">{house.name}</h4>
                   <Badge className="bg-teal-100 text-teal-800">
                     {house.currentStock} in stock
                   </Badge>
@@ -325,13 +325,13 @@ export function InventoryDashboard({ context, stores }: Props) {
         </Card>
 
         {/* Store Performance */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Store Performance</h3>
+        <Card className="p-6 rounded-2xl">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Store Performance</h3>
           <div className="space-y-3">
             {analytics.storePerformance.map(store => (
-              <div key={store.name} className="p-4 bg-gray-50 rounded-lg">
+              <div key={store.name} className="p-4 bg-gray-50 rounded-xl">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm">{store.name}</h4>
+                  <h4 className="text-sm font-bold text-gray-900">{store.name}</h4>
                   <Badge className={`${
                     store.fulfillmentRate >= 90 ? 'bg-green-100 text-green-800' :
                     store.fulfillmentRate >= 70 ? 'bg-yellow-100 text-yellow-800' :
@@ -361,8 +361,8 @@ export function InventoryDashboard({ context, stores }: Props) {
       </div>
 
       {/* Inventory Cost Analysis */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4">Inventory Cost by Category</h3>
+      <Card className="p-6 rounded-2xl">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Inventory Cost by Category</h3>
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={analytics.costData}>
             <CartesianGrid strokeDasharray="3 3" />

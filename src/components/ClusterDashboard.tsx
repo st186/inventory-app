@@ -109,43 +109,48 @@ export function ClusterDashboard({ context }: Props) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h2 className="text-gray-900">Analytics Dashboard</h2>
-        <p className="text-gray-600 mt-1">
-          Comprehensive view of spending patterns and trends
-        </p>
+      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-lg shadow-teal-500/30 flex-shrink-0">
+          <TrendingUp className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Analytics Dashboard</h1>
+          <p className="text-sm sm:text-base text-gray-500">
+            Comprehensive view of spending patterns and trends
+          </p>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg p-6 text-white">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-8">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/20 text-white">
           <div className="flex items-center gap-2 mb-2">
             <ShoppingCart className="w-5 h-5" />
             <p className="text-sm opacity-90">Total Inventory Spend</p>
           </div>
-          <p className="text-2xl">₹{totalInventorySpend.toLocaleString()}</p>
+          <p className="text-2xl font-semibold">₹{totalInventorySpend.toLocaleString()}</p>
         </div>
 
-        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-6 text-white">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 shadow-lg shadow-orange-500/20 text-white">
           <div className="flex items-center gap-2 mb-2">
             <Layers className="w-5 h-5" />
             <p className="text-sm opacity-90">Total Overhead Spend</p>
           </div>
-          <p className="text-2xl">₹{totalOverheadSpend.toLocaleString()}</p>
+          <p className="text-2xl font-semibold">₹{totalOverheadSpend.toLocaleString()}</p>
         </div>
 
-        <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-lg p-6 text-white">
+        <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-6 shadow-lg shadow-teal-500/20 text-white">
           <div className="flex items-center gap-2 mb-2">
             <TrendingUp className="w-5 h-5" />
             <p className="text-sm opacity-90">Total Expenses</p>
           </div>
-          <p className="text-2xl">₹{totalSpend.toLocaleString()}</p>
+          <p className="text-2xl font-semibold">₹{totalSpend.toLocaleString()}</p>
         </div>
       </div>
 
       {/* Daily Spends Chart */}
-      <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
-        <h3 className="text-gray-900 mb-6">Daily Spending Trends</h3>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-8">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-6">Daily Spending Trends</h3>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={dailySpends}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -182,8 +187,8 @@ export function ClusterDashboard({ context }: Props) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Most Spent Categories */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h3 className="text-gray-900 mb-6">Spending by Category</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-6">Spending by Category</h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -213,8 +218,8 @@ export function ClusterDashboard({ context }: Props) {
         </div>
 
         {/* Top Items */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h3 className="text-gray-900 mb-6">Top Inventory Items</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-6">Top Inventory Items</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={itemSpends} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" />

@@ -331,25 +331,27 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl text-gray-900 flex items-center gap-3">
-            <Factory className="w-8 h-8 text-orange-600" />
-            Production House Management
-          </h1>
-          <p className="text-gray-600 mt-2">Manage production houses, inventory, and store mappings</p>
+      <div className="mb-4 sm:mb-8 flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
+            <Factory className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production House Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">Manage production houses, inventory, and store mappings</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowTransferDialog(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-2"
           >
             <Package className="w-5 h-5" />
             Transfer Inventory
           </button>
           <button
             onClick={() => setShowCreateForm(true)}
-            className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all flex items-center gap-2"
           >
             <Plus className="w-5 h-5" />
             New Production House
@@ -360,8 +362,8 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
       {/* Create Form Modal */}
       {showCreateForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl text-gray-900 mb-4">Create New Production House</h2>
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-4">Create New Production House</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Name *</label>
@@ -429,8 +431,8 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
       {/* Transfer Inventory Dialog */}
       {showTransferDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl text-gray-900 mb-6 flex items-center gap-2">
+          <div className="bg-white rounded-2xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-6 flex items-center gap-2">
               <Package className="w-6 h-6 text-blue-600" />
               Transfer Inventory Between Production Houses
             </h2>
@@ -637,10 +639,10 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
               </div>
 
               {/* Total Transfer Summary */}
-              <div className="bg-green-50 rounded-lg p-4 border-2 border-green-200">
+              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-900">Total Pieces to Transfer:</span>
-                  <span className="text-2xl text-green-600">
+                  <span className="text-sm text-emerald-100">Total Pieces to Transfer:</span>
+                  <span className="text-2xl font-semibold">
                     {Object.values(transferData.quantities).reduce((sum, val) => sum + val, 0)}
                   </span>
                 </div>
@@ -686,13 +688,13 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
       {/* Production Houses List */}
       <div className="space-y-6">
         {context.productionHouses.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
             <Factory className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-xl text-gray-900 mb-2">No Production Houses Yet</h3>
+            <h3 className="text-xl font-bold text-gray-900 tracking-tight mb-2">No Production Houses Yet</h3>
             <p className="text-gray-600 mb-6">Create your first production house to get started</p>
             <button
               onClick={() => setShowCreateForm(true)}
-              className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors inline-flex items-center gap-2"
+              className="px-6 py-3 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all inline-flex items-center gap-2"
             >
               <Plus className="w-5 h-5" />
               Create Production House
@@ -705,10 +707,10 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
             const totalInventory = Object.values(house.inventory).reduce((sum, val) => sum + val, 0);
 
             return (
-              <div key={house.id} className="bg-white rounded-xl shadow-lg p-6">
+              <div key={house.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <div className="flex items-start justify-between mb-6">
                   <div>
-                    <h3 className="text-2xl text-gray-900 mb-2">{house.name}</h3>
+                    <h3 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">{house.name}</h3>
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-gray-600">
                         <Hash className="w-4 h-4" />
@@ -730,13 +732,13 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                   </div>
                   <div className="text-right">
                     <div className="text-sm text-gray-600">Total Inventory</div>
-                    <div className="text-2xl text-orange-600">{totalInventory} pcs</div>
+                    <div className="text-2xl font-bold text-orange-600">{totalInventory} pcs</div>
                   </div>
                 </div>
 
                 {/* Current Inventory */}
                 <div className="mb-6">
-                  <h4 className="text-gray-900 mb-3 flex items-center gap-2">
+                  <h4 className="text-base font-bold text-gray-900 tracking-tight mb-3 flex items-center gap-2">
                     <Package className="w-5 h-5 text-orange-600" />
                     Current Stock Levels
                   </h4>
@@ -792,9 +794,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                               const data = await response.json();
                               console.log('🔍 ALL PRODUCTION RECORDS:', data.production);
                               
-                              const recordsForThisHead = data.production.filter((r: any) => 
-                                r.storeId === 'STORE-1766938921191-9LCH05' || 
-                                r.productionHouseId === 'STORE-1766938921191-9LCH05' ||
+                              const recordsForThisHead = data.production.filter((r: any) =>
                                 r.productionHouseId === house.id
                               );
                               
@@ -822,7 +822,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
                             
                             // Ask user for the OLD storeId that needs to be fixed
                             const oldStoreId = window.prompt(
-                              `Enter the OLD storeId to fix (the wrong ID that production records currently have):\n\nFor example: STORE-1766938921191-9LCH05\n\nThis will update all production records from that ID to the correct production house ID: ${house.id}`
+                              `Enter the OLD storeId to fix (the wrong ID that production records currently have):\n\nThis will update all production records from that ID to the correct production house ID: ${house.id}`
                             );
                             
                             if (!oldStoreId || oldStoreId.trim() === '') {
@@ -864,7 +864,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
 
                 {/* Mapped Stores */}
                 <div>
-                  <h4 className="text-gray-900 mb-3">Mapped Stores ({mappedStores.length})</h4>
+                  <h4 className="text-base font-bold text-gray-900 tracking-tight mb-3">Mapped Stores ({mappedStores.length})</h4>
                   {mappedStores.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {mappedStores.map(store => (
@@ -899,8 +899,8 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
 
       {/* Unmapped Stores Section */}
       {context.productionHouses.length > 0 && (
-        <div className="mt-8 bg-yellow-50 rounded-xl p-6 border-2 border-yellow-200">
-          <h3 className="text-lg text-gray-900 mb-4">⚠️ Unmapped Stores</h3>
+        <div className="mt-8 bg-yellow-50 rounded-2xl p-6 border-2 border-yellow-200">
+          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-4">⚠️ Unmapped Stores</h3>
           {stores.filter(s => !s.productionHouseId).length === 0 ? (
             <p className="text-gray-600">All stores are mapped to production houses ✓</p>
           ) : (

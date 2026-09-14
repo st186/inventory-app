@@ -1,0 +1,87 @@
+// Resolves which store(s)/production house(s) a logged-in user has access to.
+//
+// Historically almost every screen computed "the current user's store" as
+// `selectedStoreId || context.user?.storeId`, treating storeId as if it always held a
+// real store's id. It doesn't: for a production incharge, storeId actually holds their
+// production house's id (a legacy ambiguity, since one employee record was only ever
+// designed to belong to one place). That mismatch broke the cash top-up store picker,
+// Sales overview, Store Stock Status, and more over the course of one session - each
+// fixed one at a time with an ad-hoc `isProductionIncharge ? ... : ...` branch.
+//
+// assignedStoreIds/assignedProductionHouseIds (added alongside this file) are the real,
+// unambiguous fix: explicit arrays an employee can be assigned to, independent of what
+// their designation implies. These helpers read that data first and only fall back to
+// the old single-field guess for employees who haven't been migrated to the new fields
+// yet (assignedStoreIds/assignedProductionHouseIds empty).
+
+type UserLike = {
+  storeId?: string | null;
+  designation?: string | null;
+  assignedStoreIds?: string[];
+  assignedProductionHouseIds?: string[];
+} | null | undefined;
+
+type StoreLike = { id: string; productionHouseId?: string | null };
+
+/**
+ * The store id this user should default to when no store has been explicitly selected
+ * in the UI (e.g. via a StoreSelector). Prefers the new assignedStoreIds array; falls
+ * back to storeId only when it actually matches a real store (guards against a
+ * production incharge's storeId, which holds a production house id instead).
+ */
+export function getDefaultStoreId(user: UserLike, stores: StoreLike[]): string | null {
+  if (!user) return null;
+  const assigned = getAssignedStoreIds(user, stores);
+  return assigned.length > 0 ? assigned[0] : null;
+}
+
+/**
+ * All store ids this user is assigned to (for a picker/dropdown, or "which stores can
+ * this production incharge credit" style checks). Falls back to deriving it from
+ * assignedProductionHouseIds (every store that production house supplies) or the
+ * legacy storeId-as-production-house-id guess, for employees not yet migrated.
+ */
+export function getAssignedStoreIds(user: UserLike, stores: StoreLike[]): string[] {
+  if (!user) return [];
+  if (user.assignedStoreIds && user.assignedStoreIds.length > 0) {
+    return user.assignedStoreIds;
+  }
+  if (user.storeId && stores.some((s) => s.id === user.storeId)) {
+    return [user.storeId];
+  }
+  const phIds = getAssignedProductionHouseIds(user, []);
+  if (phIds.length > 0) {
+    return stores.filter((s) => s.productionHouseId && phIds.includes(s.productionHouseId)).map((s) => s.id);
+  }
+  return [];
+}
+
+/**
+ * All production house ids this user is assigned to. Falls back to treating storeId as
+ * a production house id (the legacy behavior) only when assignedProductionHouseIds is
+ * empty, for employees not yet migrated to the new fields.
+ */
+export function getAssignedProductionHouseIds(user: UserLike, productionHouses: { id: string }[]): string[] {
+  if (!user) return [];
+  if (user.assignedProductionHouseIds && user.assignedProductionHouseIds.length > 0) {
+    return user.assignedProductionHouseIds;
+  }
+  if (user.designation === 'production_incharge' && user.storeId) {
+    if (productionHouses.length === 0 || productionHouses.some((ph) => ph.id === user.storeId)) {
+      return [user.storeId];
+    }
+  }
+  return [];
+}
+
+/**
+ * The effective store id for the current view: an explicitly selected store wins,
+ * otherwise fall back to the user's default assigned store.
+ */
+export function getEffectiveStoreId(
+  selectedStoreId: string | null | undefined,
+  user: UserLike,
+  stores: StoreLike[]
+): string | null {
+  return selectedStoreId || getDefaultStoreId(user, stores);
+}

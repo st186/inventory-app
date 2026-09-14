@@ -1,21 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Download, FileText, Table, FileSpreadsheet, Calendar, X, AlertTriangle } from 'lucide-react';
+import { Download, FileText, Table, FileSpreadsheet, Calendar, X, AlertTriangle, FileDown } from 'lucide-react';
 import * as api from '../utils/api';
 import { OverheadItem } from '../App';
 import { OVERHEAD_CATEGORY_META } from '../utils/inventoryData';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { ItemCatalogCleanup } from './ItemCatalogCleanup';
+import { BusinessAuditReport } from './BusinessAuditReport';
+import { InventoryContextType } from '../App';
 
 interface ExportDataProps {
   userRole: 'manager' | 'cluster_head';
   selectedStoreId?: string | null;
   currentUserId?: string;
+  // Optional so existing call sites keep working without threading it through
+  // immediately - the Business Audit Report tab simply won't render without it.
+  context?: InventoryContextType;
 }
 
 type DateRange = 'today' | 'weekly' | 'monthly' | 'custom';
 type ExportFormat = 'csv' | 'pdf' | 'excel';
 
-export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportDataProps) {
+export function ExportData({ userRole, selectedStoreId, currentUserId, context }: ExportDataProps) {
+  const [mainView, setMainView] = useState<'export' | 'audit'>('export');
   const [dateRange, setDateRange] = useState<DateRange>('today');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -776,21 +782,49 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl text-gray-900 mb-2">Export Data</h1>
-          <p className="text-gray-600">Download comprehensive reports in multiple formats</p>
-          {selectedStoreId && (
-            <div className="mt-2 inline-block bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
-              Store: {selectedStoreId}
-            </div>
-          )}
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
+            <FileDown className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Export Data</h1>
+            <p className="text-sm sm:text-base text-gray-500">Download comprehensive reports in multiple formats</p>
+            {selectedStoreId && (
+              <div className="mt-2 inline-block bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
+                Store: {selectedStoreId}
+              </div>
+            )}
+          </div>
         </div>
 
+        {/* View toggle - the raw Data Export (CSV/Excel/PDF of every record) vs. the
+            Business Audit Report (judgment: cash control health, revenue completeness) -
+            deliberately kept separate rather than merged into one page. */}
+        {context && (
+          <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
+            {(['export', 'audit'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setMainView(v)}
+                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  mainView === v ? 'bg-slate-800 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {v === 'export' ? 'Data Export' : 'Business Audit Report'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {mainView === 'audit' && context ? (
+          <BusinessAuditReport context={context} selectedStoreId={selectedStoreId} />
+        ) : (
+        <>
         {/* Export Configuration Card */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
           {/* Date Range Selection */}
           <div className="mb-6">
-            <h2 className="text-lg text-gray-900 mb-4 flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
               <Calendar className="w-5 h-5 text-orange-600" />
               Select Date Range
             </h2>
@@ -869,7 +903,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
 
           {/* Export Format Selection */}
           <div className="mb-6">
-            <h2 className="text-lg text-gray-900 mb-4 flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
               <FileText className="w-5 h-5 text-blue-600" />
               Select Export Format
             </h2>
@@ -1114,14 +1148,16 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
 
       {/* Preview Modal */}
       {showPreview && previewData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
-              <h2 className="text-xl text-gray-900">Data Preview</h2>
+              <h2 className="text-xl font-bold text-gray-900 tracking-tight">Data Preview</h2>
               <button
                 onClick={() => setShowPreview(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -1132,7 +1168,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
             <div className="p-6">
               {/* Summary */}
               <div className="bg-gradient-to-br from-blue-50 to-orange-50 rounded-lg p-6 mb-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Summary</h3>
+                <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-4">Summary</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <div className="text-sm text-gray-600">Inventory</div>
@@ -1231,7 +1267,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId }: ExportD
 
               {previewData.storeBreakdown && previewData.storeBreakdown.length > 0 && (
                 <div className="mb-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-3">Store-wise Breakdown</h3>
+                  <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3">Store-wise Breakdown</h3>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
                       <thead>

@@ -203,58 +203,61 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
-          Assign Managers to Employees
-        </h1>
-        <p className="text-gray-600 mt-2">
-          Manage employee-manager relationships across your organization
-        </p>
+      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+          <Users className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Assign Managers to Employees</h1>
+          <p className="text-sm sm:text-base text-gray-500">
+            Manage employee-manager relationships across your organization
+          </p>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-8">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/20 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Users className="w-6 h-6 text-blue-600" />
+            <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+              <Users className="w-6 h-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Total Employees</p>
-              <p className="text-2xl font-bold text-gray-900">{employees.length}</p>
+              <p className="text-sm text-blue-100">Total Employees</p>
+              <p className="text-2xl font-semibold">{employees.length}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 shadow-lg shadow-emerald-500/20 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <CheckCircle className="w-6 h-6 text-green-600" />
+            <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+              <CheckCircle className="w-6 h-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Assigned</p>
-              <p className="text-2xl font-bold text-gray-900">{assignedEmployees.length}</p>
+              <p className="text-sm text-emerald-100">Assigned</p>
+              <p className="text-2xl font-semibold">{assignedEmployees.length}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-6 shadow-lg shadow-red-500/20 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-              <AlertCircle className="w-6 h-6 text-red-600" />
+            <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+              <AlertCircle className="w-6 h-6 text-white" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Unassigned</p>
-              <p className="text-2xl font-bold text-gray-900">{unassignedEmployees.length}</p>
+              <p className="text-sm text-red-100">Unassigned</p>
+              <p className="text-2xl font-semibold">{unassignedEmployees.length}</p>
             </div>
           </div>
         </div>
       </div>
 
       {managers.length === 0 ? (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-6 text-center">
           <AlertCircle className="w-12 h-12 text-yellow-600 mx-auto mb-3" />
-          <h3 className="text-lg font-semibold text-yellow-900 mb-2">No Managers Available</h3>
+          <h3 className="text-lg font-bold text-yellow-900 mb-2">No Managers Available</h3>
           <p className="text-yellow-700">
             You need to create managers first before assigning them to employees.
           </p>
@@ -264,8 +267,8 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
           {/* Unassigned Employees Section */}
           {unassignedEmployees.length > 0 && (
             <div className="mb-8">
-              <div className="bg-red-50 border border-red-200 rounded-t-xl px-6 py-4">
-                <h2 className="text-lg font-semibold text-red-900 flex items-center gap-2">
+              <div className="bg-red-50 border border-red-200 rounded-t-2xl px-6 py-4">
+                <h2 className="text-lg font-bold text-red-900 flex items-center gap-2">
                   <AlertCircle className="w-5 h-5" />
                   Unassigned Employees ({unassignedEmployees.length})
                 </h2>
@@ -273,7 +276,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                   These employees need to be assigned to a manager
                 </p>
               </div>
-              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
+              <div className="bg-white rounded-b-2xl shadow-sm border border-gray-200 divide-y divide-gray-100">
                 {unassignedEmployees.map((employee) => (
                   <div key={employee.employeeId} className="p-4">
                     <div className="flex items-start justify-between gap-3 mb-2">
@@ -346,8 +349,8 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
           {/* Assigned Employees Section */}
           {assignedEmployees.length > 0 && (
             <div>
-              <div className="bg-green-50 border border-green-200 rounded-t-xl px-6 py-4">
-                <h2 className="text-lg font-semibold text-green-900 flex items-center gap-2">
+              <div className="bg-green-50 border border-green-200 rounded-t-2xl px-6 py-4">
+                <h2 className="text-lg font-bold text-green-900 flex items-center gap-2">
                   <CheckCircle className="w-5 h-5" />
                   Assigned Employees ({assignedEmployees.length})
                 </h2>
@@ -355,7 +358,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
                   These employees are already assigned to managers
                 </p>
               </div>
-              <div className="bg-white rounded-b-xl shadow-sm border border-gray-200 divide-y divide-gray-100">
+              <div className="bg-white rounded-b-2xl shadow-sm border border-gray-200 divide-y divide-gray-100">
                 {assignedEmployees.map((employee) => (
                   <div key={employee.employeeId} className="p-4">
                     <div className="flex items-start justify-between gap-3 mb-2">
@@ -434,9 +437,9 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
           )}
 
           {employees.length === 0 && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-12 text-center">
+            <div className="bg-gray-50 border border-gray-200 rounded-2xl p-12 text-center">
               <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Employees Found</h3>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">No Employees Found</h3>
               <p className="text-gray-600">
                 There are no employees in the system yet. Create employees first through the Employee Management tab.
               </p>

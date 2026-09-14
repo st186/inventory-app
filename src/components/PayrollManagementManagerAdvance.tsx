@@ -134,7 +134,7 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
             {myAdvances.map((advance) => (
               <div 
                 key={advance.id}
-                className={`border-2 rounded-xl p-6 ${
+                className={`border-2 rounded-2xl p-6 ${
                   advance.status === 'pending' ? 'border-yellow-300 bg-yellow-50' :
                   advance.status === 'approved' ? 'border-green-300 bg-green-50' :
                   'border-red-300 bg-red-50'
@@ -237,7 +237,7 @@ export function ManagerAdvance({ userEmployeeId, employees, salaryAdvances, onRe
       {/* Manager Salary Advance Application Modal */}
       {showAdvanceModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-6 h-6 text-orange-600" />

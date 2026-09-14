@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Bell, X, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
 import { getNavigationTarget } from '../utils/notificationNavigation';
+import { isNativePushSupported } from '../utils/nativePushNotifications';
 
 type NotificationsProps = {
  // Mirrors the push-notification deep-link shape (see notificationNavigation.ts /
@@ -10,14 +12,33 @@ type NotificationsProps = {
  onNavigate?: (view: string, tab?: string, highlightRequestId?: string) => void;
 };
 
+// The Android app already delivers every notification as a real system push (see
+// nativePushNotifications.ts) with its own tray, tap-to-open, and (for approvals) inline
+// action buttons - a second in-app bell/dropdown showing the same list is redundant there
+// and was only ever meant for the web app, where there's no OS notification tray to lean
+// on. Rendering nothing here (rather than just hiding the badge) also skips the 30-second
+// poll entirely on native, since nothing on that platform reads it.
+const HIDE_ON_NATIVE = isNativePushSupported();
+
 export function Notifications({ onNavigate }: NotificationsProps) {
  const [notifications, setNotifications] = useState<api.Notification[]>([]);
+ // Honest total unread count from the server (the full backlog, not just the 100 most
+ // recent notifications shown in the list below) - see GET /notifications. Without this,
+ // a user with more than 100 unread notifications would see "100 unread" forever, even
+ // right after successfully clearing everything, because the badge was being derived
+ // from the same capped list that's shown in the dropdown.
+ const [unreadCount, setUnreadCount] = useState(0);
  const [isOpen, setIsOpen] = useState(false);
  const [loading, setLoading] = useState(false);
 
  useEffect(() => {
+ // Nothing on native ever reads this component's own state (it renders null below),
+ // so skip the fetch and the 30-second poll entirely rather than doing pointless work
+ // in the background on every screen.
+ if (HIDE_ON_NATIVE) return;
+
  loadNotifications();
- 
+
  // Refresh notifications every 30 seconds
  const interval = setInterval(loadNotifications, 30000);
  return () => clearInterval(interval);
@@ -25,21 +46,24 @@ export function Notifications({ onNavigate }: NotificationsProps) {
 
  const loadNotifications = async () => {
  try {
- const data = await api.getNotifications();
+ const { notifications: data, unreadCount: count } = await api.getNotifications();
  setNotifications(data);
+ setUnreadCount(count);
  } catch (error) {
  // Silently handle all errors - notifications are non-critical
  // Common errors: user not logged in, network issues, server errors
  setNotifications([]);
+ setUnreadCount(0);
  }
  };
 
  const handleMarkAsRead = async (id: string) => {
  try {
  await api.markNotificationAsRead(id);
- setNotifications(notifications.map(n => 
+ setNotifications(notifications.map(n =>
  n.id === id ? { ...n, read: true } : n
  ));
+ setUnreadCount((c) => Math.max(0, c - 1));
  } catch (error) {
  console.error('Error marking notification as read:', error);
  }
@@ -50,8 +74,14 @@ export function Notifications({ onNavigate }: NotificationsProps) {
  try {
  await api.markAllNotificationsAsRead();
  setNotifications(notifications.map(n => ({ ...n, read: true })));
+ setUnreadCount(0);
+ toast.success('All notifications marked as read.');
  } catch (error) {
  console.error('Error marking all as read:', error);
+ // Previously silent - a failed request (auth hiccup, slow network on a large
+ // backlog) looked identical to a successful one from the user's side, since nothing
+ // told them it didn't work. Surface it so "still shows unread" has an explanation.
+ toast.error('Could not mark all as read - check your connection and try again.');
  } finally {
  setLoading(false);
  }
@@ -91,7 +121,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
  return <AlertTriangle className="w-5 h-5 text-blue-600" />;
  };
 
- const unreadCount = notifications.filter(n => !n.read).length;
+ if (HIDE_ON_NATIVE) return null;
 
  return (
  <div className="relative">
@@ -119,11 +149,11 @@ export function Notifications({ onNavigate }: NotificationsProps) {
  />
 
  {/* Notification Panel */}
- <div className="fixed md:absolute left-4 right-4 md:left-auto md:right-0 mt-2 md:w-96 bg-white rounded-lg shadow-2xl border border-gray-200 z-50 max-h-[80vh] md:max-h-[600px] flex flex-col">
+ <div className="fixed md:absolute left-4 right-4 md:left-auto md:right-0 mt-2 md:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 max-h-[80vh] md:max-h-[600px] flex flex-col overflow-hidden">
  {/* Header */}
  <div className="flex items-center justify-between p-4 border-b border-gray-200">
  <div>
- <h3 className="text-gray-900">Notifications</h3>
+ <h3 className="font-bold text-gray-900 tracking-tight">Notifications</h3>
  {unreadCount > 0 && (
  <p className="text-xs text-gray-500 mt-1">
  {unreadCount} unread
@@ -134,7 +164,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
  <button
  onClick={handleMarkAllAsRead}
  disabled={loading}
- className="text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
+ className="text-sm text-orange-600 hover:text-orange-700 disabled:opacity-50 font-medium"
  >
  Mark all read
  </button>

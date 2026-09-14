@@ -6,6 +6,7 @@ import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { getTodayIST } from '../utils/timezone';
 
 type Props = {
   context: InventoryContextType;
@@ -125,7 +126,7 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
         productionHouseName: productionHouse.name,
         requestedBy: context.user?.employeeId || '',
         requestedByName: context.user?.name || '',
-        requestDate: new Date().toISOString().split('T')[0],
+        requestDate: getTodayIST(),
         requestedQuantities: {
           chicken: requestForm.chicken,
           chickenCheese: requestForm.chickenCheese,
@@ -244,10 +245,15 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl">Production Requests</h2>
-          <p className="text-muted-foreground">Manage stock requests and fulfillment</p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
+            <Send className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production Requests</h1>
+            <p className="text-sm sm:text-base text-gray-500">Manage stock requests and fulfillment</p>
+          </div>
         </div>
         {isStoreIncharge && (
           <Button onClick={() => setShowCreateForm(!showCreateForm)}>
@@ -259,8 +265,8 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
 
       {/* Create Request Form */}
       {showCreateForm && isStoreIncharge && (
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Create Stock Request</h3>
+        <Card className="p-6 rounded-2xl">
+          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-4">Create Stock Request</h3>
           <form onSubmit={handleCreateRequest} className="space-y-4">
             {/* Priority Selector */}
             <div>
@@ -340,10 +346,10 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
         {/* My Requests */}
         <TabsContent value="my-requests" className="space-y-4">
           {myRequests.map(request => (
-            <Card key={request.id} className="p-6">
+            <Card key={request.id} className="p-6 rounded-2xl">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h4 className="text-lg mb-1">{request.productionHouseName}</h4>
+                  <h4 className="text-lg font-bold text-gray-900 tracking-tight mb-1">{request.productionHouseName}</h4>
                   <p className="text-sm text-muted-foreground">
                     Requested on {new Date(request.requestDate).toLocaleDateString()}
                   </p>
@@ -384,10 +390,10 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
         {/* Pending Fulfillment */}
         <TabsContent value="pending-fulfillment" className="space-y-4">
           {pendingForFulfillment.map(request => (
-            <Card key={request.id} className="p-6">
+            <Card key={request.id} className="p-6 rounded-2xl">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h4 className="text-lg mb-1">{request.storeName}</h4>
+                  <h4 className="text-lg font-bold text-gray-900 tracking-tight mb-1">{request.storeName}</h4>
                   <p className="text-sm text-muted-foreground">
                     Requested by {request.requestedByName} on {new Date(request.requestDate).toLocaleDateString()}
                   </p>
@@ -473,10 +479,10 @@ export function EnhancedProductionRequests({ context, stores }: Props) {
         {/* History */}
         <TabsContent value="history" className="space-y-4">
           {historyRequests.map(request => (
-            <Card key={request.id} className="p-6">
+            <Card key={request.id} className="p-6 rounded-2xl">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h4 className="text-lg mb-1">{request.storeName} ← {request.productionHouseName}</h4>
+                  <h4 className="text-lg font-bold text-gray-900 tracking-tight mb-1">{request.storeName} ← {request.productionHouseName}</h4>
                   <p className="text-sm text-muted-foreground">
                     {new Date(request.requestDate).toLocaleDateString()}
                     {request.fulfillmentDate && (

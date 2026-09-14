@@ -70,7 +70,7 @@ export function StockThresholdSettings({ storeId, accessToken, thresholds, onClo
  <Settings className="w-5 h-5 text-white" />
  </div>
  <div>
- <h2 className="text-xl text-white">Stock Alert Thresholds</h2>
+ <h2 className="text-xl font-bold text-white tracking-tight">Stock Alert Thresholds</h2>
  <p className="text-sm text-white/80">Customize alert levels for each momo type</p>
  </div>
  </div>

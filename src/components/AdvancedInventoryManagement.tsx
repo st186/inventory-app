@@ -9,6 +9,7 @@ import { ReportsVisualization } from './ReportsVisualization';
 import { PredictiveAnalytics } from './PredictiveAnalytics';
 import { StorePerformanceComparison } from './StorePerformanceComparison';
 import { ProductionHouseStockStatus } from './ProductionHouseStockStatus';
+import { UtilitiesStockStatus } from './UtilitiesStockStatus';
 import { Package, Bell, FileText, Send, Activity, BarChart3, Target, Trophy, Factory } from 'lucide-react';
 
 type Props = {
@@ -18,29 +19,27 @@ type Props = {
 };
 
 export function AdvancedInventoryManagement({ context, stores, onNavigateToManageItems }: Props) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'alerts' | 'requests' | 'reports' | 'predictive' | 'performance'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'utilities' | 'alerts' | 'requests' | 'reports' | 'predictive' | 'performance'>('dashboard');
 
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Main Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+            <Package className="w-6 h-6 text-white" />
+          </div>
           <div>
-            <h1 className="text-3xl">Advanced Inventory Management</h1>
-            <p className="text-muted-foreground">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Advanced Inventory Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">
               Comprehensive inventory tracking, analytics, and reporting system
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg">
-              <Package className="h-6 w-6 text-white" />
-            </div>
           </div>
         </div>
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
-          <TabsList className="grid grid-cols-7 w-full">
+          <TabsList className="grid grid-cols-8 w-full">
             <TabsTrigger value="dashboard" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Dashboard
@@ -48,6 +47,10 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
             <TabsTrigger value="stock-status" className="flex items-center gap-2">
               <Package className="h-4 w-4" />
               Stock
+            </TabsTrigger>
+            <TabsTrigger value="utilities" className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Utilities
             </TabsTrigger>
             <TabsTrigger value="alerts" className="flex items-center gap-2">
               <Bell className="h-4 w-4" />
@@ -83,6 +86,11 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
               productionHouses={context.productionHouses}
               onNavigateToManageItems={onNavigateToManageItems}
             />
+          </TabsContent>
+
+          {/* Utilities (packaging box/tray + beverage stock, from real POS order data) */}
+          <TabsContent value="utilities">
+            <UtilitiesStockStatus context={context} stores={stores} />
           </TabsContent>
 
           {/* Alerts */}

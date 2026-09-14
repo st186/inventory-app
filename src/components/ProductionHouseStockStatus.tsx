@@ -5,6 +5,7 @@ import { Package, TrendingUp, TrendingDown, Calendar, Factory, Info } from 'luci
 import { Card } from './ui/card';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { QuickAddInventoryItem } from './QuickAddInventoryItem';
+import { getTodayIST } from '../utils/timezone';
 
 type Props = {
   context: InventoryContextType;
@@ -33,7 +34,7 @@ type ProductionHouseStock = {
 };
 
 export function ProductionHouseStockStatus({ context, productionHouses, onNavigateToManageItems }: Props) {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(getTodayIST());
   const [selectedProductionHouse, setSelectedProductionHouse] = useState<string | null>(null);
   const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -300,6 +301,17 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         cumulativeSent.schezwan += (req as any).schezwanMomos || 0;
       });
 
+      // "This Month Produced" - cumulativeProduction above starts from the recalibration
+      // opening balance (not zero), so subtract that back out here; otherwise the card
+      // would double-count opening stock as if it were fresh production this month.
+      const monthProduced: typeof cumulativeProduction = { ...cumulativeProduction };
+      Object.keys(openingBalance).forEach(key => {
+        const mappedKey = keyMapping[key] || key;
+        if (mappedKey in monthProduced) {
+          monthProduced[mappedKey as keyof typeof monthProduced] -= openingBalance[key];
+        }
+      });
+
       // Production for today (selected date)
       const todayProductionQuantities = {
         chicken: todayProduction?.chickenMomos?.final || 0,
@@ -338,50 +350,50 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       // Calculate available stock (cumulative approach with carry-forward)
       const stock: ProductionHouseStock['stock'] = {
         chicken: {
-          produced: todayProductionQuantities.chicken,
-          sent: todaySentQuantities.chicken,
+          produced: monthProduced.chicken,
+          sent: cumulativeSent.chicken,
           available: Math.max(0, cumulativeProduction.chicken - cumulativeSent.chicken),
           percentage: 0,
         },
         chickenCheese: {
-          produced: todayProductionQuantities.chickenCheese,
-          sent: todaySentQuantities.chickenCheese,
+          produced: monthProduced.chickenCheese,
+          sent: cumulativeSent.chickenCheese,
           available: Math.max(0, cumulativeProduction.chickenCheese - cumulativeSent.chickenCheese),
           percentage: 0,
         },
         veg: {
-          produced: todayProductionQuantities.veg,
-          sent: todaySentQuantities.veg,
+          produced: monthProduced.veg,
+          sent: cumulativeSent.veg,
           available: Math.max(0, cumulativeProduction.veg - cumulativeSent.veg),
           percentage: 0,
         },
         cheeseCorn: {
-          produced: todayProductionQuantities.cheeseCorn,
-          sent: todaySentQuantities.cheeseCorn,
+          produced: monthProduced.cheeseCorn,
+          sent: cumulativeSent.cheeseCorn,
           available: Math.max(0, cumulativeProduction.cheeseCorn - cumulativeSent.cheeseCorn),
           percentage: 0,
         },
         paneer: {
-          produced: todayProductionQuantities.paneer,
-          sent: todaySentQuantities.paneer,
+          produced: monthProduced.paneer,
+          sent: cumulativeSent.paneer,
           available: Math.max(0, cumulativeProduction.paneer - cumulativeSent.paneer),
           percentage: 0,
         },
         vegKurkure: {
-          produced: todayProductionQuantities.vegKurkure,
-          sent: todaySentQuantities.vegKurkure,
+          produced: monthProduced.vegKurkure,
+          sent: cumulativeSent.vegKurkure,
           available: Math.max(0, cumulativeProduction.vegKurkure - cumulativeSent.vegKurkure),
           percentage: 0,
         },
         chickenKurkure: {
-          produced: todayProductionQuantities.chickenKurkure,
-          sent: todaySentQuantities.chickenKurkure,
+          produced: monthProduced.chickenKurkure,
+          sent: cumulativeSent.chickenKurkure,
           available: Math.max(0, cumulativeProduction.chickenKurkure - cumulativeSent.chickenKurkure),
           percentage: 0,
         },
         schezwan: {
-          produced: todayProductionQuantities.schezwan,
-          sent: todaySentQuantities.schezwan,
+          produced: monthProduced.schezwan,
+          sent: cumulativeSent.schezwan,
           available: Math.max(0, cumulativeProduction.schezwan - cumulativeSent.schezwan),
           percentage: 0,
         },
@@ -468,7 +480,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
   return (
     <div className="space-y-6">
       {/* Info Banner about Dynamic Inventory Items */}
-      <Card className="p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200">
+      <Card className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -486,11 +498,16 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
 
       {/* Header with Date Selector */}
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h2 className="text-2xl">Production House Stock Status</h2>
-          <p className="text-muted-foreground">
-            Opening balance + This month produced - Sent to stores (delivered requests)
-          </p>
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
+            <Factory className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production House Stock Status</h1>
+            <p className="text-sm sm:text-base text-gray-500">
+              Opening balance + This month produced - Sent to stores (delivered requests)
+            </p>
+          </div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <div className="flex items-center gap-2">
@@ -499,7 +516,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              max={new Date().toISOString().split('T')[0]}
+              max={getTodayIST()}
               className="px-3 py-2 border rounded-lg bg-background"
             />
           </div>
@@ -528,49 +545,49 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       {filteredStocks.map(houseStock => (
         <div key={houseStock.productionHouseId} className="space-y-4">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="p-6 bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
-              <div className="flex items-center gap-3 mb-2">
-                <Package className="h-5 w-5 text-orange-600" />
-                <p className="text-sm text-orange-800">Total Production</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <Package className="h-5 w-5" />
+                <div className="text-xs uppercase tracking-wide text-orange-100">Total Production</div>
               </div>
-              <p className="text-3xl text-orange-900 mb-1">{houseStock.totalProduced.toLocaleString()}</p>
-              <p className="text-xs text-orange-700">pieces</p>
-            </Card>
+              <div className="text-2xl font-semibold">{houseStock.totalProduced.toLocaleString()}</div>
+              <div className="text-xs text-orange-100 mt-1">pieces</div>
+            </div>
 
-            <Card className="p-6 bg-gradient-to-br from-red-50 to-red-100 border-red-200">
-              <div className="flex items-center gap-3 mb-2">
-                <TrendingDown className="h-5 w-5 text-red-600" />
-                <p className="text-sm text-red-800">Total Wastage</p>
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingDown className="h-5 w-5" />
+                <div className="text-xs uppercase tracking-wide text-red-100">Total Wastage</div>
               </div>
-              <p className="text-3xl text-red-900 mb-1">{houseStock.totalWastage.toFixed(2)}</p>
-              <p className="text-xs text-red-700">kg</p>
-            </Card>
+              <div className="text-2xl font-semibold">{houseStock.totalWastage.toFixed(2)}</div>
+              <div className="text-xs text-red-100 mt-1">kg</div>
+            </div>
 
-            <Card className="p-6 bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-              <div className="flex items-center gap-3 mb-2">
-                <TrendingUp className="h-5 w-5 text-green-600" />
-                <p className="text-sm text-green-800">Approved Entries</p>
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="h-5 w-5" />
+                <div className="text-xs uppercase tracking-wide text-emerald-100">Approved Entries</div>
               </div>
-              <p className="text-3xl text-green-900 mb-1">{houseStock.approvedEntries}</p>
-              <p className="text-xs text-green-700">records</p>
-            </Card>
+              <div className="text-2xl font-semibold">{houseStock.approvedEntries}</div>
+              <div className="text-xs text-emerald-100 mt-1">records</div>
+            </div>
 
-            <Card className="p-6 bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200">
-              <div className="flex items-center gap-3 mb-2">
-                <Calendar className="h-5 w-5 text-yellow-600" />
-                <p className="text-sm text-yellow-800">Pending Approval</p>
+            <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <Calendar className="h-5 w-5" />
+                <div className="text-xs uppercase tracking-wide text-yellow-100">Pending Approval</div>
               </div>
-              <p className="text-3xl text-yellow-900 mb-1">{houseStock.pendingApproval}</p>
-              <p className="text-xs text-yellow-700">records</p>
-            </Card>
+              <div className="text-2xl font-semibold">{houseStock.pendingApproval}</div>
+              <div className="text-xs text-yellow-100 mt-1">records</div>
+            </div>
           </div>
 
           {/* Stock Status Section */}
-          <Card className="p-6">
+          <Card className="p-6 rounded-2xl">
             <div className="flex items-center gap-3 mb-4">
               <Factory className="h-5 w-5 text-orange-600" />
-              <h3 className="text-lg">
+              <h3 className="text-lg font-bold text-gray-900 tracking-tight">
                 {houseStock.productionHouseName} - Stock Status
               </h3>
             </div>
@@ -578,13 +595,13 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {Object.entries(houseStock.stock).map(([product, data]) => {
                 const colors = getStockColor(data.percentage);
-                
+
                 return (
-                  <div 
+                  <div
                     key={product}
-                    className={`p-4 rounded-lg border-2 ${colors.bg} ${colors.border}`}
+                    className={`p-4 rounded-xl border-2 ${colors.bg} ${colors.border}`}
                   >
-                    <h4 className="text-sm mb-3">{productLabels[product]}</h4>
+                    <h4 className="text-sm font-semibold mb-3">{productLabels[product]}</h4>
                     
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between items-center">
@@ -626,9 +643,9 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
 
       {/* Empty State */}
       {filteredStocks.length === 0 && (
-        <Card className="p-12 text-center">
+        <Card className="p-12 rounded-2xl text-center">
           <Factory className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg mb-2">No Production Data</h3>
+          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-2">No Production Data</h3>
           <p className="text-muted-foreground">
             No production data available for the selected date and production house
           </p>

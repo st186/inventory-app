@@ -133,38 +133,43 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Organizational Hierarchy</h1>
-          <p className="text-gray-600">Manage reporting relationships across the organization</p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Network className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Organizational Hierarchy</h1>
+            <p className="text-sm sm:text-base text-gray-500">Manage reporting relationships across the organization</p>
+          </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-6 text-white">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-6">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg shadow-blue-500/20 p-6 text-white">
             <div className="flex items-center justify-between">
               <Building2 className="w-12 h-12 opacity-80" />
               <div className="text-right">
-                <div className="text-3xl">{stats.totalClusterHeads}</div>
+                <div className="text-2xl font-semibold">{stats.totalClusterHeads}</div>
                 <div className="text-sm opacity-90">Cluster Heads</div>
               </div>
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-6 text-white">
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg shadow-orange-500/20 p-6 text-white">
             <div className="flex items-center justify-between">
               <UserCog className="w-12 h-12 opacity-80" />
               <div className="text-right">
-                <div className="text-3xl">{stats.totalManagers}</div>
+                <div className="text-2xl font-semibold">{stats.totalManagers}</div>
                 <div className="text-sm opacity-90">Managers</div>
               </div>
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl shadow-lg p-6 text-white">
+          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl shadow-lg shadow-rose-500/20 p-6 text-white">
             <div className="flex items-center justify-between">
               <Users className="w-12 h-12 opacity-80" />
               <div className="text-right">
-                <div className="text-3xl">{stats.totalEmployees}</div>
+                <div className="text-2xl font-semibold">{stats.totalEmployees}</div>
                 <div className="text-sm opacity-90">Employees</div>
               </div>
             </div>
@@ -172,10 +177,10 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
         </div>
 
         {/* Hierarchy Tree */}
-        <div className="bg-white rounded-xl shadow-md p-6 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl text-gray-900">Organizational Structure</h2>
-            <Network className="w-6 h-6 text-orange-600" />
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Organizational Structure</h2>
+            <Network className="w-6 h-6 text-indigo-600" />
           </div>
 
           {hierarchy.length === 0 && unassignedManagers.length === 0 && unassignedEmployees.length === 0 ? (
@@ -189,7 +194,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
               {hierarchy.length > 0 && (
                 <div className="space-y-6 mb-6">
                   {hierarchy.map((clusterHead) => (
-                    <div key={clusterHead.employeeId} className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div key={clusterHead.employeeId} className="border border-gray-200 rounded-xl overflow-hidden">
                       {/* Cluster Head */}
                       <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 sm:p-4">
                         <div className="flex items-center gap-2 sm:gap-3">
@@ -198,7 +203,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h3 className="text-lg text-gray-900 truncate min-w-0 flex-1">{clusterHead.name}</h3>
+                              <h3 className="text-lg font-bold text-gray-900 truncate min-w-0 flex-1">{clusterHead.name}</h3>
                               <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded flex-shrink-0">Cluster Head</span>
                             </div>
                             <div className="text-sm text-gray-600 truncate">{clusterHead.employeeId} • {clusterHead.email}</div>
@@ -222,11 +227,11 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
               {/* Managers without Cluster Heads */}
               {unassignedManagers.length > 0 && unassignedManagers.some((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0)) && (
                 <div className="space-y-4 mb-6">
-                  <h3 className="text-lg text-gray-900 font-semibold">Managers and Their Teams</h3>
+                  <h3 className="text-lg font-bold text-gray-900">Managers and Their Teams</h3>
                   {unassignedManagers
                     .filter((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0))
                     .map((manager: any) => (
-                    <div key={manager.employeeId} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+                    <div key={manager.employeeId} className="border border-gray-200 rounded-xl bg-white overflow-hidden">
                       {/* Manager */}
                       <div className="bg-gradient-to-r from-orange-50 to-orange-100 p-3 sm:p-4">
                         <div className="flex items-center gap-2 sm:gap-3">
@@ -327,16 +332,16 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Unassigned Managers */}
             {unassignedManagers.length > 0 && (
-              <div className="bg-white rounded-xl shadow-md p-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg text-gray-900">Unassigned Managers</h3>
+                  <h3 className="text-lg font-bold text-gray-900">Unassigned Managers</h3>
                   <span className="px-3 py-1 bg-orange-100 text-orange-700 text-sm rounded-full">
                     {unassignedManagers.length}
                   </span>
                 </div>
                 <div className="space-y-3">
                   {unassignedManagers.map((manager) => (
-                    <div key={manager.employeeId} className="border border-gray-200 rounded-lg p-4">
+                    <div key={manager.employeeId} className="border border-gray-200 rounded-xl p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
@@ -367,16 +372,16 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
 
             {/* Unassigned Employees */}
             {unassignedEmployees.length > 0 && (
-              <div className="bg-white rounded-xl shadow-md p-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg text-gray-900">Unassigned Employees</h3>
+                  <h3 className="text-lg font-bold text-gray-900">Unassigned Employees</h3>
                   <span className="px-3 py-1 bg-orange-100 text-orange-700 text-sm rounded-full">
                     {unassignedEmployees.length}
                   </span>
                 </div>
                 <div className="space-y-3">
                   {unassignedEmployees.map((employee) => (
-                    <div key={employee.employeeId} className="border border-gray-200 rounded-lg p-4">
+                    <div key={employee.employeeId} className="border border-gray-200 rounded-xl p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-rose-100 rounded-full flex items-center justify-center">
@@ -410,8 +415,8 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
         {/* Assign Cluster Head Modal */}
         {showAssignClusterHead && selectedManager && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
-              <h3 className="text-xl text-gray-900 mb-4">Assign Cluster Head to Manager</h3>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Cluster Head to Manager</h3>
               <p className="text-sm text-gray-600 mb-4">
                 Manager: <strong>{selectedManager.name}</strong> ({selectedManager.employeeId})
               </p>
@@ -463,8 +468,8 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
         {/* Assign Manager Modal */}
         {showAssignManager && selectedEmployee && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
-              <h3 className="text-xl text-gray-900 mb-4">Assign Manager to Employee</h3>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Manager to Employee</h3>
               <p className="text-sm text-gray-600 mb-4">
                 Employee: <strong>{selectedEmployee.name}</strong> ({selectedEmployee.employeeId})
               </p>

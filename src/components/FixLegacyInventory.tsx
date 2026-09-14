@@ -11,9 +11,13 @@ export function FixLegacyInventory({ context }: Props) {
   const [isFixing, setIsFixing] = useState(false);
   const [showButton, setShowButton] = useState(true);
 
-  // Check if there are ANY legacy items (items without storeId)
+  // Legacy = an item with NEITHER a storeId NOR a productionHouseId, i.e. saved before
+  // the store/production-house split existed. A production-house item legitimately has
+  // no storeId (it uses productionHouseId instead) - that is not legacy, and must never
+  // be "fixed" by stamping a storeId onto it, which would silently reassign a production
+  // house expense to a store.
   const legacyItems = context.inventory.filter(
-    item => !item.storeId
+    item => !item.storeId && !item.productionHouseId
   );
 
   // Only show if user has a storeId and there are legacy items

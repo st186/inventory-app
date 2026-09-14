@@ -116,6 +116,19 @@
     -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
   }
 
+  /* Chart tap/hover on mobile - without this, tapping a Recharts chart to see its
+     tooltip triggers the browser's default tap-highlight (a translucent gray/black
+     wash across the whole chart) and, on a long press, the native text-selection
+     callout menu. Both make the chart look "washed out" the moment you touch it,
+     even though the chart itself isn't meant to be a tappable/selectable control -
+     the highlight is for buttons and links, not data visualizations. */
+  .recharts-wrapper, .recharts-responsive-container, .recharts-surface {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
     -moz-text-size-adjust: 100%;

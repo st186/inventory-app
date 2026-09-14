@@ -211,6 +211,15 @@ async function sendFcmNotification(
       }
     }
 
+    // Data-only message (no top-level "notification" block) so Android always invokes
+    // onMessageReceived - including while the app is backgrounded/killed - instead of the
+    // OS auto-displaying a plain notification and skipping our code entirely. This is
+    // what lets the native side (QuickActionMessagingService.java) build the notification
+    // itself and attach Approve/Reject action buttons when a quick-action token is present.
+    dataStrings.title = payload.title;
+    dataStrings.message = payload.message;
+    if (payload.tag) dataStrings.tag = payload.tag;
+
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
       {
@@ -222,15 +231,9 @@ async function sendFcmNotification(
         body: JSON.stringify({
           message: {
             token,
-            notification: {
-              title: payload.title,
-              body: payload.message,
-            },
             data: dataStrings,
             android: {
-              notification: {
-                tag: payload.tag || 'bhandar-notification',
-              },
+              priority: 'high',
             },
           },
         }),

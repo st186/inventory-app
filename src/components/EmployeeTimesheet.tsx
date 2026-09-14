@@ -373,9 +373,14 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">My Timesheet</h1>
-          <p className="text-gray-600">Track your daily working hours</p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Clock className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">My Timesheet</h1>
+            <p className="text-sm sm:text-base text-gray-500">Track your daily working hours</p>
+          </div>
         </div>
 
         {/* Mobile: single-day view */}
@@ -522,7 +527,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
         {/* Desktop: week view */}
         <div className="hidden md:block">
         {/* Week Navigator */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <button
                   onClick={previousWeek}
@@ -535,7 +540,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
                 <div className="text-center">
                   <div className="flex items-center gap-2 justify-center mb-1">
                     <Calendar className="w-5 h-5 text-orange-600" />
-                    <span className="text-lg text-gray-900">
+                    <span className="text-lg font-bold text-gray-900">
                       {currentWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       {' - '}
                       {weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -567,7 +572,7 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
             </div>
 
         {/* Timesheet Grid */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gradient-to-r from-orange-600 to-red-600 text-white">

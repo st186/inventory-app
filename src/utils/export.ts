@@ -4,6 +4,7 @@
  */
 
 import { InventoryItem, OverheadItem, SalesData, ProductionData } from '../App';
+import { getTodayIST } from './timezone';
 
 /**
  * Convert data to CSV format
@@ -52,7 +53,7 @@ export function downloadCSV(filename: string, data: any[], headers?: string[]) {
   const url = URL.createObjectURL(blob);
   
   link.setAttribute('href', url);
-  link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+  link.setAttribute('download', `${filename}_${getTodayIST()}.csv`);
   link.style.visibility = 'hidden';
   
   document.body.appendChild(link);
@@ -72,7 +73,7 @@ export function downloadJSON(filename: string, data: any) {
   const url = URL.createObjectURL(blob);
   
   link.setAttribute('href', url);
-  link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.json`);
+  link.setAttribute('download', `${filename}_${getTodayIST()}.json`);
   link.style.visibility = 'hidden';
   
   document.body.appendChild(link);

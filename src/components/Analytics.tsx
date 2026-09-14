@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus } from 'lucide-react';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line } from 'recharts';
+import { TrendingUp, TrendingDown, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus, BarChart3, Wallet, ChevronDown, ChevronUp, ChevronRight, Clock, CalendarDays, Smartphone, Briefcase, Receipt, Zap, Home, Target, AlertTriangle, XCircle, Percent } from 'lucide-react';
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line, ReferenceLine, ComposedChart, AreaChart, Area } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
-import { formatDateTimeIST, formatDateIST, getTodayIST } from '../utils/timezone';
+import { formatDateTimeIST, formatDateIST, getTodayIST, addDays } from '../utils/timezone';
 import { InventoryContextType } from '../App';
 import { DataCapture } from './DataCapture';
 import { ProductionRequests } from './ProductionRequests';
@@ -11,17 +11,22 @@ import { SalesData as SalesDataComponent } from './SalesData';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { DatePicker } from './DatePicker';
 import { RecalibrationReports } from './RecalibrationReports';
+import { StockAnalysis } from './StockAnalysis';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { logger } from '../utils/logger';
-import * as exportUtils from '../utils/export';
 import { ExpenseBreakdownModal } from './ExpenseBreakdownModal';
+import { getSettlementPeriod, settlementOverlapsPeriod } from '../utils/settlementPeriod';
+import { MOMO_TYPES, ALL_POOL_IDS, getPoolLabel } from '../constants/momoTypes';
 
 interface AnalyticsProps {
  context: InventoryContextType;
  selectedStoreId?: string | null;
  highlightRequestId?: string | null;
  onNavigateToManageItems?: () => void;
+ // Production Management no longer has its own top-level nav entry - it's opened from
+ // here instead, same idea as onNavigateToManageItems above.
+ onNavigateToProductionManagement?: () => void;
 }
 
 // Custom Tooltip Component for Bar Charts
@@ -40,7 +45,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
  {entry.name}:
  </span>
  <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- ₹{entry.value.toLocaleString()}
+ ₹{entry.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
  </span>
  </div>
  ))}
@@ -69,7 +74,7 @@ const CustomPieTooltip = ({ active, payload }: TooltipProps<any, any>) => {
  <div className="flex justify-between gap-4">
  <span className="text-gray-600" style={{ fontSize: '13px' }}>Amount:</span>
  <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- ₹{data.value.toLocaleString()}
+ ₹{data.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
  </span>
  </div>
  <div className="flex justify-between gap-4">
@@ -150,6 +155,30 @@ const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
  { value: 'custom', label: 'Custom' }
 ];
 
+// Shortens long item names for chart axis ticks (full name still shows in the tooltip).
+function truncateChartLabel(name: string, max: number): string {
+ return name.length > max ? `${name.slice(0, max - 1)}…` : name;
+}
+
+type SettlementPeriodLike = {
+ settlementDate: string;
+ periodStart?: string;
+ periodEnd?: string;
+ sourceFileName?: string;
+ orders?: { orderDate?: string }[];
+};
+
+const settlementOverlapsAnalyticsRange = (
+ settlement: SettlementPeriodLike,
+ range: { start: string; end: string } | null
+) => {
+ if (!range) return true;
+ return settlementOverlapsPeriod(settlement, range.start, range.end);
+};
+
+const settlementAnalyticsReportingDate = (settlement: SettlementPeriodLike) =>
+ getSettlementPeriod(settlement).end;
+
 // Date-range filter used across the Analytics tabs. Mobile gets a compact
 // dropdown (the pill row clips/truncates on narrow screens); desktop keeps
 // the pill row.
@@ -184,43 +213,16 @@ function TimeFilterBar({ value, onChange }: { value: TimeFilter; onChange: (v: T
  );
 }
 
-export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems }: AnalyticsProps) {
- // Load online sales and payout data for commission calculation
- const [onlineSalesData, setOnlineSalesData] = useState<any[]>([]);
- const [onlinePayoutData, setOnlinePayoutData] = useState<any[]>([]);
- const [aggregatorSettlements, setAggregatorSettlements] = useState<api.AggregatorSettlement[]>([]);
- const [isLoadingOnlineData, setIsLoadingOnlineData] = useState(false);
- 
+export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
+ // Online sales/payout/settlement data now lives in context (see the Analytics page
+ // redesign) - Analytics.tsx, OnlineSalesTab.tsx, and SalesData.tsx all read the same
+ // fetch instead of each independently re-fetching it.
+ const { onlineSalesData, onlinePayoutData, aggregatorSettlements } = context;
+
  // Load online loans data for interest expense calculation
  const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
  const [isLoadingLoans, setIsLoadingLoans] = useState(false);
 
- // Load online sales and payout data
- useEffect(() => {
- const loadOnlineData = async () => {
- if (!context.user?.accessToken) return;
- 
- setIsLoadingOnlineData(true);
- try {
- const [salesData, payoutData, settlements] = await Promise.all([
- api.getOnlineSalesData(context.user.accessToken),
- api.getOnlinePayoutData(context.user.accessToken),
- api.getAggregatorSettlements(context.user.accessToken)
- ]);
-
- setOnlineSalesData(salesData || []);
- setOnlinePayoutData(payoutData || []);
- setAggregatorSettlements(settlements || []);
- } catch (error) {
- console.error('Error loading online sales/payout data:', error);
- } finally {
- setIsLoadingOnlineData(false);
- }
- };
- 
- loadOnlineData();
- }, [context.user?.accessToken]);
- 
  // Load online loans data for interest expense calculation
  useEffect(() => {
  const loadLoans = async () => {
@@ -255,7 +257,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const isAudit = context.user?.role === 'audit';
  const isProductionIncharge = context.user?.designation === 'production_incharge';
  const isStoreIncharge = context.user?.designation === 'store_incharge';
- 
+ // Operations manager: any other manager, not tied to a single store or production
+ // house (isManager alone doesn't distinguish this - store/production incharges are
+ // also role === 'manager', just with a different designation).
+ const isOperationsManager = isManager && !isProductionIncharge && !isStoreIncharge;
+
  // Analytics Mode: 'store' or 'production'
  // Production incharges default to production analytics
  // Store incharges default to store analytics
@@ -265,28 +271,82 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  highlightRequestId ? 'store' : (isProductionIncharge ? 'production' : 'store')
  );
  
- // Local store selector for Store Analytics mode
- // Use selectedStoreId from prop if available (for backwards compatibility), otherwise null for cluster heads/managers/production incharges/audit users
- const [localSelectedStoreId, setLocalSelectedStoreId] = useState<string | null>(
- selectedStoreId || (isClusterHead || isManager || isProductionIncharge || isAudit ? null : context.user?.storeId) || null
- );
- 
- // For Store Analytics mode, use local store selector
+ // Store selection for Store Analytics mode now comes straight from the `selectedStoreId`
+ // prop (the single global store picker at the top of the app) instead of keeping a
+ // second, separate copy of the same choice here - that second copy never updated when
+ // the global picker changed, which is exactly what produced three different-looking,
+ // out-of-sync store selectors on the same page. Falls back to the user's own store for
+ // plain employees, who don't get the global picker at all.
  // For Production Analytics mode, this is ignored (we use production house selector instead)
- const effectiveStoreId = analyticsMode === 'store' 
- ? localSelectedStoreId 
- : null; // In Production mode, we don't filter by store
- 
+ const effectiveStoreId = analyticsMode === 'store'
+ ? (selectedStoreId || (!(isClusterHead || isManager || isProductionIncharge || isAudit) ? (context.user?.storeId || null) : null))
+ : null;
+
+ // A production house's own inventory/overhead/fixed-cost entries carry no storeId at all
+ // (entityType: 'production_house' instead) - only linkedEntityId. With a specific store
+ // selected, filteredInventoryData/filteredOverheadData/filteredFixedCostsData below match
+ // storeId exactly, which silently excludes every one of this store's own production
+ // costs (they show up only when "All Stores" happens to fall back to no filter at all -
+ // confirmed real: switching from one store to "All Stores" jumped Inventory Costs by the
+ // store's ENTIRE production-house spend, not by another store's contribution). Mirrors
+ // the same store->production-house lookup SalesView.tsx already uses for its own cash
+ // reconciliation.
+ const effectiveProductionHouseIdForCosts = effectiveStoreId
+ ? context.stores?.find((s) => s.id === effectiveStoreId)?.productionHouseId || null
+ : null;
+
+ // Dynamic finished products list for the Store-Production SLA Analysis tab - mirrors the same
+ // derivation ProductionRequests.tsx uses (including its legacySalesKey mapping, needed to
+ // match each item against the sales-data "data" map), so both screens agree on which
+ // items exist.
+ const stockAnalysisFinishedProducts = useMemo(() => {
+ return (context.inventoryItems?.filter((item) =>
+ item.category === 'finished_product' && item.isActive
+ ) || []).map((item) => {
+ const legacySalesKey = item.displayName.endsWith('Momo')
+ ? item.displayName + 's'
+ : item.displayName;
+ return {
+ camelKey: item.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase()),
+ label: item.displayName,
+ legacySalesKey,
+ };
+ });
+ }, [context.inventoryItems]);
+
+ // Store-Production SLA Analysis is scoped the same way the rest of Store Analytics is -
+ // effectiveStoreId===null means "All Stores" (cluster head with nothing selected).
+ const stockAnalysisRequests = useMemo(() => {
+ return (context.productionRequests || []).filter((req) =>
+ !effectiveStoreId || req.storeId === effectiveStoreId
+ );
+ }, [context.productionRequests, effectiveStoreId]);
+
+ // "Sold" quantities come from categorySalesData (the per-momo-type daily sales sync),
+ // NOT context.salesData (that's the financial-totals record - offlineSales/onlineSales/
+ // paytmAmount - it has no per-item breakdown at all, which is why this column read 0
+ // before this fix).
+ const stockAnalysisSalesData = useMemo(() => {
+ return (context.categorySalesData || []).filter((s) =>
+ !effectiveStoreId || s.storeId === effectiveStoreId
+ );
+ }, [context.categorySalesData, effectiveStoreId]);
+
  // DEBUG: Log the effective store ID being used
  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
  logger.debugStore('Analytics mode:', analyticsMode);
- console.log('🏪 Local selected store ID:', localSelectedStoreId);
  console.log('🏪 All stores in context:', context.stores);
  console.log('🏪 Number of stores:', context.stores?.length);
  
- type ActiveView = 'profit' | 'expense' | 'sales' | 'datacapture' | 'production' | 'production-requests' | 'recalibration-reports' | 'store-recalibration';
+ // 'profit'/'expense'/'sales' keep their original internal names (Revenue & Channels /
+ // Costs & Margins / Item Performance are just their new display labels) to avoid
+ // touching every reference to them across this file - only the tab bar, its labels,
+ // and each view's content changed. 'datacapture' (Performance Tracker) is no longer a
+ // top-level tab - it's now a collapsible section inside 'overview' (see the Analytics
+ // page redesign).
+ type ActiveView = 'overview' | 'profit' | 'expense' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports';
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId ? 'production-requests' : 'profit'
+ highlightRequestId ? 'production-requests' : 'overview'
  );
  
  // Expense breakdown modal state
@@ -308,16 +368,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  if (analyticsMode === 'production' && activeView !== 'production' && activeView !== 'recalibration-reports') {
  setActiveView('production');
  } else if ((activeView === 'production' || activeView === 'recalibration-reports') && analyticsMode === 'store') {
- setActiveView('profit');
- } else if (activeView === 'store-recalibration' && analyticsMode === 'production') {
- setActiveView('production');
+ setActiveView('overview');
  }
  }, [analyticsMode]);
- 
- const [salesSubView, setSalesSubView] = useState<'revenue' | 'category'>('revenue');
+
+ // Item Sales Analytics (per-item, per-channel) is the more decision-useful view, so it
+ // now leads instead of being the second sub-tab (Analytics page redesign).
+ const [salesSubView, setSalesSubView] = useState<'revenue' | 'category'>('category');
+ const [orderItemDetail, setOrderItemDetail] = useState<api.OrderItemDetailRecord[]>([]);
+ // Same shape as orderItemDetail, but for previousPeriodRange - powers the dashed
+ // "previous period" comparison lines on the order-based Overview charts.
+ const [previousOrderItemDetail, setPreviousOrderItemDetail] = useState<api.OrderItemDetailRecord[]>([]);
+ // Recalibration (Store Analytics side) now lives as a button beside "Manage Items" in
+ // ProductionRequests.tsx's Store Stock Status card, rather than its own sub-tab here.
+ // Performance Tracker (DataCapture) is folded into the Overview tab as a collapsible
+ // section instead of its own top-level tab (Analytics page redesign).
+ const [showActivityLog, setShowActivityLog] = useState(false);
  const [timeFilter, setTimeFilter] = useState<TimeFilter>('thisMonth');
  const [wastageTimeFilter, setWastageTimeFilter] = useState<WastageTimeFilter>('monthly');
- 
  // Initialize date range to current month (from 1st to today)
  const getDateRangeDefaults = () => {
  const today = new Date();
@@ -387,7 +455,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const fixedCostsData = context.fixedCosts;
  const productionData = context.productionData;
  const loading = false;
- 
+
+ // Production Ledger (dough/stuffing/batter/coating carry-forward) range for the selected
+ // production house and date range - fetched on-demand, same pattern as orderItemDetail
+ // above, rather than a global context field (this data is inherently date-range-scoped
+ // and only meaningful for one house at a time, unlike productionData). Powers the
+ // "Production Ledger" analytics section below - only meaningful for a single concrete
+ // production house, not an "all houses" view.
+ const [productionLedgerRange, setProductionLedgerRange] = useState<api.ProductionLedgerEntry[]>([]);
+ const [productionLedgerRangeLoading, setProductionLedgerRangeLoading] = useState(false);
+ const [selectedLedgerPoolId, setSelectedLedgerPoolId] = useState<string | null>(null);
+
  // Production date selector - defaults to most recent production date
  const [selectedProductionDate, setSelectedProductionDate] = useState<string | null>(() => {
  // Get all unique dates from production data for the selected production house
@@ -524,7 +602,35 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  endDate: toLocalDateString(endDate)
  };
  };
- 
+
+ // Fetches the production ledger range for the currently selected production house and
+ // date range - same on-demand pattern as orderItemDetail above. Only fetched when a
+ // single production house is selected (an "all houses" combined pool trend isn't
+ // meaningful as raw kg figures without house-specific context).
+ useEffect(() => {
+ if (activeView !== 'production' || !selectedProductionHouseId || !context.user?.accessToken) {
+ setProductionLedgerRange([]);
+ return;
+ }
+ const accessToken = context.user.accessToken;
+ const { startDate, endDate } = getDateRangeBounds();
+ let cancelled = false;
+ setProductionLedgerRangeLoading(true);
+ (async () => {
+ try {
+ const entries = await api.getProductionLedgerRange(accessToken, selectedProductionHouseId, startDate, endDate);
+ if (!cancelled) setProductionLedgerRange(entries || []);
+ } catch (err) {
+ console.error('Failed to load production ledger range:', err);
+ if (!cancelled) setProductionLedgerRange([]);
+ } finally {
+ if (!cancelled) setProductionLedgerRangeLoading(false);
+ }
+ })();
+ return () => { cancelled = true; };
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [activeView, selectedProductionHouseId, productionDateRange, customStartDate, customEndDate, context.user?.accessToken]);
+
  // Helper function to calculate previous period date range for comparison
  const getPreviousPeriodDateRange = (): { startDate: string; endDate: string } => {
  const today = new Date();
@@ -985,7 +1091,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const fulfilledRequests = (context.productionRequests || []).filter(req => {
  if (req.status !== 'delivered') return false;
  
- const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
+ const requestDate = req.shippedAt || req.deliveredAt || req.requestDate || req.createdAt;
  if (!requestDate || !requestDate.startsWith(monthStr)) return false;
  
  const requestingStore = allStores.find(s => s.id === req.storeId);
@@ -1207,7 +1313,53 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log('💰 Sample payout object:', payoutsData[0]);
  console.log('💰 All payout dates as strings:', payoutsData.map(p => p.date).join(', '));
  // FIX: Payouts use 'date' field, not 'payoutDate'
- const timeFilteredPayoutsData = filterByTimeRange(payoutsData, 'date');
+ // Payouts with a forMonth set (backlogged/late salaries, e.g. paid on the 5th
+ // for the prior month) are bucketed by forMonth instead of the actual payment
+ // date, mirroring the expenseMonth handling for personal_expense overheads above.
+ // Payouts without forMonth fall back to the standard date-based filter.
+ const payoutsWithForMonth = payoutsData.filter((payout: any) => !!payout.forMonth);
+ const payoutsWithoutForMonth = payoutsData.filter((payout: any) => !payout.forMonth);
+
+ const timeFilteredPayoutsWithForMonth = payoutsWithForMonth.filter((payout: any) => {
+ const now = new Date();
+ const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+ const payoutYearMonth = payout.forMonth;
+
+ switch (timeFilter) {
+ case 'today':
+ case 'yesterday':
+ case 'thisWeek':
+ case 'lastWeek':
+ // Daily/weekly filters don't apply to monthly payout mapping
+ return false;
+
+ case 'thisMonth': {
+ const thisMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+ return payoutYearMonth === thisMonthStr;
+ }
+
+ case 'lastMonth': {
+ const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+ const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
+ return payoutYearMonth === lastMonthStr;
+ }
+
+ case 'custom': {
+ const fromDate = new Date(dateRange.from);
+ const toDate = new Date(dateRange.to);
+ const payoutDate = new Date(payoutYearMonth + '-01');
+ const payoutMonthStart = new Date(payoutDate.getFullYear(), payoutDate.getMonth(), 1);
+ const payoutMonthEnd = new Date(payoutDate.getFullYear(), payoutDate.getMonth() + 1, 0);
+ return payoutMonthStart <= toDate && payoutMonthEnd >= fromDate;
+ }
+
+ default:
+ return true;
+ }
+ });
+
+ const timeFilteredPayoutsWithoutForMonth = filterByTimeRange(payoutsWithoutForMonth, 'date');
+ const timeFilteredPayoutsData = [...timeFilteredPayoutsWithForMonth, ...timeFilteredPayoutsWithoutForMonth];
  console.log('💰 After time filtering - timeFilteredPayoutsData:', timeFilteredPayoutsData.length, 'payouts');
  console.log('💰 Time filter:', timeFilter);
  console.log('💰 Current date for reference:', new Date().toISOString());
@@ -1276,16 +1428,20 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log('No store filter - returning all', timeFilteredInventoryData.length, 'inventory items');
  return timeFilteredInventoryData;
  }
- 
- // IMPORTANT: Only include inventory with exact storeId match
- const filtered = timeFilteredInventoryData.filter(item => 
- item.storeId === effectiveStoreId
+
+ // Store's own entries, plus its linked production house's (storeId is never set on
+ // those - see effectiveProductionHouseIdForCosts above) - otherwise this store's real
+ // production spend is invisible here even though "All Stores" picks it up via the
+ // no-filter branch above, making the two views silently inconsistent.
+ const filtered = timeFilteredInventoryData.filter(item =>
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && (item as any).entityType === 'production_house' && (item as any).productionHouseId === effectiveProductionHouseIdForCosts)
  );
- console.log('After store filtering (exact match only):', filtered.length, 'inventory items');
+ console.log('After store filtering (store + linked production house):', filtered.length, 'inventory items');
  console.log('🔍 === END INVENTORY DEBUG ===');
  
  return filtered;
- }, [timeFilteredInventoryData, effectiveStoreId]);
+ }, [timeFilteredInventoryData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
  const filteredOverheadData = useMemo(() => {
  console.log('🔍 === OVERHEAD DATA FILTERING DEBUG ===');
@@ -1306,25 +1462,28 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log('No store filter - returning all', timeFilteredOverheadData.length, 'overhead items');
  return timeFilteredOverheadData;
  }
- 
- // IMPORTANT: Only include overhead with exact storeId match
- const filtered = timeFilteredOverheadData.filter(item => 
- item.storeId === effectiveStoreId
+
+ // Store's own entries, plus its linked production house's - see filteredInventoryData
+ // above for why (same storeId-is-never-set-on-production-entries issue).
+ const filtered = timeFilteredOverheadData.filter(item =>
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && (item as any).entityType === 'production_house' && (item as any).productionHouseId === effectiveProductionHouseIdForCosts)
  );
- console.log('After store filtering (exact match only):', filtered.length, 'overhead items');
+ console.log('After store filtering (store + linked production house):', filtered.length, 'overhead items');
  console.log('Filtered overhead storeIds:', filtered.map(o => ({ date: o.date, storeId: o.storeId, amount: o.amount })));
  console.log('🔍 === END OVERHEAD DEBUG ===');
- 
+
  return filtered;
- }, [timeFilteredOverheadData, effectiveStoreId]);
+ }, [timeFilteredOverheadData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
  const filteredFixedCostsData = useMemo(() => {
  if (!effectiveStoreId) return timeFilteredFixedCostsData;
- // IMPORTANT: Only include exact storeId matches
- return timeFilteredFixedCostsData.filter(item => 
- item.storeId === effectiveStoreId
+ // Store's own entries, plus its linked production house's - see filteredInventoryData above.
+ return timeFilteredFixedCostsData.filter(item =>
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && (item as any).entityType === 'production_house' && (item as any).productionHouseId === effectiveProductionHouseIdForCosts)
  );
- }, [timeFilteredFixedCostsData, effectiveStoreId]);
+ }, [timeFilteredFixedCostsData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
  const filteredEmployeesData = useMemo(() => {
  if (!effectiveStoreId) return employeesData;
@@ -1416,110 +1575,98 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  }
  };
 
- // Load leave data for today
+ // Load leave data for the current week (Monday-Sunday) - was just today's leaves,
+ // widened so a cluster head/manager can see the whole week's schedule at once instead
+ // of having to check back in daily.
  useEffect(() => {
- const loadTodayLeaves = async () => {
+ const loadWeekLeaves = async () => {
  if (!context.user) return;
- 
+
  try {
  setLoadingLeaves(true);
- 
+
  // Get fresh access token
  const accessToken = await getFreshAccessToken();
  if (!accessToken) {
  console.error('No valid access token available');
  return;
  }
- 
- // Get today's date in IST (UTC+5:30)
+
+ // Monday-Sunday of the current week, in IST.
  const today = getTodayIST();
- 
- if (context.user.role === 'cluster_head') {
- // Cluster head: get all leaves
+ const todayDow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=Sun..6=Sat
+ const mondayOffset = todayDow === 0 ? -6 : 1 - todayDow;
+ const weekStart = addDays(today, mondayOffset);
+ const weekEnd = addDays(weekStart, 6);
+ const inThisWeek = (leave: api.LeaveApplication) => leave.leaveDate >= weekStart && leave.leaveDate <= weekEnd;
+
+ if (context.user.role === 'cluster_head' || context.user.role === 'manager') {
+ // Global for both roles - one company-wide leave list, not scoped by store or
+ // reporting line. Used to differ by role (and by which store a cluster head/manager
+ // happened to be scoped to), so two people looking at the same week could see
+ // completely different results - e.g. a manager at one store seeing "everyone's
+ // working" while another store's staff were genuinely on leave. Same query, same
+ // data, for everyone with access to this card.
  const allLeaves = await api.getAllLeaves(accessToken);
- const todayApprovedLeaves = allLeaves.filter(
- (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
+ const weekApprovedLeaves = allLeaves.filter(
+ (leave: api.LeaveApplication) => inThisWeek(leave) && leave.status === 'approved'
  );
- 
- // Get all employees to enrich leave data
+
  const employees = await api.getAllEmployees(accessToken);
  const employeeMap = new Map(employees.map(emp => [emp.employeeId, emp]));
- 
- // Filter by store if selected (include null/undefined storeIds for backward compatibility)
- if (context.user.storeId) {
- const storeEmployeeIds = employees
- .filter(emp => 
- emp.storeId === context.user!.storeId ||
- emp.storeId === null || 
- emp.storeId === undefined
- )
- .map(emp => emp.employeeId);
- 
- const storeLeaves = todayApprovedLeaves.filter(
- leave => storeEmployeeIds.includes(leave.employeeId)
- );
- 
- // Enrich leave data with employee info
- const enrichedLeaves = storeLeaves.map(leave => ({
+
+ const enrichedLeaves = weekApprovedLeaves.map(leave => ({
  ...leave,
  employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
  storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
  storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
  }));
- 
- setTodayLeaveCount(storeLeaves.length);
+
+ setTodayLeaveCount(enrichedLeaves.length);
  setTodayLeaveDetails(enrichedLeaves);
- } else {
- // Enrich all leaves with employee info
- const enrichedLeaves = todayApprovedLeaves.map(leave => ({
- ...leave,
- employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
- storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
- storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
- }));
- 
- setTodayLeaveCount(todayApprovedLeaves.length);
- setTodayLeaveDetails(enrichedLeaves);
- }
- } else if (context.user.role === 'manager' && context.user.employeeId) {
- // Manager: get leaves for their employees
- const employees = await api.getEmployeesByManager(context.user.employeeId, accessToken);
- const employeeMap = new Map(employees.map(emp => [emp.employeeId, emp]));
- let managerLeaveDetails: any[] = [];
- 
- for (const emp of employees) {
- const leaves = await api.getLeaves(emp.employeeId, accessToken);
- const todayLeaves = leaves.filter(
- (leave: api.LeaveApplication) => leave.leaveDate === today && leave.status === 'approved'
- );
- 
- // Enrich with employee info
- const enrichedLeaves = todayLeaves.map(leave => ({
- ...leave,
- employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
- storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
- storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
- }));
- 
- managerLeaveDetails.push(...enrichedLeaves);
- }
- 
- setTodayLeaveCount(managerLeaveDetails.length);
- setTodayLeaveDetails(managerLeaveDetails);
  } else {
  setTodayLeaveCount(0);
  setTodayLeaveDetails([]);
  }
  } catch (error) {
- console.error('Error loading today\'s leaves:', error);
+ console.error('Error loading this week\'s leaves:', error);
  setTodayLeaveCount(0);
  } finally {
  setLoadingLeaves(false);
  }
  };
- 
- loadTodayLeaves();
+
+ loadWeekLeaves();
  }, [context.user]);
+
+ // This week's leave list grouped by day (Monday first), plus a full/half-day split for
+ // the compact summary bar - the list itself is flat (one row per approved leave), so
+ // this is purely a display grouping, not a second fetch. Days that have already passed
+ // are dropped - only today and the remaining days of the week are worth surfacing here.
+ const weekLeaveSummary = useMemo(() => {
+ const today = getTodayIST();
+ const todayDow = new Date(`${today}T00:00:00Z`).getUTCDay();
+ const mondayOffset = todayDow === 0 ? -6 : 1 - todayDow;
+ const weekStart = addDays(today, mondayOffset);
+
+ const days = Array.from({ length: 7 }, (_, i) => {
+ const date = addDays(weekStart, i);
+ const leaves = todayLeaveDetails.filter((l: any) => l.leaveDate === date);
+ return {
+ date,
+ label: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }),
+ isToday: date === today,
+ leaves,
+ };
+ }).filter(day => day.date >= today);
+
+ const upcomingLeaves = todayLeaveDetails.filter((l: any) => l.leaveDate >= today);
+ const fullDayCount = upcomingLeaves.filter((l: any) => l.leaveType !== 'half').length;
+ const halfDayCount = upcomingLeaves.filter((l: any) => l.leaveType === 'half').length;
+ const rangeLabel = `${new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(`${addDays(weekStart, 6)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+ return { days, fullDayCount, halfDayCount, rangeLabel, upcomingCount: upcomingLeaves.length };
+ }, [todayLeaveDetails]);
 
  // Auto-switch to production-requests tab when notification is clicked - this tab only
  // exists under Store Analytics, so force that mode even for a production incharge whose
@@ -1602,6 +1749,57 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return totalInterest;
  };
 
+ // Settlement uploads have two date concepts: settlementDate is when the aggregator paid
+ // the bank/Paytm balance, while periodStart/periodEnd is when the customer orders happened.
+ // Analytics filters use the sales period so a Jul 29-31 report paid on Aug 3 belongs to
+ // Last Month; cash/bank history can still display the Aug 3 settlement date.
+ const analyticsLocalDateStr = (d: Date) => {
+ const y = d.getFullYear();
+ const m = String(d.getMonth() + 1).padStart(2, '0');
+ const day = String(d.getDate()).padStart(2, '0');
+ return `${y}-${m}-${day}`;
+ };
+ const analyticsLocalYearMonth = (d: Date) => analyticsLocalDateStr(d).slice(0, 7);
+ const getActiveSettlementDateRange = (): { start: string; end: string } | null => {
+ const now = new Date();
+ switch (timeFilter) {
+ case 'today':
+ return { start: getTodayIST(), end: getTodayIST() };
+ case 'yesterday': {
+ const yesterday = new Date();
+ yesterday.setDate(yesterday.getDate() - 1);
+ const date = analyticsLocalDateStr(yesterday);
+ return { start: date, end: date };
+ }
+ case 'thisWeek': {
+ const today = new Date();
+ const startOfWeek = new Date(today);
+ startOfWeek.setDate(today.getDate() - today.getDay());
+ return { start: analyticsLocalDateStr(startOfWeek), end: analyticsLocalDateStr(today) };
+ }
+ case 'lastWeek': {
+ const lastWeekEnd = new Date();
+ lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
+ const lastWeekStart = new Date(lastWeekEnd);
+ lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+ return { start: analyticsLocalDateStr(lastWeekStart), end: analyticsLocalDateStr(lastWeekEnd) };
+ }
+ case 'thisMonth':
+ return { start: `${analyticsLocalYearMonth(now)}-01`, end: analyticsLocalDateStr(now) };
+ case 'lastMonth': {
+ const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+ const lastMonth = analyticsLocalYearMonth(lastMonthDate);
+ const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
+ return { start: `${lastMonth}-01`, end: analyticsLocalDateStr(lastDay) };
+ }
+ case 'custom':
+ return dateRange.from && dateRange.to ? { start: dateRange.from, end: dateRange.to } : null;
+ default:
+ return null;
+ }
+ };
+ const activeSettlementDateRange = getActiveSettlementDateRange();
+
  // Calculate analytics metrics
  const calculateMetrics = () => {
  console.log('💰 === METRICS CALCULATION DEBUG ===');
@@ -1643,6 +1841,18 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Commission = Total Sales - Total Payouts for the filtered time period
  console.log('🔍 DEBUG COMMISSION - Calculating from online sales/payout data');
  
+ // Local (not UTC) YYYY-MM-DD / YYYY-MM - .toISOString() converts to UTC first, which
+ // rolled "this month"/"yesterday" back to the wrong calendar boundary for the ~5.5 hours
+ // after midnight IST (positive UTC offset), silently pulling the previous month's data
+ // into "This Month" comparisons below.
+ const localDateStr = (d: Date) => {
+ const y = d.getFullYear();
+ const m = String(d.getMonth() + 1).padStart(2, '0');
+ const day = String(d.getDate()).padStart(2, '0');
+ return `${y}-${m}-${day}`;
+ };
+ const localYearMonth = (d: Date) => localDateStr(d).slice(0, 7);
+
  // Filter online sales and payouts by time and store
  const filteredOnlineSales = onlineSalesData.filter(sale => {
  const dateMatch = (() => {
@@ -1652,7 +1862,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  case 'yesterday':
  const yesterday = new Date();
  yesterday.setDate(yesterday.getDate() - 1);
- return sale.date === yesterday.toISOString().split('T')[0];
+ return sale.date === localDateStr(yesterday);
  case 'thisWeek':
  const today = new Date();
  const startOfWeek = new Date(today);
@@ -1665,12 +1875,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
  return new Date(sale.date) >= lastWeekStart && new Date(sale.date) <= lastWeekEnd;
  case 'thisMonth':
- const currentMonth = new Date().toISOString().slice(0, 7);
+ const currentMonth = localYearMonth(new Date());
  return sale.date.startsWith(currentMonth);
  case 'lastMonth':
  const lastMonthDate = new Date();
  lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+ const lastMonth = localYearMonth(lastMonthDate);
  return sale.date.startsWith(lastMonth);
  case 'custom':
  return sale.date >= dateRange.from && sale.date <= dateRange.to;
@@ -1678,11 +1888,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return true;
  }
  })();
- 
+
  const storeMatch = effectiveStoreId ? sale.storeId === effectiveStoreId : true;
  return dateMatch && storeMatch;
  });
- 
+
  const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
  const dateMatch = (() => {
  switch (timeFilter) {
@@ -1691,7 +1901,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  case 'yesterday':
  const yesterday = new Date();
  yesterday.setDate(yesterday.getDate() - 1);
- return payout.date === yesterday.toISOString().split('T')[0];
+ return payout.date === localDateStr(yesterday);
  case 'thisWeek':
  const today = new Date();
  const startOfWeek = new Date(today);
@@ -1704,12 +1914,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
  return new Date(payout.date) >= lastWeekStart && new Date(payout.date) <= lastWeekEnd;
  case 'thisMonth':
- const currentMonth = new Date().toISOString().slice(0, 7);
+ const currentMonth = localYearMonth(new Date());
  return payout.date.startsWith(currentMonth);
  case 'lastMonth':
  const lastMonthDate = new Date();
  lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+ const lastMonth = localYearMonth(lastMonthDate);
  return payout.date.startsWith(lastMonth);
  case 'custom':
  return payout.date >= dateRange.from && payout.date <= dateRange.to;
@@ -1717,7 +1927,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return true;
  }
  })();
- 
+
  const storeMatch = effectiveStoreId ? payout.storeId === effectiveStoreId : true;
  return dateMatch && storeMatch;
  });
@@ -1738,50 +1948,25 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const legacyCommission = matchedOnlineSales - totalOnlinePayouts;
 
  const filteredSettlements = aggregatorSettlements.filter(settlement => {
- const dateMatch = (() => {
- switch (timeFilter) {
- case 'today':
- return settlement.settlementDate === getTodayIST();
- case 'yesterday': {
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return settlement.settlementDate === yesterday.toISOString().split('T')[0];
- }
- case 'thisWeek': {
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(settlement.settlementDate) >= startOfWeek && new Date(settlement.settlementDate) <= today;
- }
- case 'lastWeek': {
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(settlement.settlementDate) >= lastWeekStart && new Date(settlement.settlementDate) <= lastWeekEnd;
- }
- case 'thisMonth': {
- const currentMonth = new Date().toISOString().slice(0, 7);
- return settlement.settlementDate.startsWith(currentMonth);
- }
- case 'lastMonth': {
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
- return settlement.settlementDate.startsWith(lastMonth);
- }
- case 'custom':
- return settlement.settlementDate >= dateRange.from && settlement.settlementDate <= dateRange.to;
- default:
- return true;
- }
- })();
  const storeMatch = effectiveStoreId ? settlement.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
+ return settlementOverlapsAnalyticsRange(settlement, activeSettlementDateRange) && storeMatch;
  });
  const settlementCommission = filteredSettlements.reduce((sum, s) => sum + s.netCommission, 0);
+ const settlementGrossSales = filteredSettlements.reduce((sum, s) => sum + (s.grossSales || 0), 0);
+ const adSpend = filteredSettlements.reduce((sum, s) => sum + (s.adSpend || 0), 0);
 
  const commissionExpenses = legacyCommission + settlementCommission;
+ // Revenue basis for the Commission % figure specifically - matched the same way
+ // legacyCommission already is above, for the same reason: settlement payouts lag order
+ // dates by several days, so the last few days of any "this month"-style window always
+ // have orders that are fully counted in onlineRevenue but haven't settled yet, and so
+ // contribute 0 to commissionExpenses. Dividing by the FULL online revenue (onlineRevenue,
+ // used everywhere else) against only the settled slice of commissionExpenses silently
+ // understates the true commission rate - the more recent/unsettled the window, the worse
+ // the understatement. Using each source's own matched revenue (settlement grossSales for
+ // the settlement path, matchedOnlineSales for the legacy path) keeps numerator and
+ // denominator on the same footing.
+ const matchedOnlineRevenueForCommission = matchedOnlineSales + settlementGrossSales;
  
  // Combine online revenue from both sources:
  // 1. Main sales table's onlineSales field (manual entry)
@@ -1808,66 +1993,60 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  .filter(fc => fc.category === 'rent')
  .reduce((sum, fc) => sum + (fc.amount || 0), 0);
 
- // Calculate contract worker expenses (from salesData.employeeSalary)
- // These are daily wages, so they should be filtered by time
- console.log('💼 === CONTRACT WORKER SALARY DEBUG ===');
- console.log('Total filteredSalesData:', filteredSalesData.length);
- const salesWithSalary = filteredSalesData.filter(sale => (sale.employeeSalary || 0) > 0);
- console.log('Sales with employee salary:', salesWithSalary.length);
- console.log('Sales with salary data:', salesWithSalary.map(s => ({ date: s.date, salary: s.employeeSalary })));
- const contractWorkerExpenses = filteredSalesData.reduce((sum, sale) => sum + (sale.employeeSalary || 0), 0);
- console.log('Total contract worker expenses:', contractWorkerExpenses);
- console.log('💼 === END CONTRACT WORKER SALARY DEBUG ===');
-
- // Calculate permanent employee expenses (from payoutsData)
- // IMPORTANT: Permanent employee salaries are MONTHLY expenses
- // They should ONLY appear when viewing "Monthly" or "Yearly" time periods
- // For daily/weekly, only contract workers appear
+ // Employee payout expenses (from payoutsData), split into Contract Workers vs
+ // Permanent Employees by the employee's own employmentType. Contract worker wages
+ // used to be read from a legacy sale.employeeSalary field that nothing populates
+ // anymore (real contract payouts are logged via the Payroll page's "Add Payout" flow,
+ // exactly like permanent employees) - that always showed ₹0 here regardless of real
+ // payouts, while the real contract payouts were silently getting lumped into the
+ // "Permanent Employees" total below. Both buckets now come from the same source.
+ let contractWorkerExpenses = 0;
  let permanentEmployeeExpenses = 0;
- 
- console.log('💵 === PERMANENT EMPLOYEE SALARY DEBUG ===');
+
+ console.log('💵 === EMPLOYEE PAYOUT SALARY DEBUG ===');
  console.log('Time filter:', timeFilter);
  console.log('Total filteredPayoutsData:', filteredPayoutsData.length);
  console.log('Raw employeesData count:', employeesData.length);
- console.log('Filtered employees:', filteredEmployeesData.length);
  console.log('All employee types:', employeesData.map((e: any) => ({ id: e.id, employeeId: e.employeeId, name: e.name, type: e.type, employmentType: e.employmentType })));
  console.log('All payout data:', filteredPayoutsData.map((p: any) => ({ id: p.id, employeeId: p.employeeId, amount: p.amount, date: p.date })));
- 
+
  if (timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') {
  // For month/custom view: Use DATE-FILTERED payouts to respect the selected time range
- // Filter by store if needed
  let relevantPayouts = filteredPayoutsData;
- 
+
  if (effectiveStoreId) {
  // When store is selected, filter payouts to employees of that store
  const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
  relevantPayouts = relevantPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
  console.log('Store filtered payouts:', relevantPayouts.length);
  }
- 
+
  console.log('Relevant payouts for calculation:', relevantPayouts.length);
- 
- permanentEmployeeExpenses = relevantPayouts.reduce((sum, payout) => {
+
+ for (const payout of relevantPayouts) {
  // IMPORTANT: Use raw employeesData (not store-filtered) for type lookup
  // This ensures we can identify employee type even if store filtering is active
  const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
- const empType = employee?.type || employee?.employmentType;
- console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, 'employee found:', employee ? `${employee.name} (type=${employee.type}, employmentType=${employee.employmentType}, resolved=${empType})` : 'NOT FOUND');
- // Include ALL employee payouts as expenses (fulltime, parttime, contract, etc.)
- if (employee) {
- console.log(' ✓ Including employee payout:', payout.amount, 'type:', empType);
- return sum + (payout.amount || 0);
+ if (!employee) {
+ console.log(' ✗ Skipping payout - employee not found:', payout.id);
+ continue;
  }
- console.log(' ✗ Skipping (employee not found in database)');
- return sum;
- }, 0);
- 
+ const empType = employee?.type || employee?.employmentType;
+ console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, `${employee.name} (resolved type=${empType})`);
+ if (empType === 'contract') {
+ contractWorkerExpenses += payout.amount || 0;
+ } else {
+ permanentEmployeeExpenses += payout.amount || 0;
+ }
+ }
+
+ console.log('Total contract worker expenses calculated:', contractWorkerExpenses);
  console.log('Total permanent employee expenses calculated:', permanentEmployeeExpenses);
  } else {
- console.log('Skipping permanent employee calculation - time filter is:', timeFilter);
+ console.log('Skipping payout calculation - time filter is:', timeFilter);
  }
- console.log('💵 === END PERMANENT EMPLOYEE SALARY DEBUG ===');
- // For daily/weekly view, permanentEmployeeExpenses stays 0
+ console.log('💵 === END EMPLOYEE PAYOUT SALARY DEBUG ===');
+ // For daily/weekly view, both buckets stay 0 - payouts are monthly, not daily events
 
  // Total salary expenses = contract workers + permanent employee payouts + personal expenses (employee-mapped overhead)
  const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses + personalExpenseTotal;
@@ -1879,57 +2058,48 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Calculate interest expense (accrual basis)
  // Get the date range for the current filter
  const getDateRangeForFilter = (): { startDate: string; endDate: string } => {
- const today = new Date();
- 
+ // IST calendar-date string arithmetic throughout (getTodayIST/addDays) - a raw
+ // `new Date()` + toISOString() rolls the date back a day for anyone in IST between
+ // midnight and 5:30am, since UTC is still "yesterday" at that point.
+ const today = getTodayIST();
+ const dayOfWeek = (dateStr: string) => {
+ const [y, m, d] = dateStr.split('-').map(Number);
+ return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+ };
+
  switch (timeFilter) {
  case 'today':
- const todayStr = getTodayIST();
- return { startDate: todayStr, endDate: todayStr };
- 
- case 'yesterday':
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- const yesterdayStr = yesterday.toISOString().split('T')[0];
+ return { startDate: today, endDate: today };
+
+ case 'yesterday': {
+ const yesterdayStr = addDays(today, -1);
  return { startDate: yesterdayStr, endDate: yesterdayStr };
- 
- case 'thisWeek':
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return { 
- startDate: startOfWeek.toISOString().split('T')[0], 
- endDate: getTodayIST() 
- };
- 
- case 'lastWeek':
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return { 
- startDate: lastWeekStart.toISOString().split('T')[0], 
- endDate: lastWeekEnd.toISOString().split('T')[0] 
- };
- 
+ }
+
+ case 'thisWeek': {
+ const startOfWeek = addDays(today, -dayOfWeek(today));
+ return { startDate: startOfWeek, endDate: today };
+ }
+
+ case 'lastWeek': {
+ const thisWeekStart = addDays(today, -dayOfWeek(today));
+ const lastWeekEnd = addDays(thisWeekStart, -1);
+ const lastWeekStart = addDays(lastWeekEnd, -6);
+ return { startDate: lastWeekStart, endDate: lastWeekEnd };
+ }
+
  case 'thisMonth':
- const currentMonth = new Date().toISOString().slice(0, 7);
- return { 
- startDate: `${currentMonth}-01`, 
- endDate: getTodayIST() 
- };
- 
- case 'lastMonth':
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
- const lastMonthLastDay = new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth() + 1, 0).getDate();
- return { 
- startDate: `${lastMonth}-01`, 
- endDate: `${lastMonth}-${lastMonthLastDay}` 
- };
- 
+ return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
+
+ case 'lastMonth': {
+ const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
+ const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
+ return { startDate: lastMonthStart, endDate: lastMonthEnd };
+ }
+
  case 'custom':
  return { startDate: dateRange.from, endDate: dateRange.to };
- 
+
  default:
  return { startDate: getTodayIST(), endDate: getTodayIST() };
  }
@@ -1966,8 +2136,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return {
  totalRevenue,
  onlineRevenue,
+ matchedOnlineRevenueForCommission,
  offlineRevenue,
  commissionExpenses,
+ adSpend,
  interestExpenses,
  totalExpenses: totalCosts,
  inventoryExpenses,
@@ -1999,6 +2171,571 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  dateRange,
  effectiveStoreId
  ]);
+
+ // Date range for the current timeFilter, usable outside calculateMetrics() (which has its
+ // own copy scoped to its own body). Kept in sync with that logic.
+ const itemPerfDateRange = useMemo((): { startDate: string; endDate: string } => {
+ // Kept in sync with getDateRangeForFilter() above - same IST-safe string arithmetic.
+ const today = getTodayIST();
+ const dayOfWeek = (dateStr: string) => {
+ const [y, m, d] = dateStr.split('-').map(Number);
+ return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+ };
+ switch (timeFilter) {
+ case 'today': {
+ return { startDate: today, endDate: today };
+ }
+ case 'yesterday': {
+ const yesterdayStr = addDays(today, -1);
+ return { startDate: yesterdayStr, endDate: yesterdayStr };
+ }
+ case 'thisWeek': {
+ const startOfWeek = addDays(today, -dayOfWeek(today));
+ return { startDate: startOfWeek, endDate: today };
+ }
+ case 'lastWeek': {
+ const thisWeekStart = addDays(today, -dayOfWeek(today));
+ const lastWeekEnd = addDays(thisWeekStart, -1);
+ const lastWeekStart = addDays(lastWeekEnd, -6);
+ return { startDate: lastWeekStart, endDate: lastWeekEnd };
+ }
+ case 'thisMonth': {
+ return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
+ }
+ case 'lastMonth': {
+ const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
+ const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
+ return { startDate: lastMonthStart, endDate: lastMonthEnd };
+ }
+ case 'custom':
+ return { startDate: dateRange.from, endDate: dateRange.to };
+ default:
+ return { startDate: getTodayIST(), endDate: getTodayIST() };
+ }
+ }, [timeFilter, dateRange]);
+
+ // The comparable "previous period" for every Overview trend chart's dashed line - not
+ // just "N days back" but the actual matching period: same weekday last week for Today,
+ // the whole previous week for This Week, the previous month up to the same date-of-month
+ // for This Month, etc. - so the dashed line is a fair like-for-like comparison, not an
+ // arbitrary offset.
+ const previousPeriodRange = useMemo((): { startDate: string; endDate: string } => {
+ const today = getTodayIST();
+ switch (timeFilter) {
+ case 'today': {
+ const d = addDays(today, -7); // same weekday, last week
+ return { startDate: d, endDate: d };
+ }
+ case 'yesterday': {
+ const y = addDays(today, -1);
+ const d = addDays(y, -7); // same weekday, the week before
+ return { startDate: d, endDate: d };
+ }
+ case 'thisWeek': {
+ // Previous week, day-aligned: if this week runs Mon..today, previous week runs
+ // (Mon - 7 days)..(today - 7 days) - same position within the week, not just
+ // "any 7 days back".
+ return { startDate: addDays(itemPerfDateRange.startDate, -7), endDate: addDays(itemPerfDateRange.endDate, -7) };
+ }
+ case 'lastWeek': {
+ return { startDate: addDays(itemPerfDateRange.startDate, -7), endDate: addDays(itemPerfDateRange.endDate, -7) };
+ }
+ case 'thisMonth': {
+ // Previous month, 1st through the same day-of-month as today (capped at that
+ // month's actual last day, e.g. Feb doesn't have a 30th/31st).
+ const [y, m, d] = today.split('-').map(Number);
+ const prevMonthDate = new Date(Date.UTC(y, m - 2, 1));
+ const prevMonthStart = `${prevMonthDate.getUTCFullYear()}-${String(prevMonthDate.getUTCMonth() + 1).padStart(2, '0')}-01`;
+ const lastDayOfPrevMonth = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
+ const cappedDay = Math.min(d, lastDayOfPrevMonth);
+ const prevMonthSameDay = `${prevMonthDate.getUTCFullYear()}-${String(prevMonthDate.getUTCMonth() + 1).padStart(2, '0')}-${String(cappedDay).padStart(2, '0')}`;
+ return { startDate: prevMonthStart, endDate: prevMonthSameDay };
+ }
+ case 'lastMonth': {
+ // The month before last month, same length (1st through last day).
+ const [sy, sm] = itemPerfDateRange.startDate.split('-').map(Number);
+ const monthBeforeStart = new Date(Date.UTC(sy, sm - 2, 1));
+ const monthBeforeEnd = new Date(Date.UTC(sy, sm - 1, 0));
+ const fmt = (dt: Date) => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+ return { startDate: fmt(monthBeforeStart), endDate: fmt(monthBeforeEnd) };
+ }
+ case 'custom': {
+ // An equal-length period immediately preceding the selected custom range.
+ const [fy, fm, fd] = itemPerfDateRange.startDate.split('-').map(Number);
+ const [ty, tm, td] = itemPerfDateRange.endDate.split('-').map(Number);
+ const lengthDays = Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000) + 1;
+ const endPrev = addDays(itemPerfDateRange.startDate, -1);
+ const startPrev = addDays(endPrev, -(lengthDays - 1));
+ return { startDate: startPrev, endDate: endPrev };
+ }
+ default:
+ return { startDate: today, endDate: today };
+ }
+ }, [timeFilter, itemPerfDateRange]);
+
+ // Fetch per-item, per-order sales detail for the Item Performance tab (top items, channel
+ // comparison, week-over-week trend) and the Overview tab's Orders per Day chart (order
+ // counts aren't tracked as a number anywhere - offline vs online is only knowable by
+ // counting real orders, via externalId/paymentMode, same as Item Performance does).
+ useEffect(() => {
+ // 'profit' (Revenue & Channels) no longer needs this fetch - the Channel Economics
+ // comparison that was its only consumer here moved to OnlineSalesTab.tsx, which fetches
+ // its own copy scoped to that page's date range.
+ if ((activeView !== 'sales' && activeView !== 'overview') || !context.user?.accessToken) return;
+ const accessToken = context.user.accessToken;
+ let cancelled = false;
+ (async () => {
+ try {
+ const records = await api.getOrderItemDetail(accessToken, {
+ storeId: effectiveStoreId || undefined,
+ startDate: itemPerfDateRange.startDate,
+ endDate: itemPerfDateRange.endDate
+ });
+ if (!cancelled) setOrderItemDetail(records || []);
+ } catch (err) {
+ console.error('Failed to load order item detail for Item Performance tab:', err);
+ if (!cancelled) setOrderItemDetail([]);
+ }
+ })();
+ return () => { cancelled = true; };
+ }, [activeView, effectiveStoreId, itemPerfDateRange.startDate, itemPerfDateRange.endDate, context.user?.accessToken]);
+
+ // Same fetch, for the previous-period comparison range - only needed on the Overview
+ // tab (Item Performance doesn't show a previous-period line).
+ useEffect(() => {
+ if (activeView !== 'overview' || !context.user?.accessToken) return;
+ const accessToken = context.user.accessToken;
+ let cancelled = false;
+ (async () => {
+ try {
+ const records = await api.getOrderItemDetail(accessToken, {
+ storeId: effectiveStoreId || undefined,
+ startDate: previousPeriodRange.startDate,
+ endDate: previousPeriodRange.endDate
+ });
+ if (!cancelled) setPreviousOrderItemDetail(records || []);
+ } catch (err) {
+ console.error('Failed to load previous-period order item detail:', err);
+ if (!cancelled) setPreviousOrderItemDetail([]);
+ }
+ })();
+ return () => { cancelled = true; };
+ }, [activeView, effectiveStoreId, previousPeriodRange.startDate, previousPeriodRange.endDate, context.user?.accessToken]);
+
+ // Ciferon lists an online-specific SKU for the same physical dish under its own product
+ // name, tagged with a "-O" suffix and sometimes a prep-style qualifier and/or a
+ // "[N Pieces]" bracket - e.g. "Chicken Steamed Momos [6 Pieces] -O Normal" is really just
+ // "Chicken Steamed Momos". Without this, the Top Items/Declining charts below (built
+ // straight from raw order-item-detail productName, unlike itemChannelBreakdown which
+ // already strips this) silently split one dish's revenue across its bare dine-in name and
+ // every online prep-variant of it. Mirrors the backend's own normalizeItemName exactly
+ // (posItemClassifier.tsx) - edge functions can't import from src/, so this is duplicated,
+ // not shared; keep both in sync. KNOWN_SYNONYMS is the one exception to "strip brackets
+ // only" - a short, human-CONFIRMED list of raw Ciferon product names that are the exact
+ // same dish under two different catalog entries (e.g. word order swapped), most likely
+ // created as separate products in Ciferon at different times. The real fix is renaming
+ // the duplicate in Ciferon's own menu management so future syncs never split under two
+ // names at all - this is a stopgap for already-synced data in the meantime. Add a pair
+ // here only once a human has confirmed it, never as an automatic/fuzzy guess.
+ const KNOWN_SYNONYMS: Record<string, string> = {
+ 'steamed chicken momos': 'Chicken Steamed Momos',
+ };
+ const normalizeItemName = (name: string): string => {
+ const stripped = (name || 'Unknown')
+ .replace(/\[.*?\]/g, ' ')
+ .replace(/-\s*O\b/gi, ' ')
+ .replace(/\b(butter brushed|normal)\b/gi, ' ')
+ .replace(/\s+/g, ' ')
+ .trim();
+ return KNOWN_SYNONYMS[stripped.toLowerCase()] || stripped;
+ };
+
+ // Aggregate order item detail into per-item revenue + channel split for the Item
+ // Performance charts (top-10 by revenue, per-item channel comparison).
+ const itemPerformanceData = useMemo(() => {
+ const byItem: Record<string, { name: string; revenue: number; qty: number; Offline: number; Zomato: number; Swiggy: number }> = {};
+ orderItemDetail.forEach(rec => {
+ rec.orders.forEach(order => {
+ // Matches SalesData.tsx's classification: an order with no externalId is a POS/offline
+ // sale; otherwise it came from an aggregator, distinguished by paymentMode.
+ const channel: 'Offline' | 'Zomato' | 'Swiggy' =
+ !order.externalId ? 'Offline' : (order.paymentMode === 'Swiggy' ? 'Swiggy' : 'Zomato');
+ order.items.forEach(item => {
+ const key = normalizeItemName(item.productName);
+ if (!byItem[key]) {
+ byItem[key] = { name: key, revenue: 0, qty: 0, Offline: 0, Zomato: 0, Swiggy: 0 };
+ }
+ byItem[key].revenue += item.total || 0;
+ byItem[key].qty += item.quantity || 0;
+ byItem[key][channel] += item.total || 0;
+ });
+ });
+ });
+ const items = Object.values(byItem).sort((a, b) => b.revenue - a.revenue);
+ return { top10: items.slice(0, 10), all: items };
+ }, [orderItemDetail]);
+
+ // Number of orders per day, offline vs Zomato vs Swiggy - counted from real orders (no
+ // order-count field exists on SalesData/OnlineSalesEntry, only revenue totals), same
+ // classification rule as Item Performance above: no externalId = offline/POS, otherwise
+ // online, split further by paymentMode.
+ // Zips a "current period" series with its "previous period" counterpart by INDEX
+ // (position 1 pairs with position 1, etc.) rather than by date - the dashed comparison
+ // line is meant to overlay "same point in the period", e.g. this Monday against last
+ // Monday, not literally the same calendar date. Missing previous-period days (shorter
+ // history) just leave that point off the dashed line instead of erroring.
+ const zipPrev = <T extends Record<string, any>>(current: T[], previous: T[], keys: (keyof T)[]): any[] => {
+ const len = Math.max(current.length, previous.length);
+ const rows: any[] = [];
+ for (let i = 0; i < len; i++) {
+ const cur = current[i] || ({} as T);
+ const prev = previous[i];
+ const row: any = { ...cur };
+ keys.forEach((k) => { row[`prev_${String(k)}`] = prev ? (prev[k] ?? null) : null; });
+ rows.push(row);
+ }
+ return rows;
+ };
+
+ const buildOrdersPerDay = (records: api.OrderItemDetailRecord[]) => {
+ const byDate: Record<string, { offline: number; zomato: number; swiggy: number }> = {};
+ records.forEach(rec => {
+ if (!byDate[rec.date]) byDate[rec.date] = { offline: 0, zomato: 0, swiggy: 0 };
+ rec.orders.forEach(order => {
+ if (!order.externalId) byDate[rec.date].offline += 1;
+ else if (order.paymentMode === 'Swiggy') byDate[rec.date].swiggy += 1;
+ else byDate[rec.date].zomato += 1;
+ });
+ });
+ return Object.entries(byDate)
+ .sort(([a], [b]) => a.localeCompare(b))
+ .map(([date, counts]) => ({
+ date,
+ period: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+ offline: counts.offline,
+ zomato: counts.zomato,
+ swiggy: counts.swiggy,
+ online: counts.zomato + counts.swiggy,
+ total: counts.offline + counts.zomato + counts.swiggy,
+ }));
+ };
+ const ordersPerDayData = useMemo(() => buildOrdersPerDay(orderItemDetail), [orderItemDetail]);
+ const previousOrdersPerDayData = useMemo(() => buildOrdersPerDay(previousOrderItemDetail), [previousOrderItemDetail]);
+ const ordersPerDayChartData = useMemo(
+ () => zipPrev(ordersPerDayData, previousOrdersPerDayData, ['offline', 'zomato', 'swiggy']),
+ [ordersPerDayData, previousOrdersPerDayData]
+ );
+
+ // Separate offline/online medians for the reference lines on the chart above - a single
+ // blended median hid that the two channels run at very different volumes, and median is
+ // more resistant to one freak busy/slow day skewing the read than a plain average.
+ const median = (values: number[]): number => {
+ const sorted = [...values].sort((a, b) => a - b);
+ if (sorted.length === 0) return 0;
+ const mid = Math.floor(sorted.length / 2);
+ return sorted.length % 2 !== 0 ? sorted[mid] : Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 10) / 10;
+ };
+ const offlineOrdersMedian = useMemo(() => median(ordersPerDayData.map(d => d.offline)), [ordersPerDayData]);
+ const onlineOrdersMedian = useMemo(() => median(ordersPerDayData.map(d => d.online)), [ordersPerDayData]);
+
+ // Orders by hour, 3 PM - 10 PM IST (dinner rush window) - which hour actually peaks.
+ // Only orders with a real orderHourIST (captured going forward, see getCiferonOrderHourIST
+ // in index.ts) contribute here - days synced before that field existed simply have none,
+ // same as any other day with zero orders in this window.
+ const HOUR_START = 15; // 3 PM
+ const HOUR_END = 22; // 10 PM hour bucket (covers orders up to 10:59 PM)
+ const formatHour = (h: number) => {
+ const period = h >= 12 ? 'PM' : 'AM';
+ const h12 = h % 12 === 0 ? 12 : h % 12;
+ return `${h12} ${period}`;
+ };
+ // Normalized to average orders per day (not a raw sum across the whole selected period) -
+ // a straight sum balloons with every extra day included and isn't comparable across
+ // different-length periods, e.g. "This Month" vs "This Week". Divide by how many days
+ // actually had hourly data, so this shows a typical day's shape at each hour.
+ const buildOrdersByHour = (records: api.OrderItemDetailRecord[]) => {
+ const byHour: Record<number, { offline: number; online: number }> = {};
+ for (let h = HOUR_START; h <= HOUR_END; h++) byHour[h] = { offline: 0, online: 0 };
+ const daysWithHourData = new Set<string>();
+ records.forEach(rec => {
+ rec.orders.forEach(order => {
+ const hour = order.orderHourIST;
+ if (hour === null || hour === undefined || hour < HOUR_START || hour > HOUR_END) return;
+ daysWithHourData.add(rec.date);
+ if (!order.externalId) byHour[hour].offline += 1;
+ else byHour[hour].online += 1;
+ });
+ });
+ const dayCount = daysWithHourData.size || 1;
+ const avg = (n: number) => Math.round((n / dayCount) * 10) / 10;
+ return Object.entries(byHour)
+ .map(([h, counts]) => {
+ const hour = parseInt(h, 10);
+ return { hour, label: formatHour(hour), offline: avg(counts.offline), online: avg(counts.online), total: avg(counts.offline + counts.online) };
+ })
+ .sort((a, b) => a.hour - b.hour);
+ };
+ const ordersByHourData = useMemo(() => buildOrdersByHour(orderItemDetail), [orderItemDetail]);
+ const previousOrdersByHourData = useMemo(() => buildOrdersByHour(previousOrderItemDetail), [previousOrderItemDetail]);
+ // Hour buckets already line up 1:1 (both cover 3 PM-10 PM), so index-zip = hour-zip here.
+ const ordersByHourChartData = useMemo(
+ () => zipPrev(ordersByHourData, previousOrdersByHourData, ['offline', 'online']),
+ [ordersByHourData, previousOrdersByHourData]
+ );
+
+ const peakHour = useMemo(() => {
+ if (ordersByHourData.every(h => h.total === 0)) return null;
+ return ordersByHourData.reduce((best, h) => (h.total > best.total ? h : best), ordersByHourData[0]);
+ }, [ordersByHourData]);
+
+ // Dine-in / Takeaway / Home Delivery split, by order count and revenue - Ciferon's
+ // SaleOrderType was already being captured for box/tray counting but never charted.
+ // Zomato/Swiggy orders are always HomeDelivery, so this isn't the same axis as
+ // offline/online above - a DineIn order is always offline, but HomeDelivery mixes real
+ // offline delivery with both aggregators.
+ const buildServiceType = (records: api.OrderItemDetailRecord[]) => {
+ const byDate: Record<string, { DineIn: number; TakeAway: number; HomeDelivery: number; Other: number }> = {};
+ const revenueByType: Record<string, number> = { DineIn: 0, TakeAway: 0, HomeDelivery: 0, Other: 0 };
+ records.forEach(rec => {
+ if (!byDate[rec.date]) byDate[rec.date] = { DineIn: 0, TakeAway: 0, HomeDelivery: 0, Other: 0 };
+ rec.orders.forEach(order => {
+ const type = (order.orderType === 'DineIn' || order.orderType === 'TakeAway' || order.orderType === 'HomeDelivery')
+ ? order.orderType
+ : 'Other';
+ byDate[rec.date][type] += 1;
+ revenueByType[type] += order.grandTotal || 0;
+ });
+ });
+ const trend = Object.entries(byDate)
+ .sort(([a], [b]) => a.localeCompare(b))
+ .map(([date, counts]) => ({
+ date,
+ period: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+ ...counts,
+ }));
+ return { trend, revenueByType };
+ };
+ const serviceTypeData = useMemo(() => buildServiceType(orderItemDetail), [orderItemDetail]);
+ const previousServiceTypeData = useMemo(() => buildServiceType(previousOrderItemDetail), [previousOrderItemDetail]);
+ const serviceTypeChartData = useMemo(
+ () => zipPrev(serviceTypeData.trend, previousServiceTypeData.trend, ['DineIn', 'TakeAway', 'HomeDelivery']),
+ [serviceTypeData, previousServiceTypeData]
+ );
+
+ // Average order value per day, by channel - already have revenue and order counts
+ // separately, just never divided them against each other over time.
+ const buildAvgOrderValue = (records: api.OrderItemDetailRecord[]) => {
+ const byDate: Record<string, { offlineRevenue: number; offlineCount: number; onlineRevenue: number; onlineCount: number }> = {};
+ records.forEach(rec => {
+ if (!byDate[rec.date]) byDate[rec.date] = { offlineRevenue: 0, offlineCount: 0, onlineRevenue: 0, onlineCount: 0 };
+ rec.orders.forEach(order => {
+ const amt = order.grandTotal || 0;
+ if (!order.externalId) {
+ byDate[rec.date].offlineRevenue += amt;
+ byDate[rec.date].offlineCount += 1;
+ } else {
+ byDate[rec.date].onlineRevenue += amt;
+ byDate[rec.date].onlineCount += 1;
+ }
+ });
+ });
+ return Object.entries(byDate)
+ .sort(([a], [b]) => a.localeCompare(b))
+ .map(([date, d]) => ({
+ date,
+ period: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+ offlineAOV: d.offlineCount > 0 ? Math.round((d.offlineRevenue / d.offlineCount) * 100) / 100 : 0,
+ onlineAOV: d.onlineCount > 0 ? Math.round((d.onlineRevenue / d.onlineCount) * 100) / 100 : 0,
+ }));
+ };
+ const avgOrderValueData = useMemo(() => buildAvgOrderValue(orderItemDetail), [orderItemDetail]);
+ const previousAvgOrderValueData = useMemo(() => buildAvgOrderValue(previousOrderItemDetail), [previousOrderItemDetail]);
+ const avgOrderValueChartData = useMemo(
+ () => zipPrev(avgOrderValueData, previousAvgOrderValueData, ['offlineAOV', 'onlineAOV']),
+ [avgOrderValueData, previousAvgOrderValueData]
+ );
+
+ // Discount as a % of gross sales, per day, offline vs online - discount amounts were
+ // already tracked (offlineDiscount/onlineDiscount on SalesData), just never trended.
+ const buildDiscountPct = (records: api.OrderItemDetailRecord[]) => {
+ const byDate: Record<string, { offlineGross: number; offlineDiscount: number; onlineGross: number; onlineDiscount: number }> = {};
+ records.forEach(rec => {
+ if (!byDate[rec.date]) byDate[rec.date] = { offlineGross: 0, offlineDiscount: 0, onlineGross: 0, onlineDiscount: 0 };
+ rec.orders.forEach(order => {
+ const gross = (order.subtotal || 0);
+ const disc = order.discount || 0;
+ if (!order.externalId) {
+ byDate[rec.date].offlineGross += gross;
+ byDate[rec.date].offlineDiscount += disc;
+ } else {
+ byDate[rec.date].onlineGross += gross;
+ byDate[rec.date].onlineDiscount += disc;
+ }
+ });
+ });
+ return Object.entries(byDate)
+ .sort(([a], [b]) => a.localeCompare(b))
+ .map(([date, d]) => ({
+ date,
+ period: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+ offlinePct: d.offlineGross > 0 ? Math.round((d.offlineDiscount / d.offlineGross) * 1000) / 10 : 0,
+ onlinePct: d.onlineGross > 0 ? Math.round((d.onlineDiscount / d.onlineGross) * 1000) / 10 : 0,
+ }));
+ };
+ const discountPctData = useMemo(() => buildDiscountPct(orderItemDetail), [orderItemDetail]);
+ const previousDiscountPctData = useMemo(() => buildDiscountPct(previousOrderItemDetail), [previousOrderItemDetail]);
+ const discountPctChartData = useMemo(
+ () => zipPrev(discountPctData, previousDiscountPctData, ['offlinePct', 'onlinePct']),
+ [discountPctData, previousDiscountPctData]
+ );
+
+ // Raw digital-payment-mode split (Cash/Paytm/PhonePe/Card/Google Pay/Razorpay/...),
+ // summed across the filtered period - insight-only, doesn't change any reconciled total
+ // (see paymentModeBreakdown on SalesData). Only populated on records synced after this
+ // field was added, so older periods may show fewer/no slices even with real sales.
+ // No previous-period line here - it's a pie for the period, not a trend.
+ const paymentModeBreakdownData = useMemo(() => {
+ const totals: Record<string, number> = {};
+ filteredSalesData.forEach((sale: any) => {
+ const breakdown = sale.paymentModeBreakdown as Record<string, number> | undefined;
+ if (!breakdown) return;
+ Object.entries(breakdown).forEach(([mode, amount]) => {
+ totals[mode] = (totals[mode] || 0) + (amount || 0);
+ });
+ });
+ const PALETTE: Record<string, string> = {
+ Cash: '#22c55e', Paytm: '#3b82f6', PhonePe: '#a855f7', Card: '#f59e0b',
+ 'Google Pay': '#06b6d4', Razorpay: '#0ea5e9', Zomato: '#e23744', Swiggy: '#fc8019', Unknown: '#94a3b8',
+ };
+ return Object.entries(totals)
+ .filter(([, amount]) => amount > 0)
+ .sort((a, b) => b[1] - a[1])
+ .map(([mode, amount]) => ({ name: mode, value: Math.round(amount), color: PALETTE[mode] || '#94a3b8' }));
+ }, [filteredSalesData]);
+
+ // SalesData records for previousPeriodRange - same store scoping as filteredSalesData,
+ // just against context.salesData directly (already fully loaded) instead of the
+ // current-timeFilter-filtered subset, since we need a different date window.
+ const previousPeriodSalesData = useMemo(() => {
+ return (context.salesData || []).filter((sale: any) => {
+ if (!sale?.date) return false;
+ if (sale.date < previousPeriodRange.startDate || sale.date > previousPeriodRange.endDate) return false;
+ return effectiveStoreId ? sale.storeId === effectiveStoreId : true;
+ });
+ }, [context.salesData, previousPeriodRange, effectiveStoreId]);
+
+ // Cancellation trend - offlineCancelledCount/onlineCancelledCount were already tracked
+ // per day, just never charted as a trend (only ever shown as a same-day snapshot).
+ const buildCancellationTrend = (sales: any[]) => {
+ return [...sales]
+ .filter((sale: any) => sale.date)
+ .sort((a: any, b: any) => a.date.localeCompare(b.date))
+ .map((sale: any) => ({
+ date: sale.date,
+ period: new Date(`${sale.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+ offlineCancelled: sale.offlineCancelledCount || 0,
+ onlineCancelled: sale.onlineCancelledCount || 0,
+ cancelledAmount: (sale.offlineCancelledAmount || 0) + (sale.onlineCancelledAmount || 0),
+ }));
+ };
+ const cancellationTrendData = useMemo(() => buildCancellationTrend(filteredSalesData), [filteredSalesData]);
+ const previousCancellationTrendData = useMemo(() => buildCancellationTrend(previousPeriodSalesData), [previousPeriodSalesData]);
+ const cancellationChartData = useMemo(
+ () => zipPrev(cancellationTrendData, previousCancellationTrendData, ['offlineCancelled', 'onlineCancelled']),
+ [cancellationTrendData, previousCancellationTrendData]
+ );
+
+ // Order value distribution, per day - how many orders fell in each ₹50 value band
+ // (₹100-149, ₹150-199, ... ₹450-499, ₹500+). Orders under ₹100 aren't bucketed here.
+ // From real per-order data (orderItemDetail), same source as the other order charts.
+ // Starts at ₹0 (not ₹100) so low-value orders - a single momo, a side, a drink - show up
+ // instead of silently vanishing from the distribution.
+ const ORDER_VALUE_BUCKETS = [
+ { key: 'b0', min: 0, max: 99, label: '₹0-99' },
+ { key: 'b100', min: 100, max: 149, label: '₹100-149' },
+ { key: 'b150', min: 150, max: 199, label: '₹150-199' },
+ { key: 'b200', min: 200, max: 249, label: '₹200-249' },
+ { key: 'b250', min: 250, max: 299, label: '₹250-299' },
+ { key: 'b300', min: 300, max: 349, label: '₹300-349' },
+ { key: 'b350', min: 350, max: 399, label: '₹350-399' },
+ { key: 'b400', min: 400, max: 449, label: '₹400-449' },
+ { key: 'b450', min: 450, max: 499, label: '₹450-499' },
+ { key: 'b500', min: 500, max: Infinity, label: '₹500+' },
+ ] as const;
+
+ // A per-day stacked-bar-plus-9-dashed-lines version of this used to live here - technically
+ // complete, but unreadable: 9 colors stacked per day tells you nothing about the actual
+ // shape of the distribution, which is the whole point of a histogram. This instead totals
+ // each value band across the whole period once, so the chart reads as "here's the shape of
+ // what people order" at a glance, with the previous period as a second bar per band for
+ // comparison - a much more natural fit than a 9-series dashed-line overlay ever was.
+ const orderValueHistogramData = useMemo(() => {
+ const bucketOf = (amt: number) => ORDER_VALUE_BUCKETS.find(b => amt >= b.min && amt <= b.max);
+ const currentCounts: Record<string, number> = {};
+ const previousCounts: Record<string, number> = {};
+ ORDER_VALUE_BUCKETS.forEach(b => { currentCounts[b.key] = 0; previousCounts[b.key] = 0; });
+
+ let currentTotalOrders = 0, currentTotalValue = 0;
+ orderItemDetail.forEach(rec => rec.orders.forEach(order => {
+ const amt = order.grandTotal || 0;
+ const bucket = bucketOf(amt);
+ if (!bucket) return;
+ currentCounts[bucket.key] += 1;
+ currentTotalOrders += 1;
+ currentTotalValue += amt;
+ }));
+ previousOrderItemDetail.forEach(rec => rec.orders.forEach(order => {
+ const bucket = bucketOf(order.grandTotal || 0);
+ if (bucket) previousCounts[bucket.key] += 1;
+ }));
+
+ const rows = ORDER_VALUE_BUCKETS.map(b => ({
+ label: b.label,
+ current: currentCounts[b.key],
+ previous: previousCounts[b.key],
+ }));
+ const modalBucket = rows.reduce((best, r) => (r.current > best.current ? r : best), rows[0]);
+ const avgOrderValue = currentTotalOrders > 0 ? Math.round((currentTotalValue / currentTotalOrders) * 100) / 100 : 0;
+ return { rows, currentTotalOrders, avgOrderValue, modalBucket };
+ }, [orderItemDetail, previousOrderItemDetail]);
+
+ // Week-over-week revenue delta per item, flagged as declining when down >10% and this
+ // week's revenue is non-trivial (avoids flagging noise on near-zero volume items).
+ const decliningItems = useMemo(() => {
+ const today = new Date(getTodayIST());
+ const thisWeekStart = new Date(today); thisWeekStart.setDate(today.getDate() - 6);
+ const lastWeekEnd = new Date(thisWeekStart); lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
+ const lastWeekStart = new Date(lastWeekEnd); lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
+ const fmt = (d: Date) => d.toISOString().split('T')[0];
+ const thisWeekRange = { start: fmt(thisWeekStart), end: fmt(today) };
+ const lastWeekRange = { start: fmt(lastWeekStart), end: fmt(lastWeekEnd) };
+
+ const byItemWeek: Record<string, { thisWeek: number; lastWeek: number }> = {};
+ orderItemDetail.forEach(rec => {
+ const inThisWeek = rec.date >= thisWeekRange.start && rec.date <= thisWeekRange.end;
+ const inLastWeek = rec.date >= lastWeekRange.start && rec.date <= lastWeekRange.end;
+ if (!inThisWeek && !inLastWeek) return;
+ rec.orders.forEach(order => {
+ order.items.forEach(item => {
+ const key = normalizeItemName(item.productName);
+ if (!byItemWeek[key]) byItemWeek[key] = { thisWeek: 0, lastWeek: 0 };
+ if (inThisWeek) byItemWeek[key].thisWeek += item.total || 0;
+ if (inLastWeek) byItemWeek[key].lastWeek += item.total || 0;
+ });
+ });
+ });
+
+ return Object.entries(byItemWeek)
+ .map(([name, v]) => ({
+ name,
+ thisWeek: Math.round(v.thisWeek),
+ lastWeek: Math.round(v.lastWeek),
+ changePct: v.lastWeek > 0 ? Math.round(((v.thisWeek - v.lastWeek) / v.lastWeek) * 1000) / 10 : 0
+ }))
+ .filter(x => x.lastWeek >= 500 && x.changePct <= -10)
+ .sort((a, b) => a.changePct - b.changePct)
+ .slice(0, 8);
+ }, [orderItemDetail]);
 
  // Prepare chart data - group by month
  const prepareMonthlyData = () => {
@@ -2238,32 +2975,33 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Calculate commission by date from onlineSalesData and onlinePayoutData (same as metrics)
  const filteredOnlineSales = onlineSalesData.filter(sale => {
  const dateMatch = (() => {
+ // IST calendar-date string arithmetic (see getDateRangeForFilter above for why).
+ const today = getTodayIST();
+ const dayOfWeek = (dateStr: string) => {
+ const [y, m, d] = dateStr.split('-').map(Number);
+ return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+ };
  switch (timeFilter) {
  case 'today':
- return sale.date === getTodayIST();
+ return sale.date === today;
  case 'yesterday':
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return sale.date === yesterday.toISOString().split('T')[0];
- case 'thisWeek':
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(sale.date) >= startOfWeek && new Date(sale.date) <= today;
- case 'lastWeek':
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(sale.date) >= lastWeekStart && new Date(sale.date) <= lastWeekEnd;
+ return sale.date === addDays(today, -1);
+ case 'thisWeek': {
+ const startOfWeek = addDays(today, -dayOfWeek(today));
+ return sale.date >= startOfWeek && sale.date <= today;
+ }
+ case 'lastWeek': {
+ const thisWeekStart = addDays(today, -dayOfWeek(today));
+ const lastWeekEnd = addDays(thisWeekStart, -1);
+ const lastWeekStart = addDays(lastWeekEnd, -6);
+ return sale.date >= lastWeekStart && sale.date <= lastWeekEnd;
+ }
  case 'thisMonth':
- const currentMonth = new Date().toISOString().slice(0, 7);
- return sale.date.startsWith(currentMonth);
- case 'lastMonth':
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
- return sale.date.startsWith(lastMonth);
+ return sale.date.startsWith(today.slice(0, 7));
+ case 'lastMonth': {
+ const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
+ return sale.date.startsWith(lastMonthEnd.slice(0, 7));
+ }
  case 'custom':
  return sale.date >= dateRange.from && sale.date <= dateRange.to;
  default:
@@ -2276,32 +3014,33 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  
  const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
  const dateMatch = (() => {
+ // IST calendar-date string arithmetic (see getDateRangeForFilter above for why).
+ const today = getTodayIST();
+ const dayOfWeek = (dateStr: string) => {
+ const [y, m, d] = dateStr.split('-').map(Number);
+ return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+ };
  switch (timeFilter) {
  case 'today':
- return payout.date === getTodayIST();
+ return payout.date === today;
  case 'yesterday':
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return payout.date === yesterday.toISOString().split('T')[0];
- case 'thisWeek':
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(payout.date) >= startOfWeek && new Date(payout.date) <= today;
- case 'lastWeek':
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(payout.date) >= lastWeekStart && new Date(payout.date) <= lastWeekEnd;
+ return payout.date === addDays(today, -1);
+ case 'thisWeek': {
+ const startOfWeek = addDays(today, -dayOfWeek(today));
+ return payout.date >= startOfWeek && payout.date <= today;
+ }
+ case 'lastWeek': {
+ const thisWeekStart = addDays(today, -dayOfWeek(today));
+ const lastWeekEnd = addDays(thisWeekStart, -1);
+ const lastWeekStart = addDays(lastWeekEnd, -6);
+ return payout.date >= lastWeekStart && payout.date <= lastWeekEnd;
+ }
  case 'thisMonth':
- const currentMonth = new Date().toISOString().slice(0, 7);
- return payout.date.startsWith(currentMonth);
- case 'lastMonth':
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
- return payout.date.startsWith(lastMonth);
+ return payout.date.startsWith(today.slice(0, 7));
+ case 'lastMonth': {
+ const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
+ return payout.date.startsWith(lastMonthEnd.slice(0, 7));
+ }
  case 'custom':
  return payout.date >= dateRange.from && payout.date <= dateRange.to;
  default:
@@ -2354,48 +3093,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  aggregatorSettlements
  .filter(s => {
  const storeMatch = !effectiveStoreId || s.storeId === effectiveStoreId;
- const dateMatch = (() => {
- switch (timeFilter) {
- case 'today':
- return s.settlementDate === getTodayIST();
- case 'yesterday': {
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return s.settlementDate === yesterday.toISOString().split('T')[0];
- }
- case 'thisWeek': {
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(s.settlementDate) >= startOfWeek && new Date(s.settlementDate) <= today;
- }
- case 'lastWeek': {
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(s.settlementDate) >= lastWeekStart && new Date(s.settlementDate) <= lastWeekEnd;
- }
- case 'thisMonth': {
- const currentMonth = new Date().toISOString().slice(0, 7);
- return s.settlementDate.startsWith(currentMonth);
- }
- case 'lastMonth': {
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = lastMonthDate.toISOString().slice(0, 7);
- return s.settlementDate.startsWith(lastMonth);
- }
- case 'custom':
- return s.settlementDate >= dateRange.from && s.settlementDate <= dateRange.to;
- default:
- return true;
- }
- })();
- return storeMatch && dateMatch;
+ return storeMatch && settlementOverlapsAnalyticsRange(s, activeSettlementDateRange);
  })
  .forEach(s => {
- const date = s.settlementDate;
+ const date = settlementAnalyticsReportingDate(s);
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
@@ -2473,10 +3174,329 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  filteredEmployeesData,
  onlineSalesData,
  onlinePayoutData,
+ aggregatorSettlements,
  timeFilter,
  effectiveStoreId,
  dateRange
  ]);
+
+ // Previous-period revenue/expenses/profit for the dashed comparison line on Revenue &
+ // Profit Trend. Deliberately a simpler calc than prepareProfitChartData above (skips the
+ // commission/legacy-payout reconciliation nuance) - good enough for a trend-shape
+ // comparison without touching that fragile, already-bugfixed logic for the main figures.
+ const previousProfitTrendData = useMemo(() => {
+ const byDate: Record<string, { revenue: number; expenses: number }> = {};
+ const bump = (date: string, field: 'revenue' | 'expenses', amount: number) => {
+ if (!byDate[date]) byDate[date] = { revenue: 0, expenses: 0 };
+ byDate[date][field] += amount;
+ };
+ previousPeriodSalesData.forEach((sale: any) => {
+ bump(sale.date, 'revenue', (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0));
+ });
+ (context.inventory || []).forEach((item: any) => {
+ if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
+ if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ bump(item.date, 'expenses', item.totalCost || 0);
+ });
+ (context.overheads || []).forEach((item: any) => {
+ if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
+ if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ bump(item.date, 'expenses', item.amount || 0);
+ });
+ (context.fixedCosts || []).forEach((item: any) => {
+ if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
+ if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ bump(item.date, 'expenses', item.amount || 0);
+ });
+ return Object.entries(byDate)
+ .sort(([a], [b]) => a.localeCompare(b))
+ .map(([date, d]) => ({ date, revenue: d.revenue, expenses: d.expenses, profit: d.revenue - d.expenses }));
+ }, [previousPeriodSalesData, context.inventory, context.overheads, context.fixedCosts, previousPeriodRange, effectiveStoreId]);
+
+ const profitChartDataWithPrev = useMemo(
+ () => zipPrev(profitChartData as any[], previousProfitTrendData, ['revenue', 'expenses', 'profit']),
+ [profitChartData, previousProfitTrendData]
+ );
+
+ // Previous-period totals for the Metrics Cards row's small "+/-% vs last period" line -
+ // a deliberately simpler parallel calc (same spirit as previousProfitTrendData just
+ // above) rather than trying to re-run the full calculateMetrics() a second time with a
+ // different date range. calculateMetrics closes over a dozen other component-state-tied
+ // memos (filteredSalesData, filteredInventoryData, activeSettlementDateRange, etc.) that
+ // would all need parameterizing too to do this "properly" - too large/risky a refactor
+ // for what's just a comparison indicator. Good enough for a trend-direction read, not
+ // guaranteed to match the headline numbers to the rupee.
+ const previousPeriodMetrics = useMemo(() => {
+ // Same store-or-its-linked-production-house match as filteredInventoryData/
+ // filteredOverheadData/filteredFixedCostsData above - without it, the "vs last month"
+ // % on a single store's card swings wildly depending on whether that store's production
+ // costs happen to be excluded (single store) or included (All Stores), instead of the
+ // two views telling a consistent story.
+ const inRange = (item: any) =>
+ item?.date && item.date >= previousPeriodRange.startDate && item.date <= previousPeriodRange.endDate &&
+ (effectiveStoreId
+ ? (item.storeId === effectiveStoreId || (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts))
+ : true);
+
+ const offlineRevenue = previousPeriodSalesData.reduce((sum: number, s: any) => sum + (s.paytmAmount || 0) + (s.cashAmount || 0), 0);
+ const onlineRevenue = previousPeriodSalesData.reduce((sum: number, s: any) => sum + (s.onlineSales || 0), 0)
+ + (context.onlineSalesData || []).filter(inRange).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
+ const revenue = offlineRevenue + onlineRevenue;
+
+ const inventoryExp = (context.inventory || []).filter(inRange).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
+ const overheadExp = (context.overheads || [])
+ .filter(inRange)
+ .filter((o: any) => !isCommissionEntry(o) && o.category !== 'personal_expense')
+ .reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
+ const fixedExp = (context.fixedCosts || []).filter(inRange).reduce((sum: number, f: any) => sum + (f.amount || 0), 0);
+
+ const previousSettlements = (context.aggregatorSettlements || [])
+ .filter((s: any) => settlementOverlapsPeriod(s, previousPeriodRange.startDate, previousPeriodRange.endDate) && (effectiveStoreId ? s.storeId === effectiveStoreId : true));
+ const commissionExpenses = previousSettlements.reduce((sum: number, s: any) => sum + (s.netCommission || 0), 0);
+ const settlementGrossSales = previousSettlements.reduce((sum: number, s: any) => sum + (s.grossSales || 0), 0);
+ const adSpend = previousSettlements.reduce((sum: number, s: any) => sum + (s.adSpend || 0), 0);
+
+ const totalExpenses = inventoryExp + overheadExp + fixedExp + commissionExpenses;
+ const netProfit = revenue - totalExpenses;
+ const profitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+
+ // Same "approved shortages" and "POS vs collected" checks as the Overview cards use,
+ // just re-run against the previous period's own sales records.
+ const cashDiscrepancy = previousPeriodSalesData
+ .filter((sale: any) => sale.approvalRequired === false && sale.approvedBy)
+ .reduce((sum: number, sale: any) => {
+ const offset = sale.salesDiscrepancy !== undefined ? sale.salesDiscrepancy : (sale.cashOffset || 0);
+ return sum + (offset < 0 ? Math.abs(offset) : 0);
+ }, 0);
+ const posSalesDiscrepancy = previousPeriodSalesData.reduce((sum: number, sale: any) => {
+ const collected = (sale.cashAmount || 0) + (sale.paytmAmount || 0);
+ const netOffline = sale.offlineSales || 0;
+ const gap = netOffline - collected;
+ return sum + (gap > 1 ? gap : 0);
+ }, 0);
+
+ // Paytm shortfalls (Cash & Reconciliation tab) - same stored paytmOffset field the
+ // current period's cashReconciliationChartData sums, just for the previous period.
+ const paytmDiscrepancy = previousPeriodSalesData.reduce((sum: number, sale: any) => {
+ const offset = sale.paytmOffset || 0;
+ return sum + (offset < 0 ? Math.abs(offset) : 0);
+ }, 0);
+
+ // Salary (Costs & Margins tab) - simplified vs. the current period's contract/permanent
+ // split (which depends on cross-referencing each payout's employee record); just the
+ // total payouts + personal-expense overhead in range is enough for a trend comparison.
+ const salaryExpenses = (payoutsData || [])
+ .filter((p: any) => p?.date >= previousPeriodRange.startDate && p.date <= previousPeriodRange.endDate)
+ .reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
+ + (context.overheads || [])
+ .filter(inRange)
+ .filter((o: any) => o.category === 'personal_expense')
+ .reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
+
+ return {
+ totalRevenue: revenue,
+ offlineRevenue,
+ onlineRevenue,
+ totalExpenses,
+ inventoryExpenses: inventoryExp,
+ overheadExpenses: overheadExp,
+ fixedCostsTotal: fixedExp,
+ salaryExpenses,
+ commissionExpenses,
+ matchedOnlineRevenueForCommission: settlementGrossSales,
+ adSpend,
+ netProfit,
+ profitMargin,
+ cashDiscrepancy,
+ posSalesDiscrepancy,
+ paytmDiscrepancy,
+ };
+ }, [previousPeriodSalesData, context.onlineSalesData, context.inventory, context.overheads, context.fixedCosts, context.aggregatorSettlements, payoutsData, previousPeriodRange, effectiveStoreId, effectiveProductionHouseIdForCosts]);
+
+ // % change vs. the previous period, and a short label naming what "previous period"
+ // means for the currently selected filter - mirrors previousPeriodRange's own logic.
+ const pctChange = (current: number, previous: number): number | null => {
+ if (!previous) return null;
+ return ((current - previous) / Math.abs(previous)) * 100;
+ };
+ const getPreviousPeriodLabel = () => {
+ switch (timeFilter) {
+ case 'today': return 'vs same day last week';
+ case 'yesterday': return 'vs same day last week';
+ case 'thisWeek': case 'lastWeek': return 'vs previous week';
+ case 'thisMonth': return 'vs last month (same date)';
+ case 'lastMonth': return 'vs month before';
+ case 'custom': return 'vs previous period';
+ default: return 'vs previous period';
+ }
+ };
+ const renderPctChange = (current: number, previous: number, goodDirection: 'up' | 'down' = 'up') => {
+ const change = pctChange(current, previous);
+ if (change === null) return null;
+ const isGood = goodDirection === 'up' ? change >= 0 : change <= 0;
+ const rounded = Math.abs(change) < 0.1 ? '0.0' : Math.abs(change).toFixed(1);
+ return (
+ <div className={`flex items-center gap-1 text-xs mt-0.5 ${isGood ? 'text-emerald-700' : 'text-red-700'}`}>
+ {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+ <span>{rounded}% {getPreviousPeriodLabel()}</span>
+ </div>
+ );
+ };
+ // Same as renderPctChange, but for the Overview cards' saturated gradient backgrounds -
+ // dark-on-dark emerald/red text there would be unreadable, so this uses a translucent
+ // white pill instead and leans on the arrow direction rather than a color swap for
+ // good/bad (the card's own background color already carries that signal there).
+ const renderPctChangeOnColor = (current: number, previous: number) => {
+ // A zero previous-period value (e.g. no discrepancies logged last month) makes "%
+ // change" undefined, not zero - pctChange returns null there and the card used to
+ // just show nothing, which read as "comparison forgotten" rather than "there wasn't
+ // one to compare against". Show that explicitly instead of going silent.
+ if (!previous) {
+ if (!current) return null; // both periods are genuinely zero - nothing worth saying
+ return (
+ <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
+ <span>New this period {getPreviousPeriodLabel()}</span>
+ </div>
+ );
+ }
+ const change = pctChange(current, previous);
+ if (change === null) return null;
+ const rounded = Math.abs(change) < 0.1 ? '0.0' : Math.abs(change).toFixed(1);
+ return (
+ <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
+ {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+ <span>{rounded}% {getPreviousPeriodLabel()}</span>
+ </div>
+ );
+ };
+
+ // Recharts' default <Legend> draws every entry as the same solid line swatch - it
+ // ignores strokeDasharray, so a "Revenue" entry and its dashed "Revenue (prev period)"
+ // sibling render as two identical green marks with no way to tell which is which just
+ // from the legend. This custom renderer draws the swatch itself, dashed for any entry
+ // whose dataKey is the zipPrev "prev_X" convention used across the comparison charts.
+ const renderPrevAwareLegend = (props: any) => {
+ const payload = props?.payload;
+ if (!payload || payload.length === 0) return null;
+ return (
+ <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 mt-2 list-none p-0">
+ {payload.map((entry: any, index: number) => {
+ const isPrev = typeof entry.dataKey === 'string' && entry.dataKey.startsWith('prev_');
+ return (
+ <li key={`legend-${entry.dataKey || entry.value || index}`} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+ <svg width="18" height="10" className="flex-shrink-0" aria-hidden="true">
+ <line
+ x1="0" y1="5" x2="18" y2="5"
+ stroke={entry.color}
+ strokeWidth={2}
+ strokeDasharray={isPrev ? '4 3' : undefined}
+ />
+ </svg>
+ <span style={{ color: entry.color }}>{entry.value}</span>
+ </li>
+ );
+ })}
+ </ul>
+ );
+ };
+
+ // Commission %/ad spend trend - grouped by the sales period covered by the settlement,
+ // while settlementDate remains the payout/bank date in the reconciliation table.
+ const commissionAdSpendChartData = useMemo(() => {
+ const timeFiltered = context.aggregatorSettlements.filter((s: any) => settlementOverlapsAnalyticsRange(s, activeSettlementDateRange));
+ const storeFiltered = effectiveStoreId ? timeFiltered.filter((s: any) => s.storeId === effectiveStoreId) : timeFiltered;
+ const byDate: Record<string, { grossSales: number; netCommission: number; adSpend: number }> = {};
+ storeFiltered.forEach((s: any) => {
+ const date = settlementAnalyticsReportingDate(s);
+ if (!byDate[date]) byDate[date] = { grossSales: 0, netCommission: 0, adSpend: 0 };
+ byDate[date].grossSales += s.grossSales || 0;
+ byDate[date].netCommission += s.netCommission || 0;
+ byDate[date].adSpend += s.adSpend || 0;
+ });
+ return Object.keys(byDate).sort().map(date => ({
+ date,
+ period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+ commissionPct: byDate[date].grossSales > 0 ? Math.round((byDate[date].netCommission / byDate[date].grossSales) * 1000) / 10 : 0,
+ adSpend: Math.round(byDate[date].adSpend)
+ }));
+ }, [context.aggregatorSettlements, effectiveStoreId, timeFilter, dateRange]);
+
+ // Discount-by-promo-code and Channel Economics data now live in OnlineSalesTab.tsx,
+ // alongside the settlements/orders they're derived from.
+
+ // Channel mix over time - offline (from salesData) vs Zomato/Swiggy (from onlineSalesData).
+ const channelMixChartData = useMemo(() => {
+ const salesTimeFiltered = filterByTimeRange(context.salesData, 'date');
+ const salesFiltered = effectiveStoreId ? salesTimeFiltered.filter((s: any) => s.storeId === effectiveStoreId) : salesTimeFiltered;
+ const onlineTimeFiltered = filterByTimeRange(context.onlineSalesData, 'date');
+ const onlineFiltered = effectiveStoreId ? onlineTimeFiltered.filter((s: any) => s.storeId === effectiveStoreId) : onlineTimeFiltered;
+
+ const byDate: Record<string, { offline: number; zomato: number; swiggy: number }> = {};
+ salesFiltered.forEach((s: any) => {
+ if (!byDate[s.date]) byDate[s.date] = { offline: 0, zomato: 0, swiggy: 0 };
+ byDate[s.date].offline += s.offlineSales || 0;
+ });
+ onlineFiltered.forEach((s: any) => {
+ if (!byDate[s.date]) byDate[s.date] = { offline: 0, zomato: 0, swiggy: 0 };
+ byDate[s.date].zomato += s.zomatoSales || 0;
+ byDate[s.date].swiggy += s.swiggySales || 0;
+ });
+ return Object.keys(byDate).sort().map(date => ({
+ date,
+ period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+ Offline: Math.round(byDate[date].offline),
+ Zomato: Math.round(byDate[date].zomato),
+ Swiggy: Math.round(byDate[date].swiggy)
+ }));
+ }, [context.salesData, context.onlineSalesData, effectiveStoreId, timeFilter, dateRange]);
+
+ // Per-day cash/Paytm discrepancy trend for the Cash & Reconciliation tab. Uses the same
+ // salesDiscrepancy-first, cashOffset-fallback rule as calculateCashDiscrepancy() above, so
+ // the "losses this period" total on that tile matches the sum of the loss bars here.
+ const cashReconciliationChartData = useMemo(() => {
+ const timeFiltered = filterByTimeRange(context.salesData, 'date');
+ const storeFiltered = effectiveStoreId ? timeFiltered.filter((s: any) => s.storeId === effectiveStoreId) : timeFiltered;
+ const byDate: Record<string, { cashOffset: number; paytmOffset: number; storeIds: Set<string> }> = {};
+ storeFiltered.forEach((s: any) => {
+ if (!byDate[s.date]) byDate[s.date] = { cashOffset: 0, paytmOffset: 0, storeIds: new Set() };
+ const cashOffset = s.salesDiscrepancy !== undefined ? s.salesDiscrepancy : (s.cashOffset || 0);
+ byDate[s.date].cashOffset += cashOffset;
+ byDate[s.date].paytmOffset += s.paytmOffset || 0;
+ if (s.storeId) byDate[s.date].storeIds.add(s.storeId);
+ });
+ return Object.keys(byDate).sort().map(date => ({
+ date,
+ period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+ 'Cash Offset': Math.round(byDate[date].cashOffset),
+ 'Paytm Offset': Math.round(byDate[date].paytmOffset),
+ storeCount: byDate[date].storeIds.size
+ }));
+ }, [context.salesData, effectiveStoreId, timeFilter, dateRange]);
+
+ // Per-store discrepancy totals for the current period, worst first, so a cluster head
+ // (viewing "All Stores") can see which store to look into.
+ const cashReconciliationByStore = useMemo(() => {
+ if (effectiveStoreId) return [];
+ const timeFiltered = filterByTimeRange(context.salesData, 'date');
+ const byStore: Record<string, { cashLoss: number; paytmLoss: number }> = {};
+ timeFiltered.forEach((s: any) => {
+ const storeId = s.storeId || 'unknown';
+ if (!byStore[storeId]) byStore[storeId] = { cashLoss: 0, paytmLoss: 0 };
+ const cashOffset = s.salesDiscrepancy !== undefined ? s.salesDiscrepancy : (s.cashOffset || 0);
+ if (cashOffset < 0) byStore[storeId].cashLoss += Math.abs(cashOffset);
+ if ((s.paytmOffset || 0) < 0) byStore[storeId].paytmLoss += Math.abs(s.paytmOffset);
+ });
+ return Object.entries(byStore)
+ .map(([storeId, v]) => ({
+ storeId,
+ storeName: (context.stores || []).find((st: any) => st.id === storeId)?.name || storeId,
+ cashLoss: Math.round(v.cashLoss),
+ paytmLoss: Math.round(v.paytmLoss),
+ totalLoss: Math.round(v.cashLoss + v.paytmLoss)
+ }))
+ .filter(row => row.totalLoss > 0)
+ .sort((a, b) => b.totalLoss - a.totalLoss);
+ }, [context.salesData, context.stores, effectiveStoreId, timeFilter, dateRange]);
 
  // Prepare expense breakdown by category
  const prepareExpenseBreakdown = () => {
@@ -2592,6 +3612,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const unrealizedProfit = metrics.netProfit;
  const realizedProfit = unrealizedProfit - totalCashDiscrepancy;
 
+ // POS sales discrepancy: how much Cash + Paytm (entered by the store incharge) falls
+ // short of the Net offline sales the POS reported for that day - duplicate KOTs, cash
+ // lost at the counter, or an order that went unpaid during rush hour. Distinct from the
+ // Cash Discrepancy above (which is the counted-cash-vs-expected check); this one flags
+ // when the POS's own sales total doesn't reconcile against what was actually collected.
+ const calculatePosSalesDiscrepancy = () => {
+ return filteredSalesData.reduce((sum, sale) => {
+ const collected = (sale.cashAmount || 0) + (sale.paytmAmount || 0);
+ const netOffline = sale.offlineSales || 0;
+ const gap = netOffline - collected;
+ return sum + (gap > 1 ? gap : 0);
+ }, 0);
+ };
+
+ const totalPosSalesDiscrepancy = calculatePosSalesDiscrepancy();
+
  if (loading) {
  return (
  <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
@@ -2603,13 +3639,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return (
  <div className="min-h-screen bg-gray-50 p-3 sm:p-6">
  <div className="max-w-7xl mx-auto">
- {/* Header */}
+ {/* Header - only rendered when the Analytics Mode Selector hero card below won't
+ also show its own "Analytics Dashboard" title, so the two never stack and repeat
+ the same heading (that used to happen for every cluster head/manager/incharge/audit
+ user - this header is only needed for roles that skip the hero card entirely). */}
+ {!(isClusterHead || isManager || isProductionIncharge || isStoreIncharge || isAudit) && (
  <div className="mb-4 sm:mb-8 flex items-center justify-between">
- <div>
- <h1 className="text-2xl sm:text-3xl text-gray-900 mb-1 sm:mb-2">Analytics Dashboard</h1>
- <p className="text-sm sm:text-base text-gray-600">Track revenue, expenses, and profitability</p>
+ <div className="flex items-center gap-3 sm:gap-4">
+ <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
+ <BarChart3 className="w-6 h-6 text-white" />
  </div>
- 
+ <div>
+ <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Analytics Dashboard</h1>
+ <p className="text-sm sm:text-base text-gray-500">Track revenue, expenses, and profitability</p>
+ </div>
+ </div>
+ </div>
+ )}
+
  {/* Cleanup Button for Cluster Heads - Removed */}
  {isClusterHead && false && (
  <div className="flex gap-2">
@@ -2657,7 +3704,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Migration Button for Stock Request Timestamps */}
  <button
  onClick={async () => {
- if (!confirm('🔄 This will update all stock request IDs to include timestamps.\\n\\nThis enables proper tracking of when requests were created in the Data Capture view.\\n\\nThis is a ONE-TIME operation. Continue?')) {
+ if (!confirm('🔄 This will update all stock request IDs to include timestamps.\\n\\nThis enables proper tracking of when requests were created in the Performance Tracker view.\\n\\nThis is a ONE-TIME operation. Continue?')) {
  return;
  }
  
@@ -2728,131 +3775,121 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
  </div>
 
- {/* Leave Alert Bar */}
+ {/* Leave Alert Bar - covers the rest of the week (today through Sunday), not just today
+ and not days that have already passed, so a cluster head/manager sees what's coming. */}
  {!loadingLeaves && (context.user?.role === 'cluster_head' || context.user?.role === 'manager') && (
- <div 
+ <button
  onClick={() => setShowLeaveModal(true)}
- className={`mb-4 sm:mb-6 rounded-lg shadow-sm border-2 p-4 transition-all cursor-pointer hover:shadow-md ${
- todayLeaveCount === 0
- ? 'bg-green-50 border-green-200 hover:bg-green-100'
- : 'bg-orange-50 border-orange-200 hover:bg-orange-100'
+ className={`w-full text-left mb-4 sm:mb-6 rounded-2xl shadow-sm border p-4 sm:p-5 transition-all hover:shadow-md ${
+ weekLeaveSummary.upcomingCount === 0
+ ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200/70'
+ : 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200/70'
  }`}
  >
- <div className="flex items-center gap-3">
- {todayLeaveCount === 0 ? (
+ <div className="flex items-center gap-4">
+ <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
+ weekLeaveSummary.upcomingCount === 0 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600'
+ }`}>
+ {weekLeaveSummary.upcomingCount === 0 ? <Users className="w-5 h-5" /> : <UserX className="w-5 h-5" />}
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center gap-2 flex-wrap">
+ <p className={`font-semibold ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-900' : 'text-amber-900'}`}>
+ {weekLeaveSummary.upcomingCount === 0
+ ? 'Everyone is working this week'
+ : `${weekLeaveSummary.upcomingCount} leave${weekLeaveSummary.upcomingCount === 1 ? '' : 's'} this week`}
+ </p>
+ <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-white/70 border border-gray-200 rounded-full px-2 py-0.5">
+ <CalendarDays className="w-3 h-3" /> {weekLeaveSummary.rangeLabel}
+ </span>
+ </div>
+ <p className={`text-sm mt-1 ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+ {weekLeaveSummary.upcomingCount === 0
+ ? 'No employees on leave across all stores'
+ : (
  <>
- <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
- <Users className="w-5 h-5 text-green-600" />
- </div>
- <div className="flex-1">
- <p className="text-green-900">
- <span className="text-green-600">✓</span> Everyone is working today
- </p>
- <p className="text-sm text-green-700 mt-0.5">
- {context.user.storeId ? 'No employees on leave in this store' : 'No employees on leave across all stores'}
- </p>
- </div>
- <div className="text-green-600 text-sm">Click to view</div>
- </>
- ) : (
+ Across all stores
+ {(weekLeaveSummary.fullDayCount > 0 || weekLeaveSummary.halfDayCount > 0) && (
  <>
- <div className="flex-shrink-0 w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
- <UserX className="w-5 h-5 text-orange-600" />
- </div>
- <div className="flex-1">
- <p className="text-orange-900">
- <span className="text-orange-700">{todayLeaveCount}</span> {todayLeaveCount === 1 ? 'person is' : 'people are'} on leave today
- </p>
- <p className="text-sm text-orange-700 mt-0.5">
- {context.user.storeId ? 'In this store' : 'Across all stores'}
- </p>
- </div>
- <div className="text-orange-600 text-sm">Click to view details</div>
+ {' · '}
+ {weekLeaveSummary.fullDayCount > 0 && `${weekLeaveSummary.fullDayCount} full day${weekLeaveSummary.fullDayCount === 1 ? '' : 's'}`}
+ {weekLeaveSummary.fullDayCount > 0 && weekLeaveSummary.halfDayCount > 0 && ', '}
+ {weekLeaveSummary.halfDayCount > 0 && `${weekLeaveSummary.halfDayCount} half day${weekLeaveSummary.halfDayCount === 1 ? '' : 's'}`}
  </>
  )}
+ </>
+ )}
+ </p>
  </div>
+ <ChevronRight className={`w-5 h-5 flex-shrink-0 ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-400' : 'text-amber-400'}`} />
  </div>
+ </button>
  )}
 
- {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, Store Incharges, and Audit Users */}
+ {/* Analytics Mode Selector - For Cluster Heads, Managers, Production Incharges, Store Incharges, and Audit Users.
+ A dark hero card with a frosted-glass segmented toggle reads as a deliberate piece of
+ UI rather than the flat pale-orange box this used to be. */}
  {(isClusterHead || isManager || isProductionIncharge || isStoreIncharge || isAudit) && (
- <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-2xl shadow-lg mb-6 p-4 border border-orange-200">
- <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
- <h3 className="text-orange-900" style={{ fontSize: '16px', fontWeight: '700' }}>
+ <div className="relative overflow-hidden rounded-2xl shadow-xl mb-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 sm:p-5">
+ <div className="absolute -top-16 -right-10 w-48 h-48 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
+ <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+ <div className="flex items-center gap-3 min-w-0">
+ <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/40 flex-shrink-0">
+ <BarChart3 className="w-5 h-5 text-white" />
+ </div>
+ <div className="min-w-0">
+ <h3 className="text-white font-bold tracking-tight text-base sm:text-lg">
  {isStoreIncharge ? 'Store Analytics Dashboard' : isAudit ? 'Audit Analytics Dashboard' : 'Analytics Dashboard'}
  </h3>
+ <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
+ {analyticsMode === 'store'
+ ? 'Track revenue, expenses, and profitability across stores'
+ : 'Monitor production metrics, wastage, and SOP compliance'}
+ </p>
+ </div>
+ </div>
  {/* Only show mode selector if not Store Incharge (they only see Store Analytics) */}
  {!isStoreIncharge && (
- <div className="flex items-center gap-2 bg-white rounded-lg p-1 shadow-sm self-start sm:self-auto">
+ <div className="flex items-center gap-1 bg-white/10 backdrop-blur-sm rounded-xl p-1 self-start sm:self-auto border border-white/10 flex-shrink-0">
  <button
  onClick={() => setAnalyticsMode('store')}
- className={`px-4 py-2 rounded-md transition-all duration-200 ${
+ className={`px-4 py-2 rounded-lg transition-all duration-200 ${
  analyticsMode === 'store'
- ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
- : 'text-gray-600 hover:text-gray-900'
+ ? 'bg-white text-slate-900 shadow-md'
+ : 'text-slate-300 hover:text-white'
  }`}
  >
  <div className="flex items-center gap-2">
  <ShoppingCart className="w-4 h-4" />
- <span style={{ fontSize: '14px', fontWeight: '600' }}>Store Analytics</span>
+ <span className="text-sm font-semibold">Store Analytics</span>
  </div>
  </button>
  <button
  onClick={() => setAnalyticsMode('production')}
- className={`px-4 py-2 rounded-md transition-all duration-200 ${
+ className={`px-4 py-2 rounded-lg transition-all duration-200 ${
  analyticsMode === 'production'
- ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
- : 'text-gray-600 hover:text-gray-900'
+ ? 'bg-white text-slate-900 shadow-md'
+ : 'text-slate-300 hover:text-white'
  }`}
  >
  <div className="flex items-center gap-2">
  <Factory className="w-4 h-4" />
- <span style={{ fontSize: '14px', fontWeight: '600' }}>Production Analytics</span>
+ <span className="text-sm font-semibold">Production Analytics</span>
  </div>
  </button>
  </div>
  )}
  </div>
- <p className="text-orange-700 text-sm">
- {analyticsMode === 'store' 
- ? 'Track revenue, expenses, and profitability across stores' 
- : 'Monitor production metrics, wastage, and SOP compliance'}
- </p>
  </div>
  )}
 
- {/* Local Store Selector - Only in Store Analytics Mode */}
- {analyticsMode === 'store' && (
- <>
- {(isClusterHead || isManager || isProductionIncharge || isAudit) ? (
- <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
- <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
- <div>
- <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
- Store Selection
- </h3>
- <p className="text-blue-700 text-sm mt-1">
- Select a store to view its analytics data
- </p>
- </div>
- <select
- value={localSelectedStoreId || ''}
- onChange={(e) => setLocalSelectedStoreId(e.target.value || null)}
- className="px-4 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
- style={{ fontSize: '14px', fontWeight: '600' }}
- >
- <option value="">All Stores</option>
- {context.stores?.map((store) => (
- <option key={store.id} value={store.id}>
- {store.name} (ID: {store.id})
- </option>
- ))}
- </select>
- </div>
- </div>
- ) : (
- // Info banner for employees showing their store
- context.user?.storeId && (
+ {/* Store selection itself now lives in exactly one place: the global store picker at
+ the top of the app (cluster head only). This used to also have its own separate
+ dropdown here that could fall out of sync with that global one - removed rather than
+ kept in sync, so there's only ever one control to look at. */}
+ {analyticsMode === 'store' && !(isClusterHead || isManager || isProductionIncharge || isAudit) && context.user?.storeId && (
+ // Info banner for plain employees, who don't get the global store picker - shows
+ // which store their data is for, without offering a (redundant, permission-less) choice.
  <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
  <div className="flex items-center gap-3">
  <ShoppingCart className="w-6 h-6 text-blue-600" />
@@ -2866,9 +3903,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  </div>
  </div>
- )
- )}
- </>
  )}
 
  {/* Production House Selector - Only in Production Analytics Mode */}
@@ -2926,81 +3960,100 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* View Selector */}
  <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl shadow-lg mb-6 p-2 border border-gray-200">
  {analyticsMode === 'store' ? (
- // Store Analytics Tabs
- <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
+ // Store Analytics Tabs - reorganized around business questions rather than the
+ // org chart (see the Analytics page redesign). 'profit'/'expense'/'sales' keep
+ // their original internal activeView values, just relabeled + given new content.
+ <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-2">
+ <button
+ onClick={() => setActiveView('overview')}
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'overview'
+ ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/50'
+ : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ }`}
+ >
+ <div className="flex flex-col items-center gap-2">
+ <BarChart3 className={`w-6 h-6 ${activeView === 'overview' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Overview</span>
+ </div>
+ {activeView === 'overview' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-purple-500 rounded-full"></div>
+ )}
+ </button>
+
  <button
  onClick={() => setActiveView('profit')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'profit' 
- ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/50' 
+ activeView === 'profit'
+ ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
  <TrendingUp className={`w-6 h-6 ${activeView === 'profit' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Profit Analysis</span>
+ <span className="font-semibold text-sm">Revenue & Channels</span>
  </div>
  {activeView === 'profit' && (
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-emerald-500 rounded-full"></div>
  )}
  </button>
- 
- <button
- onClick={() => setActiveView('expense')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'expense' 
- ? 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-lg shadow-rose-500/50' 
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
- }`}
- >
- <div className="flex flex-col items-center gap-2">
- <DollarSign className={`w-6 h-6 ${activeView === 'expense' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Expenses</span>
- </div>
- {activeView === 'expense' && (
- <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
- )}
- </button>
- 
+
  <button
  onClick={() => setActiveView('sales')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'sales' 
- ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50' 
+ activeView === 'sales'
+ ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
  <ShoppingCart className={`w-6 h-6 ${activeView === 'sales' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Sales Analytics</span>
+ <span className="font-semibold text-sm">Item Performance</span>
  </div>
  {activeView === 'sales' && (
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
  )}
  </button>
- 
+
  <button
- onClick={() => setActiveView('datacapture')}
+ onClick={() => setActiveView('expense')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'datacapture' 
- ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50' 
+ activeView === 'expense'
+ ? 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-lg shadow-rose-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
- <Package className={`w-6 h-6 ${activeView === 'datacapture' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Data Capture</span>
+ <DollarSign className={`w-6 h-6 ${activeView === 'expense' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Costs & Margins</span>
  </div>
- {activeView === 'datacapture' && (
- <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-orange-500 rounded-full"></div>
+ {activeView === 'expense' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
  )}
  </button>
- 
+
+ <button
+ onClick={() => setActiveView('cash-reconciliation')}
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'cash-reconciliation'
+ ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50'
+ : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ }`}
+ >
+ <div className="flex flex-col items-center gap-2">
+ <Wallet className={`w-6 h-6 ${activeView === 'cash-reconciliation' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Cash & Reconciliation</span>
+ </div>
+ {activeView === 'cash-reconciliation' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-teal-500 rounded-full"></div>
+ )}
+ </button>
+
  <button
  onClick={() => setActiveView('production-requests')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'production-requests' 
- ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50' 
+ activeView === 'production-requests'
+ ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
@@ -3012,32 +4065,37 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
  )}
  </button>
- 
+
  <button
- onClick={() => setActiveView('store-recalibration')}
+ onClick={() => setActiveView('stock-request-analysis')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'store-recalibration' 
- ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50' 
+ activeView === 'stock-request-analysis'
+ ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
- <CheckCircle className={`w-6 h-6 ${activeView === 'store-recalibration' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
- <span className="font-semibold text-sm">Recalibration</span>
+ <BarChart3 className={`w-6 h-6 ${activeView === 'stock-request-analysis' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Store-Production SLA</span>
  </div>
- {activeView === 'store-recalibration' && (
- <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-teal-500 rounded-full"></div>
+ {activeView === 'stock-request-analysis' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-indigo-500 rounded-full"></div>
  )}
  </button>
  </div>
  ) : (
- // Production Analytics Tabs - Production and Recalibration
- <div className="grid grid-cols-2 gap-2">
+ // Production Analytics Tabs - Production, Recalibration, and (for whoever can
+ // actually use it) Production Management itself - opened from here instead of its
+ // own top-level menu entry, same idea as "Manage Items" opening Inventory Items
+ // from Store Analytics. This tab navigates away to a different page (App.tsx's
+ // ProductionManagement.tsx) rather than switching a local sub-view, so it calls
+ // onNavigateToProductionManagement instead of this component's own setActiveView.
+ <div className={`grid gap-2 ${(isProductionIncharge || isOperationsManager || isClusterHead) && onNavigateToProductionManagement ? 'grid-cols-3' : 'grid-cols-2'}`}>
  <button
  onClick={() => setActiveView('production')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'production' 
- ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50' 
+ activeView === 'production'
+ ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
@@ -3056,8 +4114,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  setActiveView('recalibration-reports');
  }}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'recalibration-reports' 
- ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50' 
+ activeView === 'recalibration-reports'
+ ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50'
  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
@@ -3069,62 +4127,41 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-teal-500 rounded-full"></div>
  )}
  </button>
+
+ {(isProductionIncharge || isOperationsManager || isClusterHead) && onNavigateToProductionManagement && (
+ <button
+ onClick={onNavigateToProductionManagement}
+ className="group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md"
+ title="Open Production Management to log today's production"
+ >
+ <div className="flex flex-col items-center gap-2">
+ <ClipboardList className="w-6 h-6 group-hover:scale-110 transition-transform" />
+ <span className="font-semibold text-sm">Production Management</span>
+ </div>
+ </button>
+ )}
  </div>
  )}
  </div>
 
- {/* Profit Analysis View */}
+ {/* Profit Analytics View */}
  {activeView === 'profit' && (
  <div>
  <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md shadow-blue-500/30 flex-shrink-0">
+ <TrendingUp className="w-5 h-5 text-white" />
+ </div>
  <div>
- <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Profit Analysis</h2>
- <p className="text-xs sm:text-sm text-gray-600">Revenue, expenses, and profit breakdown</p>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Revenue & Channels</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Revenue, expenses, profit, and how commission/ad spend/channel mix are trending</p>
+ </div>
  </div>
 
  <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
  {/* Time Filter */}
  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
-
- {/* Export Buttons */}
- <div className="flex gap-2">
- <button
- onClick={() => {
- const storeName = context.stores?.find(s => s.id === selectedStoreId)?.name || 'All_Stores';
- exportUtils.exportAnalyticsReport({
- salesData: filteredSalesData,
- inventoryData: filteredInventoryData,
- overheadData: filteredOverheadData,
- metrics,
- storeName,
- dateRange: timeFilter === 'custom' ? { start: dateRange.from, end: dateRange.to } : undefined
- });
- toast.success('Analytics report exported!');
- }}
- className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
- >
- <Download className="w-4 h-4" />
- <span className="hidden sm:inline">Export</span>
- <span className="sm:hidden">JSON</span>
- </button>
- <button
- onClick={() => {
- const storeName = context.stores?.find(s => s.id === selectedStoreId)?.name || 'All_Stores';
- exportUtils.exportAllData({
- salesData: filteredSalesData,
- inventoryData: filteredInventoryData,
- overheadData: filteredOverheadData,
- storeName
- });
- toast.success('Data exported as CSV files!');
- }}
- className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap"
- >
- <FileText className="w-4 h-4" />
- <span className="hidden sm:inline">CSV</span>
- </button>
- </div>
  </div>
  </div>
 
@@ -3153,51 +4190,68 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Metrics Cards */}
+ {/* Metrics Cards - same saturated-gradient card language as the Overview tab, so the
+ whole Analytics section reads as one consistent design instead of each tab having its
+ own take on "metric card". */}
  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
- <div className="bg-blue-100 rounded-lg p-3 sm:p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Revenue</div>
- <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalRevenue.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
+ <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-blue-100 mb-1">Total Revenue</div>
+ <div className="text-2xl font-semibold">₹{metrics.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-blue-100 mt-1">{getPeriodLabel()}</div>
+ {renderPctChangeOnColor(metrics.totalRevenue, previousPeriodMetrics.totalRevenue)}
  </div>
 
- <div className="bg-red-100 rounded-lg p-3 sm:p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
- <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.totalExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
+ <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Total Expenses</div>
+ <div className="text-2xl font-semibold">₹{metrics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-red-100 mt-1">{getPeriodLabel()}</div>
+ {renderPctChangeOnColor(metrics.totalExpenses, previousPeriodMetrics.totalExpenses)}
  </div>
 
- <div className="bg-orange-100 rounded-lg p-3 sm:p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Aggregator Commission</div>
- <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{metrics.commissionExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">
- {metrics.onlineRevenue > 0 ? `${((metrics.commissionExpenses / metrics.onlineRevenue) * 100).toFixed(1)}% of online` : 'No data'}
+ <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Aggregator Commission</div>
+ <div className="text-2xl font-semibold">₹{metrics.commissionExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-orange-100 mt-1">
+ {metrics.matchedOnlineRevenueForCommission > 0 ? `${((metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100).toFixed(1)}% of online` : 'No data'}
  </div>
+ {renderPctChangeOnColor(metrics.commissionExpenses, previousPeriodMetrics.commissionExpenses)}
  </div>
 
- <div className="bg-green-100 rounded-lg p-3 sm:p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Net Profit</div>
- <div className="text-xl sm:text-2xl text-gray-900 mb-1">₹{realizedProfit.toLocaleString()}</div>
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Net Profit</div>
+ <div className="text-2xl font-semibold">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  {metrics.totalRevenue > 0 ? (
- <div className="flex items-center gap-1 text-xs text-gray-600">
+ <div className="flex items-center gap-1 text-xs text-emerald-100 mt-1">
  <TrendingUp className="w-3 h-3" />
  Includes commission
  </div>
  ) : (
- <div className="text-xs text-gray-600">No data yet</div>
+ <div className="text-xs text-emerald-100 mt-1">No data yet</div>
  )}
+ {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
  </div>
 
- <div className="bg-yellow-100 rounded-lg p-3 sm:p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Profit Margin</div>
- <div className="text-xl sm:text-2xl text-gray-900 mb-1">{metrics.profitMargin.toFixed(1)}%</div>
- <div className="text-xs text-gray-600">Of total revenue</div>
+ <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-yellow-100 mb-1">Profit Margin</div>
+ <div className="text-2xl font-semibold">{metrics.profitMargin.toFixed(1)}%</div>
+ <div className="text-xs text-yellow-100 mt-1">Of total revenue</div>
+ {/* A % change of a % value reads oddly ("40% higher margin") - a plain point
+ difference ("+3.2 pts") is the more natural way to compare margins. */}
+ {previousPeriodMetrics.totalRevenue > 0 && (() => {
+ const diff = metrics.profitMargin - previousPeriodMetrics.profitMargin;
+ return (
+ <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
+ {diff >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+ <span>{Math.abs(diff).toFixed(1)} pts {getPreviousPeriodLabel()}</span>
+ </div>
+ );
+ })()}
  </div>
  </div>
 
  {/* Profit Breakdown - Realized vs Unrealized */}
  <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8 border-2 border-blue-200">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4 flex items-center gap-2">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
  <TrendingUp className="w-5 h-5 text-blue-600" />
  Profit Breakdown
  </h3>
@@ -3205,14 +4259,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Unrealized Profit */}
  <div className="bg-white rounded-lg p-4 shadow-sm">
  <div className="text-xs sm:text-sm text-gray-600 mb-2">Unrealized Profit</div>
- <div className="text-xl sm:text-2xl text-blue-600 mb-2">₹{unrealizedProfit.toLocaleString()}</div>
+ <div className="text-xl sm:text-2xl text-blue-600 mb-2">₹{unrealizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-gray-500">Before cash discrepancies</div>
  </div>
  
  {/* Cash Discrepancy */}
  <div className="bg-white rounded-lg p-4 shadow-sm">
  <div className="text-xs sm:text-sm text-gray-600 mb-2">Cash Discrepancy (Loss)</div>
- <div className="text-xl sm:text-2xl text-red-600 mb-2">-₹{totalCashDiscrepancy.toLocaleString()}</div>
+ <div className="text-xl sm:text-2xl text-red-600 mb-2">-₹{totalCashDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-gray-500">Approved losses</div>
  </div>
  
@@ -3222,7 +4276,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  Realized Profit
  <span className="text-xs text-green-600">(Actual)</span>
  </div>
- <div className="text-xl sm:text-2xl text-green-600 mb-2">₹{realizedProfit.toLocaleString()}</div>
+ <div className="text-xl sm:text-2xl text-green-600 mb-2">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-gray-500">
  {metrics.totalRevenue > 0 
  ? `${((realizedProfit / metrics.totalRevenue) * 100).toFixed(1)}% margin`
@@ -3236,7 +4290,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="flex items-start gap-2">
  <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5" />
  <div className="text-xs text-amber-800">
- <strong>Impact:</strong> Cash discrepancies represent actual cash shortages that have been approved by management and reduce the realized profit by ₹{totalCashDiscrepancy.toLocaleString()}.
+ <strong>Impact:</strong> Cash discrepancies represent actual cash shortages that have been approved by management and reduce the realized profit by ₹{totalCashDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}.
  </div>
  </div>
  </div>
@@ -3245,7 +4299,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Daily Profit Trend */}
  <div className="mb-6 sm:mb-8 overflow-x-auto">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">
  Daily Performance - {getPeriodLabel()}
  </h3>
  <div className="min-w-[260px]">
@@ -3264,7 +4318,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <Legend key="profit-line-legend" wrapperStyle={{ fontSize: '12px' }} />
  <Line key="revenue-line" type="monotone" dataKey="revenue" stroke="#14b8a6" strokeWidth={2.5} name="Revenue" dot={{ fill: '#14b8a6', r: 4 }} />
  <Line key="expenses-line" type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} name="Expenses" dot={{ fill: '#ef4444', r: 4 }} />
- <Line key="profit-line" type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.5} name="Profit" dot={{ fill: '#10b981', r: 4 }} />
+ <Line key="profit-line" type="monotone" dataKey="profit" stroke="#3b82f6" strokeWidth={2.5} name="Profit" dot={{ fill: '#3b82f6', r: 4 }} />
  </LineChart>
  </ResponsiveContainer>
  </div>
@@ -3319,71 +4373,183 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
  </div>
 
- {/* Profitability Metrics */}
+ {/* Commission % and Ad Spend trends - previously only shown as flat current-period
+ tiles, now charted over time so a creeping commission rate or ad spend spike is
+ visible before it eats into margin (Analytics page redesign). */}
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 sm:mb-6">
  <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
- <div className="flex items-center gap-2 mb-3 sm:mb-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
  <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
- <h3 className="text-base sm:text-lg text-gray-900">Profitability Metrics</h3>
+ Commission % Trend
+ </h3>
+ {commissionAdSpendChartData.length > 0 ? (
+ <ResponsiveContainer width="100%" height={220}>
+ <LineChart data={commissionAdSpendChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} unit="%" />
+ <Tooltip formatter={(value: number) => [`${value}%`, 'Commission']} />
+ <Line type="monotone" dataKey="commissionPct" stroke="#f97316" strokeWidth={2} name="Commission %" dot={{ r: 3 }} />
+ </LineChart>
+ </ResponsiveContainer>
+ ) : (
+ <div className="text-center text-gray-500 py-8 text-sm">No settlements in this period</div>
+ )}
+ </div>
+
+ <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-sky-600" />
+ Ad Spend Trend
+ </h3>
+ {commissionAdSpendChartData.length > 0 ? (
+ <ResponsiveContainer width="100%" height={220}>
+ <BarChart data={commissionAdSpendChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip content={<CustomTooltip />} />
+ <Bar dataKey="adSpend" fill="#0ea5e9" name="Ad Spend" radius={[4, 4, 0, 0]} />
+ </BarChart>
+ </ResponsiveContainer>
+ ) : (
+ <div className="text-center text-gray-500 py-8 text-sm">No settlements in this period</div>
+ )}
+ </div>
+ </div>
+
+ {/* Zomato Discount % of Menu Subtotal / Promo vs Flat-off charts moved to the
+ Aggregator Payout tab (OnlineSalesTab.tsx), right next to the settlements they're
+ derived from, using that page's own date-range filter instead of a separate one. */}
+
+ {/* Discount by Promo Code / Channel Economics moved to the Aggregator Payout tab
+ (OnlineSalesTab.tsx), right next to the settlements/orders they're derived from,
+ using that page's own date-range filter instead of a separate one. */}
+
+ {/* Channel mix over time */}
+ <div className="border border-gray-200 rounded-lg p-4 sm:p-6 mb-4 sm:mb-6">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+ Channel Mix Over Time
+ </h3>
+ {channelMixChartData.length > 0 ? (
+ <ResponsiveContainer width="100%" height={280}>
+ <BarChart data={channelMixChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip content={<CustomTooltip />} />
+ <Legend />
+ <Bar dataKey="Offline" stackId="channel" fill="#3b82f6" />
+ <Bar dataKey="Zomato" stackId="channel" fill="#ef4444" />
+ <Bar dataKey="Swiggy" stackId="channel" fill="#f97316" radius={[4, 4, 0, 0]} />
+ </BarChart>
+ </ResponsiveContainer>
+ ) : (
+ <div className="text-center text-gray-500 py-8 text-sm">No data available</div>
+ )}
+ </div>
+
+ {/* Profitability Metrics */}
+ <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <div className="flex items-center gap-2 mb-4">
+ <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900">Profitability Metrics</h3>
  </div>
  <div className="space-y-3">
  {/* Profit Margin */}
- <div className="bg-orange-50 p-3 sm:p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <div className="text-xs sm:text-sm text-gray-700">Profit Margin</div>
- <div className={`text-lg font-bold ${metrics.profitMargin > 30 ? 'text-green-600' : metrics.profitMargin > 15 ? 'text-yellow-600' : 'text-red-600'}`}>
+ {(() => {
+ const tier = metrics.profitMargin > 30 ? 'excellent' : metrics.profitMargin > 15 ? 'good' : metrics.profitMargin > 0 ? 'low' : 'loss';
+ const tierMeta = {
+ excellent: { Icon: Target, color: 'text-emerald-600', bg: 'bg-emerald-100', label: 'Excellent' },
+ good: { Icon: CheckCircle, color: 'text-yellow-600', bg: 'bg-yellow-100', label: 'Good' },
+ low: { Icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-100', label: 'Low' },
+ loss: { Icon: XCircle, color: 'text-red-600', bg: 'bg-red-100', label: 'Loss' },
+ }[tier];
+ const marginDiff = previousPeriodMetrics.totalRevenue > 0 ? metrics.profitMargin - previousPeriodMetrics.profitMargin : null;
+ return (
+ <div className="flex items-center gap-3 p-3 rounded-lg bg-orange-50/60 border border-orange-100">
+ <div className={`w-9 h-9 rounded-lg ${tierMeta.bg} flex items-center justify-center flex-shrink-0`}>
+ <tierMeta.Icon className={`w-4 h-4 ${tierMeta.color}`} />
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex justify-between items-center">
+ <span className="text-xs sm:text-sm text-gray-700">Profit Margin</span>
+ <span className={`text-lg font-bold tabular-nums ${metrics.profitMargin > 30 ? 'text-emerald-600' : metrics.profitMargin > 15 ? 'text-yellow-600' : 'text-red-600'}`}>
  {metrics.profitMargin.toFixed(1)}%
+ </span>
+ </div>
+ <div className="flex items-center gap-2 mt-0.5">
+ <span className="text-xs text-gray-500">{tierMeta.label}</span>
+ {marginDiff !== null && (
+ <span className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${marginDiff >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+ {marginDiff >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+ {Math.abs(marginDiff).toFixed(1)} pts {getPreviousPeriodLabel()}
+ </span>
+ )}
  </div>
  </div>
- <div className="text-xs text-gray-600">
- {metrics.profitMargin > 30 ? '🎯 Excellent' : metrics.profitMargin > 15 ? '✓ Good' : metrics.profitMargin > 0 ? '⚠️ Low' : '❌ Loss'}
  </div>
- </div>
+ );
+ })()}
 
  {/* Cost to Revenue Ratio */}
- <div className="bg-blue-50 p-3 sm:p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <div className="text-xs sm:text-sm text-gray-700">Cost-to-Revenue</div>
- <div className={`text-lg font-bold ${metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7 ? 'text-green-600' : 'text-orange-600'}`}>
- {metrics.totalRevenue > 0 
- ? `${((metrics.totalExpenses / metrics.totalRevenue) * 100).toFixed(1)}%`
- : 'N/A'}
+ {(() => {
+ const efficient = metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7;
+ return (
+ <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50/60 border border-blue-100">
+ <div className={`w-9 h-9 rounded-lg ${efficient ? 'bg-emerald-100' : 'bg-amber-100'} flex items-center justify-center flex-shrink-0`}>
+ {efficient ? <CheckCircle className="w-4 h-4 text-emerald-600" /> : <AlertTriangle className="w-4 h-4 text-amber-600" />}
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex justify-between items-center">
+ <span className="text-xs sm:text-sm text-gray-700">Cost-to-Revenue</span>
+ <span className={`text-lg font-bold tabular-nums ${efficient ? 'text-emerald-600' : 'text-orange-600'}`}>
+ {metrics.totalRevenue > 0 ? `${((metrics.totalExpenses / metrics.totalRevenue) * 100).toFixed(1)}%` : 'N/A'}
+ </span>
+ </div>
+ <div className="text-xs text-gray-500 mt-0.5">{efficient ? 'Efficient operations' : 'High cost ratio'}</div>
  </div>
  </div>
- <div className="text-xs text-gray-600">
- {metrics.totalRevenue > 0 && (metrics.totalExpenses / metrics.totalRevenue) < 0.7
- ? '✓ Efficient operations'
- : '⚠️ High cost ratio'}
- </div>
- </div>
+ );
+ })()}
 
  {/* Average Daily Profit */}
- <div className="bg-green-50 p-3 sm:p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <div className="text-xs sm:text-sm text-gray-700">Avg Daily Profit</div>
- <div className="text-lg font-bold text-green-600">
- {profitChartData.length > 0 
+ <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
+ <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+ <TrendingUp className="w-4 h-4 text-emerald-600" />
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex justify-between items-center">
+ <span className="text-xs sm:text-sm text-gray-700">Avg Daily Profit</span>
+ <span className="text-lg font-bold text-emerald-600 tabular-nums">
+ {profitChartData.length > 0
  ? `₹${Math.round(profitChartData.reduce((sum, d) => sum + d.profit, 0) / profitChartData.length).toLocaleString()}`
  : 'N/A'}
+ </span>
  </div>
- </div>
- <div className="text-xs text-gray-600">
- Per day in selected period
+ <div className="text-xs text-gray-500 mt-0.5">Per day in selected period</div>
  </div>
  </div>
 
  {/* Commission Impact */}
  {metrics.commissionExpenses > 0 && (
- <div className="bg-orange-50 p-3 sm:p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <div className="text-xs sm:text-sm text-gray-700">Commission Impact</div>
- <div className="text-lg font-bold text-orange-600">
- {metrics.totalRevenue > 0 
+ <div className="flex items-center gap-3 p-3 rounded-lg bg-orange-50/60 border border-orange-100">
+ <div className="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center flex-shrink-0">
+ <Percent className="w-4 h-4 text-orange-600" />
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex justify-between items-center">
+ <span className="text-xs sm:text-sm text-gray-700">Commission Impact</span>
+ <span className="text-lg font-bold text-orange-600 tabular-nums">
+ {metrics.totalRevenue > 0
  ? `${((metrics.commissionExpenses / (metrics.totalRevenue + metrics.commissionExpenses)) * 100).toFixed(1)}%`
  : 'N/A'}
+ </span>
  </div>
+ <div className="text-xs text-gray-500 mt-0.5">
+ ₹{metrics.commissionExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })} paid to aggregators
  </div>
- <div className="text-xs text-gray-600">
- ₹{metrics.commissionExpenses.toLocaleString()} paid to aggregators
  </div>
  </div>
  )}
@@ -3399,9 +4565,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div>
  <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center shadow-md shadow-red-500/30 flex-shrink-0">
+ <DollarSign className="w-5 h-5 text-white" />
+ </div>
  <div>
- <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Expense Breakdown</h2>
- <p className="text-xs sm:text-sm text-gray-600">Detailed analysis of all expenses by category</p>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Costs & Margins</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Detailed analysis of all expenses by category, and how big a bite they're taking out of revenue</p>
+ </div>
  </div>
 
  {/* Time Filter */}
@@ -3435,42 +4606,80 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Total Expense Summary */}
- <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4 mb-6 sm:mb-8">
- <div className="bg-gradient-to-br from-red-100 to-red-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Expenses</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalExpenses.toLocaleString()}</div>
+ {/* Total Expense Summary - same saturated-gradient card language as the Overview tab. */}
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
+ <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Total Expenses</div>
+ <div className="text-2xl font-semibold">₹{metrics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ {renderPctChangeOnColor(metrics.totalExpenses, previousPeriodMetrics.totalExpenses)}
  </div>
- <div className="bg-gradient-to-br from-rose-100 to-rose-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Inventory Costs</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.inventoryExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-rose-100 mb-1">Inventory Costs</div>
+ <div className="text-2xl font-semibold">₹{metrics.inventoryExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-rose-100 mt-1">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ {renderPctChangeOnColor(metrics.inventoryExpenses, previousPeriodMetrics.inventoryExpenses)}
  </div>
- <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Overhead Costs</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.overheadExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-sky-100 mb-1">Overhead Costs</div>
+ <div className="text-2xl font-semibold">₹{metrics.overheadExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-sky-100 mt-1">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ {renderPctChangeOnColor(metrics.overheadExpenses, previousPeriodMetrics.overheadExpenses)}
  </div>
- <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Commission</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.commissionExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{metrics.totalExpenses > 0 ? ((metrics.commissionExpenses / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
+ <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Commission</div>
+ <div className="text-2xl font-semibold">₹{metrics.commissionExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-orange-100 mt-1">{metrics.totalExpenses > 0 ? ((metrics.commissionExpenses / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
+ {renderPctChangeOnColor(metrics.commissionExpenses, previousPeriodMetrics.commissionExpenses)}
  </div>
- <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Fixed Costs</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{(metrics.fixedCostsTotal || 0).toLocaleString()}</div>
- <div className="text-xs text-gray-600">{(((metrics.fixedCostsTotal || 0) / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl p-4 shadow-lg shadow-indigo-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-indigo-100 mb-1">Fixed Costs</div>
+ <div className="text-2xl font-semibold">₹{(metrics.fixedCostsTotal || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-indigo-100 mt-1">{(((metrics.fixedCostsTotal || 0) / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ {renderPctChangeOnColor(metrics.fixedCostsTotal || 0, previousPeriodMetrics.fixedCostsTotal)}
  </div>
- <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Salary Costs</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.salaryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-amber-100 mb-1">Salary Costs</div>
+ <div className="text-2xl font-semibold">₹{metrics.salaryExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-amber-100 mt-1">{((metrics.salaryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ {renderPctChangeOnColor(metrics.salaryExpenses, previousPeriodMetrics.salaryExpenses)}
  </div>
+ {/* Loan interest was already included in Total Expenses and in the Expense
+ Distribution pie chart below (its own "💸 Loan Interest" slice) but had no tile of
+ its own here - the 6 tiles never summed to the Total shown above them, with nothing
+ on screen explaining the gap. Confirmed real: interest is genuinely being charged
+ (accrued on outstanding loans), just previously invisible at this summary level. */}
+ <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 shadow-lg shadow-purple-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-purple-100 mb-1">Loan Interest</div>
+ <div className="text-2xl font-semibold">₹{(metrics.interestExpenses || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-purple-100 mt-1">{metrics.totalExpenses > 0 ? (((metrics.interestExpenses || 0) / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
+ </div>
+ </div>
+
+ {/* Expense as % of revenue - a ratio, not just absolute ₹, so a creeping overhead
+ share is visible before it becomes a crisis (Analytics page redesign). */}
+ <div className="border border-gray-200 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-rose-600" />
+ Expenses as % of Revenue
+ </h3>
+ {profitChartData.length > 0 ? (
+ <ResponsiveContainer width="100%" height={240}>
+ <LineChart data={profitChartData.map(d => ({ ...d, expensePct: d.revenue > 0 ? Math.round((d.expenses / d.revenue) * 1000) / 10 : 0 }))}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} unit="%" />
+ <Tooltip formatter={(value: number) => [`${value}%`, 'Expenses']} />
+ <Line type="monotone" dataKey="expensePct" stroke="#e11d48" strokeWidth={2} name="Expenses % of Revenue" dot={{ r: 3 }} />
+ </LineChart>
+ </ResponsiveContainer>
+ ) : (
+ <div className="text-center text-gray-500 py-8 text-sm">No data available</div>
+ )}
  </div>
 
  {/* Pie Chart */}
  <div className="mb-6 sm:mb-8">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">Expense Distribution</h3>
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Expense Distribution</h3>
  
  {/* Large Pie Chart - Full Width */}
  <div className="relative mb-8">
@@ -3515,7 +4724,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Center summary */}
  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
  <p className="text-xs text-gray-500">Total expenses</p>
- <p className="text-lg sm:text-2xl text-gray-900 font-semibold">₹{metrics.totalExpenses.toLocaleString()}</p>
+ <p className="text-lg sm:text-2xl text-gray-900 font-semibold">₹{metrics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
  </div>
  </div>
  </div>
@@ -3553,7 +4762,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <span className="text-sm font-medium text-gray-900">{item.name}</span>
  </div>
  <div className="flex items-center gap-3">
- <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+ <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
  <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
  {item.percentage}%
  </span>
@@ -3605,7 +4814,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <span className="text-sm font-medium text-gray-900">{item.name}</span>
  </div>
  <div className="flex items-center gap-3">
- <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+ <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
  <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
  {item.percentage}%
  </span>
@@ -3657,7 +4866,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <span className="text-sm font-medium text-gray-900">{item.name}</span>
  </div>
  <div className="flex items-center gap-3">
- <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+ <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
  <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
  {item.percentage}%
  </span>
@@ -3709,7 +4918,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <span className="text-sm font-medium text-gray-900">{item.name}</span>
  </div>
  <div className="flex items-center gap-3">
- <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString()}</span>
+ <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
  <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">
  {item.percentage}%
  </span>
@@ -3735,100 +4944,136 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Detailed Breakdown */}
  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
- <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">Salary Breakdown</h3>
- 
+ <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900 tracking-tight mb-4">Salary Breakdown</h3>
+
  {/* Info Note for Month/Custom views */}
  {(timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') && metrics.permanentEmployeeExpenses > 0 && (
- <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+ <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
  <div className="flex items-start gap-2">
  <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
  <p className="text-xs text-blue-800">
- <strong>Note:</strong> Permanent employee salaries (₹{metrics.permanentEmployeeExpenses.toLocaleString()}) are monthly payouts and included in this view. Contract worker wages are date-filtered.
+ <strong>Note:</strong> Both Contract Workers and Permanent Employees are payouts logged via the Payroll page, filtered to this date range. They only appear in Month/Custom views since payouts are monthly events, not daily ones.
  </p>
  </div>
  </div>
  )}
- 
+
+ {(() => {
+ const salaryTotal = metrics.contractWorkerExpenses + metrics.permanentEmployeeExpenses;
+ const contractPct = salaryTotal > 0 ? (metrics.contractWorkerExpenses / salaryTotal) * 100 : 0;
+ const permanentPct = 100 - contractPct;
+ const periodNote = (timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom')
+ ? 'Payroll payouts for this period'
+ : 'Only shown in monthly views';
+ return (
+ <>
+ {salaryTotal > 0 && (
+ <div className="h-3 rounded-full overflow-hidden bg-gray-100 flex mb-5" role="img" aria-label={`Contract Workers ${contractPct.toFixed(1)}%, Permanent Employees ${permanentPct.toFixed(1)}%`}>
+ {contractPct > 0 && <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${contractPct}%` }} />}
+ {permanentPct > 0 && <div className="h-full bg-rose-500 transition-all duration-300" style={{ width: `${permanentPct}%` }} />}
+ </div>
+ )}
  <div className="space-y-3">
- <div className="bg-orange-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Contract Workers</div>
- <div className="text-xl text-gray-900">₹{metrics.contractWorkerExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600 mt-1">Daily wages from sales data</div>
+ <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+ <div className="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center flex-shrink-0">
+ <Briefcase className="w-4 h-4 text-orange-600" />
  </div>
- <div className="bg-rose-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Permanent Employees</div>
- <div className="text-xl text-gray-900">₹{metrics.permanentEmployeeExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600 mt-1">
- {(timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') 
- ? 'Total monthly salary payouts (all periods)' 
- : 'Only shown in monthly views'}
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center justify-between gap-2">
+ <span className="text-sm text-gray-700">Contract Workers</span>
+ {salaryTotal > 0 && <span className="text-sm font-semibold text-orange-600 tabular-nums">{contractPct.toFixed(1)}%</span>}
  </div>
+ <div className="text-lg font-semibold text-gray-900 tabular-nums">₹{metrics.contractWorkerExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-500 mt-0.5">{periodNote}</div>
  </div>
  </div>
+ <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+ <div className="w-9 h-9 rounded-lg bg-rose-100 flex items-center justify-center flex-shrink-0">
+ <Users className="w-4 h-4 text-rose-600" />
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center justify-between gap-2">
+ <span className="text-sm text-gray-700">Permanent Employees</span>
+ {salaryTotal > 0 && <span className="text-sm font-semibold text-rose-600 tabular-nums">{permanentPct.toFixed(1)}%</span>}
+ </div>
+ <div className="text-lg font-semibold text-gray-900 tabular-nums">₹{metrics.permanentEmployeeExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-500 mt-0.5">{periodNote}</div>
+ </div>
+ </div>
+ </div>
+ </>
+ );
+ })()}
  </div>
 
- <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">Overhead Costs</h3>
- <div className="bg-yellow-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Total Overheads</div>
- <div className="text-xl text-gray-900">₹{metrics.overheadExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600 mt-1">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total expenses</div>
- <div className="text-xs text-gray-500 mt-2">Fuel, travel, marketing, and other variable costs</div>
+ <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900 tracking-tight mb-4">Overhead Costs</h3>
+ <div className="flex items-center gap-3 p-3 rounded-lg border border-yellow-100 bg-yellow-50/60">
+ <div className="w-10 h-10 rounded-lg bg-yellow-100 flex items-center justify-center flex-shrink-0">
+ <Receipt className="w-5 h-5 text-yellow-700" />
  </div>
+ <div className="flex-1 min-w-0">
+ <div className="text-xs text-gray-500">Total Overheads</div>
+ <div className="text-xl font-semibold text-gray-900 tabular-nums">₹{metrics.overheadExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-600 mt-1">{((metrics.overheadExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total expenses</div>
+ </div>
+ </div>
+ <div className="text-xs text-gray-500 mt-3">Fuel, travel, marketing, and other variable costs</div>
  </div>
  </div>
 
  {/* Fixed Costs Breakdown with Bar Chart */}
- <div className="mt-6 sm:mt-8 border border-gray-200 rounded-lg p-4 sm:p-6">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">Fixed Costs Breakdown</h3>
- <p className="text-xs sm:text-sm text-gray-600 mb-4">Monthly fixed expenses breakdown</p>
- 
+ <div className="mt-6 sm:mt-8 bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900 tracking-tight mb-1">Fixed Costs Breakdown</h3>
+ <p className="text-xs sm:text-sm text-gray-500 mb-4">Monthly fixed expenses breakdown</p>
+
  {/* Fixed Costs Summary Cards */}
  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
- <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Fixed Costs</div>
- <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.fixedCostsTotal.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.fixedCostsTotal / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Total Fixed Costs</div>
+ <div className="text-xl sm:text-2xl font-semibold tabular-nums">₹{metrics.fixedCostsTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-emerald-100 mt-1">{((metrics.fixedCostsTotal / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
  </div>
- <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">⚡ Electricity</div>
- <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.electricityExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.electricityExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+ <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+ <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1"><Zap className="w-3.5 h-3.5 text-yellow-500" /> Electricity</div>
+ <div className="text-xl sm:text-2xl font-semibold text-gray-900 tabular-nums">₹{metrics.electricityExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-500">{metrics.fixedCostsTotal > 0 ? ((metrics.electricityExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
  </div>
- <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">🏠 Rent</div>
- <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.rentExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.rentExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+ <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+ <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1"><Home className="w-3.5 h-3.5 text-orange-500" /> Rent</div>
+ <div className="text-xl sm:text-2xl font-semibold text-gray-900 tabular-nums">₹{metrics.rentExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-500">{metrics.fixedCostsTotal > 0 ? ((metrics.rentExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
  </div>
- <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">💰 Salaries</div>
- <div className="text-xl sm:text-2xl text-gray-900">₹{metrics.salaryExpenses.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{metrics.fixedCostsTotal > 0 ? ((metrics.salaryExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
+ <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+ <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1"><Users className="w-3.5 h-3.5 text-sky-500" /> Salaries</div>
+ <div className="text-xl sm:text-2xl font-semibold text-gray-900 tabular-nums">₹{metrics.salaryExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-gray-500">{metrics.fixedCostsTotal > 0 ? ((metrics.salaryExpenses / metrics.fixedCostsTotal) * 100).toFixed(1) : 0}% of fixed</div>
  </div>
  </div>
 
  {/* Bar Chart for Fixed Costs */}
+ {metrics.fixedCostsTotal > 0 ? (
  <div className="overflow-x-auto">
  <div className="min-w-[260px]">
  <ResponsiveContainer width="100%" height={280}>
- <BarChart 
+ <BarChart
  data={[
- { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
- { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
- { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#38bdf8' }
+ { name: 'Electricity', amount: metrics.electricityExpenses, fill: '#eab308' },
+ { name: 'Rent', amount: metrics.rentExpenses, fill: '#f97316' },
+ { name: 'Salaries', amount: metrics.salaryExpenses, fill: '#0ea5e9' }
  ]}
  barCategoryGap="30%"
  >
- <CartesianGrid key="fixed-costs-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
- <XAxis key="fixed-costs-xaxis" dataKey="name" stroke="#666" tick={{ fontSize: 12 }} />
- <YAxis key="fixed-costs-yaxis" stroke="#666" tick={{ fontSize: 12 }} />
- <Tooltip key="fixed-costs-tooltip" content={<CustomTooltip />} />
+ <CartesianGrid key="fixed-costs-grid" strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+ <XAxis key="fixed-costs-xaxis" dataKey="name" stroke="#94a3b8" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+ <YAxis key="fixed-costs-yaxis" stroke="#94a3b8" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+ <Tooltip key="fixed-costs-tooltip" cursor={{ fill: '#f8fafc' }} formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, 'Amount']} />
  <Bar key="fixed-costs-bar" dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} maxBarSize={80}>
  {[
- { name: '⚡ Electricity', amount: metrics.electricityExpenses, fill: '#fbbf24' },
- { name: '🏠 Rent', amount: metrics.rentExpenses, fill: '#fb923c' },
- { name: '💰 Salaries', amount: metrics.salaryExpenses, fill: '#38bdf8' }
+ { name: 'Electricity', amount: metrics.electricityExpenses, fill: '#eab308' },
+ { name: 'Rent', amount: metrics.rentExpenses, fill: '#f97316' },
+ { name: 'Salaries', amount: metrics.salaryExpenses, fill: '#0ea5e9' }
  ].map((entry, index) => (
  <Cell key={`fixed-costs-cell-${entry.name}-${index}`} fill={entry.fill} />
  ))}
@@ -3837,8 +5082,115 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </ResponsiveContainer>
  </div>
  </div>
+ ) : (
+ <div className="text-center text-gray-500 py-10 text-sm border border-dashed border-gray-200 rounded-lg">
+ No fixed costs logged for this period yet.
+ </div>
+ )}
  </div>
  </div>
+ </div>
+ )}
+
+ {/* Cash & Reconciliation View - trend of the cash/Paytm discrepancy work built on the
+ Sales page, so problem stores/days surface here instead of only one day at a time. */}
+ {activeView === 'cash-reconciliation' && (
+ <div>
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
+ <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/30 flex-shrink-0">
+ <Wallet className="w-5 h-5 text-white" />
+ </div>
+ <div>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Cash & Reconciliation</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Approved cash/Paytm discrepancy trend {getPeriodLabel()}</p>
+ </div>
+ </div>
+ <div className="w-full sm:w-auto">
+ <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ </div>
+ </div>
+ </div>
+
+ {/* Same saturated-gradient card language as the Overview tab. */}
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+ <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Cash Discrepancy Losses</div>
+ <div className="text-2xl font-semibold">₹{totalCashDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-red-100 mt-1">Approved losses {getPeriodLabel()}</div>
+ {renderPctChangeOnColor(totalCashDiscrepancy, previousPeriodMetrics.cashDiscrepancy)}
+ </div>
+ <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Paytm Discrepancy</div>
+ <div className="text-2xl font-semibold">
+ ₹{cashReconciliationChartData.reduce((s, d) => s + (d['Paytm Offset'] < 0 ? Math.abs(d['Paytm Offset']) : 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+ </div>
+ <div className="text-xs text-orange-100 mt-1">Shortfalls {getPeriodLabel()}</div>
+ {renderPctChangeOnColor(cashReconciliationChartData.reduce((s, d) => s + (d['Paytm Offset'] < 0 ? Math.abs(d['Paytm Offset']) : 0), 0), previousPeriodMetrics.paytmDiscrepancy)}
+ </div>
+ <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-rose-100 mb-1">POS Sales Discrepancy</div>
+ <div className="text-2xl font-semibold">₹{totalPosSalesDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-rose-100 mt-1">Cash+Paytm short of POS sales, {getPeriodLabel()}</div>
+ {renderPctChangeOnColor(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy)}
+ </div>
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Realized Profit</div>
+ <div className="text-2xl font-semibold">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-emerald-100 mt-1">Net profit after discrepancy losses</div>
+ {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
+ </div>
+ </div>
+
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-6">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Cash & Paytm Offset Trend</h3>
+ <p className="text-xs sm:text-sm text-gray-600 mb-4">Positive = surplus, negative = shortfall, summed across {effectiveStoreId ? 'this store' : 'all stores'}</p>
+ {cashReconciliationChartData.length === 0 ? (
+ <div className="text-sm text-gray-500 py-8 text-center">No sales data for this period.</div>
+ ) : (
+ <ResponsiveContainer width="100%" height={300}>
+ <BarChart data={cashReconciliationChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+ <Legend />
+ <Bar dataKey="Cash Offset" fill="#14b8a6" radius={[4, 4, 0, 0]} />
+ <Bar dataKey="Paytm Offset" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+ </BarChart>
+ </ResponsiveContainer>
+ )}
+ </div>
+
+ {!effectiveStoreId && cashReconciliationByStore.length > 0 && (
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 border-l-4 border-red-400">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Stores With Discrepancy Losses</h3>
+ <p className="text-xs sm:text-sm text-gray-600 mb-4">Worst first, {getPeriodLabel()}</p>
+ <div className="overflow-x-auto">
+ <table className="w-full text-sm">
+ <thead>
+ <tr className="text-left text-gray-500 text-xs uppercase">
+ <th className="pb-2">Store</th>
+ <th className="pb-2 text-right">Cash Loss</th>
+ <th className="pb-2 text-right">Paytm Loss</th>
+ <th className="pb-2 text-right">Total</th>
+ </tr>
+ </thead>
+ <tbody>
+ {cashReconciliationByStore.map(row => (
+ <tr key={row.storeId} className="border-t border-gray-100">
+ <td className="py-2 text-gray-900">{row.storeName}</td>
+ <td className="py-2 text-right text-gray-600">₹{row.cashLoss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+ <td className="py-2 text-right text-gray-600">₹{row.paytmLoss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+ <td className="py-2 text-right text-red-600">₹{row.totalLoss.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ </div>
+ )}
  </div>
  )}
 
@@ -3871,7 +5223,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  >
  <div className="flex items-center justify-center gap-2">
  <FileSpreadsheet className="w-5 h-5" />
- <span className="font-semibold">Category Sales</span>
+ <span className="font-semibold">Item Sales Analytics</span>
  </div>
  </button>
  </div>
@@ -3881,9 +5233,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {salesSubView === 'revenue' && (
  <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-md shadow-emerald-500/30 flex-shrink-0">
+ <ShoppingCart className="w-5 h-5 text-white" />
+ </div>
  <div>
- <h2 className="text-lg sm:text-xl text-gray-900 mb-1">Revenue Analytics</h2>
- <p className="text-xs sm:text-sm text-gray-600">Track daily revenue from Paytm, Cash, and Online sales</p>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Revenue Analytics</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Track daily revenue from Paytm, Cash, and Online sales</p>
+ </div>
  </div>
 
  {/* Time Filter */}
@@ -3917,33 +5274,37 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Sales Summary Cards */}
+ {/* Sales Summary Cards - same saturated-gradient card language as the Overview tab. */}
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
- <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Total Sales</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.totalRevenue.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{getPeriodLabel()}</div>
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Total Sales</div>
+ <div className="text-2xl font-semibold">₹{metrics.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-emerald-100 mt-1">{getPeriodLabel()}</div>
+ {renderPctChangeOnColor(metrics.totalRevenue, previousPeriodMetrics.totalRevenue)}
  </div>
- <div className="bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Online Sales</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
+ <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-blue-100 mb-1">Online Sales</div>
+ <div className="text-2xl font-semibold">₹{metrics.onlineRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-blue-100 mt-1">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
+ {renderPctChangeOnColor(metrics.onlineRevenue, previousPeriodMetrics.onlineRevenue)}
  </div>
- <div className="bg-gradient-to-br from-orange-100 to-orange-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Offline Sales</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
+ <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Offline Sales</div>
+ <div className="text-2xl font-semibold">₹{metrics.offlineRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-orange-100 mt-1">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(0)}% of total</div>
+ {renderPctChangeOnColor(metrics.offlineRevenue, previousPeriodMetrics.offlineRevenue)}
  </div>
- <div className="bg-gradient-to-br from-amber-100 to-amber-200 rounded-lg p-4">
- <div className="text-xs sm:text-sm text-gray-700 mb-1">Net Profit</div>
- <div className="text-2xl sm:text-3xl text-gray-900">₹{realizedProfit.toLocaleString()}</div>
- <div className="text-xs text-gray-600">{metrics.totalRevenue > 0 ? ((realizedProfit / metrics.totalRevenue) * 100).toFixed(1) : '0.0'}% margin</div>
+ <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-amber-100 mb-1">Net Profit</div>
+ <div className="text-2xl font-semibold">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-amber-100 mt-1">{metrics.totalRevenue > 0 ? ((realizedProfit / metrics.totalRevenue) * 100).toFixed(1) : '0.0'}% margin</div>
+ {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
  </div>
  </div>
 
  {/* Sales Trend Chart */}
  <div className="mb-6 sm:mb-8">
- <h3 className="text-base sm:text-lg text-gray-900 mb-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">
  Sales Trend - {getPeriodLabel()}
  </h3>
  <div className="overflow-x-auto">
@@ -3966,33 +5327,56 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Sales Breakdown */}
  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
- <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
- <div className="flex items-center gap-2 mb-4">
- <ShoppingCart className="w-5 h-5 text-green-600" />
- <h3 className="text-base sm:text-lg text-gray-900">Payment Methods</h3>
+ <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <div className="flex items-center gap-2 mb-5">
+ <ShoppingCart className="w-5 h-5 text-emerald-600" />
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900">Payment Methods</h3>
+ </div>
+ {(() => {
+ const total = metrics.onlineRevenue + metrics.offlineRevenue;
+ const onlinePct = total > 0 ? (metrics.onlineRevenue / total) * 100 : 0;
+ const offlinePct = 100 - onlinePct;
+ return (
+ <>
+ <div className="h-3 rounded-full overflow-hidden bg-gray-100 flex mb-5" role="img" aria-label={`Online ${onlinePct.toFixed(1)}%, Cash & Paytm ${offlinePct.toFixed(1)}%`}>
+ {onlinePct > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${onlinePct}%` }} />}
+ {offlinePct > 0 && <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${offlinePct}%` }} />}
  </div>
  <div className="space-y-3">
- <div className="bg-green-50 p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <span className="text-sm text-gray-600">Online Payments</span>
- <span className="text-sm text-green-600">{((metrics.onlineRevenue / metrics.totalRevenue) * 100).toFixed(1)}%</span>
+ <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+ <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+ <Smartphone className="w-4 h-4 text-emerald-600" />
  </div>
- <div className="text-xl text-gray-900">₹{metrics.onlineRevenue.toLocaleString()}</div>
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center justify-between gap-2">
+ <span className="text-sm text-gray-700">Online Payments</span>
+ <span className="text-sm font-semibold text-emerald-600 tabular-nums">{onlinePct.toFixed(1)}%</span>
  </div>
- <div className="bg-blue-50 p-4 rounded-lg">
- <div className="flex justify-between items-center mb-2">
- <span className="text-sm text-gray-600">Cash & Paytm</span>
- <span className="text-sm text-blue-600">{((metrics.offlineRevenue / metrics.totalRevenue) * 100).toFixed(1)}%</span>
- </div>
- <div className="text-xl text-gray-900">₹{metrics.offlineRevenue.toLocaleString()}</div>
+ <div className="text-lg font-semibold text-gray-900 tabular-nums">₹{metrics.onlineRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  </div>
  </div>
+ <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+ <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+ <Wallet className="w-4 h-4 text-blue-600" />
+ </div>
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center justify-between gap-2">
+ <span className="text-sm text-gray-700">Cash & Paytm</span>
+ <span className="text-sm font-semibold text-blue-600 tabular-nums">{offlinePct.toFixed(1)}%</span>
+ </div>
+ <div className="text-lg font-semibold text-gray-900 tabular-nums">₹{metrics.offlineRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ </div>
+ </div>
+ </div>
+ </>
+ );
+ })()}
  </div>
 
- <div className="border border-gray-200 rounded-lg p-4 sm:p-6">
- <div className="flex items-center gap-2 mb-4">
+ <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-6 shadow-sm">
+ <div className="flex items-center gap-2 mb-5">
  <TrendingUp className="w-5 h-5 text-orange-600" />
- <h3 className="text-base sm:text-lg text-gray-900">Performance Insights</h3>
+ <h3 className="text-base sm:text-lg font-semibold text-gray-900">Performance Insights</h3>
  </div>
  <div className="space-y-3">
  {(() => {
@@ -4005,24 +5389,43 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const dayCount = profitChartData.length;
  const avgRevenue = dayCount > 0 ? profitChartData.reduce((sum, d) => sum + d.revenue, 0) / dayCount : 0;
  const avgProfit = dayCount > 0 ? profitChartData.reduce((sum, d) => sum + d.profit, 0) / dayCount : 0;
- const bestDay = dayCount > 0 ? Math.max(...profitChartData.map(d => d.revenue)) : 0;
+ const bestDayRow = dayCount > 0 ? profitChartData.reduce((best, d) => d.revenue > best.revenue ? d : best, profitChartData[0]) : null;
+ const insights: { icon: any; iconBg: string; iconColor: string; label: string; value: string; sub: string }[] = [
+ { icon: DollarSign, iconBg: 'bg-orange-100', iconColor: 'text-orange-600', label: 'Daily Revenue Average', value: `₹${avgRevenue.toFixed(0)}`, sub: 'Per day' },
+ { icon: TrendingUp, iconBg: 'bg-rose-100', iconColor: 'text-rose-600', label: 'Daily Profit Average', value: `₹${avgProfit.toFixed(0)}`, sub: 'Per day' },
+ { icon: Target, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', label: 'Best Performing Day', value: bestDayRow ? `₹${bestDayRow.revenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '₹0', sub: bestDayRow?.period ? `${bestDayRow.period} - highest daily revenue` : 'Highest daily revenue' },
+ ];
  return (
  <>
- <div className="bg-orange-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Daily Revenue Average</div>
- <div className="text-xl text-gray-900">₹{avgRevenue.toFixed(0)}</div>
- <div className="text-xs text-gray-600 mt-1">Per day</div>
+ {insights.map((row) => (
+ <div key={row.label} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+ <div className={`w-9 h-9 rounded-lg ${row.iconBg} flex items-center justify-center flex-shrink-0`}>
+ <row.icon className={`w-4 h-4 ${row.iconColor}`} />
  </div>
- <div className="bg-rose-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Daily Profit Average</div>
- <div className="text-xl text-gray-900">₹{avgProfit.toFixed(0)}</div>
- <div className="text-xs text-gray-600 mt-1">Per day</div>
+ <div className="flex-1 min-w-0">
+ <div className="text-xs text-gray-500">{row.label}</div>
+ <div className="text-lg font-semibold text-gray-900 tabular-nums">{row.value}</div>
+ <div className="text-xs text-gray-500 mt-0.5">{row.sub}</div>
  </div>
- <div className="bg-blue-50 p-4 rounded-lg">
- <div className="text-xs text-gray-600 mb-1">Best Performing Day</div>
- <div className="text-xl text-gray-900">₹{bestDay.toLocaleString()}</div>
- <div className="text-xs text-gray-600 mt-1">Highest daily revenue</div>
  </div>
+ ))}
+ {dayCount > 1 && (
+ <div className="p-3 rounded-lg border border-gray-100">
+ <div className="text-xs text-gray-500 mb-2">Revenue trend, {getPeriodLabel()}</div>
+ <ResponsiveContainer width="100%" height={64}>
+ <AreaChart data={profitChartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+ <defs>
+ <linearGradient id="perfInsightRevenueFill" x1="0" y1="0" x2="0" y2="1">
+ <stop offset="0%" stopColor="#f97316" stopOpacity={0.35} />
+ <stop offset="100%" stopColor="#f97316" stopOpacity={0} />
+ </linearGradient>
+ </defs>
+ <Tooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} labelFormatter={(label) => label} />
+ <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={2} fill="url(#perfInsightRevenueFill)" />
+ </AreaChart>
+ </ResponsiveContainer>
+ </div>
+ )}
  </>
  );
  })()}
@@ -4032,17 +5435,516 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Category Sales Sub-view */}
+ {/* Item Sales Analytics Sub-view */}
  {salesSubView === 'category' && (
- <SalesDataComponent context={context} selectedStoreId={selectedStoreId} />
+ <div>
+ {/* Top items + channel mix + declining flags, built on the same order-item-detail
+ feed as the table below. Revenue here is gross (pre-commission) for chart speed;
+ the table below settles online orders against actual aggregator payouts for
+ the exact numbers. */}
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6">
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Top 10 Items by Revenue</h3>
+ <p className="text-xs sm:text-sm text-gray-600 mb-4">{getPeriodLabel()}</p>
+ {itemPerformanceData.top10.length === 0 ? (
+ <div className="text-sm text-gray-500 py-8 text-center">No item sales data for this period.</div>
+ ) : (
+ <ResponsiveContainer width="100%" height={420}>
+ <BarChart data={itemPerformanceData.top10} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }} barCategoryGap={10}>
+ <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+ <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+ <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 9 }} tickFormatter={(v: string) => truncateChartLabel(v, 16)} interval={0} />
+ <Tooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} />
+ <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={16} />
+ </BarChart>
+ </ResponsiveContainer>
+ )}
+ </div>
+
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Top Items by Channel</h3>
+ <p className="text-xs sm:text-sm text-gray-600 mb-4">Offline vs Zomato vs Swiggy revenue</p>
+ {itemPerformanceData.top10.length === 0 ? (
+ <div className="text-sm text-gray-500 py-8 text-center">No item sales data for this period.</div>
+ ) : (
+ <ResponsiveContainer width="100%" height={280}>
+ <BarChart data={itemPerformanceData.top10.slice(0, 5)} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }} barCategoryGap={14}>
+ <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+ <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+ <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 9 }} tickFormatter={(v: string) => truncateChartLabel(v, 16)} interval={0} />
+ <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+ <Legend wrapperStyle={{ fontSize: 11 }} />
+ <Bar dataKey="Offline" stackId="ch" fill="#f97316" barSize={14} />
+ <Bar dataKey="Zomato" stackId="ch" fill="#ef4444" barSize={14} />
+ <Bar dataKey="Swiggy" stackId="ch" fill="#f97316" opacity={0.5} barSize={14} radius={[0, 4, 4, 0]} />
+ </BarChart>
+ </ResponsiveContainer>
+ )}
+ </div>
+ </div>
+
+ {decliningItems.length > 0 && (
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-6 border-l-4 border-amber-400">
+ <div className="flex items-center gap-2 mb-1">
+ <TrendingDown className="w-5 h-5 text-amber-600" />
+ <h3 className="text-base sm:text-lg text-gray-900">Declining This Week</h3>
+ </div>
+ <p className="text-xs sm:text-sm text-gray-600 mb-4">Items down 10%+ vs last week (min ₹500 last week revenue)</p>
+ <div className="overflow-x-auto">
+ <table className="w-full text-sm">
+ <thead>
+ <tr className="text-left text-gray-500 text-xs uppercase">
+ <th className="pb-2">Item</th>
+ <th className="pb-2 text-right">Last Week</th>
+ <th className="pb-2 text-right">This Week</th>
+ <th className="pb-2 text-right">Change</th>
+ </tr>
+ </thead>
+ <tbody>
+ {decliningItems.map(item => (
+ <tr key={item.name} className="border-t border-gray-100">
+ <td className="py-2 text-gray-900">{item.name}</td>
+ <td className="py-2 text-right text-gray-600">₹{item.lastWeek.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+ <td className="py-2 text-right text-gray-600">₹{item.thisWeek.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+ <td className="py-2 text-right text-red-600">{item.changePct}%</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+ </div>
+ )}
+
+ <SalesDataComponent context={context} selectedStoreId={effectiveStoreId} />
+ </div>
  )}
  </div>
  )}
 
- {/* Data Capture View */}
- {activeView === 'datacapture' && (
+ {/* Overview - a single glanceable dashboard: revenue/profit trend plus the worst
+ current value in each of the areas that most need watching, so opening Analytics
+ immediately surfaces what needs attention instead of digging through tabs. */}
+ {activeView === 'overview' && (
+ <div className="space-y-6">
+ <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+ <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Net Profit</div>
+ <div className="text-2xl font-semibold">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-emerald-100 mt-1">{getPeriodLabel()}</div>
+ {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
+ </div>
+ <div className={`rounded-xl p-4 shadow-lg text-white ${totalCashDiscrepancy > 0 ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/20' : 'bg-gradient-to-br from-gray-400 to-gray-500 shadow-gray-400/20'}`}>
+ <div className="text-xs uppercase tracking-wide text-white/80 mb-1">Cash Discrepancy Losses</div>
+ <div className="text-2xl font-semibold">₹{totalCashDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-white/80 mt-1">{getPeriodLabel()} · approved shortages</div>
+ {renderPctChangeOnColor(totalCashDiscrepancy, previousPeriodMetrics.cashDiscrepancy)}
+ </div>
+ <div className={`rounded-xl p-4 shadow-lg text-white ${totalPosSalesDiscrepancy > 0 ? 'bg-gradient-to-br from-rose-500 to-rose-600 shadow-rose-500/20' : 'bg-gradient-to-br from-gray-400 to-gray-500 shadow-gray-400/20'}`}>
+ <div className="text-xs uppercase tracking-wide text-white/80 mb-1">POS Sales Discrepancy</div>
+ <div className="text-2xl font-semibold">₹{totalPosSalesDiscrepancy.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-white/80 mt-1">{getPeriodLabel()} · Cash+Paytm short of POS sales</div>
+ {renderPctChangeOnColor(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy)}
+ </div>
+ <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Commission %</div>
+ <div className="text-2xl font-semibold">
+ {metrics.matchedOnlineRevenueForCommission > 0 ? `${((metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100).toFixed(1)}%` : '—'}
+ </div>
+ <div className="text-xs text-orange-100 mt-1">of settled online revenue, {getPeriodLabel()}</div>
+ {metrics.matchedOnlineRevenueForCommission > 0 && previousPeriodMetrics.matchedOnlineRevenueForCommission > 0 && (() => {
+ const currentPct = (metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100;
+ const previousPct = (previousPeriodMetrics.commissionExpenses / previousPeriodMetrics.matchedOnlineRevenueForCommission) * 100;
+ const diff = currentPct - previousPct;
+ return (
+ <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
+ {diff >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+ <span>{Math.abs(diff).toFixed(1)} pts {getPreviousPeriodLabel()}</span>
+ </div>
+ );
+ })()}
+ </div>
+ <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-sky-100 mb-1">Ad Spend</div>
+ <div className="text-2xl font-semibold">₹{metrics.adSpend.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-sky-100 mt-1">{getPeriodLabel()} · Zomato + Swiggy</div>
+ {renderPctChangeOnColor(metrics.adSpend, previousPeriodMetrics.adSpend)}
+ </div>
+ </div>
+
+ {/* Revenue / Profit trend - same data the old Profit Analytics chart used */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <TrendingUp className="w-5 h-5 text-emerald-600" />
+ Revenue & Profit Trend
+ </h3>
+ <p className="text-xs text-gray-500 mb-3">Dotted lines are the matching previous period (same weekday/week/date-of-month, depending on the filter above)</p>
+ <ResponsiveContainer width="100%" height={280}>
+ <LineChart data={profitChartDataWithPrev}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip content={<CustomTooltip />} />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="revenue" stroke="#14b8a6" strokeWidth={2} name="Revenue" dot={false} />
+ <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} name="Expenses" dot={false} />
+ <Line type="monotone" dataKey="profit" stroke="#3b82f6" strokeWidth={2} name="Profit" dot={false} />
+ <Line type="monotone" dataKey="prev_revenue" stroke="#14b8a6" strokeWidth={1.5} strokeDasharray="4 3" name="Revenue (prev period)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_expenses" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 3" name="Expenses (prev period)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_profit" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="4 3" name="Profit (prev period)" dot={false} connectNulls />
+ </LineChart>
+ </ResponsiveContainer>
+ </div>
+
+ {/* Orders per Day - offline (POS) vs Zomato vs Swiggy order counts, from real per-order
+ data (Ciferon's order item detail) since no order-count field exists on the sales
+ record itself, only revenue totals. Zomato/Swiggy use their real brand colors so the
+ split reads at a glance instead of needing the legend. */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <ShoppingCart className="w-5 h-5 text-indigo-600" />
+ Orders per Day
+ </h3>
+ {ordersPerDayData.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No order data for this period yet.</p>
+ ) : (
+ <>
+ {/* Median values called out here instead of as in-chart labels - with 31 days of
+ tall bars, any label placed inside the plot kept landing on top of a bar and
+ becoming unreadable regardless of position. The dashed lines themselves still
+ show where each median sits on the chart. */}
+ <div className="flex items-center gap-4 mb-2 text-xs font-semibold">
+ <span className="flex items-center gap-1.5" style={{ color: '#334155' }}>
+ <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: '#334155' }} />
+ Offline median: {offlineOrdersMedian}
+ </span>
+ <span className="flex items-center gap-1.5" style={{ color: '#4338ca' }}>
+ <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: '#6366f1' }} />
+ Online median: {onlineOrdersMedian}
+ </span>
+ </div>
+ <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <ResponsiveContainer width="100%" height={280}>
+ <ComposedChart data={ordersPerDayChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="offline" fill="#64748b" name="Offline orders" radius={[4, 4, 0, 0]} />
+ <Bar dataKey="zomato" fill="#e23744" name="Zomato orders" radius={[4, 4, 0, 0]} />
+ <Bar dataKey="swiggy" fill="#fc8019" name="Swiggy orders" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_offline" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" name="Offline (prev period)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_zomato" stroke="#e23744" strokeWidth={1.5} strokeDasharray="4 3" name="Zomato (prev period)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_swiggy" stroke="#fc8019" strokeWidth={1.5} strokeDasharray="4 3" name="Swiggy (prev period)" dot={false} connectNulls />
+ <ReferenceLine y={offlineOrdersMedian} stroke="#334155" strokeDasharray="6 4" strokeWidth={2} ifOverflow="extendDomain" />
+ <ReferenceLine y={onlineOrdersMedian} stroke="#6366f1" strokeDasharray="6 4" strokeWidth={2} ifOverflow="extendDomain" />
+ </ComposedChart>
+ </ResponsiveContainer>
+ <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-100">
+ <div className="text-center">
+ <p className="text-xs text-gray-500 uppercase tracking-wide">Offline</p>
+ <p className="text-xl font-semibold mt-1" style={{ color: '#64748b' }}>{ordersPerDayData.reduce((s, d) => s + d.offline, 0).toLocaleString()}</p>
+ </div>
+ <div className="text-center">
+ <p className="text-xs text-gray-500 uppercase tracking-wide">Zomato</p>
+ <p className="text-xl font-semibold mt-1" style={{ color: '#e23744' }}>{ordersPerDayData.reduce((s, d) => s + d.zomato, 0).toLocaleString()}</p>
+ </div>
+ <div className="text-center">
+ <p className="text-xs text-gray-500 uppercase tracking-wide">Swiggy</p>
+ <p className="text-xl font-semibold mt-1" style={{ color: '#fc8019' }}>{ordersPerDayData.reduce((s, d) => s + d.swiggy, 0).toLocaleString()}</p>
+ </div>
+ <div className="text-center">
+ <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+ <p className="text-xl font-semibold text-gray-900 mt-1">{ordersPerDayData.reduce((s, d) => s + d.total, 0).toLocaleString()}</p>
+ </div>
+ </div>
+ </>
+ )}
+ </div>
+
+ {/* Orders by Hour (3 PM - 10 PM) - which hour of the dinner rush actually peaks. Only
+ populated from orders synced after hour-of-day capture was added (see orderHourIST
+ in index.ts) - older synced days won't contribute here even though they still show
+ up fine in Orders per Day above, which only needs the date. */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
+ <Clock className="w-5 h-5 text-indigo-600" />
+ Orders by Hour
+ </h3>
+ <p className="text-xs text-gray-500 mb-4">3 PM - 10 PM IST, average orders per day for the selected period · dotted lines are the matching previous period</p>
+ {ordersByHourData.every(h => h.total === 0) ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No hourly order data yet - this fills in from today's sync onward.</p>
+ ) : (
+ <>
+ <ResponsiveContainer width="100%" height={280}>
+ <ComposedChart data={ordersByHourChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="offline" stackId="hour" fill="#f97316" name="Offline orders (avg/day)" radius={[0, 0, 0, 0]} />
+ <Bar dataKey="online" stackId="hour" fill="#6366f1" name="Online orders (avg/day)" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_offline" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 3" name="Offline (prev period)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_online" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4 3" name="Online (prev period)" dot={false} connectNulls />
+ </ComposedChart>
+ </ResponsiveContainer>
+ {peakHour && (
+ <p className="text-sm text-gray-700 mt-4 pt-4 border-t border-gray-100 text-center">
+ <span className="font-semibold text-indigo-600">Peak: {peakHour.label}</span>{' '}
+ with {peakHour.total.toLocaleString()} orders/day on average
+ </p>
+ )}
+ </>
+ )}
+ </div>
+
+ {/* Dine-in vs Takeaway vs Home Delivery - split by order count (trend) and revenue
+ (pie for the period). Note this is a different axis than Offline/Zomato/Swiggy above:
+ every DineIn order is offline, but HomeDelivery mixes real offline delivery with both
+ aggregators (which are always HomeDelivery). */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <Package className="w-5 h-5 text-teal-600" />
+ Dine-in / Takeaway / Delivery
+ </h3>
+ {serviceTypeData.trend.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No order data for this period yet.</p>
+ ) : (
+ <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+ <div className="lg:col-span-2">
+ <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Orders per day · dotted = previous period</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <ComposedChart data={serviceTypeChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="DineIn" stackId="svc" fill="#0d9488" name="Dine-in" radius={[0, 0, 0, 0]} />
+ <Bar dataKey="TakeAway" stackId="svc" fill="#facc15" name="Takeaway" radius={[0, 0, 0, 0]} />
+ <Bar dataKey="HomeDelivery" stackId="svc" fill="#8b5cf6" name="Delivery" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_DineIn" stroke="#0d9488" strokeWidth={1.5} strokeDasharray="4 3" name="Dine-in (prev)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_TakeAway" stroke="#ca8a04" strokeWidth={1.5} strokeDasharray="4 3" name="Takeaway (prev)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_HomeDelivery" stroke="#8b5cf6" strokeWidth={1.5} strokeDasharray="4 3" name="Delivery (prev)" dot={false} connectNulls />
+ </ComposedChart>
+ </ResponsiveContainer>
+ </div>
  <div>
+ <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Revenue share (period)</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <PieChart>
+ <Pie
+ data={[
+ { name: 'Dine-in', value: Math.round(serviceTypeData.revenueByType.DineIn) },
+ { name: 'Takeaway', value: Math.round(serviceTypeData.revenueByType.TakeAway) },
+ { name: 'Delivery', value: Math.round(serviceTypeData.revenueByType.HomeDelivery) },
+ ].filter(d => d.value > 0)}
+ dataKey="value"
+ nameKey="name"
+ cx="50%"
+ cy="50%"
+ outerRadius={85}
+ label={(entry: any) => `${entry.name}`}
+ >
+ <Cell fill="#0d9488" />
+ <Cell fill="#facc15" />
+ <Cell fill="#8b5cf6" />
+ </Pie>
+ <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+ </PieChart>
+ </ResponsiveContainer>
+ </div>
+ </div>
+ )}
+ </div>
+
+ {/* Average Order Value trend - revenue and order counts were already tracked
+ separately, just never divided against each other over time. */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <DollarSign className="w-5 h-5 text-emerald-600" />
+ Average Order Value
+ </h3>
+ {avgOrderValueData.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No order data for this period yet.</p>
+ ) : (
+ <>
+ <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={avgOrderValueChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `₹${v}`} />
+ <Tooltip formatter={(value: number) => `₹${value.toFixed(2)}`} />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="offlineAOV" stroke="#64748b" strokeWidth={2} name="Offline AOV" dot={false} />
+ <Line type="monotone" dataKey="onlineAOV" stroke="#6366f1" strokeWidth={2} name="Online AOV (Zomato+Swiggy)" dot={false} />
+ <Line type="monotone" dataKey="prev_offlineAOV" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name="Offline AOV (prev)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_onlineAOV" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4 3" name="Online AOV (prev)" dot={false} connectNulls />
+ </LineChart>
+ </ResponsiveContainer>
+ </>
+ )}
+ </div>
+
+ {/* Discount % of gross - discount amounts were already tracked, just never trended
+ as a rate over time (a rupee figure alone doesn't say whether discounting is
+ creeping up as volume grows). */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <TrendingDown className="w-5 h-5 text-rose-600" />
+ Discount % of Gross Sales
+ </h3>
+ {discountPctData.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No order data for this period yet.</p>
+ ) : (
+ <>
+ <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={discountPctChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+ <Tooltip formatter={(value: number) => `${value}%`} />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="offlinePct" stroke="#64748b" strokeWidth={2} name="Offline discount %" dot={false} />
+ <Line type="monotone" dataKey="onlinePct" stroke="#e11d48" strokeWidth={2} name="Online discount %" dot={false} />
+ <Line type="monotone" dataKey="prev_offlinePct" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name="Offline discount % (prev)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_onlinePct" stroke="#e11d48" strokeWidth={1.5} strokeDasharray="4 3" name="Online discount % (prev)" dot={false} connectNulls />
+ </LineChart>
+ </ResponsiveContainer>
+ </>
+ )}
+ </div>
+
+ {/* Digital Payment Mode Breakdown - Cash/Paytm/PhonePe/Card/Google Pay/Razorpay are
+ still all deliberately folded into one "Paytm" figure for reconciliation everywhere
+ else (nothing here changes any total) - this is purely the raw split for insight,
+ e.g. seeing how much volume is actually Card/GPay vs plain Paytm. */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
+ <Wallet className="w-5 h-5 text-blue-600" />
+ Payment Mode Breakdown
+ </h3>
+ <p className="text-xs text-gray-500 mb-4">Cash/Paytm/PhonePe/Card/Google Pay/Razorpay/Zomato/Swiggy - insight only, not a reconciliation total</p>
+ {paymentModeBreakdownData.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No payment-mode data yet - this fills in from today's sync onward.</p>
+ ) : (
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+ <ResponsiveContainer width="100%" height={260}>
+ <PieChart>
+ <Pie data={paymentModeBreakdownData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={(entry: any) => entry.name}>
+ {paymentModeBreakdownData.map((d, i) => <Cell key={i} fill={d.color} />)}
+ </Pie>
+ <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+ </PieChart>
+ </ResponsiveContainer>
+ <div className="space-y-2">
+ {paymentModeBreakdownData.map((d) => (
+ <div key={d.name} className="flex items-center justify-between text-sm">
+ <span className="flex items-center gap-2 text-gray-700">
+ <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
+ {d.name}
+ </span>
+ <span className="font-medium text-gray-900">₹{d.value.toLocaleString()}</span>
+ </div>
+ ))}
+ </div>
+ </div>
+ )}
+ </div>
+
+ {/* Cancellation Trend - offlineCancelledCount/onlineCancelledCount were already
+ tracked per day, just never charted as a trend before (only ever a same-day figure). */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
+ <X className="w-5 h-5 text-red-600" />
+ Cancellation Trend
+ </h3>
+ {cancellationTrendData.length === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No data for this period yet.</p>
+ ) : (
+ <>
+ <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <ComposedChart data={cancellationChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="offlineCancelled" stackId="cancel" fill="#64748b" name="Offline cancelled" radius={[0, 0, 0, 0]} />
+ <Bar dataKey="onlineCancelled" stackId="cancel" fill="#dc2626" name="Online cancelled" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_offlineCancelled" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name="Offline cancelled (prev)" dot={false} connectNulls />
+ <Line type="monotone" dataKey="prev_onlineCancelled" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" name="Online cancelled (prev)" dot={false} connectNulls />
+ </ComposedChart>
+ </ResponsiveContainer>
+ <p className="text-sm text-gray-700 mt-4 pt-4 border-t border-gray-100 text-center">
+ Total value cancelled: <span className="font-semibold text-red-600">₹{cancellationTrendData.reduce((s, d) => s + d.cancelledAmount, 0).toLocaleString()}</span>
+ </p>
+ </>
+ )}
+ </div>
+
+ {/* Order Value Distribution - a real histogram: how many orders fall in each value band
+ across the whole period, current vs previous side by side. Same real per-order data as
+ the other order charts. */}
+ <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 border border-gray-200">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
+ <ClipboardCheck className="w-5 h-5 text-purple-600" />
+ Order Value Distribution
+ </h3>
+ <p className="text-xs text-gray-500 mb-4">How many orders fall in each value band (₹0-99 up to ₹500+), this period vs the matching previous period</p>
+ {orderValueHistogramData.currentTotalOrders === 0 ? (
+ <p className="text-sm text-gray-500 py-8 text-center">No order data for this period yet.</p>
+ ) : (
+ <>
+ <div className="flex flex-wrap items-center gap-4 mb-4 text-sm">
+ <span className="text-gray-700">
+ <span className="font-semibold text-gray-900">{orderValueHistogramData.currentTotalOrders.toLocaleString()}</span> orders this period
+ </span>
+ <span className="text-gray-700">
+ Average order value <span className="font-semibold text-gray-900">₹{orderValueHistogramData.avgOrderValue.toLocaleString()}</span>
+ </span>
+ <span className="text-gray-700">
+ Most common band <span className="font-semibold text-purple-700">{orderValueHistogramData.modalBucket.label}</span> ({orderValueHistogramData.modalBucket.current.toLocaleString()} orders)
+ </span>
+ </div>
+ <ResponsiveContainer width="100%" height={300}>
+ <BarChart data={orderValueHistogramData.rows}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} angle={-30} textAnchor="end" height={55} />
+ <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="current" name="This period" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+ <Bar dataKey="previous" name="Previous period" fill="#d8b4fe" radius={[4, 4, 0, 0]} />
+ </BarChart>
+ </ResponsiveContainer>
+ </>
+ )}
+ </div>
+
+ {/* Activity Log - Performance Tracker folded in here instead of its own tab */}
+ <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+ <button
+ onClick={() => setShowActivityLog(!showActivityLog)}
+ className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-gray-50 transition-colors"
+ >
+ <h3 className="text-base sm:text-lg text-gray-900 flex items-center gap-2">
+ <Package className="w-5 h-5 text-gray-600" />
+ Activity Log
+ </h3>
+ {showActivityLog ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}
+ </button>
+ {showActivityLog && (
+ <div className="px-4 sm:px-6 pb-4 sm:pb-6">
  <DataCapture context={context} selectedStoreId={selectedStoreId} />
+ </div>
+ )}
+ </div>
  </div>
  )}
 
@@ -4080,8 +5982,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onClick={() => setProductionDateRange(option.value)}
  className={`px-4 py-2 rounded-lg text-sm border-2 transition-all ${
  productionDateRange === option.value
- ? 'bg-blue-600 text-white border-blue-600'
- : 'bg-white text-gray-700 border-blue-300 hover:border-blue-500'
+ ? 'bg-gray-900 text-white border-gray-900'
+ : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
  }`}
  style={{ fontSize: '14px', fontWeight: '600' }}
  >
@@ -4473,28 +6375,413 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <p className="text-2xl text-gray-900">{totalWastage.toFixed(2)}</p>
  <p className="text-xs text-gray-500 mt-1">kg</p>
  </div>
-
- <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-xl shadow-lg p-4">
- <div className="flex items-center gap-2 mb-2">
- <ClipboardCheck className="w-5 h-5 text-green-700" />
- <p className="text-xs text-gray-600">Approved</p>
- </div>
- <p className="text-2xl text-gray-900">{approvedCount}</p>
- <p className="text-xs text-gray-500 mt-1">records</p>
- </div>
-
- <div className="bg-gradient-to-br from-yellow-100 to-yellow-200 rounded-xl shadow-lg p-4">
- <div className="flex items-center gap-2 mb-2">
- <AlertCircle className="w-5 h-5 text-yellow-700" />
- <p className="text-xs text-gray-600">Pending</p>
- </div>
- <p className="text-2xl text-gray-900">{pendingCount}</p>
- <p className="text-xs text-gray-500 mt-1">records</p>
- </div>
  </>
  );
  })()}
  </div>
+
+ {/* Approval status for this period's production log entries - kept as a small text
+ line rather than tiles in the momo-count grid above, since "records approved" isn't
+ the same kind of number as "pieces produced" and was confusing sitting next to it. */}
+ {(() => {
+ const { startDate, endDate } = getDateRangeBounds();
+ const inRange = productionData.filter(p => {
+ if (p.date < startDate || p.date > endDate) return false;
+ if (!selectedProductionHouseId) return true;
+ const matchesStoreId = p.storeId === selectedProductionHouseId;
+ const matchesProductionHouseId = p.productionHouseId === selectedProductionHouseId;
+ let recordProductionHouseId = p.productionHouseId;
+ if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+ const allStores = stores.length > 0 ? stores : (context.stores || []);
+ recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
+ }
+ const phId = recordProductionHouseId || p.storeId;
+ return matchesStoreId || matchesProductionHouseId || phId === selectedProductionHouseId;
+ });
+ const approved = inRange.filter(p => p.approvalStatus === 'approved').length;
+ const pending = inRange.filter(p => p.approvalStatus === 'pending').length;
+ return (
+ <div className="flex items-center gap-4 text-sm text-gray-600 mb-6 -mt-3">
+ <span className="flex items-center gap-1.5">
+ <ClipboardCheck className="w-4 h-4 text-green-600" />
+ {approved} approved record{approved === 1 ? '' : 's'}
+ </span>
+ <span className="flex items-center gap-1.5">
+ <AlertCircle className="w-4 h-4 text-yellow-600" />
+ {pending} pending record{pending === 1 ? '' : 's'}
+ </span>
+ </div>
+ );
+ })()}
+
+ {/* Production Output & Efficiency - day-by-day trends for the selected production
+ date range, mirroring the dotted-previous-period pattern used in Store Analytics so a
+ production incharge/cluster head can see whether output, yield and wastage are
+ trending better or worse than the equivalent prior period. */}
+ {(() => {
+ const filterById = selectedProductionHouseId;
+ const matchesProdFilter = (p: any) => {
+ if (!filterById) return true;
+ const matchesStoreId = p.storeId === filterById;
+ const matchesProductionHouseId = p.productionHouseId === filterById;
+ let recordProductionHouseId = p.productionHouseId;
+ if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+ const allStores = stores.length > 0 ? stores : (context.stores || []);
+ recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
+ }
+ const phId = recordProductionHouseId || p.storeId;
+ return matchesStoreId || matchesProductionHouseId || phId === filterById;
+ };
+
+ const enumerateDates = (start: string, end: string): string[] => {
+ const dates: string[] = [];
+ let d = start;
+ let guard = 0;
+ while (d <= end && guard < 400) {
+ dates.push(d);
+ d = addDays(d, 1);
+ guard++;
+ }
+ return dates;
+ };
+
+ const buildDailySeries = (dates: string[]) => dates.map(date => {
+ const dayRecords = productionData.filter(p => matchesProdFilter(p) && p.date === date);
+ const row: any = { date, label: formatDateIST(date) };
+ let regularFinal = 0, regularInput = 0, kurkureFinal = 0, kurkureInput = 0;
+ let wastageKg = 0, totalInputKg = 0;
+ MOMO_TYPES.forEach(t => {
+ const final = dayRecords.reduce((sum, p) => sum + (p[t.key]?.final || 0), 0);
+ row[t.key] = final;
+ if (t.group === 'regular') {
+ const input = dayRecords.reduce((sum, p) => sum + (p[t.key]?.dough || 0) + (p[t.key]?.stuffing || 0), 0);
+ regularFinal += final; regularInput += input; totalInputKg += input;
+ } else {
+ const input = dayRecords.reduce((sum, p) => sum + (p[t.key]?.batter || 0) + (p[t.key]?.coating || 0), 0);
+ kurkureFinal += final; kurkureInput += input; totalInputKg += input;
+ }
+ });
+ wastageKg = dayRecords.reduce((sum, p) => sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
+ row.totalFinal = regularFinal + kurkureFinal;
+ row.momoYield = regularInput > 0 ? Math.round((regularFinal / regularInput) * 10) / 10 : null;
+ row.kurkureYield = kurkureInput > 0 ? Math.round((kurkureFinal / kurkureInput) * 10) / 10 : null;
+ row.wastagePct = (totalInputKg + wastageKg) > 0 ? Math.round((wastageKg / (totalInputKg + wastageKg)) * 1000) / 10 : 0;
+ return row;
+ });
+
+ const { startDate, endDate } = getDateRangeBounds();
+ const previousRangeForOutput = getPreviousPeriodDateRange();
+ const currentDates = enumerateDates(startDate, endDate);
+ const previousDates = enumerateDates(previousRangeForOutput.startDate, previousRangeForOutput.endDate);
+ const outputSeries = buildDailySeries(currentDates);
+ const previousOutputSeries = buildDailySeries(previousDates);
+ const outputChartData = zipPrev(outputSeries, previousOutputSeries, ['totalFinal', 'momoYield', 'kurkureYield', 'wastagePct']);
+
+ const periodMix = MOMO_TYPES.map(t => ({
+ name: t.label,
+ value: outputSeries.reduce((sum, r) => sum + (r[t.key] || 0), 0),
+ color: t.color,
+ }));
+ const hasAnyOutput = periodMix.some(m => m.value > 0);
+
+ if (currentDates.length === 0) return null;
+
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="mb-6">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <Factory className="w-6 h-6 text-orange-600" />
+ Production Output & Efficiency
+ </h2>
+ <p className="text-sm text-gray-600">Pieces produced, raw-material yield and wastage rate for the selected date range · dotted lines are the matching previous period</p>
+ </div>
+
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+ {/* Daily output mix, stacked by momo type */}
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Output by Momo Type</h3>
+ <ResponsiveContainer width="100%" height={280}>
+ <ComposedChart data={outputChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ {MOMO_TYPES.map(t => (
+ <Bar key={t.key} dataKey={t.key} stackId="momo" name={t.label} fill={t.color} />
+ ))}
+ <Line type="monotone" dataKey="prev_totalFinal" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ </ComposedChart>
+ </ResponsiveContainer>
+ </div>
+
+ {/* Period share by momo type */}
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Production Mix (This Period)</h3>
+ {hasAnyOutput ? (
+ <ResponsiveContainer width="100%" height={280}>
+ <PieChart>
+ <Pie data={periodMix.filter(m => m.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={95} label={(entry: any) => `${entry.name}: ${entry.value}`}>
+ {periodMix.filter(m => m.value > 0).map((m, idx) => (
+ <Cell key={idx} fill={m.color} />
+ ))}
+ </Pie>
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ </PieChart>
+ </ResponsiveContainer>
+ ) : (
+ <div className="h-[280px] flex items-center justify-center text-sm text-gray-500">No production logged for this period</div>
+ )}
+ </div>
+
+ {/* Raw material yield efficiency */}
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Raw Material Yield</h3>
+ <p className="text-xs text-gray-500 mb-3">Pieces produced per kg of raw material used (dough+stuffing for momos, batter+coating for kurkure) · higher is more efficient</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={outputChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="momoYield" name="Momo yield (pcs/kg)" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey="kurkureYield" name="Kurkure yield (pcs/kg)" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey="prev_momoYield" name="Momo yield (previous period)" stroke="#ea580c" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
+ <Line type="monotone" dataKey="prev_kurkureYield" name="Kurkure yield (previous period)" stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
+ </LineChart>
+ </ResponsiveContainer>
+ </div>
+
+ {/* Wastage rate as a % of total raw material, so it's comparable across days
+ regardless of production volume - complements the raw-kg trend charts below. */}
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Wastage Rate</h3>
+ <p className="text-xs text-gray-500 mb-3">Wasted raw material as a % of total raw material used that day · lower is better</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={outputChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} unit="%" />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="wastagePct" name="Wastage %" stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />
+ <Line type="monotone" dataKey="prev_wastagePct" name="Wastage % (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
+ </LineChart>
+ </ResponsiveContainer>
+ </div>
+ </div>
+ </div>
+ );
+ })()}
+
+ {/* Sauces & Chutneys Usage - ProductionData.sauces is captured on every day's
+ production log but was never surfaced anywhere in Analytics until now. Same
+ current-vs-previous-period convention as every other trended chart on this page
+ (zipPrev + renderPrevAwareLegend), so it reads consistently with Output & Efficiency
+ above rather than being a one-off. */}
+ {(() => {
+ const filterById = selectedProductionHouseId;
+ const matchesProdFilter = (p: any) => {
+ if (!filterById) return true;
+ const matchesStoreId = p.storeId === filterById;
+ const matchesProductionHouseId = p.productionHouseId === filterById;
+ let recordProductionHouseId = p.productionHouseId;
+ if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+ const allStores = stores.length > 0 ? stores : (context.stores || []);
+ recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
+ }
+ const phId = recordProductionHouseId || p.storeId;
+ return matchesStoreId || matchesProductionHouseId || phId === filterById;
+ };
+
+ const SAUCE_TYPES = [
+ { key: 'panfriedSauce', label: 'Panfried Sauce', color: '#ea580c' },
+ { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', color: '#dc2626' },
+ { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', color: '#db2777' },
+ { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', color: '#c026d3' },
+ { key: 'tandooriSauce', label: 'Tandoori Sauce', color: '#9333ea' },
+ { key: 'soupPremix', label: 'Soup Premix', color: '#4f46e5' },
+ { key: 'greenMayoChutney', label: 'Green Mayo Chutney', color: '#16a34a' },
+ { key: 'spicyRedChutney', label: 'Spicy Red Chutney', color: '#eab308' },
+ ] as const;
+
+ const enumerateDates = (start: string, end: string): string[] => {
+ const dates: string[] = [];
+ let d = start;
+ let guard = 0;
+ while (d <= end && guard < 400) {
+ dates.push(d);
+ d = addDays(d, 1);
+ guard++;
+ }
+ return dates;
+ };
+
+ const buildSauceSeries = (dates: string[]) => dates.map(date => {
+ const dayRecords = productionData.filter(p => matchesProdFilter(p) && p.date === date);
+ const row: any = { date, label: formatDateIST(date) };
+ let total = 0;
+ SAUCE_TYPES.forEach(s => {
+ const litres = dayRecords.reduce((sum, p) => sum + (p.sauces?.[s.key] || 0), 0);
+ row[s.key] = Math.round(litres * 100) / 100;
+ total += litres;
+ });
+ row.totalSauce = Math.round(total * 100) / 100;
+ return row;
+ });
+
+ const { startDate, endDate } = getDateRangeBounds();
+ const previousRangeForSauces = getPreviousPeriodDateRange();
+ const currentDates = enumerateDates(startDate, endDate);
+ const previousDates = enumerateDates(previousRangeForSauces.startDate, previousRangeForSauces.endDate);
+ const sauceSeries = buildSauceSeries(currentDates);
+ const previousSauceSeries = buildSauceSeries(previousDates);
+ const sauceChartData = zipPrev(sauceSeries, previousSauceSeries, ['totalSauce']);
+
+ const periodTotals = SAUCE_TYPES.map(s => ({
+ name: s.label,
+ value: Math.round(sauceSeries.reduce((sum, r) => sum + (r[s.key] || 0), 0) * 100) / 100,
+ color: s.color,
+ }));
+ const previousPeriodTotals = SAUCE_TYPES.map(s => ({
+ key: s.key,
+ value: previousSauceSeries.reduce((sum, r) => sum + (r[s.key] || 0), 0),
+ }));
+ const hasAnySauce = periodTotals.some(t => t.value > 0);
+
+ if (currentDates.length === 0 || !hasAnySauce) return null;
+
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="mb-6">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <Soup className="w-6 h-6 text-rose-600" />
+ Sauces & Chutneys Usage
+ </h2>
+ <p className="text-sm text-gray-600">Litres prepared per day for the selected date range · dotted line is the matching previous period</p>
+ </div>
+
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Usage by Type</h3>
+ <ResponsiveContainer width="100%" height={280}>
+ <ComposedChart data={sauceChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} unit="L" />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ {SAUCE_TYPES.map(s => (
+ <Bar key={s.key} dataKey={s.key} stackId="sauce" name={s.label} fill={s.color} />
+ ))}
+ <Line type="monotone" dataKey="prev_totalSauce" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ </ComposedChart>
+ </ResponsiveContainer>
+ </div>
+
+ <div className="bg-gray-50 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">This Period vs Previous, by Type</h3>
+ <div className="space-y-2.5">
+ {periodTotals.filter(t => t.value > 0 || (previousPeriodTotals.find(p => p.key === SAUCE_TYPES.find(s => s.label === t.name)?.key)?.value || 0) > 0).map(t => {
+ const sauceKey = SAUCE_TYPES.find(s => s.label === t.name)?.key;
+ const prevValue = previousPeriodTotals.find(p => p.key === sauceKey)?.value || 0;
+ const change = pctChange(t.value, prevValue);
+ return (
+ <div key={t.name} className="flex items-center gap-3">
+ <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
+ <span className="text-sm text-gray-700 flex-1 truncate">{t.name}</span>
+ <span className="text-sm font-semibold text-gray-900 tabular-nums">{t.value.toLocaleString()} L</span>
+ {change !== null && (
+ <span className={`text-xs font-medium tabular-nums w-14 text-right ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ {change >= 0 ? '+' : ''}{change.toFixed(0)}%
+ </span>
+ )}
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ </div>
+ </div>
+ );
+ })()}
+
+ {/* Day-of-Week Production Pattern - mirrors Store Analytics' "Orders by Hour" idea,
+ but production only has a date (no reliable intra-day timestamp to bucket by hour),
+ so this buckets by weekday instead: which days this production house tends to run
+ hottest/coldest, and whether wastage skews toward particular days (e.g. Mondays after
+ a weekend). Same zipPrev/current-vs-previous convention as the rest of this page. */}
+ {(() => {
+ const filterById = selectedProductionHouseId;
+ const matchesProdFilter = (p: any) => {
+ if (!filterById) return true;
+ const matchesStoreId = p.storeId === filterById;
+ const matchesProductionHouseId = p.productionHouseId === filterById;
+ let recordProductionHouseId = p.productionHouseId;
+ if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
+ const allStores = stores.length > 0 ? stores : (context.stores || []);
+ recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
+ }
+ const phId = recordProductionHouseId || p.storeId;
+ return matchesStoreId || matchesProductionHouseId || phId === filterById;
+ };
+
+ // Mon..Sun display order, mapped from JS's Sun=0..Sat=6
+ const WEEKDAYS = [
+ { jsDay: 1, label: 'Mon' }, { jsDay: 2, label: 'Tue' }, { jsDay: 3, label: 'Wed' },
+ { jsDay: 4, label: 'Thu' }, { jsDay: 5, label: 'Fri' }, { jsDay: 6, label: 'Sat' },
+ { jsDay: 0, label: 'Sun' },
+ ];
+
+ const buildWeekdaySeries = (fromDate: string, toDate: string) => {
+ const records = productionData.filter(p => matchesProdFilter(p) && p.date >= fromDate && p.date <= toDate);
+ return WEEKDAYS.map(w => {
+ const dayRecords = records.filter(p => new Date(`${p.date}T00:00:00`).getDay() === w.jsDay);
+ let totalFinal = 0, totalRawKg = 0, wastageKg = 0;
+ MOMO_TYPES.forEach(({ key }) => {
+ totalFinal += dayRecords.reduce((sum, p) => sum + (p[key]?.final || 0), 0);
+ });
+ dayRecords.forEach(p => {
+ wastageKg += (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0);
+ });
+ return { label: w.label, totalFinal, wastageKg: Math.round(wastageKg * 100) / 100 };
+ });
+ };
+
+ const { startDate, endDate } = getDateRangeBounds();
+ const previousRangeForWeekday = getPreviousPeriodDateRange();
+ const weekdaySeries = buildWeekdaySeries(startDate, endDate);
+ const previousWeekdaySeries = buildWeekdaySeries(previousRangeForWeekday.startDate, previousRangeForWeekday.endDate);
+ const weekdayChartData = zipPrev(weekdaySeries, previousWeekdaySeries, ['totalFinal']);
+ const hasAnyOutput = weekdaySeries.some(r => r.totalFinal > 0);
+
+ if (!hasAnyOutput) return null;
+
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="mb-6">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <CalendarDays className="w-6 h-6 text-teal-600" />
+ Day-of-Week Production Pattern
+ </h2>
+ <p className="text-sm text-gray-600">Total pieces produced by day of week, summed across the selected date range · dotted line is the matching previous period</p>
+ </div>
+ <ResponsiveContainer width="100%" height={280}>
+ <ComposedChart data={weekdayChartData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Bar dataKey="totalFinal" name="Pieces produced" fill="#0d9488" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_totalFinal" name="Pieces produced (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ </ComposedChart>
+ </ResponsiveContainer>
+ </div>
+ );
+ })()}
 
  {/* Production House Stock Status */}
  <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-orange-200">
@@ -4509,9 +6796,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  Opening balance + This month produced - Sent to stores (delivered requests)
  </p>
  </div>
- 
- {/* Alert Settings and Plate Settings - For Operations Managers and Production Incharge in Production Analytics Mode */}
- {analyticsMode === 'production' && (isManager || isProductionIncharge) && (
+
+ {/* Alert Settings and Plate Settings - Operations Manager / Cluster Head only, not
+ the Production Incharge submitting the data being thresholded. */}
+ {analyticsMode === 'production' && (isOperationsManager || isClusterHead) && (
  <div className="flex flex-wrap gap-2 items-start">
  {/* Stock Alert Settings Button */}
  <button
@@ -4562,7 +6850,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
  </div>
  )}
- {(isManager || isClusterHead) && onNavigateToManageItems && (
+ {(isOperationsManager || isClusterHead) && onNavigateToManageItems && (
  <button
  onClick={() => {
  console.log('🔘 Manage Items button clicked in Analytics');
@@ -4664,8 +6952,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  });
  }
 
- // Filter by current month only (monthly reset logic)
- const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
+ // Fixed current-month activity for this stock view. Stock Available itself remains
+ // current stock, so a separate date filter would make the card misleading.
+ const nowForMonth = new Date();
+ const currentMonth = `${nowForMonth.getFullYear()}-${String(nowForMonth.getMonth() + 1).padStart(2, '0')}`;
  const monthlyFilteredProduction = filteredProduction.filter(p => p.date.startsWith(currentMonth));
  
  console.log(' - Monthly filtered production:', monthlyFilteredProduction.length, 'for month:', currentMonth);
@@ -4693,7 +6983,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return snakeToCamelForCalc(baseName);
  };
 
- // Calculate total production by momo type (for current month only) - DYNAMIC
+ // Calculate approved production by momo type for the current month.
  const totalProduced: Record<string, number> = {};
  
  // Initialize all finished products to 0
@@ -4701,38 +6991,57 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
  totalProduced[stockKey] = 0;
  });
- 
- // Aggregate production data - ONLY APPROVED PRODUCTION
- monthlyFilteredProduction
- .filter(p => p.approvalStatus === 'approved') // CRITICAL: Only count approved production
- .forEach(p => {
+
+ const getProductionFieldValue = (p: any, itemName: string, stockKey: string) => {
+ const data = p?.data || {};
+ const baseItemName = itemName.replace(/_momo(s)?$/i, '');
+ const camelItemName = snakeToCamelForCalc(itemName);
+ const camelBaseItemName = snakeToCamelForCalc(baseItemName);
+ const aliases = [
+ itemName,
+ `${itemName}s`,
+ baseItemName,
+ stockKey,
+ camelItemName,
+ `${camelItemName}s`,
+ camelBaseItemName,
+ `${camelBaseItemName}Momos`,
+ `${stockKey}Momos`
+ ];
+
+ const normalizeValue = (value: any) => {
+ if (value === undefined || value === null) return 0;
+ if (typeof value === 'object') return Number(value.final ?? value.quantity ?? value.pieces ?? 0) || 0;
+ return Number(value) || 0;
+ };
+
+ for (const alias of aliases) {
+ if (data[alias] !== undefined && data[alias] !== null) {
+ return normalizeValue(data[alias]);
+ }
+ }
+
+ for (const alias of aliases) {
+ if (p[alias] !== undefined && p[alias] !== null) {
+ return normalizeValue(p[alias]);
+ }
+ }
+
+ return 0;
+ };
+
+ const addProductionRecordToTotals = (p: any, target: Record<string, number>) => {
  finishedProductsForCalc.forEach(item => {
  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- 
- // CRITICAL FIX: Production data is stored in p.data object
- // Read from p.data[item.name] (e.g., p.data.chicken_momo)
- const dataValue = ((p as any).data as any)?.[item.name];
- 
- // If not found in data object, fallback to old format for backwards compatibility
- let fieldValue = 0;
- if (dataValue !== undefined && dataValue !== null) {
- // Production data found in p.data
- fieldValue = typeof dataValue === 'object' ? (dataValue.final || dataValue.quantity || 0) : dataValue;
- } else {
- // Fallback: try old format (p.chickenMomos or p.chicken)
- const fieldWithMomos = (p as any)[stockKey + 'Momos'];
- const fieldWithoutMomos = (p as any)[stockKey];
- 
- if (fieldWithMomos) {
- fieldValue = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
- } else if (fieldWithoutMomos) {
- fieldValue = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
- }
- }
- 
- totalProduced[stockKey] = (totalProduced[stockKey] || 0) + fieldValue;
+ const fieldValue = getProductionFieldValue(p, item.name, stockKey);
+ target[stockKey] = (target[stockKey] || 0) + fieldValue;
  });
- });
+ };
+ 
+ const approvedMonthlyProduction = monthlyFilteredProduction
+ .filter(p => p.approvalStatus === 'approved'); // CRITICAL: Only count approved production
+
+ approvedMonthlyProduction.forEach(p => addProductionRecordToTotals(p, totalProduced));
 
  // Calculate total fulfilled stock requests (sent to stores)
  // Use ProductionRequests (which have 'delivered' status), not StockRequests
@@ -4756,12 +7065,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  }
  
  const fulfilledRequests = context.productionRequests?.filter(req => {
- // Only count delivered requests (completed deliveries to stores)
- if (req.status !== 'delivered') return false;
+ // Count anything sent out of the production house. A request can be shipped or
+ // partially-shipped before the store marks it delivered, but it has still left stock.
+ const sentStatuses = ['shipped', 'partially-shipped', 'delivered', 'partially-delivered'];
+ if (!sentStatuses.includes(req.status)) return false;
  
  // Filter by current month only (monthly reset)
  // Check what date field exists on production requests
- const requestDate = req.deliveredAt || req.requestDate || req.createdAt;
+ const requestDate = req.shippedAt || req.deliveredAt || req.requestDate || req.createdAt;
  
  if (!requestDate || !requestDate.startsWith(currentMonth)) {
  console.log('❌ Filtered out request - wrong month:', {
@@ -4832,18 +7143,48 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
  totalSentToStores[stockKey] = 0;
  });
- 
- // Aggregate delivered requests
- fulfilledRequests.forEach(req => {
+
+ const getDeliveredRequestQuantity = (req: any, itemName: string, stockKey: string) => {
+ const baseItemName = itemName.replace(/_momo(s)?$/i, '');
+ const camelItemName = snakeToCamelForCalc(itemName);
+ const camelBaseItemName = snakeToCamelForCalc(baseItemName);
+ const aliases = [
+ stockKey,
+ `${stockKey}Momos`,
+ `${stockKey}Momo`,
+ itemName,
+ `${itemName}s`,
+ baseItemName,
+ camelItemName,
+ `${camelItemName}s`,
+ camelBaseItemName,
+ `${camelBaseItemName}Momos`,
+ `${camelBaseItemName}Momo`
+ ];
+ const shippedQuantities = req.shippedQuantities || {};
+
+ for (const alias of aliases) {
+ const shippedValue = shippedQuantities[alias];
+ if (shippedValue !== undefined && shippedValue !== null) return Number(shippedValue) || 0;
+ }
+
+ for (const alias of aliases) {
+ const value = req[alias];
+ if (value !== undefined && value !== null) return Number(value) || 0;
+ }
+
+ return 0;
+ };
+
+ const addDeliveredRequestToTotals = (req: any, target: Record<string, number>) => {
  finishedProductsForCalc.forEach(item => {
  const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- // Support both old format (chickenMomos with 's') and new format (chickenMomo without 's')
- const requestedQty = (req as any)[stockKey + 'Momos'] || // Old: chickenMomos
- (req as any)[stockKey] || // New: chicken
- 0;
- totalSentToStores[stockKey] = (totalSentToStores[stockKey] || 0) + requestedQty;
+ const deliveredQty = getDeliveredRequestQuantity(req, item.name, stockKey);
+ target[stockKey] = (target[stockKey] || 0) + deliveredQty;
  });
- });
+ };
+ 
+ fulfilledRequests.forEach(req => addDeliveredRequestToTotals(req, totalSentToStores));
 
  // Calculate remaining stock with carry-forward from previous month - DYNAMIC
  // Stock = Opening Balance + Current Month Production - Current Month Deliveries
@@ -4861,7 +7202,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log(' previousMonthStock (raw):', previousMonthStock);
  console.log(' Opening Balance (processed):', openingBalance);
  console.log(' Current Month Production (APPROVED ONLY):', totalProduced);
- console.log(' Current Month Deliveries:', totalSentToStores);
+ console.log(' Current Month Sent to Stores:', totalSentToStores);
  console.log(' 📊 Production Records Debug:');
  console.log(' Total monthly production records:', monthlyFilteredProduction.length);
  console.log(' Approved monthly production records:', monthlyFilteredProduction.filter(p => p.approvalStatus === 'approved').length);
@@ -4874,125 +7215,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  sampleValue: (p as any).data ? (p as any).data[Object.keys((p as any).data)[0]] : null
  })));
  
- // NEW: Check if we have mid-month recalibration data
- const midMonthRecalData = (window as any).__midMonthRecalibration;
- const midMonthRecalDate = latestRecalibration?.date;
- const isMidMonthRecal = midMonthRecalData && midMonthRecalDate;
- 
- if (isMidMonthRecal) {
- console.log(' 🔄 Mid-Month Recalibration Detected:');
- console.log(' Recalibration date:', midMonthRecalDate);
- console.log(' Recalibration stock:', midMonthRecalData);
- }
- 
- // Calculate production house stock dynamically
+ // Stock = Opening Balance + This Month Produced - Sent to Stores.
+ // Base momos also lose stock when converted into Kurkure momos.
  const productionHouseStock: Record<string, number> = {};
- 
- if (isMidMonthRecal) {
- // PROPER mid-month recalibration logic:
- // Stock = Most Recent Recalibration + Production AFTER - Deliveries AFTER
- const recalTimestamp = midMonthRecalDate!; // Use full ISO timestamp
- console.log(' Recalibration date (date only):', recalTimestamp.substring(0, 10));
- 
- // Calculate production AFTER recalibration
- const productionAfterRecal: Record<string, number> = {};
  finishedProductsForCalc.forEach(item => {
  const stockKey = getStockKey(item.name);
- productionAfterRecal[stockKey] = 0;
+ const convertedToKurkure =
+ stockKey === 'chicken' ? (totalProduced.chickenKurkure || 0) :
+ stockKey === 'veg' ? (totalProduced.vegKurkure || 0) :
+ 0;
+ productionHouseStock[stockKey] =
+ (openingBalance[stockKey] || 0) +
+ (totalProduced[stockKey] || 0) -
+ (totalSentToStores[stockKey] || 0) -
+ convertedToKurkure;
  });
- 
- filteredProduction
- .filter(prod => prod.approvalStatus === 'approved') // CRITICAL: Only count approved production
- .forEach(prod => {
- const recalDateOnly = recalTimestamp.substring(0, 10); // "2026-01-14"
- const isAfterRecalDate = prod.date > recalDateOnly; // Exclude production from same day
- 
- console.log(' 📊 Checking production after recalibration:', {
- id: prod.id.slice(0, 8),
- date: prod.date,
- recalDateOnly: recalDateOnly,
- isAfter: isAfterRecalDate,
- hasData: !!(prod as any).data,
- dataKeys: (prod as any).data ? Object.keys((prod as any).data) : [],
- approvalStatus: prod.approvalStatus
- });
- 
- // Only include production from AFTER the recalibration date (not same day)
- // Since production records only have dates, we can't tell if same-day production
- // happened before or after the recalibration, so we exclude it
- if (isAfterRecalDate) {
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- 
- // CRITICAL FIX: Use same logic as totalProduced - check both p.data and old format
- const dataValue = ((prod as any).data as any)?.[item.name];
- let value = 0;
- 
- if (dataValue !== undefined && dataValue !== null) {
- // Production data found in p.data
- value = typeof dataValue === 'object' ? (dataValue.final || dataValue.quantity || 0) : dataValue;
- } else {
- // Fallback: try old format (prod.chickenMomos or prod.chicken)
- const fieldWithMomos = (prod as any)[stockKey + 'Momos'];
- const fieldWithoutMomos = (prod as any)[stockKey];
- 
- if (fieldWithMomos) {
- value = typeof fieldWithMomos === 'object' ? (fieldWithMomos.final || 0) : fieldWithMomos;
- } else if (fieldWithoutMomos) {
- value = typeof fieldWithoutMomos === 'object' ? (fieldWithoutMomos.final || 0) : fieldWithoutMomos;
- }
- }
- 
- if (value > 0) {
- console.log(` ✅ Adding production after recalibration: ${item.name} (${stockKey}) = ${value}`);
- }
- productionAfterRecal[stockKey] = (productionAfterRecal[stockKey] || 0) + value;
- });
- }
- });
- 
- // Calculate deliveries AFTER recalibration
- const deliveriesAfterRecal: Record<string, number> = {};
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- deliveriesAfterRecal[stockKey] = 0;
- });
- 
- fulfilledRequests.forEach(req => {
- const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
- // Compare full timestamps, not just dates
- if (deliveryDate && deliveryDate > recalTimestamp) {
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- const requestedQty = (req as any)[stockKey + 'Momos'] || (req as any)[stockKey] || 0;
- deliveriesAfterRecal[stockKey] = (deliveriesAfterRecal[stockKey] || 0) + requestedQty;
- });
- }
- });
- 
- console.log(' Production AFTER recalibration:', productionAfterRecal);
- console.log(' Deliveries AFTER recalibration:', deliveriesAfterRecal);
- 
- // Calculate final stock: Recal + Production After - Deliveries After
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- const recalStock = midMonthRecalData[stockKey] || 0;
- const prodAfter = productionAfterRecal[stockKey] || 0;
- const delAfter = deliveriesAfterRecal[stockKey] || 0;
- productionHouseStock[stockKey] = recalStock + prodAfter - delAfter;
- console.log(` ${stockKey}: ${recalStock} (recal) + ${prodAfter} (prod after) - ${delAfter} (del after) = ${productionHouseStock[stockKey]}`);
- });
- } else {
- // Normal calculation: Opening Balance + Production - Deliveries
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- productionHouseStock[stockKey] = 
- (openingBalance[stockKey] || 0) + 
- (totalProduced[stockKey] || 0) - 
- (totalSentToStores[stockKey] || 0);
- });
- }
- 
+
  console.log(' Final Stock:', productionHouseStock);
  
  // Store calculated stock globally for the recalibration modal
@@ -5078,7 +7316,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div>
  <h4 className="text-sm font-semibold text-blue-900">Automatic Stock Carry-Forward Active</h4>
  <p className="text-xs text-blue-700 mt-1">
- Stock calculation: <span className="font-mono">Opening Balance + This Month's Production - Deliveries</span>
+ Stock calculation: <span className="font-mono">Opening Balance + This Month Produced - Sent to Stores</span>
+ <span className="block mt-1">Chicken/Veg base stock also subtracts Kurkure prepared.</span>
  </p>
  <p className="text-xs text-blue-600 mt-1">
  {latestRecalibration && latestRecalibration.date
@@ -5091,7 +7330,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
  
- <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+ <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
  {momoTypes.map(({ key, camelKey, label, color, unit }) => {
  // Use camelCase key for stock lookup (handles both snake_case and camelCase)
  const opening = (openingBalance as any)[camelKey] || (openingBalance as any)[key] || 0;
@@ -5139,6 +7378,44 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  }
  
  const stockPercentage = produced > 0 ? ((stock / produced) * 100).toFixed(0) : '0';
+ 
+ const alertLabel = stock < 0 ? 'OVER' : isCriticalStock ? 'CRITICAL' : isLowStock ? 'LOW' : isMediumStock ? 'MEDIUM' : '';
+ const alertClasses = stock < 0 || isCriticalStock || isLowStock
+ ? 'bg-red-100 border-red-300 text-red-700'
+ : isMediumStock
+ ? 'bg-orange-100 border-orange-300 text-orange-700'
+ : '';
+ const compactValueColor = stock < 0 || isCriticalStock || isLowStock ? 'text-red-600' : `text-${color}-800`;
+ 
+ return (
+ <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-2.5 relative`}>
+ {alertLabel && (
+ <div className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded border ${alertClasses}`}>
+ <AlertCircle className="w-3 h-3" />
+ <span className="text-[10px] font-semibold uppercase">{alertLabel}</span>
+ </div>
+ )}
+ <h3 className="text-xs font-semibold text-gray-900 mb-1.5 pr-14 truncate">{label}</h3>
+ {opening > 0 && (
+ <div className="text-[11px] text-blue-700 mb-1">
+ Opening: <span className="font-semibold">{opening}</span>
+ </div>
+ )}
+ <div className="flex justify-between items-center text-[11px] text-gray-600">
+ <span>Produced: <span className={`font-semibold text-${color}-700`}>{produced}</span></span>
+ <span>Sent: <span className={`font-semibold text-${color}-700`}>{sent}</span></span>
+ </div>
+ <div className="border-t border-gray-300 mt-1.5 pt-1.5 flex items-center justify-between">
+ <span className="text-[10px] font-medium text-gray-500">Available</span>
+ <div className={`text-sm font-bold ${compactValueColor}`}>
+ {stock} pcs / {Math.round(stock / momosPerPlate)} pl
+ </div>
+ </div>
+ {!hasData && (
+ <p className="text-[10px] text-yellow-700 font-semibold mt-1">Track in production logging</p>
+ )}
+ </div>
+ );
  
  return (
  <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300`}>
@@ -5245,293 +7522,325 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  })()}
  </div>
 
- {/* Momo Production Charts */}
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
- <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 gap-3 sm:gap-0">
- <div>
- <h2 className="text-xl text-gray-900 mb-1">Momo Production Analysis</h2>
- <p className="text-sm text-gray-600">Daily, weekly, monthly, and yearly production trends</p>
- </div>
 
- {/* Time Filter */}
- <div className="w-full sm:w-auto">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
- </div>
- </div>
+ {/* Production House Leaderboard - ranks every house by output/wastage%/yield for
+ the selected period. Only meaningful with more than one house to compare, so it's
+ hidden entirely when a single production house is already the active filter. */}
+ {!selectedProductionHouseId && context.productionHouses && context.productionHouses.length > 1 && (() => {
+ const { startDate, endDate } = getDateRangeBounds();
+ const periodProduction = productionData.filter(p => p.date >= startDate && p.date <= endDate);
 
- {/* Custom Date Range Picker */}
- {timeFilter === 'custom' && (
- <div className="mb-6 bg-blue-50 p-4 rounded-lg">
- <div className="grid grid-cols-2 gap-4">
- <div>
- <label className="block text-sm text-gray-700 mb-2">From Date</label>
- <input
- type="date"
- value={dateRange.from}
- onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
- className="w-full px-3 py-2 border border-gray-300 rounded-lg"
- />
- </div>
- <div>
- <label className="block text-sm text-gray-700 mb-2">To Date</label>
- <input
- type="date"
- value={dateRange.to}
- onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
- className="w-full px-3 py-2 border border-gray-300 rounded-lg"
- />
- </div>
- </div>
- </div>
- )}
-
- {/* Card-based Production View */}
- {(() => {
- // Use consistent production house filtering logic
- const filterById = analyticsMode === 'production'
- ? selectedProductionHouseId
- : (context.user?.designation === 'production_incharge'
- ? effectiveStoreId
- : selectedProductionHouseId);
- 
- const now = new Date();
- const today = now.toISOString().split('T')[0];
- const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
- 
- // Get week boundaries
- const thisWeekStart = new Date(now);
- thisWeekStart.setDate(now.getDate() - now.getDay());
- thisWeekStart.setHours(0, 0, 0, 0);
- 
- const lastWeekStart = new Date(thisWeekStart);
- lastWeekStart.setDate(thisWeekStart.getDate() - 7);
- const lastWeekEnd = new Date(thisWeekStart);
- lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
- 
- // Get month boundaries
- const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
- const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
- const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
- 
- // Filter production data by production house
- let filteredProduction = productionData.filter(p => {
- if (filterById) {
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- 
+ const rows = context.productionHouses.map(ph => {
+ const matchesHouse = (p: any) => {
+ const matchesStoreId = p.storeId === ph.id;
+ const matchesProductionHouseId = p.productionHouseId === ph.id;
  let recordProductionHouseId = p.productionHouseId;
- 
  if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const store = context.stores?.find(s => s.id === p.storeId);
- recordProductionHouseId = store?.productionHouseId || undefined;
+ const allStores = stores.length > 0 ? stores : (context.stores || []);
+ recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
  }
- 
  const phId = recordProductionHouseId || p.storeId;
- const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
- if (!matches) return false;
- }
- return true;
- });
- 
- // Further filter by time period
- let currentPeriodProduction: typeof filteredProduction = [];
- let comparisonPeriodProduction: typeof filteredProduction = [];
- let periodLabel = '';
- let comparisonLabel = '';
- 
- if (timeFilter === 'today') {
- currentPeriodProduction = filteredProduction.filter(p => p.date === today);
- comparisonPeriodProduction = filteredProduction.filter(p => p.date === yesterday);
- periodLabel = 'Today';
- comparisonLabel = 'vs Yesterday';
- } else if (timeFilter === 'yesterday') {
- currentPeriodProduction = filteredProduction.filter(p => p.date === yesterday);
- const dayBefore = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
- comparisonPeriodProduction = filteredProduction.filter(p => p.date === dayBefore);
- periodLabel = 'Yesterday';
- comparisonLabel = 'vs Day Before';
- } else if (timeFilter === 'thisWeek') {
- currentPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= thisWeekStart && pDate <= now;
- });
- comparisonPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= lastWeekStart && pDate <= lastWeekEnd;
- });
- periodLabel = 'This Week';
- comparisonLabel = 'vs Last Week';
- } else if (timeFilter === 'lastWeek') {
- currentPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= lastWeekStart && pDate <= lastWeekEnd;
- });
- const weekBeforeStart = new Date(lastWeekStart);
- weekBeforeStart.setDate(lastWeekStart.getDate() - 7);
- const weekBeforeEnd = new Date(lastWeekStart);
- weekBeforeEnd.setDate(lastWeekStart.getDate() - 1);
- comparisonPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= weekBeforeStart && pDate <= weekBeforeEnd;
- });
- periodLabel = 'Last Week';
- comparisonLabel = 'vs Week Before';
- } else if (timeFilter === 'thisMonth') {
- currentPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= thisMonthStart && pDate <= now;
- });
- // Compare same number of days from last month
- const currentDayOfMonth = now.getDate();
- const lastMonthSameDay = new Date(now.getFullYear(), now.getMonth() - 1, currentDayOfMonth);
- comparisonPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= lastMonthStart && pDate <= lastMonthSameDay;
- });
- periodLabel = 'This Month';
- comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
- } else if (timeFilter === 'lastMonth') {
- currentPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= lastMonthStart && pDate <= lastMonthEnd;
- });
- // Get the number of days in last month
- const daysInLastMonth = lastMonthEnd.getDate();
- const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
- const monthBeforeSameDay = new Date(now.getFullYear(), now.getMonth() - 2, daysInLastMonth);
- comparisonPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= monthBeforeStart && pDate <= monthBeforeSameDay;
- });
- periodLabel = 'Last Month';
- comparisonLabel = `vs Month Before (Day 1-${daysInLastMonth})`;
- } else if (timeFilter === 'custom') {
- currentPeriodProduction = filteredProduction.filter(p => 
- p.date >= dateRange.from && p.date <= dateRange.to
- );
- const customStart = new Date(dateRange.from);
- const customEnd = new Date(dateRange.to);
- const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));
- const comparisonStart = new Date(customStart);
- comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
- const comparisonEnd = new Date(customStart);
- comparisonEnd.setDate(customStart.getDate() - 1);
- comparisonPeriodProduction = filteredProduction.filter(p => {
- const pDate = new Date(p.date);
- return pDate >= comparisonStart && pDate <= comparisonEnd;
- });
- periodLabel = `${dateRange.from} to ${dateRange.to}`;
- comparisonLabel = 'vs Previous Period';
- }
- 
- // Calculate totals for each momo type
- const momoTypes = [
- { key: 'chickenMomos', label: 'Chicken Momos', color: { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', solid: '#ef4444' } },
- { key: 'chickenCheeseMomos', label: 'Chicken Cheese', color: { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', solid: '#f97316' } },
- { key: 'vegMomos', label: 'Veg Momos', color: { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300', solid: '#10b981' } },
- { key: 'cheeseCornMomos', label: 'Cheese Corn', color: { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-300', solid: '#fbbf24' } },
- { key: 'paneerMomos', label: 'Paneer Momos', color: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', solid: '#3b82f6' } },
- { key: 'vegKurkureMomos', label: 'Veg Kurkure', color: { bg: 'bg-lime-100', text: 'text-lime-700', border: 'border-lime-300', solid: '#84cc16' } },
- { key: 'chickenKurkureMomos', label: 'Chicken Kurkure', color: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300', solid: '#f59e0b' } },
- ];
- 
- const calculateTotal = (production: any[], momoKey: string) => {
- return production.reduce((sum, p) => sum + (p[momoKey]?.final || 0), 0);
+ return matchesStoreId || matchesProductionHouseId || phId === ph.id;
  };
- 
+ const houseRecords = periodProduction.filter(matchesHouse);
+ let totalFinal = 0, totalRawKg = 0, totalWastageKg = 0;
+ MOMO_TYPES.forEach(t => {
+ totalFinal += houseRecords.reduce((sum, p) => sum + (p[t.key]?.final || 0), 0);
+ totalRawKg += t.group === 'regular'
+ ? houseRecords.reduce((sum, p) => sum + (p[t.key]?.dough || 0) + (p[t.key]?.stuffing || 0), 0)
+ : houseRecords.reduce((sum, p) => sum + (p[t.key]?.batter || 0) + (p[t.key]?.coating || 0), 0);
+ });
+ totalWastageKg = houseRecords.reduce((sum, p) => sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
+ const yieldPcsPerKg = totalRawKg > 0 ? Math.round((totalFinal / totalRawKg) * 10) / 10 : null;
+ const wastagePct = (totalRawKg + totalWastageKg) > 0 ? Math.round((totalWastageKg / (totalRawKg + totalWastageKg)) * 1000) / 10 : 0;
+ return { id: ph.id, name: ph.name, totalFinal, yieldPcsPerKg, wastagePct };
+ }).filter(r => r.totalFinal > 0).sort((a, b) => b.totalFinal - a.totalFinal);
+
+ if (rows.length === 0) return null;
+ const maxFinal = Math.max(...rows.map(r => r.totalFinal));
+
  return (
- <div>
- <div className="mb-4 text-sm text-gray-600">
- <span className="font-medium">Period:</span> {periodLabel} • <span className="font-medium">Total Production Records:</span> {currentPeriodProduction.length}
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="mb-4">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <Factory className="w-6 h-6 text-indigo-600" />
+ Production House Leaderboard
+ </h2>
+ <p className="text-sm text-gray-600">Output, yield and wastage rate by house for the selected date range</p>
  </div>
- 
- {currentPeriodProduction.length === 0 ? (
- <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
- <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
- <p>No production data for this period</p>
+ <div className="space-y-3">
+ {rows.map((r, idx) => (
+ <div key={r.id} className="flex items-center gap-3">
+ <span className="w-5 text-sm font-bold text-gray-400 flex-shrink-0 text-right">{idx + 1}</span>
+ <div className="flex-1 min-w-0">
+ <div className="flex items-center justify-between gap-2 mb-1">
+ <span className="text-sm font-semibold text-gray-900 truncate">{r.name}</span>
+ <span className="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+ {r.totalFinal.toLocaleString()} pcs
+ {r.yieldPcsPerKg !== null && ` · ${r.yieldPcsPerKg} pcs/kg`}
+ {' · '}
+ <span className={r.wastagePct > 5 ? 'text-red-600 font-medium' : 'text-gray-500'}>{r.wastagePct}% waste</span>
+ </span>
  </div>
- ) : (
- <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
- {momoTypes.map((momoType) => {
- const currentQty = calculateTotal(currentPeriodProduction, momoType.key);
- const comparisonQty = calculateTotal(comparisonPeriodProduction, momoType.key);
- 
- // Calculate percentage change
- let percentChange = 0;
- let changeDirection: 'up' | 'down' | 'same' = 'same';
- if (comparisonQty > 0) {
- percentChange = ((currentQty - comparisonQty) / comparisonQty) * 100;
- if (percentChange > 0) changeDirection = 'up';
- else if (percentChange < 0) changeDirection = 'down';
- } else if (currentQty > 0) {
- percentChange = 100;
- changeDirection = 'up';
+ <div className="w-full bg-gray-100 rounded-full h-2">
+ <div className="h-2 rounded-full bg-indigo-500" style={{ width: `${maxFinal > 0 ? Math.max(4, (r.totalFinal / maxFinal) * 100) : 0}%` }} />
+ </div>
+ </div>
+ </div>
+ ))}
+ </div>
+ </div>
+ );
+ })()}
+
+ {/* Production Ledger - dough/stuffing/batter/coating pools, carried forward day to
+ day via ProductionManagement.tsx's entry workflow. Only meaningful for a single
+ concrete production house (an "all houses" combined pool trend isn't meaningful as
+ raw kg without house-specific context) and will look sparse until real data
+ accumulates from go-live (2026-08-23) onward - same expectation as every other
+ go-live gate this session. */}
+ {selectedProductionHouseId && (() => {
+ const PRODUCTION_LEDGER_GO_LIVE_DATE = '2026-08-23';
+ const sortedEntries = [...productionLedgerRange].sort((a, b) => a.date.localeCompare(b.date));
+
+ if (productionLedgerRangeLoading) {
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6 text-center text-sm text-gray-500">
+ Loading production ledger…
+ </div>
+ );
  }
- 
+ if (sortedEntries.length === 0) {
  return (
- <div
- key={momoType.key}
- className={`${momoType.color.bg} ${momoType.color.border} border-2 rounded-xl p-4 transition-all hover:shadow-lg`}
- >
- <div className="flex flex-col gap-3">
- {/* Header */}
- <div className="flex items-center justify-between">
- <div className="flex items-center gap-2">
- <div className={`w-10 h-10 ${momoType.color.text} rounded-full flex items-center justify-center bg-white`}>
- <Soup className="w-5 h-5" />
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <Package className="w-6 h-6 text-teal-600" />
+ Production Ledger
+ </h2>
+ <p className="text-sm text-gray-600">
+ Dough/stuffing/batter/coating carry-forward tracking starts {PRODUCTION_LEDGER_GO_LIVE_DATE} - no closed days yet for this house in the selected range.
+ </p>
  </div>
- <div className="text-sm font-bold text-gray-800">
- {momoType.label}
+ );
+ }
+
+ // Totals per pool across the whole range, for utilization % and days-of-cover.
+ const totals: Record<string, { prepared: number; wastage: number }> = {};
+ ALL_POOL_IDS.forEach((id) => { totals[id] = { prepared: 0, wastage: 0 }; });
+ sortedEntries.forEach((entry) => {
+ ALL_POOL_IDS.forEach((id) => {
+ const pool = (entry.pools as any)?.[id];
+ if (!pool) return;
+ totals[id].prepared += pool.prepared || 0;
+ if (typeof pool.wastage === 'number') totals[id].wastage += pool.wastage;
+ });
+ });
+ const latestEntry = sortedEntries[sortedEntries.length - 1];
+ const daysInRange = sortedEntries.length;
+
+ // Leftover-aging: consecutive days back from the latest entry where a pool's
+ // closingActual stayed above a small threshold - a rough "sitting idle" signal,
+ // not a precise spoilage model (there's no per-type shelf-life data anywhere).
+ const agingDays: Record<string, number> = {};
+ ALL_POOL_IDS.forEach((id) => {
+ let count = 0;
+ for (let i = sortedEntries.length - 1; i >= 0; i--) {
+ const pool = (sortedEntries[i].pools as any)?.[id];
+ if (pool && typeof pool.closingActual === 'number' && pool.closingActual > 0.01) count++;
+ else break;
+ }
+ agingDays[id] = count;
+ });
+
+ const utilizationRows = ALL_POOL_IDS
+ .map((id) => ({
+ id,
+ label: getPoolLabel(id),
+ prepared: totals[id].prepared,
+ utilizationPct: totals[id].prepared > 0 ? Math.round((totals[id].wastage / totals[id].prepared) * 1000) / 10 : null,
+ closingActual: (latestEntry.pools as any)?.[id]?.closingActual ?? null,
+ avgDailyConsumption: daysInRange > 0 ? totals[id].wastage / daysInRange : 0,
+ }))
+ .filter((r) => r.prepared > 0 || (r.closingActual !== null && r.closingActual > 0));
+
+ if (utilizationRows.length === 0) return null;
+
+ const trendData = sortedEntries.map((entry) => {
+ const row: any = { label: formatDateIST(entry.date) };
+ ALL_POOL_IDS.forEach((id) => {
+ const pool = (entry.pools as any)?.[id];
+ row[`${id}_opening`] = pool?.opening ?? null;
+ row[`${id}_prepared`] = pool?.prepared ?? null;
+ row[`${id}_closing`] = pool?.closingActual ?? null;
+ });
+ return row;
+ });
+
+ const activePoolId = selectedLedgerPoolId && utilizationRows.some((r) => r.id === selectedLedgerPoolId)
+ ? selectedLedgerPoolId
+ : utilizationRows[0].id;
+
+ // Actually-consumed material yield, per momo type with its own pool - pieces made
+ // (from production: records for this house/range) divided by kg actually drawn
+ // down from that type's own pool (the ledger's `wastage` field - see
+ // EndOfDayCloseForm, this doubles as "net consumption" since there's no separate
+ // expected-yield formula to split real usage from true spoilage). This is the
+ // "actually consumed" counterpart to the prepared-based Raw Material Yield chart
+ // above - shown separately rather than replacing it, since it only covers dates
+ // this ledger has data for.
+ const houseProductionInRange = productionData.filter((p: any) => {
+ const matchesHouse = p.productionHouseId === selectedProductionHouseId || p.storeId === selectedProductionHouseId;
+ return matchesHouse && p.date >= sortedEntries[0].date && p.date <= latestEntry.date;
+ });
+ const actualYieldRows = MOMO_TYPES
+ .map((t) => {
+ const poolId = `${t.perTypePoolField}:${t.inventoryKey}`;
+ const consumedKg = totals[poolId]?.wastage || 0;
+ const piecesMade = houseProductionInRange.reduce((sum: number, p: any) => sum + (p[t.key]?.final || 0), 0);
+ return {
+ key: t.key,
+ label: t.label,
+ piecesMade,
+ consumedKg,
+ yieldPcsPerKg: consumedKg > 0.01 ? Math.round((piecesMade / consumedKg) * 10) / 10 : null,
+ };
+ })
+ .filter((r) => r.piecesMade > 0 || r.consumedKg > 0);
+
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="mb-4">
+ <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
+ <Package className="w-6 h-6 text-teal-600" />
+ Production Ledger
+ </h2>
+ <p className="text-sm text-gray-600">Dough/stuffing/batter/coating pools, carried forward day to day - tracking since {PRODUCTION_LEDGER_GO_LIVE_DATE}</p>
  </div>
- </div>
- 
- {/* Percentage badge */}
- {comparisonQty > 0 && (
- <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold ${
- changeDirection === 'up' ? 'bg-green-100 text-green-700' :
- changeDirection === 'down' ? 'bg-red-100 text-red-700' :
- 'bg-gray-100 text-gray-700'
- }`}>
- {changeDirection === 'up' && <ArrowUp className="w-3 h-3" />}
- {changeDirection === 'down' && <ArrowDown className="w-3 h-3" />}
- {changeDirection === 'same' && <Minus className="w-3 h-3" />}
- {Math.abs(percentChange).toFixed(0)}%
- </div>
+
+ <div className="overflow-x-auto mb-6">
+ <table className="w-full text-sm">
+ <thead>
+ <tr className="text-left text-gray-500 border-b border-gray-200">
+ <th className="py-2 pr-2 font-medium">Pool</th>
+ <th className="py-2 px-2 font-medium">Prepared (period)</th>
+ <th className="py-2 px-2 font-medium">Utilization</th>
+ <th className="py-2 px-2 font-medium">Current Leftover</th>
+ <th className="py-2 pl-2 font-medium">Days of Stock Cover</th>
+ </tr>
+ </thead>
+ <tbody>
+ {utilizationRows.map((r) => {
+ const daysCover = r.avgDailyConsumption > 0.001 && r.closingActual !== null
+ ? Math.round((r.closingActual / r.avgDailyConsumption) * 10) / 10
+ : null;
+ return (
+ <tr key={r.id} className="border-b border-gray-100 last:border-0">
+ <td className="py-2 pr-2 text-gray-700">{r.label}</td>
+ <td className="py-2 px-2 tabular-nums text-gray-900">{r.prepared.toFixed(2)} kg</td>
+ <td className="py-2 px-2 tabular-nums">
+ {r.utilizationPct === null ? <span className="text-gray-400">—</span> : `${r.utilizationPct}%`}
+ </td>
+ <td className="py-2 px-2 tabular-nums text-gray-900">
+ {r.closingActual === null ? <span className="text-gray-400">—</span> : `${r.closingActual.toFixed(2)} kg`}
+ </td>
+ <td className="py-2 pl-2 tabular-nums">
+ {daysCover === null ? <span className="text-gray-400">—</span> : (
+ <span className={daysCover > 7 ? 'text-amber-600 font-medium' : 'text-gray-700'}>{daysCover} days</span>
  )}
- </div>
- 
- {/* Production quantity */}
- <div className="bg-white rounded-lg p-3 text-center">
- <div className={`text-3xl font-bold ${momoType.color.text} mb-1`}>
- {currentQty.toLocaleString()}
- </div>
- <div className="text-xs text-gray-600 font-medium">pieces produced</div>
- </div>
- 
- {/* Comparison info */}
- {comparisonQty > 0 && (
- <div className="text-xs text-gray-500 text-center pt-1 border-t border-gray-200">
- {comparisonLabel}: {comparisonQty.toLocaleString()} pcs
- </div>
- )}
- </div>
- </div>
+ </td>
+ </tr>
  );
  })}
+ </tbody>
+ </table>
+ </div>
+
+ {(() => {
+ const risky = ALL_POOL_IDS
+ .map((id) => ({ id, label: getPoolLabel(id), days: agingDays[id] }))
+ .filter((r) => r.days >= 3);
+ if (risky.length === 0) return null;
+ return (
+ <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+ <div className="flex items-center gap-2 mb-2">
+ <AlertCircle className="w-4 h-4 text-amber-600" />
+ <span className="text-sm font-semibold text-amber-800">Leftover sitting unused for several days</span>
+ </div>
+ <ul className="text-xs text-amber-800 space-y-1">
+ {risky.map((r) => (
+ <li key={r.id}>{r.label} - untouched for {r.days} day{r.days === 1 ? '' : 's'} in a row</li>
+ ))}
+ </ul>
+ </div>
+ );
+ })()}
+
+ <div className="mb-6">
+ <div className="flex items-center gap-2 mb-3">
+ <label className="text-xs text-gray-500">Pool:</label>
+ <select
+ value={activePoolId}
+ onChange={(e) => setSelectedLedgerPoolId(e.target.value)}
+ className="text-sm border border-gray-300 rounded-lg px-2 py-1"
+ >
+ {utilizationRows.map((r) => (
+ <option key={r.id} value={r.id}>{r.label}</option>
+ ))}
+ </select>
+ </div>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={trendData}>
+ <CartesianGrid strokeDasharray="3 3" />
+ <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 11 }} />
+ <Tooltip />
+ <Legend />
+ <Line type="monotone" dataKey={`${activePoolId}_opening`} name="Opening" stroke="#94a3b8" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey={`${activePoolId}_prepared`} name="Prepared" stroke="#0d9488" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey={`${activePoolId}_closing`} name="Closing (counted)" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ </LineChart>
+ </ResponsiveContainer>
+ </div>
+
+ {actualYieldRows.length > 0 && (
+ <div>
+ <h3 className="text-base font-bold text-gray-900 tracking-tight mb-1">Actual Material Yield (Ledger)</h3>
+ <p className="text-xs text-gray-500 mb-3">Pieces made per kg actually drawn from that type's own pool - the actually-consumed counterpart to the prepared-based Raw Material Yield chart above, covering only ledger-tracked dates</p>
+ <div className="overflow-x-auto">
+ <table className="w-full text-sm">
+ <thead>
+ <tr className="text-left text-gray-500 border-b border-gray-200">
+ <th className="py-2 pr-2 font-medium">Momo Type</th>
+ <th className="py-2 px-2 font-medium">Pieces Made</th>
+ <th className="py-2 px-2 font-medium">Kg Consumed</th>
+ <th className="py-2 pl-2 font-medium">Yield (pcs/kg)</th>
+ </tr>
+ </thead>
+ <tbody>
+ {actualYieldRows.map((r) => (
+ <tr key={r.key} className="border-b border-gray-100 last:border-0">
+ <td className="py-2 pr-2 text-gray-700">{r.label}</td>
+ <td className="py-2 px-2 tabular-nums text-gray-900">{r.piecesMade.toLocaleString()}</td>
+ <td className="py-2 px-2 tabular-nums text-gray-900">{r.consumedKg.toFixed(2)} kg</td>
+ <td className="py-2 pl-2 tabular-nums text-gray-900">{r.yieldPcsPerKg === null ? <span className="text-gray-400">—</span> : r.yieldPcsPerKg}</td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
  </div>
  )}
  </div>
  );
  })()}
- </div>
 
- {/* Wastage Analysis Charts */}
+ {/* Wastage Analysis Charts - trend charts below now follow the shared
+ productionDateRange selector at the top of this tab, same as every other trended
+ section on this page, instead of their own separate "as of" date. */}
  <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
- <div className="flex justify-between items-center mb-6">
- <div>
+ <div className="mb-6">
  <h2 className="text-xl text-gray-900 mb-1">Wastage Analysis</h2>
  <p className="text-sm text-gray-600">Track and minimize production wastage</p>
- </div>
  </div>
 
  {/* Helper function for filtering production data by production house */}
@@ -5620,133 +7929,61 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return null;
  })()}
 
- {/* Wastage Bar Charts by Time Period */}
- <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
- {/* Daily Wastage */}
- <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4">
- <h3 className="text-gray-900 mb-3">Daily Wastage Trend</h3>
- <ResponsiveContainer width="100%" height={250}>
- <LineChart data={(() => {
- const last5Days = [];
- for (let i = 4; i >= 0; i--) {
- const date = new Date();
- date.setDate(date.getDate() - i);
- const dateStr = date.toISOString().split('T')[0];
- 
+ {/* Daily Wastage Trend - rebuilt on the same current-vs-previous-period convention
+ (zipPrev + renderPrevAwareLegend, driven by the shared productionDateRange selector)
+ as every other trended chart on this page. Previously this was three separate
+ "last 5 days/weeks/months as of {wastageTrendEndDate}" own-history mini-charts with
+ their own date anchor, the only trended section on this page with no previous-period
+ comparison line - replaced with one chart so it reads consistently with Output &
+ Efficiency and Sauces Usage above. */}
+ {(() => {
  const helper = (window as any).wastageFilterHelper;
- const dayProduction = productionData.filter(p => helper.matchesProductionHouse(p) && p.date === dateStr);
-
- const totalWastage = dayProduction.reduce((sum, p) => {
- return sum + 
- (p.wastage?.dough || 0) + 
- (p.wastage?.stuffing || 0) + 
- (p.wastage?.batter || 0) + 
- (p.wastage?.coating || 0);
- }, 0);
-
- last5Days.push({
- date: dateStr.substring(5),
- wastage: totalWastage,
- uniqueKey: `daily-${dateStr}`
- });
+ const enumerateDates = (start: string, end: string): string[] => {
+ const dates: string[] = [];
+ let d = start;
+ let guard = 0;
+ while (d <= end && guard < 400) {
+ dates.push(d);
+ d = addDays(d, 1);
+ guard++;
  }
- return last5Days;
- })()}>
- <CartesianGrid key="daily-wastage-grid" strokeDasharray="3 3" stroke="#fca5a5" />
- <XAxis key="daily-wastage-xaxis" dataKey="date" tick={{ fontSize: 10 }} />
- <YAxis key="daily-wastage-yaxis" tick={{ fontSize: 10 }} />
- <Tooltip key="daily-wastage-tooltip" />
- <Line key="daily-wastage-line" type="monotone" dataKey="wastage" stroke="#dc2626" strokeWidth={2} />
+ return dates;
+ };
+ const buildWastageSeries = (dates: string[]) => dates.map(date => {
+ const dayProduction = productionData.filter(p => helper.matchesProductionHouse(p) && p.date === date);
+ const wastage = dayProduction.reduce((sum, p) =>
+ sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
+ return { date, label: formatDateIST(date), wastage: Math.round(wastage * 100) / 100 };
+ });
+
+ const { startDate, endDate } = getDateRangeBounds();
+ const previousRangeForWastage = getPreviousPeriodDateRange();
+ const currentDates = enumerateDates(startDate, endDate);
+ const previousDates = enumerateDates(previousRangeForWastage.startDate, previousRangeForWastage.endDate);
+ const wastageSeries = buildWastageSeries(currentDates);
+ const previousWastageSeries = buildWastageSeries(previousDates);
+ const wastageChartData = zipPrev(wastageSeries, previousWastageSeries, ['wastage']);
+
+ if (currentDates.length === 0) return null;
+
+ return (
+ <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4 mb-6">
+ <h3 className="text-gray-900 font-bold mb-1">Daily Wastage Trend</h3>
+ <p className="text-xs text-gray-600 mb-3">Total kg wasted per day for the selected date range · dotted line is the matching previous period</p>
+ <ResponsiveContainer width="100%" height={260}>
+ <LineChart data={wastageChartData}>
+ <CartesianGrid strokeDasharray="3 3" stroke="#fca5a5" />
+ <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+ <YAxis tick={{ fontSize: 10 }} unit="kg" />
+ <Tooltip />
+ <Legend content={renderPrevAwareLegend} />
+ <Line type="monotone" dataKey="wastage" name="Wastage (kg)" stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />
+ <Line type="monotone" dataKey="prev_wastage" name="Wastage (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
  </LineChart>
  </ResponsiveContainer>
  </div>
-
- {/* Weekly Wastage */}
- <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4">
- <h3 className="text-gray-900 mb-3">Weekly Wastage Trend</h3>
- <ResponsiveContainer width="100%" height={250}>
- <LineChart data={(() => {
- const last5Weeks = [];
- for (let i = 4; i >= 0; i--) {
- const date = new Date();
- date.setDate(date.getDate() - (i * 7));
- const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
- const weekEnd = new Date(weekStart);
- weekEnd.setDate(weekEnd.getDate() + 6);
- 
- const helper = (window as any).wastageFilterHelper;
- const weekProduction = productionData.filter(p => 
- helper.matchesProductionHouse(p) && 
- p.date >= weekStart.toISOString().split('T')[0] && 
- p.date <= weekEnd.toISOString().split('T')[0]
  );
-
- const totalWastage = weekProduction.reduce((sum, p) => {
- return sum + 
- (p.wastage?.dough || 0) + 
- (p.wastage?.stuffing || 0) + 
- (p.wastage?.batter || 0) + 
- (p.wastage?.coating || 0);
- }, 0);
-
- last5Weeks.push({
- week: `W${5-i}`,
- wastage: totalWastage,
- uniqueKey: `week-${i}`
- });
- }
- return last5Weeks;
- })()}>
- <CartesianGrid key="weekly-wastage-grid" strokeDasharray="3 3" stroke="#fed7aa" />
- <XAxis key="weekly-wastage-xaxis" dataKey="week" tick={{ fontSize: 10 }} />
- <YAxis key="weekly-wastage-yaxis" tick={{ fontSize: 10 }} />
- <Tooltip key="weekly-wastage-tooltip" />
- <Line key="weekly-wastage-line" type="monotone" dataKey="wastage" stroke="#ea580c" strokeWidth={2} />
- </LineChart>
- </ResponsiveContainer>
- </div>
-
- {/* Monthly Wastage */}
- <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg p-4">
- <h3 className="text-gray-900 mb-3">Monthly Wastage Trend</h3>
- <ResponsiveContainer width="100%" height={250}>
- <LineChart data={(() => {
- const last5Months = [];
- for (let i = 4; i >= 0; i--) {
- const date = new Date();
- date.setMonth(date.getMonth() - i);
- const monthStr = date.toISOString().substring(0, 7);
- 
- const helper = (window as any).wastageFilterHelper;
- const monthProduction = productionData.filter(p => 
- helper.matchesProductionHouse(p) && p.date.startsWith(monthStr)
- );
-
- const totalWastage = monthProduction.reduce((sum, p) => {
- return sum + 
- (p.wastage?.dough || 0) + 
- (p.wastage?.stuffing || 0) + 
- (p.wastage?.batter || 0) + 
- (p.wastage?.coating || 0);
- }, 0);
-
- last5Months.push({
- month: monthStr.substring(5),
- wastage: totalWastage,
- uniqueKey: `month-${i}`
- });
- }
- return last5Months;
- })()}>
- <CartesianGrid key="monthly-wastage-grid" strokeDasharray="3 3" stroke="#fde68a" />
- <XAxis key="monthly-wastage-xaxis" dataKey="month" tick={{ fontSize: 10 }} />
- <YAxis key="monthly-wastage-yaxis" tick={{ fontSize: 10 }} />
- <Tooltip key="monthly-wastage-tooltip" />
- <Line key="monthly-wastage-line" type="monotone" dataKey="wastage" stroke="#ca8a04" strokeWidth={2} />
- </LineChart>
- </ResponsiveContainer>
- </div>
- </div>
+ })()}
 
  {/* Wastage Breakdown by Type with Time Filter */}
  <div className="bg-white rounded-lg border-2 border-gray-200 p-6">
@@ -5761,7 +7998,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
  className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
  wastageTimeFilter === filter
- ? 'bg-red-600 text-white'
+ ? 'bg-gray-900 text-white'
  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
  }`}
  >
@@ -6330,41 +8567,45 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Production Requests View */}
+ {/* Production Requests View - the Recalibration sub-tab that used to live here has
+ moved into ProductionRequests itself, as a "Recalibration" button beside "Manage
+ Items" in the Store Stock Status card. */}
  {activeView === 'production-requests' && (
  <div>
- <ProductionRequests 
- context={context} 
- highlightRequestId={highlightRequestId || null} 
- selectedStoreId={localSelectedStoreId}
+ <ProductionRequests
+ context={context}
+ highlightRequestId={highlightRequestId || null}
+ selectedStoreId={effectiveStoreId}
  onNavigateToManageItems={onNavigateToManageItems}
  />
  </div>
  )}
 
- {/* Recalibration Reports View - Production Analytics */}
+ {/* Store-Production SLA Analysis View - its own top-level Store Analytics tab (not a modal
+ opened from Stock Requests), covering fulfillment and pipeline timing across
+ production requests. */}
+ {activeView === 'stock-request-analysis' && (
+ <div>
+ <StockAnalysis
+ requests={stockAnalysisRequests}
+ finishedProducts={stockAnalysisFinishedProducts}
+ salesData={stockAnalysisSalesData}
+ />
+ </div>
+ )}
+
+ {/* Recalibration Reports View - Production Analytics (unrelated to the Stock
+ Requests sub-tab above - this is the production-house side, still its own tab) */}
  {activeView === 'recalibration-reports' && (
  <div>
- <RecalibrationReports 
- context={context} 
+ <RecalibrationReports
+ context={context}
  selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : selectedStoreId}
  onOpenRecalibration={() => setShowRecalibration(true)}
  locationType="production_house"
  />
  </div>
  )}
-
- {/* Store Recalibration View - Store Analytics */}
- {activeView === 'store-recalibration' && (
- <div>
- <RecalibrationReports 
- context={context} 
- selectedStoreId={effectiveStoreId}
- locationType="store"
- />
- </div>
- )}
- </div>
  
  {/* Monthly Stock Recalibration Modal */}
  {showRecalibration && (
@@ -6678,15 +8919,19 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Leave Details Modal */}
+ {/* Leave Details Modal - grouped by day (today through Sunday, Monday-start week),
+ past days already dropped by weekLeaveSummary itself. */}
  {showLeaveModal && (
  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
- <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+ <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
  {/* Modal Header */}
- <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between">
+ <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between flex-shrink-0">
  <div className="flex items-center gap-3">
- <UserX className="w-6 h-6" />
- <h3 className="text-xl">Leave Details - Today</h3>
+ <CalendarDays className="w-6 h-6" />
+ <div>
+ <h3 className="text-xl leading-tight">Leave Schedule</h3>
+ <p className="text-xs text-white/80 mt-0.5">{weekLeaveSummary.rangeLabel}</p>
+ </div>
  </div>
  <button
  onClick={() => setShowLeaveModal(false)}
@@ -6697,91 +8942,91 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
 
  {/* Modal Body */}
- <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
- {todayLeaveCount === 0 ? (
+ <div className="p-6 overflow-y-auto flex-1">
+ {weekLeaveSummary.upcomingCount === 0 ? (
  <div className="text-center py-8">
- <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
- <Users className="w-8 h-8 text-green-600" />
+ <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+ <Users className="w-8 h-8 text-emerald-600" />
  </div>
- <p className="text-lg text-gray-900 mb-2">Everyone is working today! 🎉</p>
- <p className="text-sm text-gray-600">
- {context.user?.storeId 
- ? 'No employees on leave in this store' 
- : 'No employees on leave across all stores'}
- </p>
+ <p className="text-lg text-gray-900 mb-2">Everyone is working this week! 🎉</p>
+ <p className="text-sm text-gray-600">No employees on leave across all stores</p>
  </div>
  ) : (
- <div className="space-y-4">
- <div className="flex items-center justify-between mb-4">
+ <div className="space-y-5">
+ <div className="flex items-center gap-3 flex-wrap">
  <p className="text-gray-700">
- <span className="text-xl font-bold text-orange-600">{todayLeaveCount}</span> {todayLeaveCount === 1 ? 'employee' : 'employees'} on leave
+ <span className="text-xl font-bold text-orange-600">{weekLeaveSummary.upcomingCount}</span> {weekLeaveSummary.upcomingCount === 1 ? 'leave' : 'leaves'} scheduled
  </p>
+ {weekLeaveSummary.fullDayCount > 0 && (
+ <span className="text-xs font-medium text-gray-600 bg-gray-100 rounded-full px-2.5 py-1">
+ {weekLeaveSummary.fullDayCount} full day{weekLeaveSummary.fullDayCount === 1 ? '' : 's'}
+ </span>
+ )}
+ {weekLeaveSummary.halfDayCount > 0 && (
+ <span className="text-xs font-medium text-gray-600 bg-gray-100 rounded-full px-2.5 py-1">
+ {weekLeaveSummary.halfDayCount} half day{weekLeaveSummary.halfDayCount === 1 ? '' : 's'}
+ </span>
+ )}
  </div>
 
- {/* Leave List */}
- <div className="space-y-3">
- {todayLeaveDetails.map((leave, index) => (
- <div 
- key={leave.id || index}
- className="bg-orange-50 border border-orange-200 rounded-lg p-4 hover:shadow-md transition-shadow"
- >
- <div className="flex items-start justify-between">
- <div className="flex-1">
+ {/* Days */}
+ {weekLeaveSummary.days.filter(day => day.leaves.length > 0).map((day) => (
+ <div key={day.date}>
  <div className="flex items-center gap-2 mb-2">
- <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
- <Users className="w-5 h-5 text-orange-600" />
- </div>
- <div>
- <p className="text-gray-900 font-semibold">{leave.employeeName}</p>
- <p className="text-sm text-gray-600">Employee ID: {leave.employeeId}</p>
- </div>
+ <p className={`text-sm font-semibold ${day.isToday ? 'text-orange-600' : 'text-gray-700'}`}>
+ {day.label}
+ </p>
+ {day.isToday && (
+ <span className="text-[10px] font-semibold uppercase tracking-wide bg-orange-100 text-orange-700 rounded-full px-2 py-0.5">
+ Today
+ </span>
+ )}
+ <span className="text-xs text-gray-400">
+ · {day.leaves.length} {day.leaves.length === 1 ? 'person' : 'people'}
+ </span>
  </div>
 
- <div className="ml-12 space-y-1">
+ <div className="space-y-2">
+ {day.leaves.map((leave: any, index: number) => (
+ <div
+ key={leave.id || index}
+ className="bg-orange-50/70 border border-orange-100 rounded-xl p-3.5 hover:shadow-sm transition-shadow"
+ >
+ <div className="flex items-start justify-between gap-3">
+ <div className="flex items-center gap-3 min-w-0">
+ <div className="w-9 h-9 flex-shrink-0 bg-orange-100 rounded-full flex items-center justify-center">
+ <Users className="w-4 h-4 text-orange-600" />
+ </div>
+ <div className="min-w-0">
+ <p className="text-gray-900 font-semibold text-sm truncate">{leave.employeeName}</p>
+ <div className="flex items-center gap-2 flex-wrap mt-0.5">
+ <span className="text-xs text-gray-500">{leave.employeeId}</span>
  {leave.storeName && leave.storeName !== 'N/A' && (
- <div className="flex items-center gap-2 text-sm">
- <Package className="w-4 h-4 text-gray-500" />
- <span className="text-gray-700">{leave.storeName}</span>
- {leave.storeId && leave.storeId !== 'N/A' && (
- <span className="text-gray-500">({leave.storeId})</span>
+ <span className="text-xs text-gray-500">· {leave.storeName}</span>
  )}
  </div>
- )}
- 
  {leave.reason && (
- <div className="flex items-start gap-2 text-sm mt-2">
- <FileText className="w-4 h-4 text-gray-500 mt-0.5" />
- <div>
- <p className="text-gray-600 font-medium">Reason:</p>
- <p className="text-gray-700">{leave.reason}</p>
- </div>
- </div>
+ <p className="text-xs text-gray-600 mt-1">{leave.reason}</p>
  )}
- 
- <div className="flex items-center gap-2 text-sm mt-2">
- <Calendar className="w-4 h-4 text-gray-500" />
- <span className="text-gray-600">
- Date: {formatDateIST(leave.leaveDate)}
+ </div>
+ </div>
+ <span className={`flex-shrink-0 inline-block px-2.5 py-1 text-[11px] font-semibold rounded-full ${
+ leave.leaveType === 'half' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+ }`}>
+ {leave.leaveType === 'half' ? 'Half Day' : 'Full Day'}
  </span>
- </div>
- </div>
- </div>
-
- <div className="ml-4">
- <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs rounded-full">
- Approved
- </span>
- </div>
  </div>
  </div>
  ))}
  </div>
  </div>
+ ))}
+ </div>
  )}
  </div>
 
  {/* Modal Footer */}
- <div className="bg-gray-50 px-6 py-4 flex justify-end border-t border-gray-200">
+ <div className="bg-gray-50 px-6 py-4 flex justify-end border-t border-gray-200 flex-shrink-0">
  <button
  onClick={() => setShowLeaveModal(false)}
  className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"

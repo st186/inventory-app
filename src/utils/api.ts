@@ -36,6 +36,28 @@ export async function getSession() {
 // Global flag to prevent multiple logout redirects
 let isHandlingUnauthorized = false;
 
+// Supabase refresh tokens are single-use/rotating: if several requests 401 at once
+// (e.g. loadData's ~14 parallel fetches after the token expired while the app was
+// backgrounded) and each independently calls refreshSession(), only the first actually
+// succeeds - the rest get an "already used" error and used to force-logout the user
+// even though the session was perfectly fine. Sharing one in-flight refresh across all
+// concurrent callers fixes that false-logout race.
+let inFlightRefresh: ReturnType<typeof _doRefresh> | null = null;
+
+async function _doRefresh() {
+  const supabase = createBrowserSupabase();
+  return supabase.auth.refreshSession();
+}
+
+async function refreshAccessTokenShared() {
+  if (!inFlightRefresh) {
+    inFlightRefresh = _doRefresh().finally(() => {
+      inFlightRefresh = null;
+    });
+  }
+  return inFlightRefresh;
+}
+
 async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0, _refreshed = false): Promise<any> {
   const MAX_RETRIES = 2;
 
@@ -73,8 +95,7 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
       // this was force-logging people out on ordinary token expiry.
       if (response.status === 401 && !_refreshed) {
         console.warn(`[${url}] Got 401, attempting a token refresh before giving up...`);
-        const supabase = createBrowserSupabase();
-        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+        const { data: { session: refreshedSession }, error: refreshError } = await refreshAccessTokenShared();
         if (!refreshError && refreshedSession?.access_token) {
           console.log('Token refresh succeeded, retrying request');
           return fetchWithAuth(url, refreshedSession.access_token, options, _retryCount, true);
@@ -339,6 +360,11 @@ export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'othe
 export interface CashTopupRequest {
   id: string;
   storeId: string;
+  // Set only when reason is 'production_inventory' - the approved amount credits this
+  // production house's own cash ledger (see ProductionCashEntry below) instead of the
+  // store's usedOnlineMoney. Undefined on requests made before this field existed, and on
+  // ordinary store_inventory/other requests, which still credit the store as before.
+  productionHouseId?: string;
   date: string;
   requestedAmount: number;
   reason: CashTopupReason;
@@ -384,6 +410,288 @@ export async function rejectCashTopup(accessToken: string, id: string, reason: s
     body: JSON.stringify({ reason }),
   });
   return data.request;
+}
+
+// ============================================
+// PRODUCTION CASH IN HAND
+// ============================================
+// Separate from the store's own sales:-based cash reconciliation above - previously a
+// production house's spending was silently folded into the store's own "expected cash"
+// figure, so the store incharge's physical count could show a discrepancy caused entirely
+// by production's own activity. This is production's own ledger, reconciled by whoever
+// actually holds and spends that cash (see PRODUCTION_CASH_GO_LIVE_DATE server-side -
+// dates before it aren't tracked here, the old blended calculation still applies to them).
+
+export interface ProductionCashEntry {
+  id: string;
+  productionHouseId: string;
+  date: string;
+  openingBalance: number;
+  cashTopupCredited: number;
+  productionExpenses: number;
+  expectedClosingCashInHand: number;
+  actualCashInHand: number | null;
+  discrepancy: number | null;
+  approvalRequired: boolean;
+  approvalStatus: 'approved' | 'pending' | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  approvalRequested: boolean;
+  approvalRequestedAt: string | null;
+  requestedCashInHand: number | null;
+  requestedOffset: number | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  manualOpeningOverride?: number;
+  createdBy: string;
+  createdByName: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// A "live" (never-saved) preview of what a date's entry would compute to, returned instead
+// of `entry` when nothing has been saved for that date yet - lets the UI always show
+// opening balance / expenses / topup / expected closing even before anyone submits a count.
+export interface ProductionCashLive {
+  productionHouseId: string;
+  date: string;
+  openingBalance: number;
+  cashTopupCredited: number;
+  productionExpenses: number;
+  expectedClosingCashInHand: number;
+}
+
+export async function getProductionCashEntry(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionCashEntry | null; live: ProductionCashLive | null }> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash?productionHouseId=${encodeURIComponent(productionHouseId)}&date=${encodeURIComponent(date)}`, accessToken);
+  return { entry: data.entry || null, live: data.live || null };
+}
+
+export async function getProductionCashRange(accessToken: string, productionHouseId: string, from: string, to: string): Promise<ProductionCashEntry[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash?productionHouseId=${encodeURIComponent(productionHouseId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
+  return data.entries || [];
+}
+
+export async function saveProductionCashEntry(accessToken: string, productionHouseId: string, date: string, actualCashInHand: number, manualOpeningOverride?: number): Promise<ProductionCashEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ productionHouseId, date, actualCashInHand, ...(manualOpeningOverride !== undefined ? { manualOpeningOverride } : {}) }),
+  });
+  return data.entry;
+}
+
+export async function requestProductionCashApproval(accessToken: string, id: string, requestedCashInHand: number, requestedOffset: number): Promise<ProductionCashEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash/${id}/request-approval`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ requestedCashInHand, requestedOffset }),
+  });
+  return data.entry;
+}
+
+export async function approveProductionCashDiscrepancy(accessToken: string, id: string): Promise<ProductionCashEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash/${id}/approve-discrepancy`, accessToken, {
+    method: 'POST',
+  });
+  return data.entry;
+}
+
+export async function rejectProductionCashDiscrepancy(accessToken: string, id: string, reason: string): Promise<ProductionCashEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/production-cash/${id}/reject-discrepancy`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  return data.entry;
+}
+
+// Stock Wastage - daily, store-side, in pieces per momo type (all 7 canonical MOMO_TYPES,
+// including both kurkure varieties). Store Incharge-entered; tracked from this feature's
+// launch (2026-08-30) forward only, no historical backfill.
+export interface StockWastageEntry {
+  id: string;
+  storeId: string;
+  date: string; // YYYY-MM-DD
+  wastage: Record<string, number>; // momo type key -> pieces wasted, zero entries omitted
+  notes?: string;
+  submittedBy: string;
+  submittedByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getStockWastageEntry(accessToken: string, storeId: string, date: string): Promise<StockWastageEntry | null> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-wastage?storeId=${encodeURIComponent(storeId)}&date=${encodeURIComponent(date)}`, accessToken);
+  return data.entry || null;
+}
+
+export async function getStockWastageRange(accessToken: string, storeId: string, from: string, to: string): Promise<StockWastageEntry[]> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-wastage?storeId=${encodeURIComponent(storeId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
+  return data.entries || [];
+}
+
+export async function saveStockWastageEntry(accessToken: string, storeId: string, date: string, wastage: Record<string, number>, notes?: string): Promise<StockWastageEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-wastage`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ storeId, date, wastage, ...(notes !== undefined ? { notes } : {}) }),
+  });
+  return data.entry;
+}
+
+// Production Ledger - the raw-stock counterpart to Production Cash above. Dough/stuffing/
+// batter/coating used to be write-only numbers entered fresh every day with no shared pool
+// and no leftover carried forward; this tracks each as its own running "pool" per
+// production house, carried day to day the same way Production Cash's actualCashInHand is
+// (see PRODUCTION_LEDGER_GO_LIVE_DATE server-side - dates before it aren't tracked here).
+// Pool ids: 'dough'/'batter' (shared across every momo type in that group) and
+// 'stuffing:{inventoryKey}'/'coating:{inventoryKey}' (one per momo type) - see
+// src/constants/momoTypes.ts for the canonical list these are derived from.
+export interface ProductionLedgerPoolState {
+  opening: number;
+  prepared: number;
+  closingActual: number | null;
+  wastage: number | null;
+  // A human-confirmed wastage figure, distinct from the raw opening+prepared-closing gap -
+  // wastage is never assumed here, only ever suggested. When set, `wastage` above equals
+  // this value and sticks even through a later backdated correction; when null, `wastage`
+  // falls back to the computed gap.
+  wastageOverride?: number | null;
+}
+
+// Weekly Production Goal - a cluster head/operations manager sets a per-momo-type piece
+// target for one Monday-start week; progress is computed live from real production:
+// records' .final counts, not tracked separately here.
+export interface ProductionWeeklyGoal {
+  id: string;
+  productionHouseId: string;
+  weekStart: string; // YYYY-MM-DD, a Monday
+  goals: Partial<Record<string, number>>; // momo type key (e.g. 'chickenMomos') -> piece target
+  setBy: string;
+  setByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getProductionWeeklyGoal(accessToken: string, productionHouseId: string, weekStart: string): Promise<ProductionWeeklyGoal | null> {
+  const data = await fetchWithAuth(`${API_BASE}/production-weekly-goal?productionHouseId=${encodeURIComponent(productionHouseId)}&weekStart=${encodeURIComponent(weekStart)}`, accessToken);
+  return data.goal || null;
+}
+
+export async function saveProductionWeeklyGoal(accessToken: string, productionHouseId: string, weekStart: string, goals: Partial<Record<string, number>>): Promise<ProductionWeeklyGoal> {
+  const data = await fetchWithAuth(`${API_BASE}/production-weekly-goal`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ productionHouseId, weekStart, goals }),
+  });
+  return data.goal;
+}
+
+export interface ProductionLedgerEntry {
+  id: string;
+  productionHouseId: string;
+  date: string;
+  pools: Record<string, ProductionLedgerPoolState>;
+  closed: boolean;
+  closedBy?: string;
+  closedByName?: string;
+  closedByUserId?: string;
+  closedAt?: string;
+  manualOpeningOverride?: Record<string, number>;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// A "live" (never-saved) preview of what a date's ledger would show - returned instead of
+// `entry` when the day hasn't been closed yet, so the entry screen always has an opening
+// balance + prepared-so-far to render even before anyone submits a closing count.
+export interface ProductionLedgerLive {
+  productionHouseId: string;
+  date: string;
+  pools: Record<string, ProductionLedgerPoolState>;
+}
+
+export interface ProductionLedgerItem {
+  id: string;
+  productionHouseId: string;
+  date: string;
+  momoKey: string;
+  globalPoolQty: number;
+  perTypePoolQty: number;
+  loggedBy: string;
+  loggedByName: string;
+  loggedByUserId?: string;
+  loggedAt: string;
+  updatedAt?: string;
+}
+
+export async function getProductionLedger(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionLedgerEntry | null; live: ProductionLedgerLive | null; items: ProductionLedgerItem[]; hasAnyPriorRecord: boolean }> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger?productionHouseId=${encodeURIComponent(productionHouseId)}&date=${encodeURIComponent(date)}`, accessToken);
+  return { entry: data.entry || null, live: data.live || null, items: data.items || [], hasAnyPriorRecord: !!data.hasAnyPriorRecord };
+}
+
+export async function getProductionLedgerRange(accessToken: string, productionHouseId: string, from: string, to: string): Promise<ProductionLedgerEntry[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger?productionHouseId=${encodeURIComponent(productionHouseId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
+  return data.entries || [];
+}
+
+export async function addProductionLedgerItem(accessToken: string, productionHouseId: string, date: string, momoKey: string, globalPoolQty: number, perTypePoolQty: number): Promise<ProductionLedgerItem> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger-item`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ productionHouseId, date, momoKey, globalPoolQty, perTypePoolQty }),
+  });
+  return data.item;
+}
+
+export async function updateProductionLedgerItem(accessToken: string, id: string, globalPoolQty: number, perTypePoolQty: number): Promise<ProductionLedgerItem> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger-item/${id}`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify({ globalPoolQty, perTypePoolQty }),
+  });
+  return data.item;
+}
+
+export async function deleteProductionLedgerItem(accessToken: string, id: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/production-ledger-item/${id}`, accessToken, { method: 'DELETE' });
+}
+
+// Free-text wastage note - something wasted that isn't one of the tracked ledger pools
+// (a sauce, a chutney, a raw ingredient). unit is whatever the caller picked ('kg'/'g' for
+// something solid, 'L'/'ml' for something liquid) - not fed into the pool cascade.
+export interface ProductionWastageNote {
+  id: string;
+  productionHouseId: string;
+  date: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  loggedBy: string;
+  loggedByName: string;
+  loggedAt: string;
+}
+
+export async function getProductionWastageNotes(accessToken: string, productionHouseId: string, date: string): Promise<ProductionWastageNote[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-wastage-notes?productionHouseId=${encodeURIComponent(productionHouseId)}&date=${encodeURIComponent(date)}`, accessToken);
+  return data.notes || [];
+}
+
+export async function addProductionWastageNote(accessToken: string, productionHouseId: string, date: string, description: string, quantity: number, unit: string): Promise<ProductionWastageNote> {
+  const data = await fetchWithAuth(`${API_BASE}/production-wastage-notes`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ productionHouseId, date, description, quantity, unit }),
+  });
+  return data.note;
+}
+
+export async function deleteProductionWastageNote(accessToken: string, id: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/production-wastage-notes/${id}`, accessToken, { method: 'DELETE' });
+}
+
+export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>): Promise<ProductionLedgerEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/close`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}) }),
+  });
+  return data.entry;
 }
 
 // Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM
@@ -547,22 +855,28 @@ export interface Notification {
   createdAt: string;
 }
 
-export async function getNotifications(): Promise<Notification[]> {
+export async function getNotifications(): Promise<{ notifications: Notification[]; unreadCount: number }> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
-    // Return empty array instead of throwing error - notifications are non-critical
-    return [];
+    // Return empty instead of throwing error - notifications are non-critical
+    return { notifications: [], unreadCount: 0 };
   }
-  
+
   try {
     const data = await fetchWithAuth(`${API_BASE}/notifications`, session.access_token);
-    return data.notifications;
+    // unreadCount reflects the FULL backlog server-side, not just the 100 most recent
+    // notifications returned below - falls back to counting the visible list for older
+    // deployments of this route that don't send it yet.
+    return {
+      notifications: data.notifications,
+      unreadCount: typeof data.unreadCount === 'number' ? data.unreadCount : data.notifications.filter((n: Notification) => !n.read).length,
+    };
   } catch (error) {
-    // Return empty array on error (auth failure, network issue, etc.)
+    // Return empty on error (auth failure, network issue, etc.)
     console.log('Unable to fetch notifications:', error instanceof Error ? error.message : 'Unknown error');
-    return [];
+    return { notifications: [], unreadCount: 0 };
   }
 }
 
@@ -591,6 +905,25 @@ export async function markAllNotificationsAsRead(): Promise<void> {
   await fetchWithAuth(`${API_BASE}/notifications/read-all`, session.access_token, {
     method: 'PUT',
   });
+}
+
+// ============================================
+// APP VERSION CHECK
+// ============================================
+
+// No-login-required by design - see GET /app-version. Never throws; a stale/offline
+// build should just quietly skip the update nudge, not break anything else on load.
+export async function getLatestAppVersion(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_BASE}/app-version`, {
+      headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.latestVersion || null;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================
@@ -806,6 +1139,24 @@ export interface Employee {
   designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
   department?: 'store_operations' | 'production' | null;
   inchargeId?: string;
+  // Explicit multi-entity access, replacing the old assumption that storeId alone
+  // identifies "the one store/production house this person belongs to" - that field is
+  // ambiguous (it holds a real store id for a store incharge but a production house id
+  // for a production incharge) and broke every screen that read it as a plain store id.
+  // These arrays are the source of truth going forward; storeId is kept for backward
+  // compatibility with older records/code that hasn't been migrated to read these yet.
+  assignedStoreIds?: string[];
+  assignedProductionHouseIds?: string[];
+  // Fixed monthly salary breakdown (Basic, HRA, Conveyance, etc.) - drives the payslip's
+  // itemized breakdown instead of a single lump "Basic Salary" line. Deliberately doesn't
+  // include the variable component - that's entered per-payout (see Payout.variablePay)
+  // since it changes month to month (incentive/performance pay), unlike these fixed lines.
+  salaryStructure?: SalaryComponent[];
+}
+
+export interface SalaryComponent {
+  label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
+  amount: number; // fixed monthly amount for this component
 }
 
 export async function getAllEmployees(accessToken?: string): Promise<Employee[]> {
@@ -1064,6 +1415,35 @@ export async function updateEmployeeStore(employeeId: string, newStoreId: string
   return await response.json();
 }
 
+// Explicit multi-store/multi-production-house access for an employee (manager/incharge
+// roles especially) - the real fix for the ambiguous single storeId field, which can't
+// represent "this person covers 2 stores" or "store incharge who is also backup for the
+// production house" at all.
+export async function updateEmployeeAssignments(
+  employeeId: string,
+  assignedStoreIds: string[],
+  assignedProductionHouseIds: string[]
+) {
+  const session = await getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const response = await fetch(`${API_BASE}/employee/${employeeId}/assignments`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ assignedStoreIds, assignedProductionHouseIds })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to update assignments');
+  }
+
+  return await response.json();
+}
+
 // Update employee designation (Store Incharge / Production Incharge)
 export async function updateEmployeeDesignation(
   employeeId: string, 
@@ -1216,6 +1596,20 @@ export interface Payout {
   amount: number;
   storeId?: string; // Optional for backward compatibility with existing data
   createdAt?: string;
+  forMonth?: string; // Format "YYYY-MM" - which month this payout covers, for late/backlogged salaries (e.g. paid on the 5th for the prior month)
+  // Bank/UPI reference for this specific digital payment, kept as a paper trail alongside
+  // the payout record - shown on the payslip so the employee has proof of the transfer.
+  transactionId?: string;
+  // This month's variable/incentive pay, entered fresh per payout since (unlike the
+  // employee's fixed salaryStructure) it isn't the same every month. Shown on the payslip
+  // as its own line alongside the fixed components.
+  variablePay?: number;
+  variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  // Which balance this payout actually came out of. Only 'paytm' payouts are subtracted
+  // from the store's Online Cash (Paytm) balance - 'bank' and 'cash' payouts are settled
+  // from elsewhere and must NOT drain the Paytm figure. Undefined (legacy records) is
+  // treated as 'paytm', which was the implicit assumption before this field existed.
+  paidFrom?: 'paytm' | 'bank' | 'cash';
 }
 
 export async function getPayouts(): Promise<Payout[]> {
@@ -1271,6 +1665,29 @@ export async function deletePayout(id: string): Promise<void> {
   await fetchWithAuth(`${API_BASE}/payouts/${id}`, session.access_token, {
     method: 'DELETE',
   });
+}
+
+// ============================================
+// UTILITIES CONSUMPTION (packaging box/tray + beverage stock, from real POS order data)
+// ============================================
+
+export interface UtilitiesConsumption {
+  success: boolean;
+  startDate: string;
+  endDate: string;
+  daysWithData: number;
+  boxesUsed: number;
+  traysUsed: number;
+  unattributedOrders: number;
+  beverageConsumption: Record<string, number>;
+}
+
+export async function getUtilitiesConsumption(accessToken: string, storeId?: string | null, startDate?: string, endDate?: string): Promise<UtilitiesConsumption> {
+  const params = new URLSearchParams();
+  if (storeId) params.set('storeId', storeId);
+  if (startDate) params.set('startDate', startDate);
+  if (endDate) params.set('endDate', endDate);
+  return await fetchWithAuth(`${API_BASE}/utilities-consumption?${params.toString()}`, accessToken);
 }
 
 // ============================================
@@ -1336,21 +1753,106 @@ export async function saveOnlinePayoutData(accessToken: string, entry: OnlinePay
 // online-payouts daily-entry mechanism above)
 // ============================================
 
+export type AggregatorSettlementOrder = {
+  orderId: string; // matches Ciferon's OrderList[].ExternalId for the join
+  grossValue: number;
+  netPayout: number;
+  orderDate?: string; // YYYY-MM-DD sales/order date from the settlement report
+  // Zomato-only, from the settlement's own "Order Level" sheet (Swiggy's equivalent
+  // columns haven't been inspected yet - stays undefined for Swiggy settlements). All
+  // optional so settlements uploaded before these were added keep reading fine.
+  itemSubtotal?: number;      // "Subtotal (items total)" - pre-discount, pre-GST dish total
+  promoDiscount?: number;     // "Restaurant discount [Promo]"
+  flatOffDiscount?: number;   // "Restaurant discount [Flat offs, Freebies, Gold, Brand pack & others]"
+  gstCollected?: number;      // "Total GST collected from customers"
+  discountConstruct?: string; // the promo code itself, e.g. "SmartPromos TAKEOFF40ON149"
+};
+
 export type AggregatorSettlement = {
   id: string;
   storeId: string;
   storeName: string;
   aggregator: 'zomato' | 'swiggy';
   settlementDate: string; // YYYY-MM-DD
+  // Sales/order period covered by this settlement. This can differ from settlementDate
+  // when a July report is paid out by the aggregator in August.
+  periodStart?: string; // YYYY-MM-DD
+  periodEnd?: string; // YYYY-MM-DD
   bankUTR: string;
-  grossSales: number;
+  grossSales: number; // "Net Order Value" in Zomato's own terms - post-discount, pre-payout. NOT the same as Online Revenue (that comes from POS billing) - see the Discounts/Channel Economics sections in Analytics for how this is used.
   netPayout: number;
   netCommission: number;
   orderCount: number;
+  orders: AggregatorSettlementOrder[];
+  // Ad spend for this settlement period (Zomato's "Investment in growth services" or
+  // Swiggy's "Unlimited Ads" deduction, from the Payout Breakup sheet). Undefined on
+  // settlements uploaded before this was parsed, or reports missing that sheet.
+  adSpend?: number;
+  // Summed from the per-order fields above (Zomato only) - undefined whenever none of the
+  // underlying orders carried these fields, so "not captured" reads differently from "0".
+  itemSubtotal?: number;    // "Menu Subtotal" in the UI - pre-discount dish-price total
+  promoDiscount?: number;
+  flatOffDiscount?: number;
+  totalDiscount?: number;   // promoDiscount + flatOffDiscount, precomputed for convenience
+  gstCollected?: number;
   sourceFileName: string;
   uploadedBy: string;
   uploadedAt: string;
 };
+
+export type OrderItemDetailItem = {
+  productId: number | null;
+  productName: string;
+  category: string | null;
+  quantity: number;
+  rate: number;
+  total: number;
+};
+
+export type OrderItemDetailOrder = {
+  orderId: number | string;
+  externalId: string | null;
+  paymentMode: string;
+  grandTotal: number;
+  subtotal: number;
+  discount: number;
+  items: OrderItemDetailItem[];
+  // Hour of day (0-23, IST) the order was placed, when Ciferon's raw timestamp for this
+  // order actually carried a time component - null/undefined for orders synced before this
+  // was captured, or whose raw date field turned out to be date-only. Powers the hourly
+  // order-volume chart in Analytics; days with no hour data simply won't appear there
+  // (they're unaffected everywhere else, like the daily order-count chart).
+  orderHourIST?: number | null;
+ // 'DineIn' | 'TakeAway' | 'HomeDelivery' from Ciferon's SaleOrderType - already captured
+ // by the sync (used for box/tray counting in /utilities-consumption) but not previously
+ // typed here or surfaced in any chart.
+ orderType?: string | null;
+};
+
+export type OrderItemDetailRecord = {
+  storeId: string;
+  date: string; // YYYY-MM-DD
+  orders: OrderItemDetailOrder[];
+  syncedAt: string;
+};
+
+export async function getOrderItemDetail(
+  accessToken: string,
+  opts?: { storeId?: string; startDate?: string; endDate?: string }
+): Promise<OrderItemDetailRecord[]> {
+  try {
+    const params = new URLSearchParams();
+    if (opts?.storeId) params.set('storeId', opts.storeId);
+    if (opts?.startDate) params.set('startDate', opts.startDate);
+    if (opts?.endDate) params.set('endDate', opts.endDate);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const data = await fetchWithAuth(`${API_BASE}/order-item-detail${query}`, accessToken);
+    return data.records || [];
+  } catch (error) {
+    console.error('Error fetching order item detail:', error);
+    return [];
+  }
+}
 
 export async function getAggregatorSettlements(accessToken: string, storeId?: string): Promise<AggregatorSettlement[]> {
   try {
@@ -1365,7 +1867,7 @@ export async function getAggregatorSettlements(accessToken: string, storeId?: st
 
 export async function createAggregatorSettlement(
   accessToken: string,
-  entry: Omit<AggregatorSettlement, 'id' | 'uploadedBy' | 'uploadedAt'>
+  entry: Omit<AggregatorSettlement, 'id' | 'uploadedBy' | 'uploadedAt'> & { replace?: boolean }
 ): Promise<AggregatorSettlement> {
   const data = await fetchWithAuth(`${API_BASE}/aggregator-settlements`, accessToken, {
     method: 'POST',
@@ -1694,6 +2196,11 @@ export interface Timesheet {
   hoursWorked?: number;
   approvedBy?: string;
   approvedAt?: string;
+  // Set server-side on save (POST /timesheets, /timesheets/bulk) - when the employee
+  // actually submitted this entry, used by the 5-day auto-approve-stale cron to tell how
+  // long it's been waiting on a manager. Records saved before this field existed won't
+  // have it.
+  submittedAt?: string;
 }
 
 export interface LeaveApplication {
@@ -1720,6 +2227,20 @@ export async function getTimesheets(employeeId: string): Promise<Timesheet[]> {
   }
   
   const data = await fetchWithAuth(`${API_BASE}/timesheets/${employeeId}`, session.access_token);
+  return data.timesheets || [];
+}
+
+// Every employee's timesheets, org-wide - powers the Staff Attendance Compliance section
+// on the Store-Production SLA Analysis page.
+export async function getAllTimesheets(): Promise<Timesheet[]> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  const data = await fetchWithAuth(`${API_BASE}/timesheets/all`, session.access_token);
   return data.timesheets || [];
 }
 
@@ -1832,6 +2353,39 @@ export async function applyLeave(leave: LeaveApplication): Promise<LeaveApplicat
   return data.leave;
 }
 
+// Applies for a multi-day leave in one call - saves one record per day like applyLeave,
+// but sends a single notification summarizing the whole date range instead of one per
+// day (see the /leaves/bulk route for why: looping applyLeave floods the approver).
+export async function applyLeaveBulk(leaves: LeaveApplication[]): Promise<{ success: boolean; ids: string[] }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  return fetchWithAuth(`${API_BASE}/leaves/bulk`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ leaves }),
+  });
+}
+
+// Deletes a still-pending leave application - e.g. the employee applied for the wrong
+// date and wants to redo it. The server rejects this once a manager has already
+// approved/rejected it (see DELETE /leaves/:leaveId).
+export async function deleteLeave(leaveId: string): Promise<{ success: boolean }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+
+  return fetchWithAuth(`${API_BASE}/leaves/${leaveId}`, session.access_token, {
+    method: 'DELETE',
+  });
+}
+
 export async function getLeaveBalance(employeeId: string, joiningDate: string): Promise<number> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1883,6 +2437,10 @@ export interface CustomItem {
   itemName: string;
   itemNameBengali?: string;
   emoji?: string;
+  // Which quick-add flow this item belongs to, and which entity it's normally logged
+  // against - remembered so the smart quick-add can auto-classify it next time.
+  entryType?: 'inventory' | 'overhead' | 'fixedcost';
+  entityType?: 'store' | 'production_house' | 'both';
   createdAt?: string;
 }
 
@@ -1908,7 +2466,12 @@ export async function getCustomItems(): Promise<CustomItem[]> {
   }
 }
 
-export async function addCustomItem(category: string, itemName: string): Promise<CustomItem> {
+export async function addCustomItem(
+  category: string,
+  itemName: string,
+  entryType?: 'inventory' | 'overhead' | 'fixedcost',
+  entityType?: 'store' | 'production_house' | 'both'
+): Promise<CustomItem> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -1918,7 +2481,7 @@ export async function addCustomItem(category: string, itemName: string): Promise
 
   const data = await fetchWithAuth(`${API_BASE}/custom-items`, session.access_token, {
     method: 'POST',
-    body: JSON.stringify({ category, itemName }),
+    body: JSON.stringify({ category, itemName, entryType, entityType }),
   });
   return data.customItem;
 }
@@ -1947,6 +2510,56 @@ export async function deleteCustomItem(id: string): Promise<void> {
   }
 
   await fetchWithAuth(`${API_BASE}/custom-items/${id}`, session.access_token, {
+    method: 'DELETE',
+  });
+}
+
+// Cluster-head-created inventory categories, separate for store vs. production-house
+// purchases - see the "Manage Categories & Items" modal and the backend's
+// getValidInventoryCategoryKeys (supabase/functions/make-server-c2dd9b9d/index.ts).
+export interface CustomCategory {
+  key: string;
+  scope: 'store' | 'production';
+  label: string;
+  emoji: string;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+export async function getCustomCategories(): Promise<CustomCategory[]> {
+  try {
+    const response = await fetch(`${API_BASE}/custom-categories`, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.categories || [];
+  } catch (error) {
+    console.error('Error fetching custom categories:', error);
+    return [];
+  }
+}
+
+export async function addCustomCategory(scope: 'store' | 'production', label: string, emoji?: string): Promise<CustomCategory> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  const data = await fetchWithAuth(`${API_BASE}/custom-categories`, session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ scope, label, emoji }),
+  });
+  return data.category;
+}
+
+export async function deleteCustomCategory(key: string): Promise<void> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
+  }
+  await fetchWithAuth(`${API_BASE}/custom-categories/${key}`, session.access_token, {
     method: 'DELETE',
   });
 }
@@ -2066,6 +2679,21 @@ export interface SalesDataRecord {
     'Chicken Kurkure Momos': number;
     'Veg Kurkure Momos': number;
   };
+  channelBreakdown?: {
+    'Chicken Momos': Record<string, { pieces: number; revenue: number }>;
+    'Chicken Cheese Momos': Record<string, { pieces: number; revenue: number }>;
+    'Veg Momos': Record<string, { pieces: number; revenue: number }>;
+    'Paneer Momos': Record<string, { pieces: number; revenue: number }>;
+    'Corn Cheese Momos': Record<string, { pieces: number; revenue: number }>;
+    'Chicken Kurkure Momos': Record<string, { pieces: number; revenue: number }>;
+    'Veg Kurkure Momos': Record<string, { pieces: number; revenue: number }>;
+  };
+  // Per-menu-item (not rolled up to category) channel split - real product name ->
+  // piecesPerUnit (this item's plate size, e.g. 6) + channel name (POS/Zomato/Swiggy/...) ->
+  // pieces/revenue. Only present on pos-sync records from 2026-08-23 onward (see
+  // classifyAndSumProductsByItemAndChannel) - older records only have the category-level
+  // channelBreakdown above.
+  itemChannelBreakdown?: Record<string, { piecesPerUnit: number; channels: Record<string, { pieces: number; revenue: number }> }>;
   uploadedBy: string;
   uploadedAt: string;
 }
@@ -2547,6 +3175,43 @@ export async function saveMomoPlateConfig(accessToken: string, config: MomoPlate
     method: 'POST',
     body: JSON.stringify({ config }),
   });
+}
+
+// ============================================
+// MENU ITEM PRICES (real per-item Offline vs Online price, keyed by Ciferon's ProductId -
+// the same ID that appears on Step D's order-item-detail line items)
+// ============================================
+
+export type MenuItemPrice = {
+  productId: string;
+  productName: string;
+  momoCategory: string | null;
+  piecesPerUnit: number;
+  offlinePrice: number;
+  onlinePrice: number;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export async function getMenuItemPrices(accessToken: string): Promise<MenuItemPrice[]> {
+  try {
+    const data = await fetchWithAuth(`${API_BASE}/menu-item-prices`, accessToken);
+    return data.items || [];
+  } catch (error) {
+    console.error('Error fetching menu item prices:', error);
+    return [];
+  }
+}
+
+export async function saveMenuItemPrice(
+  accessToken: string,
+  item: Omit<MenuItemPrice, 'updatedBy' | 'updatedAt'>
+): Promise<MenuItemPrice> {
+  const data = await fetchWithAuth(`${API_BASE}/menu-item-prices`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify(item),
+  });
+  return data.item;
 }
 
 export async function getMonthlyWastageReport(accessToken: string, month: string, locationId?: string, locationType?: string) {

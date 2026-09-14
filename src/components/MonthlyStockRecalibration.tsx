@@ -129,8 +129,10 @@ export function MonthlyStockRecalibration({
  productionData = context.productionData || [];
  }
  
- // Get current month for filtering
- const currentMonth = new Date().toISOString().substring(0, 7); // "2025-12"
+ // Get current month for filtering. .toISOString() converts to UTC first, which rolls
+ // the month back for the ~5.5 hours after midnight IST on the 1st - use local components.
+ const now = new Date();
+ const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; // "2025-12"
  
  // CRITICAL FIX: effectiveStoreId might be a UUID, we need to find the actual STORE- ID
  let actualStoreId = effectiveStoreId;
@@ -968,7 +970,7 @@ export function MonthlyStockRecalibration({
  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
  <CheckCircle className="w-8 h-8 text-green-600" />
  </div>
- <h3 className="text-xl text-gray-900">Recalibration Submitted!</h3>
+ <h3 className="text-xl font-bold text-gray-900 tracking-tight">Recalibration Submitted!</h3>
  <p className="text-gray-600 text-center">Your recalibration has been submitted for approval.</p>
  <p className="text-sm text-gray-500 text-center">A manager or cluster head will review and approve it.</p>
  </div>
@@ -989,7 +991,7 @@ export function MonthlyStockRecalibration({
  <Calendar className="w-6 h-6 text-white" />
  </div>
  <div>
- <h2 className="text-2xl text-white">Monthly Stock Recalibration</h2>
+ <h2 className="text-2xl font-bold text-white tracking-tight">Monthly Stock Recalibration</h2>
  <p className="text-white/80 text-sm">
  {locationName || store?.name} - {currentMonth}
  </p>
@@ -1009,15 +1011,15 @@ export function MonthlyStockRecalibration({
  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
  <div className="bg-white/80 rounded-xl p-4 border-2 border-orange-200">
  <div className="text-sm text-gray-600 mb-1">Total Items</div>
- <div className="text-2xl text-orange-600">{totalItems}</div>
+ <div className="text-2xl font-semibold text-orange-600">{totalItems}</div>
  </div>
  <div className="bg-white/80 rounded-xl p-4 border-2 border-orange-200">
  <div className="text-sm text-gray-600 mb-1">Items with Difference</div>
- <div className="text-2xl text-orange-600">{itemsWithDifference}</div>
+ <div className="text-2xl font-semibold text-orange-600">{itemsWithDifference}</div>
  </div>
  <div className="bg-white/80 rounded-xl p-4 border-2 border-red-200">
  <div className="text-sm text-gray-600 mb-1">Total Wastage</div>
- <div className="text-2xl text-red-600">{totalWastage.toFixed(2)}</div>
+ <div className="text-2xl font-semibold text-red-600">{totalWastage.toFixed(2)}</div>
  </div>
  </div>
 

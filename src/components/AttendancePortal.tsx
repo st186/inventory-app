@@ -18,7 +18,7 @@ interface AttendancePortalProps {
   };
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
   initialTab?: string | null;
 }
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Calendar, User, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
+import { formatDateTimeIST } from '../utils/timezone';
 
 interface ApproveLeavesProps {
   managerId: string;
@@ -8,13 +9,17 @@ interface ApproveLeavesProps {
   role?: string; // Add role to differentiate between manager and cluster_head
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
 }
 
 export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, isIncharge = false, inchargeDesignation = null }: ApproveLeavesProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [leaves, setLeaves] = useState<any[]>([]);
+  // Full leave history (approved + rejected) for the selected employee, so managers
+  // can see past decisions, not just what's still awaiting action.
+  const [leaveHistory, setLeaveHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const isClusterHead = role === 'cluster_head';
   // Advance leave requests over the escalation threshold skip the normal manager
@@ -121,6 +126,11 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
       setLoading(true);
       const data = await api.getLeaves(selectedEmployee);
       setLeaves(data.filter((l: any) => l.status === 'pending'));
+      setLeaveHistory(
+        data
+          .filter((l: any) => l.status === 'approved' || l.status === 'rejected')
+          .sort((a: any, b: any) => new Date(b.leaveDate).getTime() - new Date(a.leaveDate).getTime())
+      );
     } catch (error) {
       console.error('Error loading leaves:', error);
     } finally {
@@ -203,22 +213,27 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Approve {entityType} Leaves</h1>
-          <p className="text-gray-600">
-            {role === 'cluster_head' 
-              ? 'Review and approve manager leave applications. Contract workers do not require leave approval.'
-              : 'Review and approve employee leave applications'
-            }
-          </p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Calendar className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Approve {entityType} Leaves</h1>
+            <p className="text-sm sm:text-base text-gray-500">
+              {role === 'cluster_head'
+                ? 'Review and approve manager leave applications. Contract workers do not require leave approval.'
+                : 'Review and approve employee leave applications'
+              }
+            </p>
+          </div>
         </div>
 
         {/* Escalated Advance Leave Requests - cluster head only, spans all employees
             regardless of the manager-hierarchy selector below */}
         {isClusterHead && (
-          <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-xl overflow-hidden">
+          <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-2xl overflow-hidden">
             <div className="px-6 py-4 bg-purple-100 border-b border-purple-200">
-              <h3 className="text-lg text-purple-900">Escalated Advance Leave Requests</h3>
+              <h3 className="text-lg font-bold text-purple-900">Escalated Advance Leave Requests</h3>
               <p className="text-sm text-purple-700">Advance leave requests over 4 days, escalated past the employee's manager for your direct approval</p>
             </div>
             {escalatedLoading ? (
@@ -232,7 +247,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
                     <div className="flex items-start justify-between gap-3 mb-2">
                       <div>
                         <p className="text-sm font-medium text-gray-900">
-                          {leave.employeeId} · {new Date(leave.leaveDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', weekday: 'short' })}
+                          {leave.employeeId} · {new Date(leave.leaveDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', weekday: 'short', timeZone: 'UTC' })}
                         </p>
                         <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
                         {leave.advanceDaysRequested && (
@@ -308,7 +323,7 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
         )}
 
         {/* Employee Selector */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
           <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
           <select
             value={selectedEmployee}
@@ -326,13 +341,13 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
 
         {/* Employee Info Card */}
         {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 mb-6 text-white">
+          <div className="bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl shadow-lg p-6 mb-6 text-white">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
                 <User className="w-8 h-8" />
               </div>
               <div>
-                <h2 className="text-xl mb-1">{selectedEmployeeData.name}</h2>
+                <h2 className="text-xl font-bold mb-1">{selectedEmployeeData.name}</h2>
                 <p className="text-sm opacity-90">Employee ID: {selectedEmployeeData.employeeId}</p>
                 <p className="text-sm opacity-90">Email: {selectedEmployeeData.email}</p>
               </div>
@@ -341,9 +356,9 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
         )}
 
         {/* Leaves Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
-            <h3 className="text-lg text-gray-900">Pending Leave Applications</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-indigo-100 to-violet-100 border-b border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900">Pending Leave Applications</h3>
           </div>
 
           {loading ? (
@@ -364,7 +379,8 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
                           year: 'numeric',
                           month: 'short',
                           day: 'numeric',
-                          weekday: 'short'
+                          weekday: 'short',
+                          timeZone: 'UTC'
                         })}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
@@ -410,6 +426,80 @@ export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, i
             </div>
           )}
         </div>
+
+        {/* Leave History - approved + rejected applications for this employee, collapsed
+            by default since the pending queue above is what usually needs attention. */}
+        {selectedEmployeeData && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mt-6">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="w-full flex items-center justify-between px-6 py-4 bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200 text-left"
+            >
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Leave History</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{leaveHistory.length} past application{leaveHistory.length === 1 ? '' : 's'} · approved &amp; rejected</p>
+              </div>
+              <span className="text-sm text-orange-600">{showHistory ? 'Hide' : 'Show'}</span>
+            </button>
+
+            {showHistory && (
+              loading ? (
+                <div className="p-12 text-center text-gray-500">Loading...</div>
+              ) : leaveHistory.length === 0 ? (
+                <div className="p-12 text-center">
+                  <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                  <p className="text-gray-500">No past leave decisions for this employee yet</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {leaveHistory.map((leave, index) => (
+                    <div key={index} className="p-4">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {new Date(leave.leaveDate).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              weekday: 'short',
+                              timeZone: 'UTC'
+                            })}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            leave.status === 'approved'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {leave.status === 'approved' ? 'Approved' : 'Rejected'}
+                          </span>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            (leave.leaveType || 'full') === 'full'
+                              ? 'bg-orange-100 text-orange-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-400 mb-1">
+                        Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
+                        {leave.status === 'approved' && leave.approvedBy ? ` · Approved by ${leave.approvedBy}` : ''}
+                        {leave.status === 'rejected' && leave.rejectedBy ? ` · Rejected by ${leave.rejectedBy}` : ''}
+                        {(leave.status === 'approved' ? leave.approvedAt : leave.rejectedAt) ? ` · ${formatDateTimeIST(leave.status === 'approved' ? leave.approvedAt : leave.rejectedAt)} IST` : ''}
+                      </p>
+                      {leave.status === 'rejected' && leave.rejectionReason && (
+                        <p className="text-xs text-red-600">Reason: {leave.rejectionReason}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

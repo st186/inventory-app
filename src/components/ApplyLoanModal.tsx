@@ -58,19 +58,19 @@ export function ApplyLoanModal({
         className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
         onClick={onClose}
       >
-        <div 
-          className="bg-white rounded-xl max-w-lg w-full shadow-2xl p-6"
+        <div
+          className="bg-white rounded-2xl max-w-lg w-full shadow-2xl p-6"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="text-center">
             <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Store Not Selected</h3>
-            <p className="text-gray-600 mb-4">
+            <h3 className="text-xl font-bold text-gray-900 tracking-tight mb-2">Store Not Selected</h3>
+            <p className="text-gray-500 mb-4">
               Please select a store from the dropdown at the top of the page before applying for a loan.
             </p>
             <button
               onClick={onClose}
-              className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors"
+              className="px-6 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Close
             </button>
@@ -133,19 +133,23 @@ export function ApplyLoanModal({
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
-      <div 
-        className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+      <div
+        className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <DollarSign className="w-6 h-6" />
-                Request Loan
-              </h2>
-              <p className="text-orange-100 mt-1">{storeName}</p>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">
+                <DollarSign className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+                  Request Loan
+                </h2>
+                <p className="text-orange-100 mt-1 text-sm">{storeName}</p>
+              </div>
             </div>
             <button
               onClick={onClose}

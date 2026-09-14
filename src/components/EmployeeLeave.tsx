@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Calendar, CheckCircle, XCircle, Clock, AlertCircle, Plus } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, AlertCircle, Plus, Trash2 } from 'lucide-react';
 import * as api from '../utils/api';
+import { addDays } from '../utils/timezone';
+import { DatePicker } from './DatePicker';
 
 interface LeaveApplication {
   id?: string;
@@ -34,6 +36,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   const [projectedBalance, setProjectedBalance] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showApplyForm, setShowApplyForm] = useState(false);
+  const [deletingLeaveId, setDeletingLeaveId] = useState<string | null>(null);
   const [applyMode, setApplyMode] = useState<'regular' | 'advance'>('regular');
   const [newLeave, setNewLeave] = useState({
     startDate: '',
@@ -47,11 +50,11 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
 
   const getDateRange = (start: string, end: string) => {
     const dates: string[] = [];
-    const cursor = new Date(start + 'T00:00:00');
-    const last = new Date((end || start) + 'T00:00:00');
-    while (cursor <= last) {
-      dates.push(cursor.toISOString().split('T')[0]);
-      cursor.setDate(cursor.getDate() + 1);
+    const last = end || start;
+    let current = start;
+    while (current <= last) {
+      dates.push(current);
+      current = addDays(current, 1);
     }
     return dates;
   };
@@ -116,8 +119,9 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     // Multi-day applications are always full-day; half day only applies to a single date
     const effectiveLeaveType = datesInRange.length > 1 ? 'full' : newLeave.leaveType;
 
-    // Check if leave already applied for any date in the range
-    const conflicting = datesInRange.filter(d => leaves.find(l => l.leaveDate === d));
+    // Check if leave already applied for any date in the range - a rejected application
+    // doesn't count as "already applied", otherwise a rejected date can never be re-requested.
+    const conflicting = datesInRange.filter(d => leaves.find(l => l.leaveDate === d && l.status !== 'rejected'));
     if (conflicting.length > 0) {
       alert(`Leave already applied for: ${conflicting.join(', ')}`);
       return;
@@ -145,19 +149,20 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     try {
       setLoading(true);
       const appliedAt = new Date().toISOString();
-      for (const date of datesInRange) {
-        const leaveData: LeaveApplication = {
-          employeeId: user.employeeId,
-          leaveDate: date,
-          leaveType: effectiveLeaveType,
-          isAdvanceLeave,
-          ...(isAdvanceLeave ? { advanceDaysRequested: requestedDays, approverRole } : {}),
-          reason: newLeave.reason,
-          status: 'pending',
-          appliedAt
-        };
-        await api.applyLeave(leaveData);
-      }
+      const leavesToApply: LeaveApplication[] = datesInRange.map(date => ({
+        employeeId: user.employeeId,
+        leaveDate: date,
+        leaveType: effectiveLeaveType,
+        isAdvanceLeave,
+        ...(isAdvanceLeave ? { advanceDaysRequested: requestedDays, approverRole } : {}),
+        reason: newLeave.reason,
+        status: 'pending',
+        appliedAt
+      }));
+      // One bulk call instead of looping applyLeave per day - a multi-day application
+      // sends a single "applied for leave: 13 Apr to 15 Apr (3 days)" notification
+      // instead of flooding the approver with one per day.
+      await api.applyLeaveBulk(leavesToApply);
       await loadLeaves();
       await calculateLeaveBalance();
 
@@ -170,6 +175,22 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       alert('Error applying leave');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteLeave = async (leave: LeaveApplication) => {
+    if (!leave.id) return;
+    if (!confirm(`Delete your leave application for ${leave.leaveDate}?`)) return;
+
+    try {
+      setDeletingLeaveId(leave.id);
+      await api.deleteLeave(leave.id);
+      await loadLeaves();
+      await calculateLeaveBalance();
+    } catch (error: any) {
+      alert(error?.message || 'Failed to delete leave application');
+    } finally {
+      setDeletingLeaveId(null);
     }
   };
 
@@ -207,13 +228,18 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-3 sm:p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-4 sm:mb-6">
-          <h1 className="text-2xl sm:text-3xl text-gray-900 mb-1 sm:mb-2">Leave Management</h1>
-          <p className="text-sm sm:text-base text-gray-600">Apply for leaves and track your leave balance</p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0">
+            <Calendar className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Leave Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">Apply for leaves and track your leave balance</p>
+          </div>
         </div>
 
         {/* Leave Balance Card */}
-        <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6 text-white">
+        <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-2xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6 text-white">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <h2 className="text-base sm:text-lg mb-3 sm:mb-4 opacity-90">Leave Balance</h2>
@@ -268,8 +294,8 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
 
         {/* Apply Leave Form */}
         {showApplyForm && (
-          <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-            <h3 className="text-lg text-gray-900 mb-4">Apply for Leave</h3>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Apply for Leave</h3>
 
             {/* Regular vs Advance Leave tabs */}
             <div className="flex gap-2 mb-4 bg-gray-100 rounded-lg p-1">
@@ -306,24 +332,28 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm text-gray-700 mb-2">Start Date</label>
-                <input
-                  type="date"
+                {/* Was a raw <input type="date"> - on the Android WebView's native spinner
+                    picker, the visible day/month/year can end up one step ahead of what
+                    actually lands in onChange while the wheel is still settling, so what's
+                    shown and what gets submitted silently diverge (e.g. "Aug 14" on screen,
+                    "2026-08-13" applied). DatePicker always renders the displayed date from
+                    the same React state that gets submitted, so there's nothing to diverge -
+                    same component every other date field in the app already uses. */}
+                <DatePicker
+                  label="Start Date"
                   value={newLeave.startDate}
-                  onChange={(e) => setNewLeave({ ...newLeave, startDate: e.target.value, endDate: newLeave.endDate && newLeave.endDate < e.target.value ? e.target.value : newLeave.endDate })}
-                  min={new Date().toISOString().split('T')[0]}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  onChange={(date) => setNewLeave({ ...newLeave, startDate: date, endDate: newLeave.endDate && newLeave.endDate < date ? date : newLeave.endDate })}
+                  className="w-full"
                 />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700 mb-2">End Date</label>
-                <input
-                  type="date"
+                <DatePicker
+                  label="End Date"
                   value={newLeave.endDate}
-                  onChange={(e) => setNewLeave({ ...newLeave, endDate: e.target.value })}
-                  min={newLeave.startDate || new Date().toISOString().split('T')[0]}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  onChange={(date) => setNewLeave({ ...newLeave, endDate: date })}
+                  min={newLeave.startDate || undefined}
+                  className="w-full"
                 />
                 <p className="text-xs text-gray-500 mt-1">Leave blank for a single day</p>
               </div>
@@ -375,9 +405,9 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
         )}
 
         {/* Leave History */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
-            <h3 className="text-lg text-gray-900">Leave History</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-violet-100 to-indigo-100 border-b border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900">Leave History</h3>
           </div>
 
           {loading ? (
@@ -397,12 +427,25 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
                         {new Date(leave.leaveDate).toLocaleDateString('en-US', {
                           year: 'numeric',
                           month: 'short',
-                          day: 'numeric'
+                          day: 'numeric',
+                          timeZone: 'UTC'
                         })}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
                     </div>
-                    {getStatusBadge(leave.status)}
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(leave.status)}
+                      {leave.status === 'pending' && leave.id && (
+                        <button
+                          onClick={() => handleDeleteLeave(leave)}
+                          disabled={deletingLeaveId === leave.id}
+                          title="Delete this leave application"
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${

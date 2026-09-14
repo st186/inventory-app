@@ -165,14 +165,14 @@ export function InventoryAlerts({ context, stores }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
-            <Bell className="h-5 w-5 text-white" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center shadow-lg shadow-red-500/30 flex-shrink-0">
+            <Bell className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl">Inventory Alerts</h2>
-            <p className="text-muted-foreground">
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Alerts</h2>
+            <p className="text-sm sm:text-base text-gray-500">
               {alerts.length} active alert{alerts.length !== 1 ? 's' : ''}
             </p>
           </div>
@@ -212,7 +212,7 @@ export function InventoryAlerts({ context, stores }: Props) {
       {/* Alerts List */}
       <div className="space-y-3">
         {filteredAlerts.map(alert => (
-          <Card key={alert.id} className="p-4 hover:shadow-md transition-shadow">
+          <Card key={alert.id} className="p-4 rounded-2xl hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3 flex-1">
                 <div className={`p-2 rounded-lg ${
@@ -224,7 +224,7 @@ export function InventoryAlerts({ context, stores }: Props) {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <h4 className="text-sm">{alert.storeName}</h4>
+                    <h4 className="text-sm font-bold text-gray-900">{alert.storeName}</h4>
                     {alert.product && (
                       <>
                         <ArrowRight className="h-4 w-4 text-muted-foreground" />
@@ -253,9 +253,9 @@ export function InventoryAlerts({ context, stores }: Props) {
 
       {/* Empty State */}
       {filteredAlerts.length === 0 && (
-        <Card className="p-12 text-center">
+        <Card className="p-12 rounded-2xl text-center">
           <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg mb-2">No Alerts</h3>
+          <h3 className="text-lg font-bold text-gray-900 mb-2">No Alerts</h3>
           <p className="text-muted-foreground">
             {filter === 'all' 
               ? 'All inventory levels are healthy'
