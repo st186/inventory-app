@@ -7,6 +7,7 @@ import { ApproveLeaves } from './ApproveLeaves';
 import { EmployeeHierarchy } from './EmployeeHierarchy';
 import { AssignManagers } from './AssignManagers';
 import { EmployeeHierarchyView } from './EmployeeHierarchyView';
+import type { Store } from '../utils/api';
 
 interface AttendancePortalProps {
   user: {
@@ -20,9 +21,14 @@ interface AttendancePortalProps {
   isIncharge?: boolean;
   inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
   initialTab?: string | null;
+  // Needed so ApproveTimesheets/ApproveLeaves can resolve "this store's own production
+  // incharge" (whose employee record's storeId actually holds their production house's
+  // id, not a real store id - see entityAccess.ts) instead of silently dropping them from
+  // a specific store's queue.
+  stores?: Store[];
 }
 
-export function AttendancePortal({ user, selectedStoreId, isIncharge = false, inchargeDesignation = null, initialTab = null }: AttendancePortalProps) {
+export function AttendancePortal({ user, selectedStoreId, isIncharge = false, inchargeDesignation = null, initialTab = null, stores = [] }: AttendancePortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => {
     // A notification deep-link takes priority over the role-based default
     if (initialTab) return initialTab;
@@ -186,11 +192,11 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
         )}
 
         {activeTab === 'approve-timesheet' && (isManager || isClusterHead || isIncharge) && (
-          <ApproveTimesheets managerId={user.employeeId || ''} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} />
+          <ApproveTimesheets managerId={user.employeeId || ''} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} stores={stores} />
         )}
 
         {activeTab === 'approve-leave' && (isManager || isClusterHead || isIncharge) && (
-          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} />
+          <ApproveLeaves managerId={user.employeeId || ''} managerName={user.name} role={user.role} selectedStoreId={selectedStoreId} isIncharge={isIncharge} inchargeDesignation={inchargeDesignation} stores={stores} />
         )}
 
         {activeTab === 'team' && isManager && (

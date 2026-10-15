@@ -20,6 +20,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   cash_topup_request: { view: 'sales' },
   cash_topup_approved: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
+  paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
   low_stock_alert: { view: 'stock-requests' },
   loan_requested: { view: 'sales' },

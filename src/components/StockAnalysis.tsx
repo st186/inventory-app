@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Package, Droplet, AlertTriangle, Clock, BarChart3, UserX, Users } from 'lucide-react';
+import { Package, Droplet, AlertTriangle, Clock, BarChart3, UserX, Users, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import type { ProductionRequest, Employee, Timesheet } from '../utils/api';
 import * as api from '../utils/api';
@@ -11,16 +11,60 @@ interface StockAnalysisProps {
   // display name, e.g. "Chicken Momos") isn't part of SalesData's formal TS type, the same
   // way ProductionRequests.tsx's own sold-quantity lookup accesses it.
   salesData: { date: string; storeId?: string; data?: Record<string, number> }[];
+  // Stores whose daily momo wastage (logged by the store incharge) is summarised below.
+  storeIds?: string[];
+  accessToken?: string;
 }
 
-type Period = '7d' | '30d' | 'thisMonth' | 'all';
+type Period = 'today' | 'yesterday' | '7d' | '30d' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom' | 'all';
 
 const PERIOD_LABELS: Record<Period, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
+  thisWeek: 'This week',
+  lastWeek: 'Last week',
   thisMonth: 'This month',
+  lastMonth: 'Last month',
+  custom: 'Custom',
   all: 'All time',
 };
+
+// Calendar-date (YYYY-MM-DD) arithmetic in IST, so a late-night check doesn't land on the
+// wrong day - same approach as the Analytics page's own date filters. Weeks run Sun-Sat.
+const todayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const shiftDate = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().substring(0, 10);
+};
+const weekdayOf = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay();
+
+// Inclusive [start, end] for a period, or null when it's unbounded ("All time", or a custom
+// range that isn't filled in yet).
+function resolvePeriodRange(period: Period, custom: { from: string; to: string }): { start: string; end: string } | null {
+  const today = todayIST();
+  switch (period) {
+    case 'today': return { start: today, end: today };
+    case 'yesterday': return { start: shiftDate(today, -1), end: shiftDate(today, -1) };
+    case '7d': return { start: shiftDate(today, -7), end: today };
+    case '30d': return { start: shiftDate(today, -30), end: today };
+    case 'thisWeek': return { start: shiftDate(today, -weekdayOf(today)), end: today };
+    case 'lastWeek': {
+      const thisWeekStart = shiftDate(today, -weekdayOf(today));
+      return { start: shiftDate(thisWeekStart, -7), end: shiftDate(thisWeekStart, -1) };
+    }
+    case 'thisMonth': return { start: `${today.substring(0, 7)}-01`, end: today };
+    case 'lastMonth': {
+      const end = shiftDate(`${today.substring(0, 7)}-01`, -1);
+      return { start: `${end.substring(0, 7)}-01`, end };
+    }
+    case 'custom':
+      return custom.from && custom.to && custom.from <= custom.to ? { start: custom.from, end: custom.to } : null;
+    default: return null;
+  }
+}
 
 // A request counts as "not delivered" for this item only once it's actually reached the
 // store - pending/accepted/shipped requests haven't failed to deliver, they just haven't
@@ -85,12 +129,51 @@ function hoursBetween(fromIso: string, toIso: string): number {
 // this old gets auto-approved by the nightly cron, so the compliance list below can tell
 // the manager "this will auto-approve today" instead of just "it's old".
 const TIMESHEET_AUTO_APPROVE_DAYS = 5;
-// How far back to look for missing attendance - matches the "Not Delivered Recently"
-// section's spirit (recent, actionable window) rather than the full employment history.
-const ATTENDANCE_LOOKBACK_DAYS = 7;
-
-export function StockAnalysis({ requests, finishedProducts, salesData }: StockAnalysisProps) {
+export function StockAnalysis({ requests, finishedProducts, salesData, storeIds = [], accessToken = '' }: StockAnalysisProps) {
   const [period, setPeriod] = useState<Period>('30d');
+  const [customRange, setCustomRange] = useState<{ from: string; to: string }>(() => {
+    const today = todayIST();
+    return { from: shiftDate(today, -7), to: today };
+  });
+  const periodRange = useMemo(() => resolvePeriodRange(period, customRange), [period, customRange]);
+  // ---- Store wastage (pieces per momo type, logged daily by the store incharge). Fetched for
+  // the selected period; wastage only exists from the feature's launch (2026-08-30). ----
+  const [wastageEntries, setWastageEntries] = useState<api.StockWastageEntry[]>([]);
+  const [wastageLoading, setWastageLoading] = useState(false);
+  const storeIdsKey = storeIds.join(',');
+  useEffect(() => {
+    if (!accessToken || storeIds.length === 0) { setWastageEntries([]); return; }
+    let cancelled = false;
+    const from = periodRange?.start || '2026-08-30';
+    const to = periodRange?.end || todayIST();
+    setWastageLoading(true);
+    Promise.all(storeIds.map((id) => api.getStockWastageRange(accessToken, id, from, to).catch(() => [] as api.StockWastageEntry[])))
+      .then((lists) => { if (!cancelled) setWastageEntries(lists.flat()); })
+      .finally(() => { if (!cancelled) setWastageLoading(false); });
+    return () => { cancelled = true; };
+  }, [accessToken, storeIdsKey, periodRange]);
+
+  const wastageSummary = useMemo(() => {
+    const labelByKey = new Map(finishedProducts.map((p) => [p.camelKey, p.label]));
+    const byType = new Map<string, number>();
+    let total = 0;
+    for (const e of wastageEntries) {
+      for (const [key, pieces] of Object.entries(e.wastage || {})) {
+        byType.set(key, (byType.get(key) || 0) + (pieces || 0));
+        total += pieces || 0;
+      }
+    }
+    const rows = [...byType.entries()]
+      .map(([key, pieces]) => ({ key, label: labelByKey.get(key) || key, pieces }))
+      .sort((a, b) => b.pieces - a.pieces);
+    const days = [...wastageEntries]
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .map((e) => ({ date: e.date, pieces: Object.values(e.wastage || {}).reduce((x, y) => x + (y || 0), 0), by: e.submittedByName || '', notes: e.notes || '' }));
+    const lastLogged = days.length > 0 ? days[0].date : null;
+    return { rows, total, days, lastLogged, maxPieces: rows[0]?.pieces || 0 };
+  }, [wastageEntries, finishedProducts]);
+
+  const periodLabel = period === 'custom' && periodRange ? `${periodRange.start} to ${periodRange.end}` : PERIOD_LABELS[period];
   const [staleDays, setStaleDays] = useState(3);
 
   // ---- Staff Attendance Compliance: who hasn't submitted a timesheet recently, and how
@@ -100,25 +183,37 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
   // StockAnalysis. ----
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
+  const [leaves, setLeaves] = useState<api.LeaveApplication[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
+
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [attendanceReloadKey, setAttendanceReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setAttendanceLoading(true);
+    setAttendanceError(null);
     (async () => {
       try {
-        const [emp, ts] = await Promise.all([api.getEmployees(), api.getAllTimesheets()]);
+        const [emp, ts, lv] = await Promise.all([
+          api.getEmployees(),
+          api.getAllTimesheets(),
+          api.getAllLeaves().catch(() => [] as api.LeaveApplication[]),
+        ]);
         if (!cancelled) {
           setEmployees(emp);
           setTimesheets(ts);
+          setLeaves(lv);
         }
       } catch (error) {
         console.log('StockAnalysis: failed to load attendance data:', error);
+        if (!cancelled) setAttendanceError(error instanceof Error ? error.message : 'Could not load attendance data');
       } finally {
         if (!cancelled) setAttendanceLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [attendanceReloadKey]);
 
   // Only employees and managers actually fill their own timesheet (cluster heads only
   // approve, per AttendancePortal's role-based default tab) - and only once they've
@@ -128,30 +223,51 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
     [employees]
   );
 
-  const missingAttendance = useMemo(() => {
-    const today = new Date().toISOString().substring(0, 10);
+  // Per-employee attendance for the page's selected period (day / week / month / custom /
+  // all time): how many working days they filled a timesheet, how many they did not, and how
+  // many were approved leave. Today is never counted as missing - timesheets are filled in
+  // the evening - unless "Today" itself is the selected period. Nobody is expected to have
+  // filled anything before they joined.
+  const attendanceReport = useMemo(() => {
+    const today = todayIST();
+    const earliestTimesheet = timesheets.reduce((min, t) => (t.date && t.date < min ? t.date : min), today);
+    const rangeStart = periodRange?.start || earliestTimesheet;
+    const rangeEnd = periodRange?.end || today;
+    const lastDue = rangeStart >= today ? today : (rangeEnd >= today ? shiftDate(today, -1) : rangeEnd);
     const windowDates: string[] = [];
-    for (let i = 1; i <= ATTENDANCE_LOOKBACK_DAYS; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      windowDates.push(d.toISOString().substring(0, 10));
-    }
+    for (let d = rangeStart; d <= lastDue; d = shiftDate(d, 1)) windowDates.push(d);
 
-    const hasTimesheet = new Set(timesheets.map((t) => `${t.employeeId}:${t.date}`));
+    const sheetByKey = new Map(timesheets.map((t) => [`${t.employeeId}:${t.date}`, t]));
+    const leaveKeys = new Set(
+      leaves.filter((l) => l.status === 'approved').map((l) => `${l.employeeId}:${(l.leaveDate || '').substring(0, 10)}`)
+    );
 
-    return expectedSubmitters
-      .map((emp) => {
-        const missingDates = windowDates.filter((date) => {
-          // Never expect a submission before the employee joined, or after today.
-          if (emp.joiningDate && date < emp.joiningDate) return false;
-          if (date >= today) return false;
-          return !hasTimesheet.has(`${emp.employeeId}:${date}`);
-        });
-        return { employeeId: emp.employeeId, name: emp.name, missingDates };
-      })
-      .filter((row) => row.missingDates.length > 0)
-      .sort((a, b) => b.missingDates.length - a.missingDates.length);
-  }, [expectedSubmitters, timesheets]);
+    const rows = expectedSubmitters.map((emp) => {
+      let filled = 0, onLeave = 0, approved = 0, pending = 0, rejected = 0, expected = 0;
+      const missingDates: string[] = [];
+      for (const date of windowDates) {
+        if (emp.joiningDate && date < emp.joiningDate) continue;
+        expected++;
+        const sheet = sheetByKey.get(`${emp.employeeId}:${date}`);
+        if (sheet && sheet.isLeave) {
+          onLeave++;
+        } else if (sheet) {
+          filled++;
+          if (sheet.status === 'approved') approved++; else if (sheet.status === 'rejected') rejected++; else pending++;
+        } else if (leaveKeys.has(`${emp.employeeId}:${date}`)) {
+          onLeave++;
+        } else {
+          missingDates.push(date);
+        }
+      }
+      return { employeeId: emp.employeeId, name: emp.name, expected, filled, onLeave, missing: missingDates.length, missingDates, approved, pending, rejected };
+    });
+
+    rows.sort((a, b) => b.missing - a.missing || a.name.localeCompare(b.name));
+    const totalExpected = rows.reduce((n, r) => n + r.expected - r.onLeave, 0);
+    const totalFilled = rows.reduce((n, r) => n + r.filled, 0);
+    return { rows, days: windowDates.length, totalExpected, totalFilled };
+  }, [expectedSubmitters, timesheets, leaves, periodRange]);
 
   const pendingAttendanceApprovals = useMemo(() => {
     const nameById = new Map(employees.map((e) => [e.employeeId, e.name]));
@@ -172,37 +288,23 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
   }, [timesheets, employees]);
 
   const periodRequests = useMemo(() => {
-    if (period === 'all') return requests;
-    const now = new Date();
-    let cutoff: string;
-    if (period === 'thisMonth') {
-      cutoff = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    } else {
-      const days = period === '7d' ? 7 : 30;
-      const d = new Date(now);
-      d.setDate(d.getDate() - days);
-      cutoff = d.toISOString().substring(0, 10);
-    }
-    return requests.filter((r) => (r.requestDate || r.createdAt || '').substring(0, 10) >= cutoff);
-  }, [requests, period]);
+    if (!periodRange) return requests;
+    return requests.filter((r) => {
+      const d = (r.requestDate || r.createdAt || '').substring(0, 10);
+      return d >= periodRange.start && d <= periodRange.end;
+    });
+  }, [requests, periodRange]);
 
   // Same cutoff logic as periodRequests, applied to the store's daily sales records instead
   // - this is what backs the new "Sold" column, so what counts as "this period" matches
   // between the two tables.
   const periodSalesData = useMemo(() => {
-    if (period === 'all') return salesData;
-    const now = new Date();
-    let cutoff: string;
-    if (period === 'thisMonth') {
-      cutoff = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    } else {
-      const days = period === '7d' ? 7 : 30;
-      const d = new Date(now);
-      d.setDate(d.getDate() - days);
-      cutoff = d.toISOString().substring(0, 10);
-    }
-    return salesData.filter((s) => (s.date || '').substring(0, 10) >= cutoff);
-  }, [salesData, period]);
+    if (!periodRange) return salesData;
+    return salesData.filter((s) => {
+      const d = (s.date || '').substring(0, 10);
+      return d >= periodRange.start && d <= periodRange.end;
+    });
+  }, [salesData, periodRange]);
 
   // ---- Section A: momo items requested vs actually delivered vs actually sold ----
   const itemStats = useMemo(() => {
@@ -543,6 +645,27 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
             {PERIOD_LABELS[p]}
           </button>
         ))}
+        {period === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <input
+              type="date"
+              aria-label="From date"
+              value={customRange.from}
+              max={customRange.to || undefined}
+              onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+            />
+            <span className="text-sm text-gray-500">to</span>
+            <input
+              type="date"
+              aria-label="To date"
+              value={customRange.to}
+              min={customRange.from || undefined}
+              onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+            />
+          </div>
+        )}
       </div>
 
       {/* SLA Scorecard + Key Observations - the three fixed operational cutoffs this
@@ -553,7 +676,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
         <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
           <AlertTriangle className="w-4 h-4 text-indigo-600" />
           <h3 className="text-sm font-semibold text-gray-900">SLA Scorecard &amp; Key Observations</h3>
-          <span className="text-xs text-gray-500 ml-auto">{PERIOD_LABELS[period]}</span>
+          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
         </div>
         <div className="p-4 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -661,34 +784,72 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
         <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
           <Users className="w-4 h-4 text-indigo-600" />
           <h3 className="text-sm font-semibold text-gray-900">Staff Attendance Compliance</h3>
-          <span className="text-xs text-gray-500 ml-auto">Last {ATTENDANCE_LOOKBACK_DAYS} days</span>
+          <span className="text-xs text-gray-500 ml-auto">{periodLabel}{attendanceReport.days > 0 ? ` - ${attendanceReport.days} day${attendanceReport.days === 1 ? '' : 's'}` : ''}</span>
         </div>
         {attendanceLoading ? (
           <div className="p-6 text-center text-sm text-gray-500">Loading attendance data...</div>
+        ) : attendanceError ? (
+          <div className="p-6 text-center text-sm text-red-600">
+            Could not load attendance: {attendanceError}.{' '}
+            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="underline">Try again</button>
+          </div>
         ) : (
           <div className="p-4 space-y-4">
             <div>
               <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                <UserX className="w-3.5 h-3.5 text-red-600" /> Missing Timesheets
+                <UserX className="w-3.5 h-3.5 text-red-600" /> Timesheets filled vs missing
               </p>
-              {missingAttendance.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-emerald-600">
-                  <span>Everyone has filled attendance for every day in this window.</span>
-                </div>
+              {attendanceReport.days === 0 || attendanceReport.rows.length === 0 ? (
+                <div className="text-sm text-gray-500">No working days to check in this period yet.</div>
               ) : (
-                <div className="border border-red-200 rounded-lg overflow-hidden divide-y divide-red-100">
-                  {missingAttendance.map((row) => (
-                    <div key={row.employeeId} className="flex items-center justify-between gap-3 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
-                        <p className="text-xs text-gray-500 mt-0.5 truncate">Missing: {row.missingDates.slice().reverse().join(', ')}</p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold whitespace-nowrap flex-shrink-0">
-                        {row.missingDates.length}/{ATTENDANCE_LOOKBACK_DAYS} days
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <>
+                  <p className="text-xs text-gray-500 mb-2">
+                    {attendanceReport.totalFilled} of {attendanceReport.totalExpected} expected timesheets filled
+                    {attendanceReport.totalExpected > 0 ? ` (${Math.round((attendanceReport.totalFilled / attendanceReport.totalExpected) * 100)}%)` : ''}.
+                    Approved leave days are not counted as missing, and today is not counted until the day is over.
+                    {' '}Based on {timesheets.length} timesheets loaded.{' '}
+                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="text-indigo-600 underline">Reload</button>
+                  </p>
+                  <div className="border border-gray-200 rounded-lg overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-100">
+                          <th className="px-3 py-2">Employee</th>
+                          <th className="px-3 py-2 text-right">Filled</th>
+                          <th className="px-3 py-2 text-right">Missing</th>
+                          <th className="px-3 py-2 text-right">Leave</th>
+                          <th className="px-3 py-2">Approval</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceReport.rows.map((row) => (
+                          <tr key={row.employeeId} className="border-b border-gray-50 align-top">
+                            <td className="px-3 py-2">
+                              <p className="font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
+                              {row.missing > 0 && (
+                                <details className="mt-0.5">
+                                  <summary className="text-xs text-red-600 cursor-pointer">Show missing dates</summary>
+                                  <p className="text-xs text-gray-500 mt-1">{row.missingDates.slice().reverse().join(', ')}</p>
+                                </details>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              <span className="font-semibold text-emerald-700">{row.filled}</span>
+                              <span className="text-gray-400"> / {row.expected - row.onLeave}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${row.missing > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.missing}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-gray-600">{row.onLeave}</td>
+                            <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                              {row.approved} approved{row.pending > 0 ? ` · ${row.pending} pending` : ''}{row.rejected > 0 ? ` · ${row.rejected} rejected` : ''}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
 
@@ -725,12 +886,65 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
         )}
       </div>
 
+      {/* Store wastage - what the store incharge logs under Stock Requests > Log Wastage. */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
+          <Trash2 className="w-4 h-4 text-red-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Store Wastage</h3>
+          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+        </div>
+        {wastageLoading ? (
+          <div className="p-6 text-center text-sm text-gray-500">Loading wastage...</div>
+        ) : wastageSummary.days.length === 0 ? (
+          <div className="p-6 text-center text-sm text-gray-500">
+            No wastage logged in this period. The store incharge logs it from Stock Requests &rarr; Log Wastage (tracked from 30 Aug 2026).
+          </div>
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg bg-red-50 p-3">
+                <p className="text-xs text-gray-600">Pieces wasted</p>
+                <p className="text-xl font-bold text-red-700 tabular-nums">{wastageSummary.total.toLocaleString('en-IN')}</p>
+              </div>
+              <div className="rounded-lg bg-gray-50 p-3">
+                <p className="text-xs text-gray-600">Days logged</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.days.length}</p>
+              </div>
+              <div className="rounded-lg bg-gray-50 p-3">
+                <p className="text-xs text-gray-600">Last logged</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.lastLogged ? new Date(`${wastageSummary.lastLogged}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {wastageSummary.rows.map((r) => (
+                <div key={r.key} className="flex items-center gap-3">
+                  <span className="w-32 text-sm text-gray-700 truncate">{r.label}</span>
+                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-red-400 rounded-full" style={{ width: `${wastageSummary.maxPieces > 0 ? (r.pieces / wastageSummary.maxPieces) * 100 : 0}%` }} />
+                  </div>
+                  <span className="w-16 text-right text-sm font-semibold tabular-nums">{r.pieces}</span>
+                </div>
+              ))}
+            </div>
+            <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
+              {wastageSummary.days.map((d) => (
+                <div key={d.date} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="text-gray-700">{new Date(`${d.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                  <span className="text-gray-500 truncate flex-1 text-xs">{d.notes || d.by}</span>
+                  <span className="font-semibold tabular-nums">{d.pieces} pcs</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Section A: Items requested vs delivered */}
       <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
         <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
           <Package className="w-4 h-4 text-orange-600" />
           <h3 className="text-sm font-semibold text-gray-900">Items Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">{PERIOD_LABELS[period]}</span>
+          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
         </div>
         {itemStats.length === 0 ? (
           <div className="p-6 text-center text-sm text-gray-500">No requests in this period.</div>
@@ -771,7 +985,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData }: StockAn
         <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
           <Droplet className="w-4 h-4 text-rose-600" />
           <h3 className="text-sm font-semibold text-gray-900">Sauces - Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">by number of requests, {PERIOD_LABELS[period]}</span>
+          <span className="text-xs text-gray-500 ml-auto">by number of requests, {periodLabel}</span>
         </div>
         {sauceStats.length === 0 ? (
           <div className="p-6 text-center text-sm text-gray-500">No sauces requested in this period.</div>

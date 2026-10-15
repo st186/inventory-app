@@ -500,6 +500,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  effectiveStoreId={effectiveStoreId}
  targetProductionHouseId={targetProductionHouseId}
  canCreateNewItems={context.user?.role === 'cluster_head'}
+ canUseRestrictedCategories={context.user?.role === 'cluster_head'}
  onClose={() => setShowQuickAdd(false)}
  onSubmitInventory={async (item) => {
  await context.addInventoryItem(item);
@@ -554,6 +555,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  employees={employees}
  existingOverheads={context.overheads}
  entityScope={activeTab === 'production' ? 'production' : 'store'}
+ canUseRestrictedCategories={context.user?.role === 'cluster_head'}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields() };

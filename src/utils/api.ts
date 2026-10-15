@@ -2194,6 +2194,8 @@ export interface Timesheet {
   date: string;
   status: 'pending' | 'approved' | 'rejected';
   hoursWorked?: number;
+  // True when the day was logged as leave rather than worked hours.
+  isLeave?: boolean;
   approvedBy?: string;
   approvedAt?: string;
   // Set server-side on save (POST /timesheets, /timesheets/bulk) - when the employee

@@ -5,6 +5,7 @@ import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
 import { PaymentHistoryModal } from './PaymentHistoryModal';
 import { generatePayslip } from '../utils/payslip';
+import { employeeBelongsToStore } from '../utils/entityAccess';
 
 interface SalaryComponent {
   label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
@@ -18,6 +19,10 @@ interface Employee {
   phone: string;
   type: 'contract' | 'fulltime';
   role?: string;
+  // Was only ever accessed via `(emp as any).storeId` before - declaring it properly here
+  // so employeeBelongsToStore (entityAccess.ts) can be called without a cast.
+  storeId?: string | null;
+  inchargeId?: string;
   dailyRate?: number;
   createdAt: string;
   // Fixed monthly salary breakdown - drives the payslip's itemized breakdown instead of a
@@ -65,6 +70,19 @@ interface PayrollManagementProps {
 export function PayrollManagement({ userRole, selectedDate, userEmployeeId, userName, selectedStoreId, isIncharge = false, inchargeDesignation = null }: PayrollManagementProps) {
   const [activeTab, setActiveTab] = useState<'contract' | 'permanent' | 'my-payouts' | 'advances'>('contract');
   const [employees, setEmployees] = useState<Employee[]>([]);
+  // Archived (released) employees - fetched separately so their historical payouts can
+  // still be displayed correctly (name, role, etc.) after they leave. Never merged into
+  // `employees` itself - every employee-selection flow (who to pay, who to edit) must stay
+  // active-only; this is purely a lookup table for rendering past payout rows.
+  const [archivedEmployees, setArchivedEmployees] = useState<Employee[]>([]);
+  const employeesForDisplay = useMemo(() => [...employees, ...archivedEmployees], [employees, archivedEmployees]);
+  // For employeeBelongsToStore below - a production incharge/ops employee's own `storeId`
+  // field actually holds their production house's id, not a real store id (see
+  // entityAccess.ts). Without resolving that, Akash Dey (production_ops, storeId = his
+  // production house's id) silently vanished from Bunny Momos 1's Payroll view and its
+  // payout history the moment a specific store was selected - "no payment showing up"
+  // even though the payout record itself was always there.
+  const [stores, setStores] = useState<api.Store[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [salaryAdvances, setSalaryAdvances] = useState<any[]>([]);
   const [overheads, setOverheads] = useState<OverheadItem[]>([]);
@@ -173,44 +191,49 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [showAccountSetup, setShowAccountSetup] = useState(false);
 
   
-  // Filter employees and payouts by store and incharge permissions
-  const filteredEmployees = useMemo(() => {
-    let filtered = employees;
-    
-    // Apply store filter (include null/undefined storeIds for backward compatibility)
-    if (selectedStoreId) {
-      filtered = filtered.filter(emp => 
-        (emp as any).storeId === selectedStoreId || 
-        (emp as any).storeId === null || 
-        (emp as any).storeId === undefined
-      );
-    }
-    
-    // Apply incharge permissions
+  // Same store-match + incharge-permission predicate used for both lists below - pulled
+  // out once so the roster (active-only) and the payout-matching list (active + archived)
+  // can never drift apart on what counts as "in scope" the way they used to.
+  const matchesStoreAndIncharge = (emp: Employee) => {
+    // Also matches this store's linked production house - see entityAccess.ts's
+    // employeeBelongsToStore for why a production incharge/ops employee needs that extra
+    // check, not just an exact/null storeId match.
+    if (selectedStoreId && !employeeBelongsToStore(emp, selectedStoreId, stores)) return false;
+
     if (isIncharge && userEmployeeId) {
-      filtered = filtered.filter(emp => {
-        // For contract employees, incharge can see ALL contract employees
-        if (emp.type === 'contract') {
-          return true;
-        }
-        
-        // For permanent employees, incharge can only see employees under them
-        if (emp.type === 'fulltime') {
-          return (emp as any).inchargeId === userEmployeeId;
-        }
-        
-        return false;
-      });
+      // For contract employees, incharge can see ALL contract employees
+      if (emp.type === 'contract') return true;
+      // For permanent employees, incharge can only see employees under them
+      if (emp.type === 'fulltime') return (emp as any).inchargeId === userEmployeeId;
+      return false;
     }
-    
-    return filtered;
-  }, [employees, selectedStoreId, isIncharge, userEmployeeId]);
+
+    return true;
+  };
+
+  // Filter employees and payouts by store and incharge permissions - active employees
+  // only, for the editable Contract/Permanent roster cards.
+  const filteredEmployees = useMemo(
+    () => employees.filter(matchesStoreAndIncharge),
+    [employees, selectedStoreId, stores, isIncharge, userEmployeeId]
+  );
+
+  // Same scope, but active + archived - for deciding which PAYOUTS belong to this
+  // store/incharge view. An employee who has since been archived still has real payout
+  // history that belongs here; filteredEmployees (roster-only) must never gate that,
+  // which is exactly the bug that made Akash Dey's payouts disappear once he was archived.
+  const employeesInScopeForPayouts = useMemo(
+    () => employeesForDisplay.filter(matchesStoreAndIncharge),
+    [employeesForDisplay, selectedStoreId, stores, isIncharge, userEmployeeId]
+  );
 
   const filteredPayoutsByStore = useMemo(() => {
     if (!selectedStoreId) return payouts;
-    const storeEmployeeIds = filteredEmployees.map(emp => emp.id);
+    // employeesInScopeForPayouts (active + archived), not filteredEmployees (active-only)
+    // - see its own comment above for why.
+    const storeEmployeeIds = employeesInScopeForPayouts.map(emp => emp.id);
     return payouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
-  }, [payouts, filteredEmployees, selectedStoreId]);
+  }, [payouts, employeesInScopeForPayouts, selectedStoreId]);
 
   // Filter payouts based on selected date range (must come AFTER filteredPayoutsByStore).
   // A payout's forMonth (when set) is which month it's actually FOR, not when it was
@@ -249,19 +272,24 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const loadData = async () => {
     setLoading(true);
     try {
-      console.log('Loading employees, payouts, salary advances, and overheads from server...');
-      const [employeesData, payoutsData, advancesData, overheadsData] = await Promise.all([
+      console.log('Loading employees, payouts, salary advances, overheads, and stores from server...');
+      const [employeesData, archivedData, payoutsData, advancesData, overheadsData, storesData] = await Promise.all([
         api.getEmployees(),
+        api.getArchivedEmployees(),
         api.getPayouts(),
         api.getSalaryAdvances(),
-        api.getOverheads()
+        api.getOverheads(),
+        api.getStores()
       ]);
       console.log('Loaded employees:', employeesData);
+      console.log('Loaded archived employees:', archivedData);
       console.log('Loaded payouts:', payoutsData);
       console.log('Loaded salary advances:', advancesData);
       console.log('Loaded overheads:', overheadsData);
       setEmployees((employeesData as any) || []);
+      setArchivedEmployees((archivedData as any) || []);
       setPayouts((payoutsData as any) || []);
+      setStores(storesData || []);
       setSalaryAdvances(advancesData || []);
       setOverheads(overheadsData || []);
     } catch (error) {
@@ -528,14 +556,19 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
 
     try {
-      await api.deleteEmployee(id);
+      const result = await api.deleteEmployee(id);
       setEmployees(employees.filter(e => e.id !== id));
-      // Also delete associated payouts
-      setPayouts(payouts.filter(p => p.employeeId !== id));
-      alert('Employee deleted successfully!');
+      // This only ever archives the employee server-side (see DELETE
+      // /unified-employees/:employeeId) - their payout history is kept, never deleted.
+      // Move them into archivedEmployees locally so past payout rows still resolve a name
+      // instead of silently removing those payouts from view, which this used to do.
+      if (result?.archived) {
+        setArchivedEmployees([...archivedEmployees, result.archived]);
+      }
+      alert('Employee archived - their past payout records are kept.');
     } catch (error) {
       console.error('Error deleting employee:', error);
-      alert('Failed to delete employee');
+      alert('Failed to archive employee');
     }
   };
 
@@ -619,8 +652,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   const calculateContractStats = () => {
     const contractEmployees = filteredEmployees.filter(e => e.type === 'contract');
+    // employeesInScopeForPayouts (active + archived) for the payout match, same reason as
+    // everywhere else in this file - an archived employee's past payout still counts
+    // toward this total, even though contractEmployees itself stays active-only.
     const contractPayouts = filteredPayouts.filter(p => {
-      const emp = filteredEmployees.find(e => e.id === p.employeeId);
+      const emp = employeesInScopeForPayouts.find(e => e.id === p.employeeId);
       return emp?.type === 'contract';
     });
 
@@ -642,8 +678,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   const calculatePermanentStats = () => {
     const permanentEmployees = filteredEmployees.filter(e => e.type === 'fulltime');
+    // See calculateContractStats above - employeesInScopeForPayouts for the payout match.
     const permanentPayouts = filteredPayouts.filter(p => {
-      const emp = filteredEmployees.find(e => e.id === p.employeeId);
+      const emp = employeesInScopeForPayouts.find(e => e.id === p.employeeId);
       return emp?.type === 'fulltime';
     });
 
@@ -878,8 +915,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           {/* Contract Employees Tab */}
           {activeTab === 'contract' && (() => {
             const contractEmployees = employees.filter(e => e.type === 'contract');
+            // employeesForDisplay (active + archived) so an archived contract employee's
+            // past payouts still match this filter instead of silently disappearing once
+            // they're no longer an active employee - the payout records themselves were
+            // never deleted, only this active-only lookup was hiding them.
             const contractPayouts = filteredPayouts.filter(p => {
-              const emp = employees.find(e => e.id === p.employeeId);
+              const emp = employeesForDisplay.find(e => e.id === p.employeeId);
               return emp?.type === 'contract';
             });
 
@@ -1025,7 +1066,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           {contractPayouts
                             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                             .map((payout, index) => {
-                              const employee = employees.find(e => e.id === payout.employeeId);
+                              const employee = employeesForDisplay.find(e => e.id === payout.employeeId);
                               return (
                                 <tr key={payout.id} className="border-b border-gray-100 hover:bg-gray-50">
                                   <td className="py-4 px-4">
@@ -1467,8 +1508,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           {/* Permanent Employees Tab */}
           {activeTab === 'permanent' && (() => {
             const permanentEmployees = employees.filter(e => e.type === 'fulltime');
+            // See the Contract tab's identical comment above - employeesForDisplay so an
+            // archived permanent employee's past payouts still show here.
             const permanentPayouts = filteredPayouts.filter(p => {
-              const emp = employees.find(e => e.id === p.employeeId);
+              const emp = employeesForDisplay.find(e => e.id === p.employeeId);
               return emp?.type === 'fulltime';
             });
 
@@ -1663,7 +1706,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           {permanentPayouts
                             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                             .map((payout, index) => {
-                              const employee = employees.find(e => e.id === payout.employeeId);
+                              const employee = employeesForDisplay.find(e => e.id === payout.employeeId);
                               return (
                                 <tr key={payout.id} className="border-b border-gray-100 hover:bg-gray-50">
                                   <td className="py-4 px-4">

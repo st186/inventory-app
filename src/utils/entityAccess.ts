@@ -85,3 +85,29 @@ export function getEffectiveStoreId(
 ): string | null {
   return selectedStoreId || getDefaultStoreId(user, stores);
 }
+
+type EmployeeLike = { storeId?: string | null };
+
+/**
+ * Whether an employee record belongs to the given store, for a "filter this list down to
+ * one store" screen (Employee Management, Approve Timesheets/Leaves, Analytics' employee-
+ * and payout-derived cost figures, etc.). Three ways this can be true, all confirmed real
+ * this session:
+ *  1. `emp.storeId` is that store's own id - the normal case.
+ *  2. `emp.storeId` is null/undefined - a legacy/unassigned record, historically always
+ *     included rather than silently dropped from every store's view.
+ *  3. `emp.storeId` is that store's LINKED PRODUCTION HOUSE's id - a production incharge/
+ *     ops employee's `storeId` field holds their production house's id, not a real store
+ *     id (see the file header). Missing this case is what caused this store's own
+ *     production staff (e.g. its production incharge) to silently vanish from that
+ *     store's employee/payout/salary-cost figures the moment a specific store was
+ *     selected, while "All Stores" (which applies no filter at all) never dropped them -
+ *     the same store vs. "All Stores" inconsistency bug, now fixed at its one source
+ *     instead of separately in every screen that filters employees by store.
+ */
+export function employeeBelongsToStore(emp: EmployeeLike, storeId: string, stores: StoreLike[]): boolean {
+  if (!emp.storeId) return true;
+  if (emp.storeId === storeId) return true;
+  const linkedProductionHouseId = stores.find((s) => s.id === storeId)?.productionHouseId;
+  return !!linkedProductionHouseId && emp.storeId === linkedProductionHouseId;
+}

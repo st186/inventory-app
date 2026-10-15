@@ -84,7 +84,12 @@ export type InventoryItem = {
 export type OverheadItem = {
  id: string;
  date: string;
- category: 'fuel' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'party' | 'breakfast' | 'lunch' | 'evening_snacks' | 'emergency_online' | 'personal_expense' | 'utensils' | 'equipments' | 'license' | 'water_jar' | 'vehicle_maintenance' | 'donations_community' | 'staff_welfare' | 'miscellaneous' | 'commission'; // 'miscellaneous' and 'commission' are legacy categories kept for backwards compatibility with old records; no longer selectable in the form
+ // Kept in sync with OVERHEAD_CATEGORY_META (src/utils/inventoryData.ts) - that's the
+ // runtime source of truth for labels/grouping, this is just so a literal category value
+ // written here typechecks against it. 'miscellaneous' and 'commission' are legacy
+ // categories kept for backwards compatibility with old records; no longer selectable
+ // in the form.
+ category: 'fuel' | 'ev_charging' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'renovation' | 'labour_charge' | 'puja_expense' | 'office_supplies' | 'deep_cleaning' | 'party' | 'breakfast' | 'lunch' | 'dinner' | 'evening_snacks' | 'emergency_online' | 'staff_emergency_services' | 'personal_expense' | 'utensils' | 'cleaning_supplies' | 'equipments' | 'license' | 'water_jar' | 'vehicle_maintenance' | 'donations_community' | 'staff_welfare' | 'miscellaneous' | 'commission';
  description: string;
  amount: number;
  storeId?: string; // Optional storeId for multi-store filtering
@@ -2231,6 +2236,7 @@ export default function App() {
  isIncharge={isAnyIncharge}
  inchargeDesignation={user.designation}
  initialTab={highlightTab}
+ stores={contextValue.stores}
  />
  ) : activeView === 'export' && isAnyIncharge ? (
  <ExportData

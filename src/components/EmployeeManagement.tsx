@@ -7,6 +7,7 @@ import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 import { PayrollManagement } from './PayrollManagement';
 import { AttendancePortal } from './AttendancePortal';
 import { getTodayIST } from '../utils/timezone';
+import { employeeBelongsToStore } from '../utils/entityAccess';
 
 type Employee = api.Employee;
 
@@ -179,13 +180,11 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
         console.log('📋 Loading all employees for cluster head');
         data = await api.getAllEmployees();
         
-        // If a specific store is selected, filter by that store (include null/undefined storeIds for backward compatibility)
+        // If a specific store is selected, filter by that store (also matches this
+        // store's linked production house - see entityAccess.ts's employeeBelongsToStore
+        // for why a production incharge/ops employee needs that extra check).
         if (selectedStoreId) {
-          data = data.filter((emp: any) => 
-            emp.storeId === selectedStoreId || 
-            emp.storeId === null || 
-            emp.storeId === undefined
-          );
+          data = data.filter((emp: any) => employeeBelongsToStore(emp, selectedStoreId, stores));
         }
       } else {
         // Fallback: load all
@@ -796,6 +795,7 @@ New Password: ${result.credentials.password}
             }}
             selectedStoreId={selectedStoreId}
             initialTab={initialAttendanceTab}
+            stores={stores}
           />
         ) : (
           <>

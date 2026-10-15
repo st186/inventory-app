@@ -65,12 +65,20 @@ export const CATEGORY_ITEMS = {
 export type OverheadCategoryGroup = 'operating' | 'meals' | 'payroll_linked';
 
 export const OVERHEAD_CATEGORY_META: Record<string, { label: string; group: OverheadCategoryGroup }> = {
+  // Petrol is no longer a routine store cost (the store now runs an electric bike) - fuel
+  // entry is cluster-head-only, see RESTRICTED_OVERHEAD_CATEGORIES below.
   fuel: { label: '⛽ Fuel Cost', group: 'operating' },
+  ev_charging: { label: '⚡ Electric Bike Charging', group: 'operating' },
   travel: { label: '🚗 Travel by Employee', group: 'operating' },
   transportation: { label: '🚛 Goods Transportation Cost', group: 'operating' },
   marketing: { label: '📢 Marketing Cost', group: 'operating' },
   service_charge: { label: '🍔 Service Charge (Food Aggregators)', group: 'operating' },
   repair: { label: '🔧 Repair Cost', group: 'operating' },
+ // Distinct from Repair Cost on purpose - repair is fixing something broken; this is a
+ // proactive refresh/beautification (wall painting, festive decor, store look-and-feel)
+ // that isn't "broken" to begin with. Conflating the two was making Repair Cost an
+ // unreliable signal of actual equipment/furniture failures.
+ renovation: { label: '🎨 Renovation & Decoration', group: 'operating' },
   labour_charge: { label: '👷 Labour Charge', group: 'operating' },
   puja_expense: { label: '🪔 Puja Expense (Garland, Candle, Scented Sticks)', group: 'operating' },
   office_supplies: { label: '🖊️ Office Supplies & Stationery', group: 'operating' },
@@ -100,6 +108,10 @@ export const OVERHEAD_CATEGORIES: Record<string, string> = Object.fromEntries(
   Object.entries(OVERHEAD_CATEGORY_META).map(([key, { label }]) => [key, label])
 );
 
+// Categories only the cluster head may log (UI hides them for everyone else and the server
+// rejects them) - existing entries stay visible and keep counting in analytics.
+export const RESTRICTED_OVERHEAD_CATEGORIES: readonly string[] = ['fuel'];
+
 export const MEAL_CATEGORIES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'evening_snacks'];
 
 // The store's day-to-day overhead categories are a small, curated subset of the full
@@ -112,17 +124,20 @@ export const STORE_OVERHEAD_CATEGORY_KEYS: readonly string[] = [
   'transportation',
   'travel',
   'fuel',
+  'ev_charging',
   'breakfast',
   'lunch',
   'dinner',
   'evening_snacks',
   'repair',
+  'renovation',
   'labour_charge',
   'puja_expense',
   'office_supplies',
   'cleaning_supplies',
   'utensils',
   'equipments',
+  'vehicle_maintenance',
   'staff_emergency_services',
   'miscellaneous',
 ];

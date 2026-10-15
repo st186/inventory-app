@@ -948,7 +948,19 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       toast.error(`Please add notes for items with different quantities: ${missingNotes.join(', ')}`);
       return;
     }
-    
+
+    // Any sauce the production head unticked needs its own reason, same requirement as
+    // a quantity shortfall above - this used to be the one shortfall type nobody had to
+    // explain, so a missing sauce showed up on the store's end with no way to tell why.
+    const missingSauceReasons = Object.entries(shippedSauces)
+      .filter(([, included]) => !included)
+      .filter(([sauce]) => !shippingNotes[`sauce_${sauce}`]?.trim())
+      .map(([sauce]) => sauce);
+    if (missingSauceReasons.length > 0) {
+      toast.error(`Please add a reason for the missing sauce(s): ${missingSauceReasons.join(', ')}`);
+      return;
+    }
+
     try {
       await api.shipProductionRequest(
         context.user.accessToken,
@@ -2965,30 +2977,35 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                 {request.sauces && Object.keys(request.sauces).length > 0 && (
                                   <div className="mt-4 pt-4 border-t border-gray-200">
                                     <p className="text-xs font-semibold text-gray-600 mb-2">Sauces</p>
-                                    <div className="flex flex-wrap gap-2">
+                                    {/* Same card style as the momo/utility grid above (green = delivered,
+                                        red = not), instead of a plain chip - a missing sauce used to be
+                                        the one shortfall type on this page with no reason attached. */}
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                       {Object.keys(request.sauces).map((sauce) => {
                                         const wasShipped = request.shippedSauces ? request.shippedSauces[sauce] : true;
+                                        const reason = request.shippingNotes?.[`sauce_${sauce}`];
                                         return (
-                                          <span
-                                            key={sauce}
-                                            className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 ${
-                                              wasShipped
-                                                ? 'bg-white border-green-200 text-gray-700'
-                                                : 'bg-red-100 border-red-400 text-red-700'
-                                            }`}
-                                          >
-                                            {sauce} {!wasShipped && '— Missing'}
-                                          </span>
+                                          <div key={sauce} className={`rounded-lg p-3 border-2 ${wasShipped ? 'bg-white border-green-200' : 'bg-red-100 border-red-400'}`}>
+                                            <p className={`text-sm font-semibold ${wasShipped ? 'text-gray-700' : 'text-red-700'}`}>{sauce}</p>
+                                            <p className={`text-xs font-medium ${wasShipped ? 'text-green-700' : 'text-red-600'}`}>
+                                              {wasShipped ? 'Delivered' : 'Not delivered'}
+                                            </p>
+                                            {!wasShipped && reason && (
+                                              <p className="text-xs text-red-600 mt-0.5">Reason: {reason}</p>
+                                            )}
+                                          </div>
                                         );
                                       })}
                                     </div>
                                   </div>
                                 )}
 
-                                {request.shippingNotes && Object.keys(request.shippingNotes).length > 0 && (
+                                {request.shippingNotes && Object.entries(request.shippingNotes).some(([key]) => !key.startsWith('sauce_')) && (
                                   <div className="mt-4 pt-4 border-t border-gray-200 space-y-1">
                                     <p className="text-xs font-semibold text-gray-600 mb-1">Notes</p>
-                                    {Object.entries(request.shippingNotes).map(([key, note]) => (
+                                    {/* Sauce reasons are excluded here - they're already shown inline on the
+                                        sauce's own card above, right next to its Delivered/Not delivered status. */}
+                                    {Object.entries(request.shippingNotes).filter(([key]) => !key.startsWith('sauce_')).map(([key, note]) => (
                                       <p key={key} className="text-sm text-gray-700">
                                         <span className="font-medium">{key.replace(/_/g, ' ')}:</span> {note}
                                       </p>
@@ -3169,7 +3186,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
         const kitchenUtilEntries = Object.entries(req.kitchenUtilities || {});
         const sauceNames = Object.keys(req.sauces || {}).filter(s => (req.sauces as any)[s]);
         const utilityEntries = Object.entries(req.utilities || {});
-        const shippingNoteEntries = Object.entries(req.shippingNotes || {});
+        // Excludes sauce_* entries - those reasons are already shown inline next to the
+        // sauce's own "Not delivered" chip above, with the plain sauce name rather than the
+        // raw sauce_ prefixed key.
+        const shippingNoteEntries = Object.entries(req.shippingNotes || {}).filter(([key]) => !key.startsWith('sauce_'));
         const timeline: { label: string; at?: string }[] = [
           { label: 'Created', at: req.createdAt },
           { label: 'Accepted', at: req.acceptedAt },
@@ -3230,12 +3250,36 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                 {sauceNames.length > 0 && (
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Sauces Requested</h4>
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Sauces</h4>
                     <div className="flex flex-wrap gap-1.5">
-                      {sauceNames.map(s => (
-                        <span key={s} className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full text-xs">{s}</span>
-                      ))}
+                      {sauceNames.map(s => {
+                        // Only meaningful once shipped - a request still pending/preparing has no
+                        // shippedSauces yet, so treat it as "requested" rather than "delivered".
+                        const hasShipped = !!req.shippedQuantities;
+                        const wasShipped = !hasShipped || (req.shippedSauces ? req.shippedSauces[s] : true);
+                        const reason = req.shippingNotes?.[`sauce_${s}`];
+                        return (
+                          <span
+                            key={s}
+                            title={!wasShipped && reason ? `Not delivered - ${reason}` : undefined}
+                            className={`px-2 py-0.5 border rounded-full text-xs ${
+                              !hasShipped ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : wasShipped ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-red-50 text-red-700 border-red-300'
+                            }`}
+                          >
+                            {s}{hasShipped && !wasShipped ? ' — Not delivered' : ''}
+                          </span>
+                        );
+                      })}
                     </div>
+                    {sauceNames.some(s => req.shippedQuantities && !(req.shippedSauces ? req.shippedSauces[s] : true) && req.shippingNotes?.[`sauce_${s}`]) && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {sauceNames.filter(s => req.shippedQuantities && !(req.shippedSauces ? req.shippedSauces[s] : true) && req.shippingNotes?.[`sauce_${s}`]).map(s => (
+                          <p key={s} className="text-xs text-red-600"><span className="font-medium">{s}:</span> {req.shippingNotes![`sauce_${s}`]}</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3767,30 +3811,47 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                 {shippingRequest.sauces && Object.keys(shippingRequest.sauces).length > 0 && (
                   <div>
                     <h3 className="font-bold text-lg text-gray-900 mb-3">Sauces</h3>
-                    <p className="text-sm text-gray-500 mb-3">Untick any sauce that could not be included in this shipment.</p>
-                    <div className="flex flex-wrap gap-3">
+                    <p className="text-sm text-gray-500 mb-3">Untick any sauce that could not be included in this shipment - unticking asks why, same as a quantity shortfall above.</p>
+                    <div className="space-y-3">
                       {Object.keys(shippingRequest.sauces).map((sauce) => {
                         const isIncluded = shippedSauces[sauce] ?? true;
+                        const notesKey = `sauce_${sauce}`;
                         return (
-                          <label
-                            key={sauce}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-                              isIncluded ? 'border-gray-200 bg-white' : 'border-red-300 bg-red-50'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isIncluded}
-                              onChange={(e) => setShippedSauces({
-                                ...shippedSauces,
-                                [sauce]: e.target.checked
-                              })}
-                              className="w-4 h-4 text-rose-600 rounded"
-                            />
-                            <span className={`text-sm font-medium ${isIncluded ? 'text-gray-700' : 'text-red-700'}`}>
-                              {sauce}
-                            </span>
-                          </label>
+                          <div key={sauce} className={`border rounded-lg p-4 ${!isIncluded ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                            <div className="flex items-start gap-4">
+                              <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isIncluded}
+                                  onChange={(e) => setShippedSauces({
+                                    ...shippedSauces,
+                                    [sauce]: e.target.checked
+                                  })}
+                                  className="w-4 h-4 text-rose-600 rounded"
+                                />
+                                <span className={`text-sm font-medium ${isIncluded ? 'text-gray-700' : 'text-red-700'}`}>
+                                  {sauce}
+                                </span>
+                              </label>
+                              {!isIncluded && (
+                                <div className="flex-1">
+                                  <label className="block text-sm font-medium text-red-700 mb-1">
+                                    Reason it's not included *
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={shippingNotes[notesKey] || ''}
+                                    onChange={(e) => setShippingNotes({
+                                      ...shippingNotes,
+                                      [notesKey]: e.target.value
+                                    })}
+                                    placeholder="e.g., Ran out of stock"
+                                    className="w-full px-3 py-2 border border-red-300 rounded-lg bg-white"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
                     </div>

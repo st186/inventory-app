@@ -5,6 +5,11 @@ import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
 import { formatDateTimeIST, formatDateIST, getTodayIST, addDays } from '../utils/timezone';
 import { InventoryContextType } from '../App';
+import { employeeBelongsToStore } from '../utils/entityAccess';
+import { SalaryBreakdownModal } from './SalaryBreakdownModal';
+import { CommissionBreakdownModal, InterestBreakdownModal } from './CostBreakdownModals';
+import { buildSmoothedCosts } from '../utils/dailyCostSmoothing';
+import { buildSalaryBreakdown } from '../utils/salaryBreakdown';
 import { DataCapture } from './DataCapture';
 import { ProductionRequests } from './ProductionRequests';
 import { SalesData as SalesDataComponent } from './SalesData';
@@ -278,8 +283,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // out-of-sync store selectors on the same page. Falls back to the user's own store for
  // plain employees, who don't get the global picker at all.
  // For Production Analytics mode, this is ignored (we use production house selector instead)
+ // A production incharge who is also a manager (e.g. a founding member) has no global store
+ // picker, so Store Analytics used to fall through to "no store selected" - which several
+ // store tabs and the store+linked-production cost scoping can't work with. Resolve them to
+ // the store they actually belong to (explicit assignment first, then their own store id
+ // when it is a real store, then whichever store their production house supplies) - no
+ // production-house id is ever used as a store id here.
+ const productionInchargeDefaultStoreId = (() => {
+ if (!isProductionIncharge) return null;
+ const stores = context.stores || [];
+ const u = context.user;
+ const assigned = u?.assignedStoreIds?.find((id) => stores.length === 0 || stores.some((s) => s.id === id));
+ if (assigned) return assigned;
+ if (u?.storeId && (stores.length === 0 ? String(u.storeId).startsWith('STORE-') : stores.some((s) => s.id === u.storeId))) return u.storeId;
+ const houseIds = [...(u?.assignedProductionHouseIds || []), ...(u?.storeId ? [u.storeId] : [])];
+ return stores.find((s) => s.productionHouseId && houseIds.includes(s.productionHouseId))?.id || null;
+ })();
  const effectiveStoreId = analyticsMode === 'store'
- ? (selectedStoreId || (!(isClusterHead || isManager || isProductionIncharge || isAudit) ? (context.user?.storeId || null) : null))
+ ? (selectedStoreId || productionInchargeDefaultStoreId || (!(isClusterHead || isManager || isProductionIncharge || isAudit) ? (context.user?.storeId || null) : null))
  : null;
 
  // A production house's own inventory/overhead/fixed-cost entries carry no storeId at all
@@ -354,6 +375,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  category: string;
  items: any[];
  amount: number;
+ // Salaries, commission and interest aren't purchases of items, so they open their own
+ // purpose-built breakdowns instead of the item/price-trend modal (which had nothing to
+ // show for them).
+ type?: 'salary' | 'commission' | 'interest';
  } | null>(null);
  
  // Debug: Log activeView changes
@@ -385,6 +410,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // section instead of its own top-level tab (Analytics page redesign).
  const [showActivityLog, setShowActivityLog] = useState(false);
  const [timeFilter, setTimeFilter] = useState<TimeFilter>('thisMonth');
+ // Daily charts: spread rent/electricity/salaries over the month (default) vs show them on
+ // the day they were actually paid. Remembered per device; storage can be unavailable.
+ const [smoothFixedCosts, setSmoothFixedCosts] = useState<boolean>(() => {
+ try { return localStorage.getItem('analytics.smoothFixedCosts') !== 'off'; } catch { return true; }
+ });
+ const updateSmoothFixedCosts = (on: boolean) => {
+ setSmoothFixedCosts(on);
+ try { localStorage.setItem('analytics.smoothFixedCosts', on ? 'on' : 'off'); } catch { /* ignore */ }
+ };
  const [wastageTimeFilter, setWastageTimeFilter] = useState<WastageTimeFilter>('monthly');
  // Initialize date range to current month (from 1st to today)
  const getDateRangeDefaults = () => {
@@ -1487,11 +1521,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  const filteredEmployeesData = useMemo(() => {
  if (!effectiveStoreId) return employeesData;
- // IMPORTANT: Only include exact storeId matches
- return employeesData.filter(emp => 
- emp.storeId === effectiveStoreId
- );
- }, [employeesData, effectiveStoreId]);
+ // See entityAccess.ts's employeeBelongsToStore - without its production-house case, a
+ // production incharge/ops employee's own `storeId` field (which actually holds their
+ // production house's id, not a real store id) meant every one of this store's own
+ // production staff silently vanished from a specific store's view - and with them,
+ // filteredPayoutsData below (matched by employeeId against this list), understating
+ // that store's real salary cost relative to "All Stores", which applies no filter at
+ // all and so never drops them.
+ return employeesData.filter(emp => employeeBelongsToStore(emp, effectiveStoreId, context.stores || []));
+ }, [employeesData, effectiveStoreId, context.stores]);
 
  const filteredPayoutsData = useMemo(() => {
  // Start with time-filtered payouts
@@ -1512,10 +1550,18 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const loadData = async () => {
  try {
  console.log('💰 === LOADING PAYOUTS AND EMPLOYEES ===');
- const [payouts, employees] = await Promise.all([
+ // Archived (released) employees are fetched too and merged in below - this list is
+ // only ever used to look up who a payout belongs to (their type and store), and an
+ // employee archived after being paid still has real salary expense in the months they
+ // worked. Active-only silently dropped it: September showed Rs.45,000 instead of
+ // Rs.52,000 because Akash Dey (archived 3 Oct) had his Rs.7,000 payout skipped as
+ // "employee not found".
+ const [payouts, activeEmployees, archivedEmployees] = await Promise.all([
  api.getPayouts(),
- api.getEmployees()
+ api.getEmployees(),
+ api.getArchivedEmployees().catch(() => [])
  ]);
+ const employees = [...(activeEmployees || []), ...(archivedEmployees || [])];
  console.log('💰 Raw payouts from API:', payouts);
  console.log('💰 Number of payouts:', payouts?.length || 0);
  console.log('💰 Payout dates:', payouts?.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
@@ -1643,27 +1689,32 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // the compact summary bar - the list itself is flat (one row per approved leave), so
  // this is purely a display grouping, not a second fetch. Days that have already passed
  // are dropped - only today and the remaining days of the week are worth surfacing here.
- const weekLeaveSummary = useMemo(() => {
+ const monthLeaveSummary = useMemo(() => {
  const today = getTodayIST();
- const todayDow = new Date(`${today}T00:00:00Z`).getUTCDay();
- const mondayOffset = todayDow === 0 ? -6 : 1 - todayDow;
- const weekStart = addDays(today, mondayOffset);
+ const [year, month] = today.split('-').map(Number);
+ // Last calendar day of the current month - new Date(year, month, 0) rolls back one day
+ // from the 1st of next month, which lands on the last day of this one (month here is
+ // already 1-indexed from the split above, so this "next month" is correct as-is).
+ const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
 
- const days = Array.from({ length: 7 }, (_, i) => {
- const date = addDays(weekStart, i);
+ const days: { date: string; label: string; isToday: boolean; leaves: any[] }[] = [];
+ for (let date = today; date <= monthEnd; date = addDays(date, 1)) {
  const leaves = todayLeaveDetails.filter((l: any) => l.leaveDate === date);
- return {
+ days.push({
  date,
  label: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }),
  isToday: date === today,
  leaves,
- };
- }).filter(day => day.date >= today);
+ });
+ }
 
- const upcomingLeaves = todayLeaveDetails.filter((l: any) => l.leaveDate >= today);
+ // Bounded to today-through-month-end (previously unbounded into the indefinite future,
+ // while the label/day list only ever covered the current week - this scopes the count
+ // itself to match what the card actually says it's showing).
+ const upcomingLeaves = todayLeaveDetails.filter((l: any) => l.leaveDate >= today && l.leaveDate <= monthEnd);
  const fullDayCount = upcomingLeaves.filter((l: any) => l.leaveType !== 'half').length;
  const halfDayCount = upcomingLeaves.filter((l: any) => l.leaveType === 'half').length;
- const rangeLabel = `${new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(`${addDays(weekStart, 6)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+ const rangeLabel = `${new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(`${monthEnd}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
  return { days, fullDayCount, halfDayCount, rangeLabel, upcomingCount: upcomingLeaves.length };
  }, [todayLeaveDetails]);
@@ -2171,6 +2222,34 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  dateRange,
  effectiveStoreId
  ]);
+
+ // ---- Data behind the Salaries / Commission / Interest breakdown modals. Built from the
+ // same filtered sources calculateMetrics uses, so each modal's rows add up to the headline
+ // figure on the card it was opened from. ----
+ const salaryBreakdownData = useMemo(() => {
+ const isMonthly = timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom';
+ return buildSalaryBreakdown({
+ // Daily/weekly filters carry no payouts by design - salaries are monthly events.
+ periodPayouts: isMonthly ? filteredPayoutsData : [],
+ allPayouts: payoutsData,
+ employees: employeesData,
+ personalExpenses: filteredOverheadData.filter((o: any) => o.category === 'personal_expense'),
+ timeFilter,
+ todayIST: getTodayIST(),
+ inScope: (emp: any) => !effectiveStoreId || employeeBelongsToStore(emp, effectiveStoreId, context.stores || []),
+ });
+ }, [filteredPayoutsData, payoutsData, employeesData, filteredOverheadData, timeFilter, effectiveStoreId, context.stores]);
+
+ const commissionBreakdownSettlements = useMemo(
+ () => (aggregatorSettlements || []).filter((st: any) =>
+ (!effectiveStoreId || st.storeId === effectiveStoreId) && settlementOverlapsAnalyticsRange(st, activeSettlementDateRange)
+ ),
+ [aggregatorSettlements, effectiveStoreId, timeFilter, dateRange]
+ );
+ const legacyCommissionAmount = Math.max(
+ 0,
+ metrics.commissionExpenses - commissionBreakdownSettlements.reduce((sum: number, st: any) => sum + (st.netCommission || 0), 0)
+ );
 
  // Date range for the current timeFilter, usable outside calculateMetrics() (which has its
  // own copy scoped to its own body). Kept in sync with that logic.
@@ -2951,6 +3030,41 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  timeFilter
  ]);
 
+ // Rent / electricity / permanent salaries (incl. variable pay) spread over the days of the
+ // month they belong to - see utils/dailyCostSmoothing.ts for the rules (estimates, true-up).
+ // Built from ALL records (not the time-filtered ones) so a payment made outside the viewed
+ // window still contributes its daily share to the days inside it.
+ const smoothedCosts = useMemo(() => {
+ if (!smoothFixedCosts) return null;
+ const today = getTodayIST();
+ const dow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); };
+ let start = today;
+ let end = today;
+ switch (timeFilter) {
+ case 'yesterday': start = end = addDays(today, -1); break;
+ case 'thisWeek': start = addDays(today, -dow(today)); break;
+ case 'lastWeek': { const ws = addDays(today, -dow(today)); end = addDays(ws, -1); start = addDays(end, -6); break; }
+ case 'thisMonth': start = `${today.slice(0, 7)}-01`; break;
+ case 'lastMonth': { end = addDays(`${today.slice(0, 7)}-01`, -1); start = `${end.slice(0, 7)}-01`; break; }
+ case 'custom': start = dateRange.from; end = dateRange.to; break;
+ default: break;
+ }
+ if (end > today) end = today;
+ if (!start || !end || start > end) return null;
+ const inScopeFixed = (item: any) => !effectiveStoreId ||
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
+ const scopedEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
+ return buildSmoothedCosts({
+ fixedCosts: fixedCostsData.filter(inScopeFixed),
+ payouts: payoutsData.filter((p: any) => !effectiveStoreId || scopedEmployeeIds.has(p.employeeId)),
+ employees: employeesData,
+ windowStart: start,
+ windowEnd: end,
+ todayIST: today
+ });
+ }, [smoothFixedCosts, timeFilter, dateRange, fixedCostsData, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
+
  // Prepare profit chart data with revenue, expenses, profit based on time filter
  const prepareProfitChartData = () => {
  const now = new Date();
@@ -3123,15 +3237,27 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  
  // Add fixed costs by date
  filteredFixedCostsData.forEach(item => {
+ // Smoothed mode spreads rent/electricity over the month instead (smoothedCosts)
+ if (smoothedCosts && (item.category === 'electricity' || item.category === 'rent')) return;
  const date = item.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
  dailyData[date].expenses += (item.amount || 0);
  });
+
+ if (smoothedCosts) {
+ Object.entries(smoothedCosts.byDate).forEach(([date, day]) => {
+ if (!dailyData[date]) {
+ dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+ }
+ dailyData[date].expenses += day.amount;
+ });
+ }
  
  // Add employee payouts by date (only for fulltime employees to avoid double-counting)
- filteredPayoutsData.forEach(payout => {
+ // - skipped in smoothed mode, where permanent salaries are spread over the month instead
+ if (!smoothedCosts) filteredPayoutsData.forEach(payout => {
  const date = payout.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
@@ -3175,6 +3301,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onlineSalesData,
  onlinePayoutData,
  aggregatorSettlements,
+ smoothedCosts,
  timeFilter,
  effectiveStoreId,
  dateRange
@@ -3775,53 +3902,54 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
  </div>
 
- {/* Leave Alert Bar - covers the rest of the week (today through Sunday), not just today
- and not days that have already passed, so a cluster head/manager sees what's coming. */}
+ {/* Leave Alert Bar - covers the rest of the month (today through month-end), not just
+ today and not days that have already passed, so a cluster head/manager sees what's
+ coming over a more useful horizon than just the current week. */}
  {!loadingLeaves && (context.user?.role === 'cluster_head' || context.user?.role === 'manager') && (
  <button
  onClick={() => setShowLeaveModal(true)}
  className={`w-full text-left mb-4 sm:mb-6 rounded-2xl shadow-sm border p-4 sm:p-5 transition-all hover:shadow-md ${
- weekLeaveSummary.upcomingCount === 0
+ monthLeaveSummary.upcomingCount === 0
  ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200/70'
  : 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200/70'
  }`}
  >
  <div className="flex items-center gap-4">
  <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
- weekLeaveSummary.upcomingCount === 0 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600'
+ monthLeaveSummary.upcomingCount === 0 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600'
  }`}>
- {weekLeaveSummary.upcomingCount === 0 ? <Users className="w-5 h-5" /> : <UserX className="w-5 h-5" />}
+ {monthLeaveSummary.upcomingCount === 0 ? <Users className="w-5 h-5" /> : <UserX className="w-5 h-5" />}
  </div>
  <div className="flex-1 min-w-0">
  <div className="flex items-center gap-2 flex-wrap">
- <p className={`font-semibold ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-900' : 'text-amber-900'}`}>
- {weekLeaveSummary.upcomingCount === 0
- ? 'Everyone is working this week'
- : `${weekLeaveSummary.upcomingCount} leave${weekLeaveSummary.upcomingCount === 1 ? '' : 's'} this week`}
+ <p className={`font-semibold ${monthLeaveSummary.upcomingCount === 0 ? 'text-emerald-900' : 'text-amber-900'}`}>
+ {monthLeaveSummary.upcomingCount === 0
+ ? 'Everyone is working this month'
+ : `${monthLeaveSummary.upcomingCount} leave${monthLeaveSummary.upcomingCount === 1 ? '' : 's'} this month`}
  </p>
  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-white/70 border border-gray-200 rounded-full px-2 py-0.5">
- <CalendarDays className="w-3 h-3" /> {weekLeaveSummary.rangeLabel}
+ <CalendarDays className="w-3 h-3" /> {monthLeaveSummary.rangeLabel}
  </span>
  </div>
- <p className={`text-sm mt-1 ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
- {weekLeaveSummary.upcomingCount === 0
+ <p className={`text-sm mt-1 ${monthLeaveSummary.upcomingCount === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+ {monthLeaveSummary.upcomingCount === 0
  ? 'No employees on leave across all stores'
  : (
  <>
  Across all stores
- {(weekLeaveSummary.fullDayCount > 0 || weekLeaveSummary.halfDayCount > 0) && (
+ {(monthLeaveSummary.fullDayCount > 0 || monthLeaveSummary.halfDayCount > 0) && (
  <>
  {' · '}
- {weekLeaveSummary.fullDayCount > 0 && `${weekLeaveSummary.fullDayCount} full day${weekLeaveSummary.fullDayCount === 1 ? '' : 's'}`}
- {weekLeaveSummary.fullDayCount > 0 && weekLeaveSummary.halfDayCount > 0 && ', '}
- {weekLeaveSummary.halfDayCount > 0 && `${weekLeaveSummary.halfDayCount} half day${weekLeaveSummary.halfDayCount === 1 ? '' : 's'}`}
+ {monthLeaveSummary.fullDayCount > 0 && `${monthLeaveSummary.fullDayCount} full day${monthLeaveSummary.fullDayCount === 1 ? '' : 's'}`}
+ {monthLeaveSummary.fullDayCount > 0 && monthLeaveSummary.halfDayCount > 0 && ', '}
+ {monthLeaveSummary.halfDayCount > 0 && `${monthLeaveSummary.halfDayCount} half day${monthLeaveSummary.halfDayCount === 1 ? '' : 's'}`}
  </>
  )}
  </>
  )}
  </p>
  </div>
- <ChevronRight className={`w-5 h-5 flex-shrink-0 ${weekLeaveSummary.upcomingCount === 0 ? 'text-emerald-400' : 'text-amber-400'}`} />
+ <ChevronRight className={`w-5 h-5 flex-shrink-0 ${monthLeaveSummary.upcomingCount === 0 ? 'text-emerald-400' : 'text-amber-400'}`} />
  </div>
  </button>
  )}
@@ -3899,6 +4027,20 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </h3>
  <p className="text-blue-700 text-sm mt-1">
  Viewing data for: {context.stores?.find(s => s.id === context.user?.storeId)?.name || 'Your Store'}
+ </p>
+ </div>
+ </div>
+ </div>
+ )}
+
+ {analyticsMode === 'store' && isProductionIncharge && effectiveStoreId && (
+ <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
+ <div className="flex items-center gap-3">
+ <ShoppingCart className="w-6 h-6 text-blue-600" />
+ <div>
+ <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>Store Analytics</h3>
+ <p className="text-blue-700 text-sm mt-1">
+ Viewing: {context.stores?.find((s) => s.id === effectiveStoreId)?.name || 'Your store'} (store costs plus its production house)
  </p>
  </div>
  </div>
@@ -4299,9 +4441,20 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Daily Profit Trend */}
  <div className="mb-6 sm:mb-8 overflow-x-auto">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">
+ <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+ <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
  Daily Performance - {getPeriodLabel()}
  </h3>
+ <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="group" aria-label="How rent, electricity and salaries are shown on daily charts">
+ <button type="button" onClick={() => updateSmoothFixedCosts(true)} className={`px-3 py-1.5 ${smoothFixedCosts ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>Spread over month</button>
+ <button type="button" onClick={() => updateSmoothFixedCosts(false)} className={`px-3 py-1.5 border-l border-gray-200 ${!smoothFixedCosts ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>As paid</button>
+ </div>
+ </div>
+ <p className="text-xs text-gray-500 mb-4">
+ {smoothedCosts
+ ? <>Rent, electricity, salaries and variable pay are spread evenly across the days of the month they belong to, so payday doesn't distort a single day.{smoothedCosts.estimatedAmount > 0 && <> About <b>₹{Math.round(smoothedCosts.estimatedAmount).toLocaleString('en-IN')}</b> of this is estimated from last month until the real bill or payout is recorded.</>} Daily charts and the summary cards use different bases, so their totals can differ slightly for the current month.</>
+ : <>Showing every cost on the day it was paid.</>}
+ </p>
  <div className="min-w-[260px]">
  <ResponsiveContainer width="100%" height={300}>
  <LineChart data={profitChartData.map((item, index) => ({ ...item, id: `profit-${item.date}-${index}`, key: `data-${index}` }))}>
@@ -4889,6 +5042,51 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
 
  {/* Salaries */}
+ {expenseBreakdown.filter(item => item.type === 'commission' || item.type === 'interest').length > 0 && (
+ <div>
+ <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">🏦 Platform & Financing Costs</h4>
+ <div className="space-y-2">
+ {expenseBreakdown.filter(item => item.type === 'commission' || item.type === 'interest').map((item) => {
+ const colorIndex = expenseBreakdown.indexOf(item);
+ return (
+ <div
+ key={item.name}
+ className="group border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer bg-white"
+ onClick={() => {
+ setSelectedExpenseCategory({
+ category: item.name,
+ items: [],
+ amount: item.value,
+ type: item.type as 'commission' | 'interest'
+ });
+ }}
+ >
+ <div className="flex items-center justify-between">
+ <div className="flex items-center gap-2 flex-1">
+ <div
+ className="w-3 h-3 rounded-full"
+ style={{ background: `linear-gradient(135deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` }}
+ />
+ <span className="text-sm font-medium text-gray-900">{item.name}</span>
+ </div>
+ <div className="flex items-center gap-3">
+ <span className="text-sm font-bold text-gray-900">₹{item.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+ <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded min-w-[3rem] text-center">{item.percentage}%</span>
+ </div>
+ </div>
+ <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+ <div
+ className="h-full rounded-full transition-all duration-700"
+ style={{ width: `${item.percentage}%`, background: `linear-gradient(90deg, ${COLORS[colorIndex % COLORS.length]}, ${COLORS[(colorIndex + 1) % COLORS.length]})` }}
+ />
+ </div>
+ </div>
+ );
+ })}
+ </div>
+ </div>
+ )}
+
  {expenseBreakdown.filter(item => item.type === 'salary').length > 0 && (
  <div>
  <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">💰 Salaries</h4>
@@ -4903,7 +5101,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  setSelectedExpenseCategory({
  category: item.name,
  items: item.items || [],
- amount: item.value
+ amount: item.value,
+ type: 'salary' as const
  });
  }}
  >
@@ -8590,6 +8789,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  requests={stockAnalysisRequests}
  finishedProducts={stockAnalysisFinishedProducts}
  salesData={stockAnalysisSalesData}
+ storeIds={effectiveStoreId ? [effectiveStoreId] : (context.stores || []).map((st) => st.id)}
+ accessToken={context.user?.accessToken}
  />
  </div>
  )}
@@ -8919,8 +9120,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
- {/* Leave Details Modal - grouped by day (today through Sunday, Monday-start week),
- past days already dropped by weekLeaveSummary itself. */}
+ {/* Leave Details Modal - grouped by day (today through the end of the current month),
+ past days already dropped by monthLeaveSummary itself. */}
  {showLeaveModal && (
  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
  <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
@@ -8930,7 +9131,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <CalendarDays className="w-6 h-6" />
  <div>
  <h3 className="text-xl leading-tight">Leave Schedule</h3>
- <p className="text-xs text-white/80 mt-0.5">{weekLeaveSummary.rangeLabel}</p>
+ <p className="text-xs text-white/80 mt-0.5">{monthLeaveSummary.rangeLabel}</p>
  </div>
  </div>
  <button
@@ -8943,34 +9144,34 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Modal Body */}
  <div className="p-6 overflow-y-auto flex-1">
- {weekLeaveSummary.upcomingCount === 0 ? (
+ {monthLeaveSummary.upcomingCount === 0 ? (
  <div className="text-center py-8">
  <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
  <Users className="w-8 h-8 text-emerald-600" />
  </div>
- <p className="text-lg text-gray-900 mb-2">Everyone is working this week! 🎉</p>
+ <p className="text-lg text-gray-900 mb-2">Everyone is working this month! 🎉</p>
  <p className="text-sm text-gray-600">No employees on leave across all stores</p>
  </div>
  ) : (
  <div className="space-y-5">
  <div className="flex items-center gap-3 flex-wrap">
  <p className="text-gray-700">
- <span className="text-xl font-bold text-orange-600">{weekLeaveSummary.upcomingCount}</span> {weekLeaveSummary.upcomingCount === 1 ? 'leave' : 'leaves'} scheduled
+ <span className="text-xl font-bold text-orange-600">{monthLeaveSummary.upcomingCount}</span> {monthLeaveSummary.upcomingCount === 1 ? 'leave' : 'leaves'} scheduled
  </p>
- {weekLeaveSummary.fullDayCount > 0 && (
+ {monthLeaveSummary.fullDayCount > 0 && (
  <span className="text-xs font-medium text-gray-600 bg-gray-100 rounded-full px-2.5 py-1">
- {weekLeaveSummary.fullDayCount} full day{weekLeaveSummary.fullDayCount === 1 ? '' : 's'}
+ {monthLeaveSummary.fullDayCount} full day{monthLeaveSummary.fullDayCount === 1 ? '' : 's'}
  </span>
  )}
- {weekLeaveSummary.halfDayCount > 0 && (
+ {monthLeaveSummary.halfDayCount > 0 && (
  <span className="text-xs font-medium text-gray-600 bg-gray-100 rounded-full px-2.5 py-1">
- {weekLeaveSummary.halfDayCount} half day{weekLeaveSummary.halfDayCount === 1 ? '' : 's'}
+ {monthLeaveSummary.halfDayCount} half day{monthLeaveSummary.halfDayCount === 1 ? '' : 's'}
  </span>
  )}
  </div>
 
  {/* Days */}
- {weekLeaveSummary.days.filter(day => day.leaves.length > 0).map((day) => (
+ {monthLeaveSummary.days.filter(day => day.leaves.length > 0).map((day) => (
  <div key={day.date}>
  <div className="flex items-center gap-2 mb-2">
  <p className={`text-sm font-semibold ${day.isToday ? 'text-orange-600' : 'text-gray-700'}`}>
@@ -9039,7 +9240,34 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
 
  {/* Expense Breakdown Modal */}
- {selectedExpenseCategory && (
+ {selectedExpenseCategory && selectedExpenseCategory.type === 'salary' && (
+ <SalaryBreakdownModal
+ totalAmount={selectedExpenseCategory.amount}
+ data={salaryBreakdownData}
+ periodLabel={getPeriodLabel()}
+ canSeeEmployeeDetail={context.user?.role === 'cluster_head'}
+ onClose={() => setSelectedExpenseCategory(null)}
+ />
+ )}
+ {selectedExpenseCategory && selectedExpenseCategory.type === 'commission' && (
+ <CommissionBreakdownModal
+ totalAmount={selectedExpenseCategory.amount}
+ settlements={commissionBreakdownSettlements}
+ legacyAmount={legacyCommissionAmount}
+ periodLabel={getPeriodLabel()}
+ onClose={() => setSelectedExpenseCategory(null)}
+ />
+ )}
+ {selectedExpenseCategory && selectedExpenseCategory.type === 'interest' && (
+ <InterestBreakdownModal
+ totalAmount={selectedExpenseCategory.amount}
+ loans={onlineLoans.filter((l) => !effectiveStoreId || l.storeId === effectiveStoreId)}
+ range={activeSettlementDateRange}
+ periodLabel={getPeriodLabel()}
+ onClose={() => setSelectedExpenseCategory(null)}
+ />
+ )}
+ {selectedExpenseCategory && !selectedExpenseCategory.type && (
  <ExpenseBreakdownModal
  category={selectedExpenseCategory.category}
  items={selectedExpenseCategory.items}

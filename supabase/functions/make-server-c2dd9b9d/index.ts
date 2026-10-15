@@ -198,6 +198,9 @@ async function getAllByPrefix(prefix: string): Promise<any[]> {
       .from('kv_store_c2dd9b9d')
       .select('key, value')
       .like('key', prefix + '%')
+      // Without a stable order, page boundaries can shift between requests and rows get
+      // returned twice or skipped entirely once a prefix passes 1000 rows.
+      .order('key', { ascending: true })
       .range(from, from + pageSize - 1);
     
     if (error) {
@@ -849,6 +852,9 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     }
 
     const item = await c.req.json();
+    if (item?.category === 'fuel' && role !== 'cluster_head') {
+      return c.json({ error: 'Fuel cost entries need cluster head permission. Use Electric Bike Charging for the e-bike.' }, 403);
+    }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -913,6 +919,9 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     const key = `overhead:${userId}:${itemId}`;
     const updates = await c.req.json();
+    if (updates?.category === 'fuel' && role !== 'cluster_head') {
+      return c.json({ error: 'Fuel cost entries need cluster head permission.' }, 403);
+    }
     
     const overheadItem = {
       ...updates,
@@ -1218,7 +1227,13 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       approvalRequired: true,
       createdBy: employeeId || userId, // Use employeeId if available, fallback to userId
       createdByName: userName,
-      createdByEmail: userEmail
+      createdByEmail: userEmail,
+      // Same reasoning as PUT /sales/:id above: usedOnlineMoney only ever moves via the
+      // cash-topup-approval route or the "Convert to Online" route, never a general sales
+      // save - and by the time either of those has ever touched this date, a record already
+      // exists for the approval route to find (it creates one itself otherwise), so this
+      // POST path only ever legitimately runs for a date with nothing credited yet.
+      usedOnlineMoney: 0
     };
 
     await kvWithRetry.set(key, salesItem);
@@ -1301,7 +1316,20 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
       ...existingSale,
       ...updates,
       id: itemId,
-      userId: existingSale.userId
+      userId: existingSale.userId,
+      // CONFIRMED ROOT CAUSE (found 2026-10-16, real case: a ₹540 approved store_inventory
+      // cash top-up for Rohan/Bunny Momos 1 on 2026-10-12 showed as ₹0 in the Store Cash in
+      // Hand breakdown): usedOnlineMoney is a running ledger only ever meant to move via the
+      // cash-topup-approval route (above) and the "Convert to Online" route (below) - never
+      // via this general sales-data save. The store incharge's form loads it once when the
+      // page opens and echoes that same value back on every save; if a top-up gets approved
+      // (or a conversion happens) *after* the page loaded but *before* the store incharge
+      // clicks Save - entirely plausible, since a save often happens late at night after the
+      // till is counted - this stale echo silently overwrote the just-approved credit with
+      // the old number. Always keep the server's own value; a client-submitted usedOnlineMoney
+      // is never trusted here, exactly like actualPaytmBalance is server-derived rather than
+      // client-trusted for the same reason.
+      usedOnlineMoney: existingSale.usedOnlineMoney || 0
     };
 
     await kvWithRetry.set(key, salesItem);
@@ -1810,6 +1838,99 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
   } catch (error) {
     console.log('Error creating cash top-up request:', error);
     return c.json({ error: 'Failed to create cash top-up request' }, 500);
+  }
+});
+
+// Scooter EMI (purchased Oct 2026) - ₹5,543 auto-debits from the bank on the 5th of every
+// month, but the store's own till doesn't see that money move on its own. Rather than
+// relying on someone remembering to raise a cash top-up every single month, this creates
+// the request automatically on the 1st (a few days ahead of the actual debit), in Aniket
+// Prasad's name, exactly like a normal manually-raised request - it still needs a cluster
+// head's approval, this only saves someone having to remember to ask every month.
+// Hardcoded to this one specific EMI; if the amount changes or the loan is paid off, update
+// (or remove) this block and its cron (see the scooter-emi-cash-topup migration).
+const SCOOTER_EMI_AMOUNT = 5543;
+const SCOOTER_EMI_STORE_ID = 'STORE-1766938921191-9LCH05'; // Bunny Momos 1
+const SCOOTER_EMI_REQUESTER_EMPLOYEE_ID = 'BM004'; // Aniket Prasad
+
+app.post('/make-server-c2dd9b9d/cron/scooter-emi-cash-topup', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const today = getTodayIST();
+
+    // Guard against double-creation if the cron ever fires twice in one day (pg_cron
+    // retries, a manual re-trigger while debugging, etc.) - never raise two requests for
+    // the same month.
+    const existing = await getAllByPrefixWithRetry('cash-topup:');
+    const alreadyRaisedThisMonth = existing.some((t: any) =>
+      t.storeId === SCOOTER_EMI_STORE_ID &&
+      t.requestedAmount === SCOOTER_EMI_AMOUNT &&
+      t.reason === 'store_inventory' &&
+      typeof t.date === 'string' && t.date.slice(0, 7) === today.slice(0, 7)
+    );
+    if (alreadyRaisedThisMonth) {
+      return c.json({ success: true, skipped: 'already raised this month' });
+    }
+
+    const requester = await kv.get(`unified-employee:${SCOOTER_EMI_REQUESTER_EMPLOYEE_ID}`);
+    const allStores = await kv.getByPrefix('store:');
+    const store = allStores.find((s: any) => s.id === SCOOTER_EMI_STORE_ID);
+
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const key = `cash-topup:${id}`;
+    const topupRequest = {
+      id,
+      storeId: SCOOTER_EMI_STORE_ID,
+      date: today,
+      requestedAmount: SCOOTER_EMI_AMOUNT,
+      reason: 'store_inventory',
+      requestedByEntityType: 'store',
+      requestedByEntityName: store?.name || 'Store',
+      status: 'pending',
+      requestedBy: SCOOTER_EMI_REQUESTER_EMPLOYEE_ID,
+      requestedByName: requester?.name || 'Aniket Prasad',
+      requestedByUserId: requester?.authUserId || '',
+      requestDate: getNowIST(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null,
+      // Not read by any existing screen - purely so this record is self-explanatory to
+      // anyone looking at the raw data later, same as every other auto-generated record
+      // this session has left a trail for.
+      autoGeneratedNote: 'Auto-raised monthly for the scooter EMI (debits from the bank on the 5th) - see SCOOTER_EMI_AMOUNT in index.ts.'
+    };
+
+    await kvWithRetry.set(key, topupRequest);
+
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'cash_topup_request',
+          'Cash Top-up Requested (Scooter EMI)',
+          `${topupRequest.requestedByName} (${topupRequest.requestedByEntityName}) - auto-raised ₹${SCOOTER_EMI_AMOUNT.toFixed(2)} cash top-up for the scooter EMI, due ${today}`,
+          id,
+          today
+        );
+      }
+    }
+
+    console.log(`Scooter EMI cash top-up auto-raised: ${id}`);
+    return c.json({ success: true, id });
+  } catch (error: any) {
+    console.log('Error auto-raising scooter EMI cash top-up:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
+    return c.json({ error: 'Failed to auto-raise scooter EMI cash top-up' }, 500);
   }
 });
 
@@ -2655,7 +2776,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.2.0';
+const LATEST_APP_VERSION = '1.10.6';
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -2981,7 +3102,19 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
   try {
     const archivedEmployees = await kv.getByPrefix('archived-employee:');
     console.log('Fetched archived employees:', archivedEmployees.length);
-    return c.json({ success: true, employees: archivedEmployees });
+    // Same normalization GET /employees already applies to active unified employees -
+    // without it, every archived employee's `type` reads as null (they only ever had
+    // `employmentType` set), so PayrollManagement.tsx's Contract/Permanent split silently
+    // excludes their entire payout history once they're archived, regardless of whether
+    // the store/archive-status filtering is otherwise correct. Confirmed real: Akash Dey's
+    // August payout existed the whole time but could never match either tab.
+    const normalized = archivedEmployees.map((emp: any) => ({
+      ...emp,
+      id: emp.id || emp.employeeId,
+      employeeId: emp.employeeId || emp.id,
+      type: emp.employmentType || emp.type
+    }));
+    return c.json({ success: true, employees: normalized });
   } catch (error) {
     console.log('Error fetching archived employees:', error);
     return c.json({ error: 'Failed to fetch archived employees' }, 500);
@@ -3466,6 +3599,34 @@ async function cascadeRecomputePaytmBalances(storeId: string, fromDate: string):
     // falls back to the old behavior of a stale value needing a manual fix.
   }
 }
+
+// Reusable admin trigger for cascadeRecomputePaytmBalances, per its own comment above
+// ("any direct DB correction... MUST be followed by calling this function... from that
+// record's date forward"). Every normal write path already calls it automatically; this
+// exists for the case this comment warns about - a direct database correction made outside
+// any of those paths (e.g. 2026-10-16: usedOnlineMoney hand-corrected on a past date after
+// fixing the bug that zeroed it out) - so the fix doesn't just sit on that one day while
+// every later day keeps chaining off the stale balance. Cron-secret protected like the
+// other admin/cron-only routes, since it writes data and isn't meant for regular users.
+app.post('/make-server-c2dd9b9d/admin/recompute-paytm-balance', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const { storeId, fromDate } = await c.req.json();
+    if (!storeId || !fromDate) {
+      return c.json({ error: 'storeId and fromDate are required' }, 400);
+    }
+    await cascadeRecomputePaytmBalances(storeId, fromDate);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log('Error in manual Paytm recompute trigger:', error);
+    return c.json({ error: 'Failed to recompute' }, 500);
+  }
+});
 
 // Recomputes and re-saves the derived fields (openingBalance/cashTopupCredited/
 // productionExpenses/expectedClosingCashInHand) on every one of a production house's
@@ -5438,18 +5599,9 @@ app.get('/make-server-c2dd9b9d/attendance/managers/cluster/:clusterHeadId', asyn
 
 // ===== Timesheet Management =====
 
-// Get timesheets for an employee
-app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
-  try {
-    const employeeId = c.req.param('employeeId');
-    const allTimesheets = await kv.getByPrefix(`timesheet:${employeeId}:`);
-    return c.json({ timesheets: allTimesheets });
-  } catch (error) {
-    console.log('Error fetching timesheets:', error);
-    return c.json({ error: 'Failed to fetch timesheets' }, 500);
-  }
-});
-
+// NOTE: must stay registered BEFORE '/timesheets/:employeeId' below - otherwise Hono matches
+// 'all' as an employeeId and returns an empty list (the Attendance Compliance section
+// showed every employee as missing every day because of exactly that).
 // Get every employee's timesheets - powers the Staff Attendance Compliance section on
 // the Store-Production SLA Analysis page (who hasn't submitted, and how long a pending
 // one has been waiting on manager approval). Mirrors GET /leaves/all.
@@ -5467,6 +5619,18 @@ app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
     if (error?.message === 'DATABASE_UNAVAILABLE') {
       return c.json({ timesheets: [], warning: 'Database temporarily unavailable' });
     }
+    return c.json({ error: 'Failed to fetch timesheets' }, 500);
+  }
+});
+
+// Get timesheets for an employee
+app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
+  try {
+    const employeeId = c.req.param('employeeId');
+    const allTimesheets = await kv.getByPrefix(`timesheet:${employeeId}:`);
+    return c.json({ timesheets: allTimesheets });
+  } catch (error) {
+    console.log('Error fetching timesheets:', error);
     return c.json({ error: 'Failed to fetch timesheets' }, 500);
   }
 });
@@ -6734,7 +6898,11 @@ app.get('/make-server-c2dd9b9d/organizational-hierarchy', async (c) => {
       const subordinateManagers = allManagers.filter((m: any) => m.managerId === managerId);
       
       // Get direct employees (non-managers) under this manager
-      const directEmployees = allEmployees.filter((e: any) => e.managerId === managerId);
+      // Fall back to inchargeId for employees that have an incharge but no managerId
+      // (e.g. production staff assigned to their production incharge) - without this they
+      // appeared nowhere in the tree.
+      const directEmployees = allEmployees.filter((e: any) =>
+        e.managerId === managerId || (!e.managerId && e.inchargeId === managerId));
       
       // Recursively build subordinate manager hierarchies
       const managersWithHierarchy = subordinateManagers.map((subMgr: any) => {
@@ -6796,7 +6964,17 @@ app.get('/make-server-c2dd9b9d/organizational-hierarchy', async (c) => {
       unassigned: unassignedManagers.map((m: any) => m.employeeId)
     });
     
-    const unassignedEmployees = employees.filter((e: any) => !e.managerId && !e.inchargeId);
+    // "Unassigned" = not reachable from any manager in the tree above (not just "has no
+    // managerId") - an employee pointing at the cluster head directly or at someone who
+    // isn't a manager used to vanish from the page entirely.
+    const placedEmployeeIds = new Set<string>();
+    const collectPlaced = (node: any) => {
+      (node.employees || []).forEach((e: any) => placedEmployeeIds.add(e.employeeId));
+      (node.managers || []).forEach(collectPlaced);
+    };
+    hierarchy.forEach(collectPlaced);
+    unassignedManagers.forEach(collectPlaced);
+    const unassignedEmployees = employees.filter((e: any) => !placedEmployeeIds.has(e.employeeId));
     
     return c.json({ 
       hierarchy,
@@ -7545,7 +7723,7 @@ async function getValidInventoryCategoryKeys(): Promise<Set<string>> {
 // item's classification" feature) - keep in sync with OVERHEAD_CATEGORY_META /
 // FIXED_COST_CATEGORIES in src/utils/inventoryData.ts.
 const VALID_OVERHEAD_CATEGORIES = new Set([
-  'fuel', 'travel', 'transportation', 'marketing', 'service_charge', 'repair',
+  'fuel', 'ev_charging', 'travel', 'transportation', 'marketing', 'service_charge', 'repair', 'renovation',
   'labour_charge', 'puja_expense', 'office_supplies', 'deep_cleaning', 'party',
   'emergency_online', 'staff_emergency_services', 'utensils', 'cleaning_supplies',
   'equipments', 'license', 'water_jar', 'vehicle_maintenance', 'donations_community',
@@ -8181,25 +8359,23 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
   try {
     const userId = authResult.user.id;
 
-    // Notification keys are `notification:{userId}:{uuid}` - the uuid suffix has no
-    // relationship to when the notification was created, so ordering by `key` (as this
-    // used to do) is effectively random, not by recency. Fetch every notification for
-    // this user (paginated, so it isn't capped by Supabase's default 1000-row limit)
-    // and sort by the actual `createdAt` field instead, then take the most recent 100.
-    const allNotifications = await getAllByPrefixWithRetry(`notification:${userId}:`);
+    // Most recent 100 by the real createdAt (the key's uuid suffix says nothing about age) and
+    // the full unread count, both computed in the database - this used to download a user's
+    // whole history (6,000+ rows for the cluster head) on every 30s poll.
+    const prefix = `notification:${userId}:`;
+    const [{ data: recent, error: listError }, { data: unread, error: countError }] = await Promise.all([
+      supabase
+        .from('kv_store_c2dd9b9d')
+        .select('value')
+        .like('key', prefix + '%')
+        .order('value->>createdAt', { ascending: false })
+        .limit(100),
+      supabase.rpc('notification_unread_count', { p_user: userId }),
+    ]);
+    if (listError) throw new Error(listError.message);
+    if (countError) throw new Error(countError.message);
 
-    const sortedNotifications = allNotifications.sort((a: any, b: any) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    // unreadCount is computed from the FULL set, not the truncated slice below - a user
-    // with a backlog past 100 notifications would otherwise see "100 unread" forever
-    // (every one of the 100 most recent happens to be unread) even seconds after actually
-    // clearing everything with Mark All Read, since the displayed list is capped but the
-    // count read off it wasn't.
-    const unreadCount = allNotifications.filter((n: any) => !n.read).length;
-
-    return c.json({ notifications: sortedNotifications.slice(0, 100), unreadCount });
+    return c.json({ notifications: (recent || []).map((r: any) => r.value), unreadCount: unread ?? 0 });
   } catch (error: any) {
     console.log('Error fetching notifications:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -8255,29 +8431,12 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
   try {
     const userId = authResult.user.id;
 
-    // Previously this fetched an unordered `.limit(100)` slice of this user's
-    // notifications and marked only those as read - once a user had accumulated more
-    // than 100 notifications (nothing ever auto-deleted old ones), each click of
-    // "Mark all read" touched a different arbitrary ~100-row subset, so a rotating set
-    // of unread notifications could never actually be cleared. Fetch every notification
-    // for this user (paginated) so read-all really does mean all.
-    const allNotifications = await getAllByPrefixWithRetry(`notification:${userId}:`);
-    const unreadNotifications = allNotifications.filter((n: any) => !n.read);
+    // One UPDATE in the database (see migration 20261017000000_notification_rpcs.sql) -
+    // downloading the history and re-writing it row batches missed rows on large backlogs.
+    const { data: updated, error: rpcError } = await supabase.rpc('mark_all_notifications_read', { p_user: userId });
+    if (rpcError) throw new Error(rpcError.message);
 
-    if (unreadNotifications.length === 0) {
-      return c.json({ success: true, updated: 0 });
-    }
-
-    const keys = unreadNotifications.map((n: any) => `notification:${userId}:${n.id}`);
-    const values = unreadNotifications.map((n: any) => ({ ...n, read: true }));
-
-    // Chunk the batch update so a large backlog doesn't ship as one oversized upsert.
-    const CHUNK_SIZE = 500;
-    for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
-      await kvWithRetry.mset(keys.slice(i, i + CHUNK_SIZE), values.slice(i, i + CHUNK_SIZE));
-    }
-
-    return c.json({ success: true, updated: unreadNotifications.length });
+    return c.json({ success: true, updated: updated ?? 0 });
   } catch (error: any) {
     console.log('Error marking all notifications as read:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -11766,6 +11925,63 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
 // today's production, by 11:30 PM there's no more time left in the day to fix it - so
 // this escalates past just the incharge, to Operations Heads and Cluster Heads too
 // (Aniket, Subham), rather than a quiet one-person nudge. Fires once per incharge per day.
+// Weekly nudge to count the real Paytm/bank balance and recalibrate. The app's Paytm
+// balance is a running calculation from the last physical count, so any payment or receipt
+// that never gets logged (found 2026-10-16: a month of drift, Rs.5,173, from unlogged
+// transfers and Zomato payouts that were never uploaded) silently accumulates until
+// someone checks. A regular count caps that drift at one week. Skipped when a
+// recalibration already happened within the last 6 days, so it never nags right after one.
+// Cron-secret protected like the other cron-only routes.
+app.post('/make-server-c2dd9b9d/cron/weekly-paytm-recalibration-reminder', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const today = getTodayIST();
+    const stores = await kv.getByPrefix('store:');
+    const recalibrations = await getAllByPrefixWithRetry('online-cash-recalibration:');
+    const clusterHeads = await getAllClusterHeads();
+    let sent = 0;
+
+    for (const store of stores) {
+      const storeRecals = recalibrations.filter((r: any) => r.storeId === store.id && r.date);
+      const lastDate = storeRecals.map((r: any) => r.date as string).sort().pop() || null;
+      const daysSince = lastDate
+        ? Math.round((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${lastDate}T00:00:00Z`).getTime()) / 86400000)
+        : null;
+      if (daysSince !== null && daysSince < 6) continue;
+
+      // Only stores that actually trade - an inactive/sandbox store has nothing to count.
+      const hasRecentSales = (await getAllByPrefixWithRetry('sales:')).some((s: any) =>
+        s.storeId === store.id && s.date && s.date >= addDaysToDateString(today, -7)
+      );
+      if (!hasRecentSales) continue;
+
+      const since = lastDate ? `Last recalibrated ${daysSince} days ago (${lastDate}).` : 'It has never been recalibrated.';
+      for (const clusterHead of clusterHeads) {
+        if (!clusterHead.authUserId) continue;
+        await notifyUser(
+          clusterHead.authUserId,
+          'paytm_recalibration_reminder',
+          'Weekly Paytm check',
+          `${store.name}: please check your actual Paytm/bank balance and recalibrate if it differs from the app. ${since}`,
+          store.id,
+          today
+        );
+        sent++;
+      }
+    }
+
+    return c.json({ success: true, sent });
+  } catch (error: any) {
+    console.log('Error sending weekly Paytm recalibration reminder:', error);
+    return c.json({ error: 'Failed to send reminder' }, 500);
+  }
+});
+
 app.post('/make-server-c2dd9b9d/send-eod-data-alerts', async (c) => {
   try {
     console.log('=== END-OF-DAY DATA ALERT CHECK (11:30PM) ===');

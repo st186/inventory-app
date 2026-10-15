@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Clock, User, Calendar, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
 import { RouteDebugger } from './RouteDebugger';
+import { employeeBelongsToStore } from '../utils/entityAccess';
+import type { Store } from '../utils/api';
 
 interface ApproveTimesheetsProps {
   managerId: string;
@@ -9,9 +11,12 @@ interface ApproveTimesheetsProps {
   selectedStoreId?: string | null;
   isIncharge?: boolean;
   inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
+  // For resolving a production incharge/ops employee's storeId (which actually holds
+  // their production house's id) back to this store - see entityAccess.ts.
+  stores?: Store[];
 }
 
-export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null }: ApproveTimesheetsProps) {
+export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null, stores = [] }: ApproveTimesheetsProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [timesheets, setTimesheets] = useState<any[]>([]);
@@ -27,22 +32,19 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
   const filteredEmployees = useMemo(() => {
     let filtered = employees;
     
-    // Apply store filter (include null/undefined storeIds for backward compatibility)
+    // Apply store filter (also matches this store's linked production house - see
+    // entityAccess.ts's employeeBelongsToStore for why that case matters)
     if (selectedStoreId) {
-      filtered = filtered.filter(emp => 
-        emp.storeId === selectedStoreId || 
-        emp.storeId === null || 
-        emp.storeId === undefined
-      );
+      filtered = filtered.filter(emp => employeeBelongsToStore(emp, selectedStoreId, stores));
     }
-    
+
     // Apply incharge permissions - only show employees under the incharge
     if (isIncharge && managerId) {
       filtered = filtered.filter(emp => emp.inchargeId === managerId);
     }
-    
+
     return filtered;
-  }, [employees, selectedStoreId, isIncharge, managerId]);
+  }, [employees, selectedStoreId, stores, isIncharge, managerId]);
 
   useEffect(() => {
     loadEmployees();

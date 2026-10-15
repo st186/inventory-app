@@ -7,6 +7,7 @@ import {
   STORE_SELECTABLE_INVENTORY_CATEGORIES,
   OVERHEAD_CATEGORIES,
   STORE_OVERHEAD_CATEGORY_KEYS,
+  RESTRICTED_OVERHEAD_CATEGORIES,
   FIXED_COST_CATEGORIES,
 } from '../utils/inventoryData';
 import {
@@ -33,6 +34,9 @@ type Props = {
   // head adds it properly. Surfaced explicitly (see `catalogNotice` below) so that isn't
   // a silent, confusing surprise.
   canCreateNewItems?: boolean;
+  // Cluster head only - unlocks RESTRICTED_OVERHEAD_CATEGORIES (fuel), which is otherwise
+  // hidden from search and the manual category list (the server rejects it too).
+  canUseRestrictedCategories?: boolean;
 };
 
 const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
@@ -50,6 +54,7 @@ export function QuickAddExpense({
   onSubmitOverhead,
   onSubmitFixedCost,
   canCreateNewItems = true,
+  canUseRestrictedCategories = false,
 }: Props) {
   const [amount, setAmount] = useState('');
   const [query, setQuery] = useState('');
@@ -91,7 +96,12 @@ export function QuickAddExpense({
     api.getCustomItems().then(setCustomItems).catch(() => {});
   }, []);
 
-  const candidates: ExpenseCandidate[] = useMemo(() => buildExpenseCandidates(customItems), [customItems]);
+  const candidates: ExpenseCandidate[] = useMemo(
+    () => buildExpenseCandidates(customItems).filter(
+      (c) => canUseRestrictedCategories || !(c.entryType === 'overhead' && RESTRICTED_OVERHEAD_CATEGORIES.includes(c.category))
+    ),
+    [customItems, canUseRestrictedCategories]
+  );
   const suggestions = useMemo(() => searchExpenseCandidates(query, candidates, 6), [query, candidates]);
   const bestMatch = suggestions[0];
   const hasStrongMatch = !!bestMatch && bestMatch.score >= 0.85;
@@ -103,11 +113,12 @@ export function QuickAddExpense({
       return Object.entries(list);
     }
     if (manualType === 'overhead') {
-      const entries = Object.entries(OVERHEAD_CATEGORIES);
+      const entries = Object.entries(OVERHEAD_CATEGORIES)
+        .filter(([key]) => canUseRestrictedCategories || !RESTRICTED_OVERHEAD_CATEGORIES.includes(key));
       return entity === 'store' ? entries.filter(([key]) => STORE_OVERHEAD_CATEGORY_KEYS.includes(key)) : entries;
     }
     return Object.entries(FIXED_COST_CATEGORIES);
-  }, [manualType, entity]);
+  }, [manualType, entity, canUseRestrictedCategories]);
 
   useEffect(() => {
     if (!manualCategory && manualCategoryOptions.length > 0) {
