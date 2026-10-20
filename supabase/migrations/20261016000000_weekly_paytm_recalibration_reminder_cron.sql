@@ -11,7 +11,7 @@ select cron.schedule(
     url := 'https://xssxnhrzxvtejavoqgwg.supabase.co/functions/v1/make-server-c2dd9b9d/cron/weekly-paytm-recalibration-reminder',
     headers := jsonb_build_object(
       'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhzc3huaHJ6eHZ0ZWphdm9xZ3dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwODAzNjksImV4cCI6MjA4MTY1NjM2OX0.boONpQZ8Xv2AzlDylEoKnAlGEW7DFsMQ0zEQ1S5LPGE',
-      'X-Cron-Secret', '2jP60YAvoR_LCPEerYh5py60wiC9ad-zGNmmeVfwQuE',
+      'X-Cron-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_sync_secret' limit 1),
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
