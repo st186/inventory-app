@@ -11,7 +11,7 @@ interface ApproveLeavesProps {
   role?: string; // Add role to differentiate between manager and cluster_head
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
   // For resolving a production incharge/ops employee's storeId (which actually holds
   // their production house's id) back to this store - see entityAccess.ts.
   stores?: Store[];

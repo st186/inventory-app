@@ -14,6 +14,8 @@ const AuditDashboard = lazy(() => import('./components/AuditDashboard').then(mod
 const ProductionManagement = lazy(() => import('./components/ProductionManagement').then(module => ({ default: module.ProductionManagement })));
 const ProductionHouseManagement = lazy(() => import('./components/ProductionHouseManagement').then(module => ({ default: module.ProductionHouseManagement })));
 const AssetsManagement = lazy(() => import('./components/AssetsManagement').then(module => ({ default: module.AssetsManagement })));
+const RiderProfile = lazy(() => import('./components/RiderProfile').then(module => ({ default: module.RiderProfile })));
+const RiderTrips = lazy(() => import('./components/RiderTrips').then(module => ({ default: module.RiderTrips })));
 const StockRequestManagement = lazy(() => import('./components/StockRequestManagement').then(module => ({ default: module.StockRequestManagement })));
 const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInventoryManagement').then(module => ({ default: module.AdvancedInventoryManagement })));
 const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
@@ -39,7 +41,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database } from 'lucide-react';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -330,7 +332,7 @@ export type InventoryContextType = {
  fulfillStockRequest: (id: string, fulfilledQuantities: api.StockRequest['fulfilledQuantities'], fulfilledBy: string, fulfilledByName: string, notes?: string) => Promise<void>;
  cancelStockRequest: (id: string) => Promise<void>;
  isManager: boolean;
- user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null;
+ user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null;
  // Force-refreshes all context data in place (bypassing cache) - lets a child component
  // pull in fresh data after a server-side action (e.g. a manual POS sync) without a full
  // page reload, same underlying loadData() the nav bar's "Refresh data" button already uses.
@@ -343,7 +345,7 @@ export type InventoryContextType = {
 
 export default function App() {
  // All useState hooks must be at the top, before any conditional returns
- const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup'>('analytics');
+ const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile'>('analytics');
  // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
  const setActiveView = useCallback((view: typeof activeView) => {
  startTransition(() => { setActiveViewRaw(view); });
@@ -355,7 +357,7 @@ export default function App() {
  // (not a sub-tab), so without this there was no way back to whichever Analytics view
  // sent the user here (CONFIRMED bug, found 2026-09-05).
  const [preProductionManagementView, setPreProductionManagementView] = useState<typeof activeView>('analytics');
- const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null>(null);
+ const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null>(null);
  const [authError, setAuthError] = useState<string | null>(null);
  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
  const [highlightRequestId, setHighlightRequestId] = useState<string | null>(null);
@@ -1106,6 +1108,15 @@ export default function App() {
  };
 
  const handleLogout = async () => {
+ // Tell the server this phone no longer belongs to this account, so their notifications (and the
+ // rider's loud ride-request alert) stop arriving here after sign-out.
+ try {
+ if (user && nativePushNotifications.isNativePushSupported()) {
+ await nativePushNotifications.unsubscribeNativePushNotifications(user.employeeId || user.email);
+ }
+ } catch (error) {
+ console.log('Could not unsubscribe push on logout:', error);
+ }
  await supabaseClient.auth.signOut();
  setUser(null);
  setInventory([]);
@@ -1710,7 +1721,12 @@ export default function App() {
  // those returns caused a hooks-count mismatch (React error #310) once logged in.
  useEffect(() => {
  if (!user) return;
- const isPlainEmployee = user.role === 'employee' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
+ // A rider only ever needs their rides, plus their own attendance/payouts.
+    if (user.designation === 'rider') {
+      if (!['riders', 'payroll', 'rider-profile'].includes(activeView)) setActiveView('riders');
+      return;
+    }
+    const isPlainEmployee = user.role === 'employee' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
  const restrictedViews = ['analytics', 'sales', 'inventory', 'production', 'export', 'backup', 'employees', 'stock-requests', 'advanced-inventory', 'inventory-items', 'assets'];
  if (isPlainEmployee && restrictedViews.includes(activeView)) {
  setActiveView('payroll');
@@ -1798,6 +1814,9 @@ export default function App() {
  const isProductionIncharge = user.designation === 'production_incharge';
  const isProductionHead = isProductionIncharge; // Alias for clarity
  const isAnyIncharge = isStoreIncharge || isProductionIncharge;
+  const isRider = user.designation === 'rider';
+  // Production incharge, operations manager and cluster head can call riders / mark orders ready.
+  const canDispatchRiders = user.role === 'cluster_head' || user.designation === 'production_incharge' || (user.role === 'manager' && user.designation !== 'store_incharge');
  const isOperationsManager = user.role === 'manager' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
  const isManager = user.role === 'manager';
  const isStoreInchargeManager = user.role === 'manager' && user.designation === 'store_incharge';
@@ -1976,6 +1995,34 @@ export default function App() {
  </>
  )}
 
+ {(isRider || isAnyIncharge) && (
+ <button
+ onClick={() => setActiveView('riders')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
+ activeView === 'riders'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <Bike className="w-4 h-4" />
+ <span>{isRider ? 'My Rides' : 'Riders'}</span>
+ </button>
+ )}
+
+ {isRider && (
+ <button
+ onClick={() => setActiveView('rider-profile')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
+ activeView === 'rider-profile'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <Users className="w-4 h-4" />
+ <span>My Profile</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => setActiveView('payroll')}
@@ -1988,7 +2035,8 @@ export default function App() {
  <Users className="w-4 h-4" />
  <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
  </button>
- <button
+ {!isRider && (
+<button
  onClick={() => setActiveView('attendance')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
  activeView === 'attendance'
@@ -1999,6 +2047,7 @@ export default function App() {
  <Clock className="w-4 h-4" />
  <span>Attendance</span>
  </button>
+)}
 
  {isAnyIncharge && (
  <button
@@ -2130,6 +2179,40 @@ export default function App() {
  </>
  )}
 
+ {(isRider || isAnyIncharge) && (
+ <button
+ onClick={() => {
+ setActiveView('riders');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+ activeView === 'riders'
+ ? 'bg-white text-orange-600'
+ : 'bg-white/20 text-white hover:bg-white/30'
+ }`}
+ >
+ <Bike className="w-5 h-5" />
+ <span>{isRider ? 'My Rides' : 'Riders'}</span>
+ </button>
+ )}
+
+ {isRider && (
+ <button
+ onClick={() => {
+ setActiveView('rider-profile');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+ activeView === 'rider-profile'
+ ? 'bg-white text-orange-600'
+ : 'bg-white/20 text-white hover:bg-white/30'
+ }`}
+ >
+ <Users className="w-5 h-5" />
+ <span>My Profile</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => {
@@ -2145,7 +2228,8 @@ export default function App() {
  <Users className="w-5 h-5" />
  <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
  </button>
- <button
+ {!isRider && (
+<button
  onClick={() => {
  setActiveView('attendance');
  setIsMobileMenuOpen(false);
@@ -2159,6 +2243,7 @@ export default function App() {
  <Clock className="w-5 h-5" />
  <span>Attendance</span>
  </button>
+)}
 
  {isAnyIncharge && (
  <button
@@ -2191,9 +2276,19 @@ export default function App() {
  {/* Employee Main Content */}
  <main className="pb-6">
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'analytics' ? (
- <Analytics 
- context={contextValue} 
+ {activeView === 'rider-profile' && isRider ? (
+ <RiderProfile />
+ ) : activeView === 'riders' && (isRider || isAnyIncharge) ? (
+ <RiderTrips
+ mode={isRider ? 'rider' : 'staff'}
+ stockRequests={contextValue.productionRequests}
+ canDispatch={canDispatchRiders}
+ stores={(contextValue.stores || []).map((st) => ({ id: st.id, name: st.name }))}
+ defaultStoreId={user.storeId || null}
+ />
+ ) : activeView === 'analytics' ? (
+ <Analytics
+ context={contextValue}
  highlightRequestId={highlightRequestId}
  onNavigateToManageItems={() => {
  console.log('🔄 App.tsx: Changing activeView to inventory-items');
@@ -2322,6 +2417,17 @@ export default function App() {
  
  {/* Desktop Menu */}
  <div className="hidden lg:flex gap-2 flex-wrap">
+ <button
+ onClick={() => setActiveView('riders')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'riders'
+ ? 'bg-white text-cyan-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <Bike className="w-4 h-4" />
+ <span>Riders</span>
+ </button>
  {isClusterHead ? (
  <>
  <button
@@ -2486,6 +2592,20 @@ export default function App() {
  {/* Mobile Menu */}
  {isMobileMenuOpen && (
  <div className="lg:hidden border-t border-white/20 py-3 space-y-1.5 max-h-[70vh] overflow-y-auto">
+ <button
+ onClick={() => {
+ setActiveView('riders');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
+ activeView === 'riders'
+ ? 'bg-white text-orange-600 font-semibold shadow-sm'
+ : 'bg-white/10 text-white hover:bg-white/20'
+ }`}
+ >
+ <Bike className="w-5 h-5" />
+ <span>Riders</span>
+ </button>
  {isClusterHead ? (
  <>
  <button
@@ -2730,7 +2850,15 @@ export default function App() {
  {/* Main Content */}
  <main className="pb-6">
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'sales' ? (
+ {activeView === 'riders' ? (
+ <RiderTrips
+ mode="staff"
+ stockRequests={contextValue.productionRequests}
+ canDispatch={canDispatchRiders}
+ stores={(stores || []).map((st) => ({ id: st.id, name: st.name }))}
+ defaultStoreId={user.storeId || null}
+ />
+ ) : activeView === 'sales' ? (
  // Store incharge validates the day's sales (POS-reported once live) against the
  // cash they counted and owns reconciliation; everyone else (operations manager,
  // cluster head, etc.) gets a read-only view - the operations manager additionally

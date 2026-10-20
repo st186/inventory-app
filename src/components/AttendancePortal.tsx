@@ -19,7 +19,7 @@ interface AttendancePortalProps {
   };
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
   initialTab?: string | null;
   // Needed so ApproveTimesheets/ApproveLeaves can resolve "this store's own production
   // incharge" (whose employee record's storeId actually holds their production house's

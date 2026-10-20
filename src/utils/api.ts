@@ -1136,7 +1136,7 @@ export interface Employee {
   createdAt?: string;
   status?: 'active' | 'inactive';
   storeId?: string | null;
-  designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | null;
+  designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
   department?: 'store_operations' | 'production' | null;
   inchargeId?: string;
   // Explicit multi-entity access, replacing the old assumption that storeId alone
@@ -3313,4 +3313,279 @@ export async function getAllOnlineLoans(accessToken: string) {
 export async function getAllLoanRepayments(accessToken: string) {
   const response = await fetchWithAuth(`${API_BASE}/online-loans/repayments`, accessToken);
   return response.repayments || [];
+}
+
+// ============================================
+// RIDER TRIPS (production house -> store logistics)
+// ============================================
+
+export type RiderTripStatus = 'called' | 'on_the_way' | 'arrived' | 'picked_up' | 'delivered' | 'cancelled';
+
+export type RiderDirection = 'to_store' | 'to_production';
+// Production -> store, store -> production, store -> production -> store, or any two places.
+export type RiderTripType = 'to_store' | 'to_production' | 'round_trip' | 'custom';
+
+// One place on a ride. A custom stop (e.g. an event stall) carries its own coordinates;
+// production/store stops use their map pin.
+export interface RiderStop {
+  kind: 'production' | 'store' | 'custom';
+  id: string | null;
+  name: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+export type RiderFareStatus = 'agreed' | 'proposed' | 'needs_rate';
+
+export interface RiderTrip {
+  id: string;
+  date: string;
+  tripNumber: number;
+  // 'to_store' = production house -> store; 'to_production' = store -> production house.
+  direction: RiderDirection;
+  tripType: RiderTripType;
+  // The ride's stops in order, and which leg (stop -> next stop) the rider is on (0-based).
+  stops: RiderStop[];
+  legIndex: number;
+  // Set once the receiving end has confirmed the delivery or reported a problem.
+  receipt?: { status: 'confirmed' | 'issue'; note: string; byName: string; at: string; requestsDelivered?: number; viaRequests?: boolean } | null;
+  // Stock requests this ride carries; confirming the ride's delivery marks them delivered (and
+  // marking them delivered in Stock Requests confirms the ride).
+  requestIds?: string[];
+  productionHouseName: string | null;
+  // Fare for the ride: the agreed amount, and (while the rider has asked for a different rate and
+  // production hasn't answered) the amount being proposed.
+  fare: number;
+  defaultFare: number;
+  proposedFare: number | null;
+  fareStatus: RiderFareStatus;
+  riderEmployeeId: string;
+  riderName: string;
+  storeId: string;
+  storeName: string;
+  productionHouseId: string | null;
+  note: string;
+  status: RiderTripStatus;
+  calledAt: string;
+  calledByName: string;
+  onTheWayAt: string | null;
+  arrivedAt: string | null;
+  readyAt: string | null;
+  readyByName: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+}
+
+async function riderToken(): Promise<string> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return session.access_token;
+}
+
+export async function getRiderTrips(date?: string): Promise<{ trips: RiderTrip[]; maxTripsPerDay: number }> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips${date ? `?date=${encodeURIComponent(date)}` : ''}`, token);
+  return { trips: data.trips || [], maxTripsPerDay: data.maxTripsPerDay || 4 };
+}
+
+export interface RiderListItem {
+  employeeId: string;
+  name: string;
+  available: boolean;
+  unavailableReason: string | null;
+  defaultRate: number | null;
+  aadhaarMasked: string | null;
+  aadhaarFull: string | null; // cluster head only
+  hasProfile: boolean;
+}
+
+// Rides within an inclusive date range (YYYY-MM-DD), for the Past rides view.
+export async function getRiderTripsRange(from: string, to: string): Promise<RiderTrip[]> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token);
+  return data.trips || [];
+}
+
+export async function getRiders(): Promise<RiderListItem[]> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/riders`, token);
+  return data.riders || [];
+}
+
+export async function callRider(input: {
+  riderEmployeeId: string;
+  storeId?: string;
+  note?: string;
+  direction?: RiderDirection;
+  tripType?: RiderTripType;
+  // For custom rides: where it starts and ends. riderEmployeeId/storeId rules are in the server route.
+  pickup?: { kind: 'production' | 'store' | 'custom'; id?: string; name?: string; latitude?: number; longitude?: number };
+  drop?: { kind: 'production' | 'store' | 'custom'; id?: string; name?: string; latitude?: number; longitude?: number };
+  fare?: number;
+  force?: boolean;
+  requestIds?: string[];
+}): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips`, token, { method: 'POST', body: JSON.stringify(input) });
+  return data.trip;
+}
+
+export async function markRiderTripReady(id: string): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/ready`, token, { method: 'POST' });
+  return data.trip;
+}
+
+// `override` lets dispatch roles confirm a step for the rider (e.g. the rider's GPS isn't working);
+// the server skips the "are you actually there" location check for those and records who did it.
+export async function advanceRiderTrip(id: string, status: RiderTripStatus, override = false): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/advance`, token, { method: 'POST', body: JSON.stringify({ status, ...(override ? { override: true } : {}) }) });
+  return data.trip;
+}
+
+// The receiving end confirms the delivery arrived (ok) or reports a problem (with a note).
+export async function confirmRiderReceipt(id: string, ok: boolean, note?: string): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/receipt`, token, { method: 'POST', body: JSON.stringify({ ok, note }) });
+  return data.trip;
+}
+
+export async function cancelRiderTrip(id: string): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/cancel`, token, { method: 'POST' });
+  return data.trip;
+}
+
+export interface RiderPin {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface RiderMapPlace {
+  kind: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface RiderTripLocation {
+  status: RiderTripStatus;
+  places: RiderMapPlace[];
+  // Names of stops with no map location yet (a production house / store that hasn't been pinned).
+  missingPins: string[];
+  location: {
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    speed: number | null;
+    updatedAt: string;
+    track: [number, number, string][];
+  } | null;
+  production: RiderPin | null;
+  store: RiderPin | null;
+}
+
+export async function getRiderTripLocation(id: string): Promise<RiderTripLocation> {
+  const token = await riderToken();
+  return fetchWithAuth(`${API_BASE}/rider/trips/${id}/location`, token);
+}
+
+export interface RiderPlace {
+  kind: 'production' | 'store';
+  id: string;
+  name: string;
+  latitude: number | null;
+  longitude: number | null;
+  setByName: string | null;
+  setAt: string | null;
+}
+
+export async function getRiderPlaces(): Promise<RiderPlace[]> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/places`, token);
+  return data.places || [];
+}
+
+export async function setRiderPlace(input: { kind: 'production' | 'store'; id: string; latitude: number; longitude: number }): Promise<void> {
+  const token = await riderToken();
+  await fetchWithAuth(`${API_BASE}/rider/places`, token, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function proposeRiderFare(id: string, amount: number): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/fare`, token, { method: 'POST', body: JSON.stringify({ amount }) });
+  return data.trip;
+}
+
+export async function decideRiderFare(id: string, approve: boolean): Promise<RiderTrip> {
+  const token = await riderToken();
+  const data = await fetchWithAuth(`${API_BASE}/rider/trips/${id}/fare-decision`, token, { method: 'POST', body: JSON.stringify({ approve }) });
+  return data.trip;
+}
+
+export type RiderDaySchedule = { enabled: boolean; from: string; to: string };
+export type RiderWeekSchedule = Record<'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun', RiderDaySchedule>;
+
+export interface RiderProfile {
+  name: string;
+  aadhaar: string;
+  defaultRate: number | null;
+  availability: Partial<RiderWeekSchedule> | null;
+  unavailableUntil: string | null;
+}
+
+export interface RiderProfileResponse {
+  profile: RiderProfile;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export async function getRiderProfile(): Promise<RiderProfileResponse> {
+  const token = await riderToken();
+  return fetchWithAuth(`${API_BASE}/rider/profile`, token);
+}
+
+export async function saveRiderProfile(input: { name: string; aadhaar: string; defaultRate: number | null; availability: Partial<RiderWeekSchedule> }): Promise<void> {
+  const token = await riderToken();
+  await fetchWithAuth(`${API_BASE}/rider/profile`, token, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export type RiderUnavailableFor = 'hour' | 'three_hours' | 'rest_of_day' | 'until_back';
+
+export async function setRiderAvailability(input: { unavailable: boolean; duration?: RiderUnavailableFor }): Promise<{ available: boolean; unavailableReason: string | null; unavailableUntil: string | null }> {
+  const token = await riderToken();
+  return fetchWithAuth(`${API_BASE}/rider/availability`, token, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export interface RiderSummary {
+  today: { rides: number; earned: number };
+  month: { rides: number; earned: number; paid: number; balance: number };
+}
+
+export async function getRiderSummary(): Promise<RiderSummary> {
+  const token = await riderToken();
+  return fetchWithAuth(`${API_BASE}/rider/summary`, token);
+}
+
+export interface RiderTripEta {
+  leg: 'pickup' | 'drop' | null;
+  targetName?: string;
+  // Present when no estimate can be given yet.
+  unavailable?: 'waiting_for_location' | 'destination_not_pinned';
+  distanceMeters?: number;
+  etaSeconds?: number;
+  etaAt?: string;
+  traffic?: { level: 'light' | 'moderate' | 'heavy' | 'unknown'; observedKmh: number | null; freeFlowKmh: number };
+  timing?: 'late' | 'early' | 'on_time';
+  deltaMinutes?: number;
+  expectedMinutes?: number;
+  source?: 'osrm' | 'estimate';
+}
+
+export async function getRiderTripEta(id: string): Promise<RiderTripEta> {
+  const token = await riderToken();
+  return fetchWithAuth(`${API_BASE}/rider/trips/${id}/eta`, token);
 }

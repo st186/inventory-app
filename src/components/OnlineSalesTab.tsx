@@ -118,6 +118,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   // (Ciferon's per-order OrderReport, not the settlement file upload).
   const [orderItemDetail, setOrderItemDetail] = useState<api.OrderItemDetailRecord[]>([]);
   const [menuItemPrices, setMenuItemPrices] = useState<api.MenuItemPrice[]>([]);
+  // Channel Economics works for either aggregator; the settlement file's order ids join to the POS
+  // orders' external ids the same way for both.
+  const [econPlatform, setEconPlatform] = useState<'zomato' | 'swiggy'>('zomato');
+  // The last ~2 months of POS orders, fetched regardless of the selected date range, only to find each
+  // dish's NEWEST price at the counter (see latestCounterPrices below).
+  const [priceDiscoveryDetail, setPriceDiscoveryDetail] = useState<api.OrderItemDetailRecord[]>([]);
 
   const concreteSelectedStoreId = selectedStoreId && selectedStoreId !== 'all' ? selectedStoreId : null;
   const userConcreteStoreId = context.user?.storeId && context.user.storeId !== 'all' ? context.user.storeId : null;
@@ -326,6 +332,31 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     return () => { cancelled = true; };
   }, [context.user?.accessToken, effectiveStoreId, filterStart, filterEnd, hasActiveRange]);
 
+  // Newest counter prices: look back ~60 days (not just the selected range) so a recent price increase
+  // is picked up even when the period being analysed is older or shorter than the change.
+  useEffect(() => {
+    if (!context.user?.accessToken) return;
+    const accessToken = context.user.accessToken;
+    let cancelled = false;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const from = new Date(`${today}T00:00:00Z`);
+    from.setUTCDate(from.getUTCDate() - 60);
+    (async () => {
+      try {
+        const records = await api.getOrderItemDetail(accessToken, {
+          storeId: effectiveStoreId || undefined,
+          startDate: from.toISOString().substring(0, 10),
+          endDate: today,
+        });
+        if (!cancelled) setPriceDiscoveryDetail(records || []);
+      } catch (err) {
+        console.error('Failed to load recent orders for counter price discovery:', err);
+        if (!cancelled) setPriceDiscoveryDetail([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [context.user?.accessToken, effectiveStoreId]);
+
   const filteredStats = useMemo(() => {
     const totalSales = filteredSettlements.reduce((sum, s) => sum + s.grossSales, 0);
     const totalPayouts = filteredSettlements.reduce((sum, s) => sum + s.netPayout, 0);
@@ -502,6 +533,25 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       if (!catalogByName.has(norm)) catalogByName.set(norm, { onlinePrice: p.onlinePrice, offlinePrice: p.offlinePrice });
     });
 
+    // Newest listing price per dish on each aggregator, read off the most recent delivery orders
+    // (the item rate a Zomato/Swiggy order was billed at is the menu price at that moment). The
+    // saved catalog's online prices were typed in once and go stale whenever the menu is repriced.
+    const latestOnlinePrice: Record<'Zomato' | 'Swiggy', Map<string, { price: number; date: string; hour: number }>> = { Zomato: new Map(), Swiggy: new Map() };
+    priceDiscoveryDetail.forEach(rec => {
+      (rec.orders || []).forEach((o: any) => {
+        const mode = String(o.paymentMode || '');
+        if (mode !== 'Zomato' && mode !== 'Swiggy') return;
+        (o.items || []).forEach((it: any) => {
+          const price = Number(it.rate);
+          if (!(price > 0) || !it.productName) return;
+          const key = normalizeForCatalogMatch(String(it.productName).replace(/\s*-\s*O\b.*$/i, ''));
+          const hour = typeof o.orderHourIST === 'number' ? o.orderHourIST : -1;
+          const cur = latestOnlinePrice[mode].get(key);
+          if (!cur || rec.date > cur.date || (rec.date === cur.date && hour >= cur.hour)) latestOnlinePrice[mode].set(key, { price, date: rec.date, hour });
+        });
+      });
+    });
+
     const build = (aggKey: 'zomato' | 'swiggy', channelName: 'Zomato' | 'Swiggy') => {
       const stats = byAggregator[aggKey];
       if (stats.payoutPct === null || stats.preAdPostDiscountPayoutPct === null) return null; // no item-level data this period - nothing to derive a rate from
@@ -597,8 +647,9 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         // the Zomato menu, and the one a price change would mean typing into Zomato's own
         // system. Falls back to the realized price when no catalog match exists (no
         // discount assumed in that case, since there's nothing to measure it against).
-        const listingPrice = catalogEntry?.onlinePrice ?? realizedPrice;
-        const hasCatalogPrice = !!catalogEntry;
+        const latestListing = latestOnlinePrice[channelName].get(name);
+        const listingPrice = latestListing?.price ?? catalogEntry?.onlinePrice ?? realizedPrice;
+        const hasCatalogPrice = !!catalogEntry || !!latestListing;
         // This dish's OWN discount fraction, measured (not blended) - Chicken Fried Momos
         // showed a real 0% gap the same day Veg Kurkure Momos showed 25%, so a single
         // period-wide discount rate silently overcharged one and undercharged the other.
@@ -631,7 +682,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     };
     return { zomato: build('zomato', 'Zomato'), swiggy: build('swiggy', 'Swiggy') };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context.categorySalesData, byAggregator, effectiveStoreId, filterStart, filterEnd, hasActiveRange, menuItemPrices]);
+  }, [context.categorySalesData, byAggregator, effectiveStoreId, filterStart, filterEnd, hasActiveRange, menuItemPrices, priceDiscoveryDetail]);
 
   // Per-promo-code discount breakdown (moved here from Analytics.tsx's "Revenue & Channels"
   // tab, since it's derived straight from these same settlements) - Zomato's own "Discounts
@@ -674,8 +725,47 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   const NON_FOOD_KEYWORDS = ['drink', 'cola', 'campa', 'water', 'beverage', 'soup', 'samosa', 'nugget', 'popcorn', 'fries', 'mojito', 'mocktail', 'cake'];
   const isFoodItem = (name: string) => !NON_FOOD_KEYWORDS.some(k => name.toLowerCase().includes(k));
 
-  const channelEconomicsData = useMemo(() => {
-    const zomatoOnly = filteredSettlements.filter(s => s.aggregator === 'zomato');
+  // Online and counter menus name the same dish differently ("Chicken Steamed Momos [6 Pieces] -O
+  // Normal" online vs "Steamed Chicken Momos" at the counter), so dishes are matched on their
+  // words, ignoring order, bracketed piece counts, the "-O" online marker, and "momo(s)".
+  const dishKey = (name: string) => name
+    .toLowerCase()
+    .replace(/\[[^\]]*\]|\(\s*\d+\s*pieces?[^)]*\)/gi, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !['o', 'normal', 'regular', 'momo', 'momos', 'piece', 'pieces', 'pcs'].includes(w))
+    .sort()
+    .join(' ');
+
+  // Each dish's newest price at the counter, from real POS sales (not delivery-app orders, not
+  // complimentary ones). The saved menu catalog was seeded once and goes stale whenever prices
+  // change; the sales themselves always carry the price actually charged.
+  const latestCounterPrices = useMemo(() => {
+    const best = new Map<string, { price: number; date: string; hour: number; name: string }>();
+    priceDiscoveryDetail.forEach(rec => {
+      (rec.orders || []).forEach((o: any) => {
+        const mode = String(o.paymentMode || '');
+        if (mode === 'Zomato' || mode === 'Swiggy' || mode === 'Complimentary') return;
+        (o.items || []).forEach((it: any) => {
+          const price = Number(it.rate);
+          const name = it.productName || '';
+          if (!(price > 0) || !name || !isFoodItem(name)) return;
+          const key = dishKey(name);
+          if (!key) return;
+          const hour = typeof o.orderHourIST === 'number' ? o.orderHourIST : -1;
+          const cur = best.get(key);
+          if (!cur || rec.date > cur.date || (rec.date === cur.date && hour >= cur.hour)) best.set(key, { price, date: rec.date, hour, name });
+        });
+      });
+    });
+    return best;
+  }, [priceDiscoveryDetail]);
+
+  const platformName = econPlatform === 'zomato' ? 'Zomato' : 'Swiggy';
+
+  const channelEconomicsByPlatform = useMemo(() => {
+   const compute = (platform: 'zomato' | 'swiggy') => {
+    const platformSettlements = filteredSettlements.filter(s => s.aggregator === platform);
 
     const itemDetailByExternalId = new Map<string, any>();
     orderItemDetail.forEach(rec => {
@@ -688,9 +778,11 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
     let matchedOrders = 0, unmatchedOrders = 0, unpricedOrders = 0;
     const unpricedItemNames = new Set<string>();
+    // Per dish: the counter price used and where it came from, for the "Prices used" table.
+    const pricesUsed = new Map<string, { name: string; used: number; source: 'latest' | 'saved'; lastSeen: string | null; saved: number | null; quantity: number }>();
     const byDate: Record<string, { theoreticalOffline: number; itemSubtotal: number; netPayout: number }> = {};
 
-    zomatoOnly.forEach(s => {
+    platformSettlements.forEach(s => {
       const date = settlementPeriodEnd(s);
       (s.orders || []).forEach((order: any) => {
         const detail = itemDetailByExternalId.get(String(order.orderId));
@@ -698,25 +790,35 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
         let theoreticalOffline = 0;
         let allPriced = true;
-        // Confirmed against real data: every "missing item price" case traced back to a
-        // Mania Combo's auto-decomposed "-A" sub-lines (e.g. "Chicken Steamed Momos (8 pcs) -
-        // A", "Fried Chicken Momos Burger (2 pcs) - A") - Ciferon prices these at rate=0/
-        // total=0 by design (the combo's own top-level line already carries the full price),
-        // and they were never going to have their own catalog entry. `detail.items` (this
-        // array) drops the CategoryName==='Addon' marker during classification, but
-        // `detail.rawItems` is built from the exact same list in the same order, so it's
-        // used here (same pattern as the box/tray counter in /utilities-consumption) to skip
-        // these zero-value sibling lines instead of demanding a price that will never exist.
+        const orderPrices: { name: string; used: number; source: 'latest' | 'saved'; lastSeen: string | null; saved: number | null; quantity: number }[] = [];
+        // Combo-decomposed "-A" sibling lines carry rate 0 by design (the combo's own line already
+        // has the full price), and drinks/add-ons don't need a price - both are skipped, as before.
         detail.items.forEach((item: any, idx: number) => {
-          if (detail.rawItems?.[idx]?.categoryName === 'Addon') return; // combo-decomposed sibling line, already priced via the combo's own line
-          if (!isFoodItem(item.productName || '')) return; // drinks/add-ons don't need a price to count this order
-          const price = item.productId != null ? offlinePriceByProductId.get(String(item.productId)) : undefined;
+          if (detail.rawItems?.[idx]?.categoryName === 'Addon') return;
+          if (!isFoodItem(item.productName || '')) return;
+          const key = dishKey(item.productName || '');
+          const latest = key ? latestCounterPrices.get(key) : undefined;
+          const saved = item.productId != null ? offlinePriceByProductId.get(String(item.productId)) : undefined;
+          const price = latest?.price ?? saved;
           if (price === undefined) { allPriced = false; unpricedItemNames.add(item.productName || String(item.productId)); return; }
           theoreticalOffline += price * (item.quantity || 0);
+          orderPrices.push({
+            name: (item.productName || '').replace(/\s*-O\b.*$/i, '').trim(),
+            used: price,
+            source: latest ? 'latest' : 'saved',
+            lastSeen: latest?.date ?? null,
+            saved: saved ?? null,
+            quantity: item.quantity || 0,
+          });
         });
         if (!allPriced) { unpricedOrders++; return; }
 
         matchedOrders++;
+        orderPrices.forEach(op => {
+          const prev = pricesUsed.get(op.name);
+          if (prev) prev.quantity += op.quantity;
+          else pricesUsed.set(op.name, { ...op });
+        });
         if (!byDate[date]) byDate[date] = { theoreticalOffline: 0, itemSubtotal: 0, netPayout: 0 };
         byDate[date].theoreticalOffline += theoreticalOffline;
         byDate[date].itemSubtotal += order.itemSubtotal ?? 0;
@@ -741,17 +843,37 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       netPayout: acc.netPayout + r.netPayout,
     }), { theoreticalOffline: 0, itemSubtotal: 0, netPayout: 0 });
 
+    const pricesUsedList = Array.from(pricesUsed.values()).sort((x, y) => y.quantity - x.quantity);
     return {
       chartData,
       matchedOrders, unmatchedOrders, unpricedOrders, totalOrders, matchRatePct,
       unpricedItemNames: Array.from(unpricedItemNames),
-      // Positive = offline would have earned MORE than Zomato actually paid - a real deficit
-      // from selling via Zomato. Negative = Zomato paid more than the counter price would have.
+      pricesUsedList,
+      latestPricedCount: pricesUsedList.filter(p => p.source === 'latest').length,
+      // Positive = offline would have earned MORE than the aggregator actually paid - a real deficit
+      // from selling via that channel. Negative = the aggregator paid more than the counter price would have.
       deficitVsPayout: totals.theoreticalOffline - totals.netPayout,
       deficitVsMenuSubtotal: totals.theoreticalOffline - totals.itemSubtotal,
       totals,
     };
-  }, [filteredSettlements, orderItemDetail, menuItemPrices]);
+   };
+   return { zomato: compute('zomato'), swiggy: compute('swiggy') };
+  }, [filteredSettlements, orderItemDetail, menuItemPrices, latestCounterPrices]);
+  const channelEconomicsData = channelEconomicsByPlatform[econPlatform];
+
+  // Zomato + Swiggy together, for the at-a-glance card under Channel Economics.
+  const allPlatformsEconomics = useMemo(() => {
+    const rows = (['zomato', 'swiggy'] as const).map(agg => ({
+      agg,
+      label: agg === 'zomato' ? 'Zomato' : 'Swiggy',
+      orders: channelEconomicsByPlatform[agg].matchedOrders,
+      counter: channelEconomicsByPlatform[agg].totals.theoreticalOffline,
+      menu: channelEconomicsByPlatform[agg].totals.itemSubtotal,
+      paid: channelEconomicsByPlatform[agg].totals.netPayout,
+    }));
+    const total = rows.reduce((acc, r) => ({ orders: acc.orders + r.orders, counter: acc.counter + r.counter, menu: acc.menu + r.menu, paid: acc.paid + r.paid }), { orders: 0, counter: 0, menu: 0, paid: 0 });
+    return { rows, total };
+  }, [channelEconomicsByPlatform]);
 
   return (
     <div className="space-y-6">
@@ -1074,21 +1196,34 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
             )}
           </div>
 
-          {/* Channel Economics - "would these dishes have earned more sold at the counter
-              than what Zomato actually paid us?" See channelEconomicsData's own comment for
-              the join logic and why unmatched/unpriced orders are excluded rather than
-              zero-filled. */}
+          <div className="space-y-4">
+          {/* Channel Economics - "would these dishes have earned more sold at the counter than what
+              the aggregator actually paid us?" For Zomato or Swiggy (toggle). Counter prices are each
+              dish's newest price from POS sales; see channelEconomicsData / latestCounterPrices. */}
           <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
-              <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
-              Channel Economics
-            </h3>
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+                Channel Economics
+              </h3>
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="group" aria-label="Aggregator">
+                {(['zomato', 'swiggy'] as const).map((agg, i) => (
+                  <button
+                    key={agg}
+                    onClick={() => setEconPlatform(agg)}
+                    className={`px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-gray-200' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-red-600 text-white' : 'bg-orange-500 text-white') : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    {agg}
+                  </button>
+                ))}
+              </div>
+            </div>
             <p className="text-xs text-gray-500 mb-4">
-              For every real Zomato order this period, what the exact same dishes would have cost at your counter - compared to what Zomato's menu listed them at, and what Zomato actually paid you.
+              For every real {platformName} order this period, what the exact same dishes would have cost at your counter - compared to what {platformName}'s menu listed them at, and what {platformName} actually paid you.
             </p>
 
             {channelEconomicsData.totalOrders === 0 ? (
-              <div className="text-center text-gray-500 py-8 text-sm">No Zomato orders with item-level detail in this period</div>
+              <div className="text-center text-gray-500 py-8 text-sm">No {platformName} orders with item-level detail in this period</div>
             ) : (
               <>
                 {/* The three raw inputs, side by side, before the derived deficit/markup
@@ -1097,15 +1232,15 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   <div className="bg-gray-50 rounded-lg p-2.5">
                     <p className="text-[10px] uppercase tracking-wide text-gray-500">Counter Price</p>
                     <p className="text-sm font-bold text-emerald-700">₹{channelEconomicsData.totals.theoreticalOffline.toLocaleString('en-IN')}</p>
-                    <p className="text-[10px] text-gray-400">same dishes, dine-in price</p>
+                    <p className="text-[10px] text-gray-400">same dishes, latest dine-in price</p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Zomato Menu Price</p>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-500">{platformName} Menu Price</p>
                     <p className="text-sm font-bold text-slate-700">₹{channelEconomicsData.totals.itemSubtotal.toLocaleString('en-IN')}</p>
-                    <p className="text-[10px] text-gray-400">what Zomato listed them at</p>
+                    <p className="text-[10px] text-gray-400">what {platformName} listed them at</p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Zomato Paid You</p>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-500">{platformName} Paid You</p>
                     <p className="text-sm font-bold text-orange-600">₹{channelEconomicsData.totals.netPayout.toLocaleString('en-IN')}</p>
                     <p className="text-[10px] text-gray-400">actual net payout</p>
                   </div>
@@ -1114,13 +1249,13 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                   <div className={`rounded-xl p-4 shadow-lg text-white ${channelEconomicsData.deficitVsPayout > 0 ? 'bg-gradient-to-br from-amber-500 to-amber-600 shadow-amber-500/20' : 'bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/20'}`}>
                     <div className="text-xs uppercase tracking-wide text-white/80 mb-1">
-                      {channelEconomicsData.deficitVsPayout > 0 ? 'Money Left on the Table' : 'Zomato Paid a Premium'}
+                      {channelEconomicsData.deficitVsPayout > 0 ? 'Money Left on the Table' : `${platformName} Paid a Premium`}
                     </div>
                     <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsPayout).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                     <div className="text-xs text-white/80 mt-1">
                       {channelEconomicsData.deficitVsPayout > 0
-                        ? 'Counter Price − Zomato Paid You: these dishes would have earned this much more sold at the counter'
-                        : 'Counter Price − Zomato Paid You: Zomato actually paid more than counter price for these dishes'}
+                        ? `Counter Price − ${platformName} Paid You: these dishes would have earned this much more sold at the counter`
+                        : `Counter Price − ${platformName} Paid You: ${platformName} actually paid more than counter price for these dishes`}
                     </div>
                   </div>
                   <div className="rounded-xl p-4 shadow-lg text-white bg-gradient-to-br from-slate-500 to-slate-600 shadow-slate-500/20">
@@ -1128,15 +1263,15 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                     <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsMenuSubtotal).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                     <div className="text-xs text-white/80 mt-1">
                       {channelEconomicsData.deficitVsMenuSubtotal < 0
-                        ? 'Counter Price − Zomato Menu Price: Zomato lists these dishes higher than the counter, but it isn\'t enough to cover the deficit above'
-                        : 'Counter Price − Zomato Menu Price: Zomato\'s listed prices are at or below counter price for these dishes'}
+                        ? `Counter Price − ${platformName} Menu Price: ${platformName} lists these dishes higher than the counter, but it isn't enough to cover the deficit above`
+                        : `Counter Price − ${platformName} Menu Price: ${platformName}'s listed prices are at or below counter price for these dishes`}
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-3 text-xs">
                   <span className="text-gray-500">
-                    Based on <span className="font-semibold text-gray-700">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} Zomato orders ({channelEconomicsData.matchRatePct}% matched to item + price data)
+                    Based on <span className="font-semibold text-gray-700">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} {platformName} orders ({channelEconomicsData.matchRatePct}% matched to item + price data)
                   </span>
                   <div className="flex gap-1.5">
                     {channelEconomicsData.unmatchedOrders > 0 && (
@@ -1150,6 +1285,40 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   </div>
                 </div>
 
+                {/* Where each counter price came from - the newest sale at the counter, or the saved menu price as a fallback. */}
+                <details className="mb-3 rounded-lg border border-gray-200 bg-gray-50/60">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700">
+                    Counter prices used - {channelEconomicsData.latestPricedCount} of {channelEconomicsData.pricesUsedList.length} dishes priced from the latest counter sales
+                  </summary>
+                  <div className="px-3 pb-3 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-gray-500">
+                          <th className="py-1.5 pr-2 font-medium">Dish</th>
+                          <th className="py-1.5 px-1 font-medium text-right">Sold</th>
+                          <th className="py-1.5 px-1 font-medium text-right">Counter ₹</th>
+                          <th className="py-1.5 pl-1 font-medium">Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {channelEconomicsData.pricesUsedList.map(row => (
+                          <tr key={row.name} className="border-t border-gray-100">
+                            <td className="py-1.5 pr-2 text-gray-800">{row.name}</td>
+                            <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{row.quantity}</td>
+                            <td className="py-1.5 px-1 text-right tabular-nums font-semibold text-gray-900">
+                              ₹{row.used}
+                              {row.saved !== null && row.saved !== row.used && <span className="block text-[10px] font-normal text-amber-600">saved menu: ₹{row.saved}</span>}
+                            </td>
+                            <td className="py-1.5 pl-1 text-gray-500">
+                              {row.source === 'latest' ? `Latest sale${row.lastSeen ? ` (${formatDateIN(row.lastSeen, { day: 'numeric', month: 'short' })})` : ''}` : 'Saved menu price'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
                 {channelEconomicsData.chartData.length > 0 && (
                   <ResponsiveContainer width="100%" height={240}>
                     <LineChart data={channelEconomicsData.chartData}>
@@ -1159,13 +1328,72 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                       <Tooltip formatter={(value: number, name: string) => [`₹${value.toLocaleString('en-IN')}`, name]} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                       <Line type="monotone" dataKey="theoreticalOffline" stroke="#16a34a" strokeWidth={2} name="Counter Price" dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="itemSubtotal" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name="Zomato Menu Price" dot={false} />
-                      <Line type="monotone" dataKey="netPayout" stroke="#f59e0b" strokeWidth={2} name="Zomato Paid You" dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="itemSubtotal" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name={`${platformName} Menu Price`} dot={false} />
+                      <Line type="monotone" dataKey="netPayout" stroke="#f59e0b" strokeWidth={2} name={`${platformName} Paid You`} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
               </>
             )}
+          </div>
+
+          {/* Aggregated across every online platform, so the combined picture is visible at a glance. */}
+          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 sm:p-5">
+            <h4 className="text-sm font-bold text-gray-900 tracking-tight mb-0.5">All online platforms</h4>
+            <p className="text-[11px] text-gray-500 mb-3">Zomato + Swiggy together for this period, same matched orders as above</p>
+            <div className="grid grid-cols-3 gap-2 mb-3 text-center">
+              <div className="bg-gray-50 rounded-lg p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">Counter Price</p>
+                <p className="text-sm font-bold text-emerald-700 tabular-nums">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">Online Menu Price</p>
+                <p className="text-sm font-bold text-slate-700 tabular-nums">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">Online Paid You</p>
+                <p className="text-sm font-bold text-orange-600 tabular-nums">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-500">
+                    <th className="py-1.5 pr-2 font-medium">Platform</th>
+                    <th className="py-1.5 px-1 font-medium text-right">Orders</th>
+                    <th className="py-1.5 px-1 font-medium text-right">Counter</th>
+                    <th className="py-1.5 px-1 font-medium text-right">Menu</th>
+                    <th className="py-1.5 px-1 font-medium text-right">Paid you</th>
+                    <th className="py-1.5 pl-1 font-medium text-right" title="Counter Price minus what the platform paid you">Left on table</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allPlatformsEconomics.rows.map(r => (
+                    <tr key={r.agg} className="border-t border-gray-100">
+                      <td className="py-1.5 pr-2 font-medium text-gray-800">{r.label}</td>
+                      <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{r.orders}</td>
+                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.counter.toLocaleString('en-IN')}</td>
+                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.menu.toLocaleString('en-IN')}</td>
+                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.paid.toLocaleString('en-IN')}</td>
+                      <td className={`py-1.5 pl-1 text-right tabular-nums font-semibold ${r.counter - r.paid > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                        {r.counter - r.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(r.counter - r.paid)).toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-gray-200 font-bold">
+                    <td className="py-1.5 pr-2 text-gray-900">Total</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">{allPlatformsEconomics.total.orders}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</td>
+                    <td className={`py-1.5 pl-1 text-right tabular-nums ${allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid)).toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
           </div>
         </div>
       )}
@@ -1185,7 +1413,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               <div key={agg} className={`bg-white rounded-2xl border shadow-sm p-4 sm:p-6 ${agg === 'zomato' ? 'border-red-200' : 'border-orange-200'}`}>
                 <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight capitalize mb-1">{agg} - Are We Pricing This Right?</h3>
                 <p className="text-xs text-gray-500 mb-4">
-                  Effective payout per plate (the price actually billed after any discount, × Payout %, minus that plate's share of ad spend) vs your dine-in price for the same menu item. "Online ₹/plate" is the Zomato menu listing price - see "billed avg" below it where the two differ
+                  Effective payout per plate (the price actually billed after any discount, × Payout %, minus that plate's share of ad spend) vs your dine-in price for the same menu item. "Online ₹/plate" is the latest menu listing price (from the newest {agg} orders) - see "billed avg" below it where the two differ
                 </p>
                 {!data ? (
                   <div className="text-center text-gray-500 py-8 text-sm">Needs Items Total data - upload/re-upload settlements with item-level tracking for this period</div>

@@ -41,6 +41,14 @@ public class QuickActionMessagingService extends MessagingService {
         String body = data.get("message");
         if (title == null && body == null) return;
 
+        // A ride request for a rider gets the loud horn / full-screen alert instead of a normal
+        // notification - see RiderCallAlert.
+        if ("rider_called".equals(data.get("type"))) {
+            if (RiderCallAlert.show(getApplicationContext(), data, title, body)) return;
+            // The loud alert could not be shown - fall through to a normal notification so the
+            // rider is still told about the ride.
+        }
+
         showNotification(data, title, body);
     }
 

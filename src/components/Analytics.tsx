@@ -9,7 +9,7 @@ import { employeeBelongsToStore } from '../utils/entityAccess';
 import { SalaryBreakdownModal } from './SalaryBreakdownModal';
 import { CommissionBreakdownModal, InterestBreakdownModal } from './CostBreakdownModals';
 import { buildSmoothedCosts } from '../utils/dailyCostSmoothing';
-import { buildSalaryBreakdown } from '../utils/salaryBreakdown';
+import { buildSalaryBreakdown, monthAdd, monthLabel } from '../utils/salaryBreakdown';
 import { DataCapture } from './DataCapture';
 import { ProductionRequests } from './ProductionRequests';
 import { SalesData as SalesDataComponent } from './SalesData';
@@ -2223,6 +2223,91 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  effectiveStoreId
  ]);
 
+ // ---- Loss carry-forward. A month that ends in a loss is brought forward into the next
+ // month's realized profit, and stays there until later profits pay it back (a running
+ // balance, not just last month: Sept -10k, Oct +4k leaves -6k to carry into Nov). Profits
+ // never carry forward. Counted from LOSS_CARRY_FORWARD_START onward, and one-off purchases
+ // are deliberately included - they are real money out, same as every other expense here.
+ // Each past month's profit is built with the same ingredients calculateMetrics uses
+ // (revenue, inventory, overhead, rent/electricity, commission, interest, salaries), scoped
+ // to the same store and its linked production house, so it matches the number you see
+ // when that month is selected. Only shown on This month / Last month. ----
+ const carryForward = useMemo(() => {
+ const LOSS_CARRY_FORWARD_START = '2026-09';
+ const currentMonth = getTodayIST().slice(0, 7);
+ const viewMonth = timeFilter === 'thisMonth' ? currentMonth : timeFilter === 'lastMonth' ? monthAdd(currentMonth, -1) : null;
+ const empty = { amount: 0, viewMonth, parts: [] as { month: string; profit: number; carried: number }[] };
+ if (!viewMonth || viewMonth <= LOSS_CARRY_FORWARD_START) return empty;
+
+ const inStoreOrHouse = (item: any) => !effectiveStoreId ||
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
+ const storeOnly = (item: any) => !effectiveStoreId || item.storeId === effectiveStoreId;
+ const storeEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
+ const employeeIds = new Set(employeesData.map((e: any) => e.id));
+
+ const monthProfit = (ym: string) => {
+ const start = `${ym}-01`;
+ const end = addDays(`${monthAdd(ym, 1)}-01`, -1);
+ const inMonth = (d?: string) => !!d && d >= start && d <= end;
+ const sum = (items: any[], pick: (x: any) => number) => items.reduce((t, x) => t + pick(x), 0);
+
+ const monthSales = salesData.filter((x: any) => inMonth(x.date) && storeOnly(x));
+ const monthOnline = onlineSalesData.filter((x: any) => inMonth(x.date) && storeOnly(x));
+ const monthPayouts = onlinePayoutData.filter((x: any) => inMonth(x.date) && storeOnly(x));
+ const onlineTotal = sum(monthOnline, (x) => (x.swiggySales || 0) + (x.zomatoSales || 0));
+ const revenue = sum(monthSales, (x) => (x.paytmAmount || 0) + (x.cashAmount || 0) + (x.onlineSales || 0)) + onlineTotal;
+
+ const payoutDates = new Set(monthPayouts.map((x: any) => x.date));
+ const matchedOnline = sum(monthOnline.filter((x: any) => payoutDates.has(x.date)), (x) => (x.swiggySales || 0) + (x.zomatoSales || 0));
+ const legacyCommission = matchedOnline - sum(monthPayouts, (x) => (x.swiggyPayout || 0) + (x.zomatoPayout || 0));
+ const settlementCommission = sum(
+ aggregatorSettlements.filter((x: any) => settlementOverlapsAnalyticsRange(x, { start, end }) && (!effectiveStoreId || x.storeId === effectiveStoreId)),
+ (x) => x.netCommission || 0
+ );
+
+ const inventory = sum(inventoryData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x)), (x) => x.totalCost || 0);
+ const monthOverheads = overheadData.filter((x: any) =>
+ (x.category === 'personal_expense' && x.expenseMonth ? x.expenseMonth === ym : inMonth(x.date)) && inStoreOrHouse(x)
+ );
+ const personal = sum(monthOverheads.filter((x: any) => x.category === 'personal_expense'), (x) => x.amount || 0);
+ const overhead = sum(monthOverheads.filter((x: any) => x.category !== 'personal_expense' && !isCommissionEntry(x)), (x) => x.amount || 0);
+ const fixed = sum(
+ fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x) && (x.category === 'electricity' || x.category === 'rent')),
+ (x) => x.amount || 0
+ );
+ const salaries = sum(
+ payoutsData.filter((x: any) =>
+ (x.forMonth ? x.forMonth === ym : inMonth(x.date)) &&
+ employeeIds.has(x.employeeId) &&
+ (!effectiveStoreId || storeEmployeeIds.has(x.employeeId))
+ ),
+ (x) => x.amount || 0
+ ) + personal;
+ const interest = calculateAccruedInterest(start, end, effectiveStoreId || undefined);
+
+ // Approved cash shortages are deducted by the Net Profit card (see calculateCashDiscrepancy),
+ // so the figure carried forward has to deduct them too or it won't match what that month showed.
+ const approvedShortages = sum(
+ monthSales.filter((x: any) => x.approvalRequired === false && x.approvedBy),
+ (x) => {
+ const offset = x.salesDiscrepancy !== undefined ? x.salesDiscrepancy : (x.cashOffset || 0);
+ return offset < 0 ? Math.abs(offset) : 0;
+ }
+ );
+ return revenue - (inventory + overhead + fixed + legacyCommission + settlementCommission + interest + salaries) - approvedShortages;
+ };
+
+ const parts: { month: string; profit: number; carried: number }[] = [];
+ let carried = 0;
+ for (let m = LOSS_CARRY_FORWARD_START; m < viewMonth; m = monthAdd(m, 1)) {
+ const profit = monthProfit(m);
+ carried = Math.min(0, carried + profit);
+ parts.push({ month: m, profit, carried });
+ }
+ return { amount: carried, viewMonth, parts };
+ }, [timeFilter, salesData, inventoryData, overheadData, fixedCostsData, onlineSalesData, onlinePayoutData, aggregatorSettlements, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts, onlineLoans]);
+
  // ---- Data behind the Salaries / Commission / Interest breakdown modals. Built from the
  // same filtered sources calculateMetrics uses, so each modal's rows add up to the headline
  // figure on the card it was opened from. ----
@@ -3737,7 +3822,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  const totalCashDiscrepancy = calculateCashDiscrepancy();
  const unrealizedProfit = metrics.netProfit;
+ // carryForward.amount is zero or negative: a loss brought forward lowers this month's realized profit.
  const realizedProfit = unrealizedProfit - totalCashDiscrepancy;
+ // Net realised profit = this month's profit after a loss brought forward from earlier months.
+ const netRealisedProfit = realizedProfit + carryForward.amount;
 
  // POS sales discrepancy: how much Cash + Paytm (entered by the store incharge) falls
  // short of the Net offline sales the POS reported for that day - duplicate KOTs, cash
@@ -4371,6 +4459,16 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="text-xs text-emerald-100 mt-1">No data yet</div>
  )}
  {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
+ </div>
+
+ <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl p-4 shadow-lg shadow-teal-500/20 text-white">
+  <div className="text-xs uppercase tracking-wide text-teal-100 mb-1">Net Realised Profit</div>
+  <div className="text-2xl font-semibold">₹{netRealisedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+  <div className="text-xs text-teal-100 mt-1">
+   {carryForward.amount < 0
+    ? `After -₹${Math.abs(Math.round(carryForward.amount)).toLocaleString('en-IN')} loss brought forward (${carryForward.parts.filter((p) => p.profit < 0 || p.carried < 0).map((p) => monthLabel(p.month)).join(', ')})`
+    : (timeFilter === 'thisMonth' || timeFilter === 'lastMonth') ? 'No loss brought forward' : 'Carry-forward shows on This month / Last month'}
+  </div>
  </div>
 
  <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
@@ -5726,12 +5824,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {activeView === 'overview' && (
  <div className="space-y-6">
  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
- <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Net Profit</div>
  <div className="text-2xl font-semibold">₹{realizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-emerald-100 mt-1">{getPeriodLabel()}</div>
  {renderPctChangeOnColor(realizedProfit, previousPeriodMetrics.netProfit)}
+ </div>
+ <div className="bg-gradient-to-br from-teal-500 to-cyan-600 rounded-xl p-4 shadow-lg shadow-teal-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-teal-100 mb-1">Net Realised Profit</div>
+ <div className="text-2xl font-semibold">₹{netRealisedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-teal-100 mt-1">
+ {carryForward.amount < 0
+ ? `After -₹${Math.abs(Math.round(carryForward.amount)).toLocaleString('en-IN')} loss brought forward (${carryForward.parts.filter((p) => p.profit < 0 || p.carried < 0).map((p) => monthLabel(p.month)).join(', ')})`
+ : (timeFilter === 'thisMonth' || timeFilter === 'lastMonth') ? 'No loss brought forward' : 'Carry-forward shows on This month / Last month'}
+ </div>
  </div>
  <div className={`rounded-xl p-4 shadow-lg text-white ${totalCashDiscrepancy > 0 ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/20' : 'bg-gradient-to-br from-gray-400 to-gray-500 shadow-gray-400/20'}`}>
  <div className="text-xs uppercase tracking-wide text-white/80 mb-1">Cash Discrepancy Losses</div>

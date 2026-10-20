@@ -184,6 +184,7 @@ export function AssignManagers({ clusterHeadId }: AssignManagersProps) {
       'production_incharge': 'Production Incharge',
       'store_ops': 'Store Operations',
       'production_ops': 'Production Operations',
+      'rider': 'Rider',
     };
     
     return (

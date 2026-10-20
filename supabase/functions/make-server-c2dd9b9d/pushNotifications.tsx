@@ -62,6 +62,22 @@ export async function getAllSubscriptions(): Promise<StoredSubscription[]> {
 // (different key prefix) so a user signed in on both the web app and the native app
 // gets notified on both at once, instead of one overwriting the other.
 export async function storeFcmToken(userId: string, token: string): Promise<void> {
+  // A token identifies one phone's app install, and that phone belongs to whoever is signed in on
+  // it NOW. If it was registered for another account earlier (someone signed out without the
+  // server hearing about it, or one phone is used for two logins), release it from them first -
+  // otherwise their notifications keep arriving on this phone, e.g. the rider's loud ride-request
+  // alert ringing on the cluster head's phone.
+  try {
+    const existing = await kv.getByPrefix('fcm_token:');
+    for (const other of (existing || []) as StoredFcmToken[]) {
+      if (other?.token === token && other.userId !== userId) {
+        await kv.del(`fcm_token:${other.userId}`);
+        console.log(`Released FCM token from ${other.userId} (device now belongs to ${userId})`);
+      }
+    }
+  } catch (error) {
+    console.log('Could not check for a shared FCM token:', error);
+  }
   const key = `fcm_token:${userId}`;
   const data: StoredFcmToken = {
     userId,
@@ -188,6 +204,13 @@ async function getFcmAccessToken(): Promise<string> {
   return cachedFcmAccessToken.token;
 }
 
+// What happened on the most recent FCM send to each user - lets callers (e.g. the rider ride
+// requests) record whether Google accepted the message, for diagnosing "no alert arrived".
+type FcmOutcome = { at: string; hasToken: boolean; ok: boolean; status?: number; error?: string };
+const lastFcmOutcome = new Map<string, FcmOutcome>();
+const recordFcm = (userId: string, o: Omit<FcmOutcome, 'at'>) => lastFcmOutcome.set(userId, { at: new Date().toISOString(), ...o });
+export const getLastFcmOutcome = (userId: string): FcmOutcome | null => lastFcmOutcome.get(userId) || null;
+
 // Send a push notification to a single FCM token. Returns false (without throwing)
 // if FCM isn't configured, so callers can fall back to/coexist with web push.
 async function sendFcmNotification(
@@ -197,6 +220,7 @@ async function sendFcmNotification(
 ): Promise<boolean> {
   const projectId = Deno.env.get('FCM_PROJECT_ID');
   if (!projectId) {
+    recordFcm(userId, { hasToken: true, ok: false, error: 'FCM_PROJECT_ID is not configured' });
     return false;
   }
 
@@ -249,13 +273,16 @@ async function sendFcmNotification(
         console.log(`Removed invalid FCM token for user: ${userId}`);
       }
       console.error(`Error sending FCM notification to user ${userId}:`, response.status, errBody);
+      recordFcm(userId, { hasToken: true, ok: false, status: response.status, error: errBody?.error?.status || errBody?.error?.message || 'FCM rejected the message' });
       return false;
     }
 
     console.log(`FCM notification sent successfully to user: ${userId}`);
+    recordFcm(userId, { hasToken: true, ok: true, status: response.status });
     return true;
   } catch (error) {
     console.error(`Error sending FCM notification to user ${userId}:`, error);
+    recordFcm(userId, { hasToken: true, ok: false, error: error instanceof Error ? error.message : String(error) });
     return false;
   }
 }
@@ -285,7 +312,10 @@ async function sendFcmForUser(
   payload: { title: string; message: string; icon?: string; tag?: string; data?: any }
 ): Promise<boolean> {
   const storedToken = await getFcmToken(userId);
-  if (!storedToken) return false;
+  if (!storedToken) {
+    recordFcm(userId, { hasToken: false, ok: false, error: 'No FCM token stored for this user - the app has not registered for push' });
+    return false;
+  }
   return sendFcmNotification(userId, storedToken.token, payload);
 }
 

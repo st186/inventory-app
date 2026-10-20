@@ -219,7 +219,8 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   // approve, per AttendancePortal's role-based default tab) - and only once they've
   // actually joined, and while still active.
   const expectedSubmitters = useMemo(
-    () => employees.filter((e) => e.status !== 'inactive' && (e.role === 'employee' || e.role === 'manager')),
+    // Riders don't fill attendance, so they aren't expected to submit timesheets.
+    () => employees.filter((e) => e.status !== 'inactive' && e.designation !== 'rider' && (e.role === 'employee' || e.role === 'manager')),
     [employees]
   );
 

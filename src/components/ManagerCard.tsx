@@ -24,6 +24,7 @@ export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
       'production_incharge': 'Production Incharge',
       'store_ops': 'Store Operations',
       'production_ops': 'Production Operations',
+      'rider': 'Rider',
     };
     
     return designationMap[designation] || designation;

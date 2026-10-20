@@ -164,6 +164,7 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
               <option value="production_incharge">Production Incharge</option>
               <option value="store_ops">Store Operations</option>
               <option value="production_ops">Production Operations</option>
+              <option value="rider">Rider (logistics)</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
               Designation is the job title (appears in organization chart)

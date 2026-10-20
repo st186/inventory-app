@@ -181,6 +181,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         'operations_manager': 'Operations Manager',
         'store_ops': 'Store Operations',
         'production_ops': 'Production Operations',
+        'rider': 'Rider',
       };
       
       return designationMap[designation] || designation;

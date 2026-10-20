@@ -1251,6 +1251,7 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     // save, regardless of what the client's snapshot looked like at compute time.
     if (storeId && salesItem.date) {
       await cascadeRecomputePaytmBalances(storeId, salesItem.date);
+      await cascadeProductionCashForStoreSale(storeId, salesItem.date);
     }
 
     // Notify cluster heads and this store's operations manager(s) about the sales entry
@@ -1347,6 +1348,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     // own cascade the final word on every save, regardless of the client's snapshot.
     if (salesItem.storeId && salesItem.date) {
       await cascadeRecomputePaytmBalances(salesItem.storeId, salesItem.date);
+      await cascadeProductionCashForStoreSale(salesItem.storeId, salesItem.date);
     }
 
     // Notify this store's operations manager(s) that the store incharge logged/confirmed
@@ -1996,7 +1998,13 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/approve', async (c) => {
         // usedOnlineMoney just changed on it.
         const storeIncharge = await getStoreIncharge(existingRequest.storeId);
         const ownerUserId = storeIncharge?.authUserId || existingRequest.requestedByUserId;
-        const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        // Deterministic id (same one runPosSync's new-record branch uses) instead of a random
+        // one: two top-ups for the same store/date approved at nearly the same moment (found
+        // 700ms apart on 2026-10-17) both ran the find above, both saw no record, and each
+        // created its own stub - the day then existed twice and every total on the Sales
+        // overview doubled. With one shared key a concurrent second create lands on the
+        // first's record instead of becoming a sibling.
+        const itemId = `pos-sync-${existingRequest.storeId}-${existingRequest.date}`;
         // This stub is meant to be found-and-edited-in-place by the real end-of-day
         // submission (pos-sync or the store incharge's manual save) later, exactly like a
         // pos-sync placeholder - give it the SAME shape/defaults a pos-sync-created record
@@ -2776,7 +2784,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.10.6';
+const LATEST_APP_VERSION = '1.15.1';
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -3628,6 +3636,28 @@ app.post('/make-server-c2dd9b9d/admin/recompute-paytm-balance', async (c) => {
   }
 });
 
+// Same manual trigger for the production-cash ledger (cron-secret gated, like the Paytm one
+// above) - for repairing a stretch of days after a correction that the automatic cascades
+// didn't see.
+app.post('/make-server-c2dd9b9d/admin/recompute-production-cash', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  try {
+    const { productionHouseId, fromDate } = await c.req.json();
+    if (!productionHouseId || !fromDate) {
+      return c.json({ error: 'productionHouseId and fromDate are required' }, 400);
+    }
+    await cascadeRecomputeProductionCash(productionHouseId, fromDate);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log('Error in manual production cash recompute trigger:', error);
+    return c.json({ error: 'Failed to recompute' }, 500);
+  }
+});
+
 // Recomputes and re-saves the derived fields (openingBalance/cashTopupCredited/
 // productionExpenses/expectedClosingCashInHand) on every one of a production house's
 // production-cash records from a given date through today, in chronological order -
@@ -3776,6 +3806,25 @@ async function cascadeRecomputeProductionCash(productionHouseId: string, fromDat
   } catch (error) {
     console.log('Error cascading production cash recompute:', error);
     // Non-fatal - matches cascadeRecomputePaytmBalances' own convention.
+  }
+}
+
+// A store's actual cash-in-hand for a day is handed over to its linked production house the
+// next morning and becomes part of that day's production opening balance (see
+// getStoreHandoverForDate). So whenever a store's sales record is saved - its actual count may
+// have just changed - the production-cash records from the following day forward must be
+// recomputed too. Without this, the 18th's production opening stayed at the production's own
+// leftover (3,700) after the store's 17th count (6,850) was saved, instead of the 10,550 both
+// together actually hold. Non-fatal, like the other cascades.
+async function cascadeProductionCashForStoreSale(storeId: string, date: string): Promise<void> {
+  try {
+    if (!storeId || !date) return;
+    const stores = await kv.getByPrefix('store:');
+    const productionHouseId = (stores || []).find((s: any) => s.id === storeId)?.productionHouseId;
+    if (!productionHouseId) return;
+    await cascadeRecomputeProductionCash(productionHouseId, addDaysToDateString(date, 1));
+  } catch (error) {
+    console.log('Error cascading production cash after a store sales save:', error);
   }
 }
 
@@ -8706,6 +8755,1233 @@ async function getStoreIncharge(storeId: string) {
 }
 
 // ============================================
+// RIDER TRIPS (logistics: production house -> store)
+// ============================================
+// A "rider" is a regular employee (role: 'employee') with designation 'rider'. One trip is one
+// run: production calls the rider in, the rider moves it through the stages below with a
+// button each, and everyone involved is notified at the relevant steps.
+//   called -> on_the_way -> arrived -> picked_up -> delivered   (or cancelled by dispatch)
+// Production must mark the order "ready for pickup" before the rider can mark it picked up.
+// Phase 1 is status-only; live GPS/map layers on top of these same trip records later.
+const RIDER_MAX_TRIPS_PER_DAY = 4;
+const RIDER_NEXT_STATUS: Record<string, string> = {
+  called: 'on_the_way',
+  on_the_way: 'arrived',
+  arrived: 'picked_up',
+  picked_up: 'delivered',
+};
+const RIDER_ACTIVE_STATUSES = ['called', 'on_the_way', 'arrived', 'picked_up'];
+
+async function getRiderActor(authUser: any) {
+  const meta = authUser?.user_metadata || {};
+  const employeeId: string | null = meta.employeeId || null;
+  const employee = employeeId ? await kv.get(`unified-employee:${employeeId}`) : null;
+  const role: string = meta.role || employee?.role || '';
+  const designation: string | null = meta.designation || employee?.designation || null;
+  return {
+    employeeId,
+    employee,
+    role,
+    designation,
+    name: meta.name || employee?.name || authUser?.email || 'Someone',
+    storeId: employee?.storeId || meta.storeId || null,
+    // Who may call riders / mark an order ready: cluster head, production incharge, or an
+    // operations manager (a manager who isn't tied to a single store).
+    canDispatch: role === 'cluster_head' || designation === 'production_incharge' || (role === 'manager' && designation !== 'store_incharge'),
+    isRider: designation === 'rider',
+  };
+}
+
+async function notifyEmployeeIds(employees: any[], type: string, title: string, message: string, trip: any) {
+  const seen = new Set<string>();
+  for (const emp of employees) {
+    if (!emp?.authUserId || seen.has(emp.authUserId)) continue;
+    seen.add(emp.authUserId);
+    try {
+      await notifyUser(emp.authUserId, type, title, message, trip.id, trip.date);
+      // Keep what Google said about this push, so a "no alert arrived" report can be traced to
+      // the server side (no token / rejected) or the phone side (accepted but nothing shown).
+      try {
+        const outcome = push.getLastFcmOutcome(emp.employeeId);
+        await kv.set(`rider-push-log:${trip.id}:${type}:${Date.now()}`, { tripId: trip.id, type, employeeId: emp.employeeId, outcome });
+      } catch (_) { /* diagnostics only */ }
+    } catch (error) {
+      console.log(`Rider notification (${type}) failed for ${emp.employeeId}:`, error);
+    }
+  }
+}
+
+// ---- Rider profile, availability and fares ----
+// rider-profile:{employeeId} = { name, aadhaar, defaultRate, availability, unavailableUntil }
+// availability = { mon: { enabled, from: 'HH:MM', to: 'HH:MM' }, ... } (India time). Riders count as
+// available inside their schedule unless they marked themselves unavailable.
+const RIDER_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const RIDER_DAY_LABELS: Record<string, string> = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+
+function riderIstNow() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + 5.5 * 3600 * 1000);
+  const endOfDayIst = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) - 5.5 * 3600 * 1000);
+  return {
+    now,
+    dayKey: RIDER_DAY_KEYS[ist.getUTCDay()],
+    minutes: ist.getUTCHours() * 60 + ist.getUTCMinutes(),
+    endOfDayIso: endOfDayIst.toISOString(),
+  };
+}
+
+const hhmmToMinutes = (t: string) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t || '');
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN;
+};
+
+function riderAvailability(profile: any): { available: boolean; reason: string | null } {
+  const { now, dayKey, minutes } = riderIstNow();
+  const until = profile?.unavailableUntil;
+  if (until === 'indefinite') return { available: false, reason: 'Marked unavailable' };
+  if (until && new Date(until).getTime() > now.getTime()) {
+    const t = new Date(until).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+    return { available: false, reason: `Marked unavailable until ${t}` };
+  }
+  const day = profile?.availability?.[dayKey];
+  if (day) {
+    if (!day.enabled) return { available: false, reason: `Off on ${RIDER_DAY_LABELS[dayKey]}s` };
+    const from = hhmmToMinutes(day.from);
+    const to = hhmmToMinutes(day.to);
+    if (!isNaN(from) && !isNaN(to) && (minutes < from || minutes >= to)) {
+      return { available: false, reason: `Outside working hours (${day.from} - ${day.to})` };
+    }
+  }
+  return { available: true, reason: null };
+}
+
+const maskAadhaar = (a: string | null | undefined) => (a && a.length >= 4 ? `XXXX XXXX ${a.slice(-4)}` : null);
+
+async function loadRiderProfile(employeeId: string) {
+  return (await kv.get(`rider-profile:${employeeId}`)) || null;
+}
+
+// A ride is an ordered list of STOPS; the rider works through it one leg (stop -> next stop) at a
+// time. Production -> store and store -> production have two stops, a round trip (store ->
+// production -> store) has three, and a custom ride (e.g. a stall at an event) has two stops where
+// either end can be a one-off location with its own coordinates.
+type RiderStop = { kind: 'production' | 'store' | 'custom'; id: string | null; name: string; latitude?: number | null; longitude?: number | null };
+
+// Rides created before multi-stop rides existed have no `stops` - derive them from the direction.
+function tripStops(trip: any): RiderStop[] {
+  if (Array.isArray(trip.stops) && trip.stops.length >= 2) return trip.stops;
+  const production: RiderStop = { kind: 'production', id: trip.productionHouseId || null, name: trip.productionHouseName || 'the production house' };
+  const store: RiderStop = { kind: 'store', id: trip.storeId || null, name: trip.storeName || 'the store' };
+  return trip.direction === 'to_production' ? [store, production] : [production, store];
+}
+const tripLegIndex = (trip: any) => Math.min(Math.max(0, trip.legIndex || 0), tripStops(trip).length - 2);
+const isFinalLeg = (trip: any) => tripLegIndex(trip) >= tripStops(trip).length - 2;
+
+// The two ends of the leg the rider is on right now.
+const rideEnds = (trip: any) => {
+  const stops = tripStops(trip);
+  const i = tripLegIndex(trip);
+  const pickup = stops[i];
+  const drop = stops[i + 1];
+  return { pickup, drop, pickupKind: pickup.kind, dropKind: drop.kind, pickupName: pickup.name, dropName: drop.name };
+};
+
+// Who to tell about a stop: production heads, that store's incharge, or - for a one-off custom
+// location - whoever created the ride.
+async function stopParty(stop: RiderStop, trip: any): Promise<any[]> {
+  if (stop.kind === 'production') return await getAllProductionHeads();
+  if (stop.kind === 'store') {
+    const incharge = stop.id ? await getStoreIncharge(stop.id) : null;
+    return incharge ? [incharge] : [];
+  }
+  const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+  return caller ? [caller] : [];
+}
+
+// Coordinates for a stop: a custom stop carries its own, production/store use their map pin.
+async function stopCoordinates(stop: RiderStop): Promise<{ latitude: number; longitude: number } | null> {
+  if (isValidLatLng(stop.latitude, stop.longitude)) return { latitude: stop.latitude as number, longitude: stop.longitude as number };
+  if (stop.kind === 'custom' || !stop.id) return null;
+  const place = await kv.get(`rider-place:${stop.kind}:${stop.id}`);
+  return place && isValidLatLng(place.latitude, place.longitude) ? { latitude: place.latitude, longitude: place.longitude } : null;
+}
+
+// ---- Linking a ride to the stock requests it carries ----
+// A ride can carry stock requests (trip.requestIds). The store confirms the delivery ONCE: either
+// "Confirm received" on the ride (which marks the carried requests delivered) or "Delivered" on the
+// Stock Requests screen (which confirms the ride). Both directions below.
+const REQUEST_DONE = ['delivered', 'partially-delivered'];
+
+// Marks one stock request delivered because the ride confirmed it. Only a request production has
+// actually shipped can be delivered (delivery credits the shipped quantities to the store's stock),
+// and a request that is already delivered is left alone so stock is never credited twice.
+async function deliverRequestFromRide(requestId: string, byName: string): Promise<'delivered' | 'already' | 'not_shipped' | 'missing'> {
+  const req = await kv.get(`production_request_${requestId}`);
+  if (!req) return 'missing';
+  if (REQUEST_DONE.includes(req.status)) return 'already';
+  if (req.status !== 'shipped' && req.status !== 'partially-shipped') return 'not_shipped';
+  const now = new Date().toISOString();
+  await creditStoreInventoryForDelivery(req, requestId);
+  await kv.set(`production_request_${requestId}`, { ...req, status: 'delivered', updatedAt: now, deliveredAt: now, deliveredBy: byName, deliveredViaRide: true });
+  return 'delivered';
+}
+
+// If every stock request on a delivered ride has already been marked delivered in Stock Requests,
+// the ride's receipt is confirmed automatically - the store should not have to confirm it twice.
+async function autoReceiptFromRequests(trip: any, byName?: string): Promise<any | null> {
+  const ids: string[] = Array.isArray(trip.requestIds) ? trip.requestIds : [];
+  if (trip.status !== 'delivered' || trip.receipt || ids.length === 0) return null;
+  const reqs = await Promise.all(ids.map((id) => kv.get(`production_request_${id}`)));
+  if (reqs.some((r) => !r || !REQUEST_DONE.includes(r.status))) return null;
+  const partial = reqs.some((r) => r.status === 'partially-delivered');
+  const stops = tripStops(trip);
+  const lastStop = stops[stops.length - 1];
+  const who = byName || reqs[reqs.length - 1]?.deliveredBy || 'the store';
+  const receipt = {
+    status: partial ? 'issue' : 'confirmed',
+    note: partial ? 'Marked partially delivered in Stock Requests - see the request for what was short' : 'Confirmed through Stock Requests',
+    byName: who,
+    at: new Date().toISOString(),
+    viaRequests: true,
+    requestsDelivered: ids.length,
+  };
+  const updated = { ...trip, receipt };
+  await kv.set(`rider-trip:${trip.id}`, updated);
+  const heads = await getAllProductionHeads();
+  const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+  await notifyEmployeeIds(
+    [...heads, caller],
+    'rider_receipt',
+    partial ? 'Delivery partly received' : 'Delivery received',
+    partial ? `${lastStop.name} marked the stock request partially delivered - check what was short.` : `${lastStop.name} confirmed the stock request from ${trip.riderName}'s ride was received.`,
+    updated
+  );
+  return updated;
+}
+
+// Called whenever a stock request is marked delivered: confirm any delivered ride that carried it.
+async function confirmRidesForRequest(requestId: string, byName?: string): Promise<void> {
+  try {
+    // Stock Requests records who delivered it as an employee id - show their name instead.
+    let name = byName;
+    if (byName) {
+      const emp = await kv.get(`unified-employee:${byName}`);
+      if (emp?.name) name = emp.name;
+    }
+    const trips = await getAllByPrefixWithRetry('rider-trip:');
+    for (const t of trips || []) {
+      if (t.status === 'delivered' && !t.receipt && Array.isArray(t.requestIds) && t.requestIds.includes(requestId)) {
+        await autoReceiptFromRequests(t, name);
+      }
+    }
+  } catch (error) {
+    console.log('Could not sync ride receipts for request', requestId, error);
+  }
+}
+
+// Guardrail: the rider may only mark Arrived / Picked up / Delivered while actually at that stop.
+// Checked against the phone's last reported position (and its stated accuracy), which must be
+// fresh. A stop with no map location yet can't be checked, so it is allowed but recorded as
+// unverified rather than blocking the ride.
+const RIDER_GEOFENCE_METRES = 200;
+const RIDER_LOCATION_MAX_AGE_MS = 3 * 60 * 1000;
+
+async function checkRiderAtStop(
+  trip: any,
+  stop: RiderStop,
+  action: string
+): Promise<{ ok: true; verified: boolean; meters: number | null } | { ok: false; error: string }> {
+  const coords = await stopCoordinates(stop);
+  if (!coords) return { ok: true, verified: false, meters: null };
+  const loc = await kv.get(`rider-location:${trip.id}`);
+  if (!loc || Date.now() - new Date(loc.updatedAt).getTime() > RIDER_LOCATION_MAX_AGE_MS) {
+    return { ok: false, error: "We can't see your location right now. Turn on location/GPS, wait a few seconds, then try again." };
+  }
+  const meters = haversineMetres(loc.latitude, loc.longitude, coords.latitude, coords.longitude);
+  const allowed = RIDER_GEOFENCE_METRES + Math.min(typeof loc.accuracy === 'number' ? loc.accuracy : 0, 100);
+  if (meters > allowed) {
+    const away = meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters / 10) * 10} m`;
+    return { ok: false, error: `You're about ${away} from ${stop.name}. Get to ${stop.name} before marking ${action}.` };
+  }
+  return { ok: true, verified: true, meters: Math.round(meters) };
+}
+
+// Is the actor store staff for a store this ride stops at, and may they watch the rider right now?
+// (Watching: once the order is on its way to their store, or while the rider is coming to pick up from it.)
+function storeStaffMayWatch(trip: any, actor: any): boolean {
+  if (!(actor.designation === 'store_incharge' || actor.designation === 'store_ops') || !actor.storeId) return false;
+  const { pickup, drop } = rideEnds(trip);
+  const pickupIsMine = pickup.kind === 'store' && pickup.id === actor.storeId;
+  const dropIsMine = drop.kind === 'store' && drop.id === actor.storeId;
+  return (pickupIsMine && RIDER_LOCATION_STATUSES.includes(trip.status)) || (dropIsMine && trip.status === 'picked_up');
+}
+
+// Riders available to be called (dispatch roles only), with live availability and default rate.
+app.get('/make-server-c2dd9b9d/rider/riders', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const all = await kv.getByPrefix('unified-employee:');
+    const riderEmployees = (all || []).filter((e: any) => e.designation === 'rider' && e.status !== 'inactive');
+    const riders = [];
+    for (const e of riderEmployees) {
+      const profile = await loadRiderProfile(e.employeeId);
+      const avail = riderAvailability(profile);
+      riders.push({
+        employeeId: e.employeeId,
+        name: profile?.name || e.name,
+        available: avail.available,
+        unavailableReason: avail.reason,
+        defaultRate: profile?.defaultRate ?? null,
+        aadhaarMasked: maskAadhaar(profile?.aadhaar),
+        aadhaarFull: actor.role === 'cluster_head' ? (profile?.aadhaar || null) : null,
+        hasProfile: !!profile,
+      });
+    }
+    // Available riders first, unavailable (shown red) last.
+    riders.sort((a, b) => Number(b.available) - Number(a.available) || a.name.localeCompare(b.name));
+    return c.json({ riders });
+  } catch (error) {
+    console.log('Error fetching riders:', error);
+    return c.json({ error: 'Failed to fetch riders' }, 500);
+  }
+});
+
+// Trips for a date (default today) plus any still-active trip from an earlier day, scoped by who
+// is asking: a rider sees only their own, store staff only rides that stop at their store,
+// dispatch roles see everything.
+app.get('/make-server-c2dd9b9d/rider/trips', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const date = c.req.query('date') || getTodayIST();
+    // Optional range (inclusive, YYYY-MM-DD) for the Past rides view; without it: one day + anything still active.
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    const isIso = (d?: string) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    const all = await getAllByPrefixWithRetry('rider-trip:');
+    let trips = (all || []).filter((t: any) =>
+      isIso(from) && isIso(to)
+        ? t.date >= (from as string) && t.date <= (to as string)
+        : t.date === date || RIDER_ACTIVE_STATUSES.includes(t.status)
+    );
+    if (actor.isRider) {
+      trips = trips.filter((t: any) => t.riderEmployeeId === actor.employeeId);
+    } else if (!actor.canDispatch) {
+      const isStoreStaff = actor.designation === 'store_incharge' || actor.designation === 'store_ops';
+      if (!isStoreStaff || !actor.storeId) return c.json({ trips: [] });
+      trips = trips.filter((t: any) => tripStops(t).some((st) => st.kind === 'store' && st.id === actor.storeId));
+    }
+    // Give older rides the same shape as new ones so the screens only deal with one format.
+    trips = trips.map((t: any) => ({ ...t, stops: tripStops(t), legIndex: tripLegIndex(t), tripType: t.tripType || (t.direction === 'to_production' ? 'to_production' : 'to_store') }));
+    trips.sort((a: any, b: any) => String(b.calledAt).localeCompare(String(a.calledAt)));
+    return c.json({ trips, maxTripsPerDay: RIDER_MAX_TRIPS_PER_DAY });
+  } catch (error) {
+    console.log('Error fetching rider trips:', error);
+    return c.json({ error: 'Failed to fetch trips' }, 500);
+  }
+});
+
+// Call a rider in (dispatch roles). tripType: 'to_store' (production house -> store, the default),
+// 'to_production' (store -> production house), 'round_trip' (store -> production -> store) or
+// 'custom' (any two places, including a one-off location such as an event stall).
+app.post('/make-server-c2dd9b9d/rider/trips', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Only the production incharge, an operations manager or the cluster head can call a rider' }, 403);
+
+    const body = await c.req.json();
+    const { riderEmployeeId, storeId, note, fare, force } = body;
+    const requestedRequestIds: string[] = Array.isArray(body.requestIds) ? body.requestIds.filter((x: any) => typeof x === 'string') : [];
+    const tripType: string = ['to_store', 'to_production', 'round_trip', 'custom'].includes(body.tripType) ? body.tripType : (body.direction === 'to_production' ? 'to_production' : 'to_store');
+    if (!riderEmployeeId) return c.json({ error: 'Choose a rider' }, 400);
+
+    const rider = await kv.get(`unified-employee:${riderEmployeeId}`);
+    if (!rider || rider.designation !== 'rider') return c.json({ error: 'That employee is not a rider' }, 400);
+
+    // ---- work out the stops
+    const makeStop = async (input: any): Promise<RiderStop | { error: string }> => {
+      if (input?.kind === 'production') {
+        const house = input.id ? await kv.get(`production_house_${input.id}`) : null;
+        return house ? { kind: 'production', id: input.id, name: house.name || 'Production house' } : { error: 'Production house not found' };
+      }
+      if (input?.kind === 'store') {
+        const st = input.id ? await kv.get(`store:${input.id}`) : null;
+        return st ? { kind: 'store', id: input.id, name: st.name || 'Store' } : { error: 'Store not found' };
+      }
+      if (input?.kind === 'custom') {
+        const name = typeof input.name === 'string' ? input.name.trim() : '';
+        if (name.length < 2) return { error: 'Give the custom location a name' };
+        if (!isValidLatLng(input.latitude, input.longitude)) return { error: `Set the map location for "${name}"` };
+        return { kind: 'custom', id: null, name, latitude: input.latitude, longitude: input.longitude };
+      }
+      return { error: 'Choose where the ride starts and ends' };
+    };
+
+    let stops: RiderStop[] = [];
+    if (tripType === 'custom') {
+      const pickup = await makeStop(body.pickup);
+      if ('error' in pickup) return c.json({ error: pickup.error }, 400);
+      const drop = await makeStop(body.drop);
+      if ('error' in drop) return c.json({ error: drop.error }, 400);
+      stops = [pickup, drop];
+    } else {
+      if (!storeId) return c.json({ error: 'Choose a store' }, 400);
+      const store = await kv.get(`store:${storeId}`);
+      if (!store) return c.json({ error: 'Store not found' }, 404);
+      if (!store.productionHouseId) return c.json({ error: `${store.name || 'This store'} has no production house linked` }, 400);
+      const houseStop = await makeStop({ kind: 'production', id: store.productionHouseId });
+      if ('error' in houseStop) return c.json({ error: houseStop.error }, 400);
+      const storeStop: RiderStop = { kind: 'store', id: storeId, name: store.name || 'Store' };
+      stops = tripType === 'to_production' ? [storeStop, houseStop]
+        : tripType === 'round_trip' ? [storeStop, houseStop, storeStop]
+        : [houseStop, storeStop];
+    }
+    if (stops.length === 2 && stops[0].kind === stops[1].kind && stops[0].id === stops[1].id && stops[0].kind !== 'custom') {
+      return c.json({ error: 'The ride starts and ends at the same place' }, 400);
+    }
+
+    const profile = await loadRiderProfile(riderEmployeeId);
+    const avail = riderAvailability(profile);
+    if (!avail.available && !force) {
+      return c.json({ error: `${profile?.name || rider.name} is unavailable right now (${avail.reason}).`, unavailable: true }, 409);
+    }
+
+    const today = getTodayIST();
+    const all = await getAllByPrefixWithRetry('rider-trip:');
+    const riderTrips = (all || []).filter((t: any) => t.riderEmployeeId === riderEmployeeId);
+    if (riderTrips.some((t: any) => RIDER_ACTIVE_STATUSES.includes(t.status))) {
+      return c.json({ error: `${rider.name} already has a ride in progress. Wait until it is delivered or cancel it first.` }, 400);
+    }
+    const todaysCount = riderTrips.filter((t: any) => t.date === today && t.status !== 'cancelled').length;
+    if (todaysCount >= RIDER_MAX_TRIPS_PER_DAY) {
+      return c.json({ error: `${rider.name} has already done ${RIDER_MAX_TRIPS_PER_DAY} rides today.` }, 400);
+    }
+
+    // Fare: what production typed, else the rider's own default rate. With no rate at all the
+    // rider has to name one first (and production approves it) before the ride can start.
+    const typedFare = typeof fare === 'number' && fare > 0 ? fare : null;
+    const startingFare = typedFare ?? (profile?.defaultRate > 0 ? profile.defaultRate : 0);
+
+    const primaryStore = stops.find((st) => st.kind === 'store') || null;
+    const primaryHouse = stops.find((st) => st.kind === 'production') || null;
+
+    // Stock requests this ride carries: only those for the store it finally delivers to, and not
+    // already delivered. They get marked delivered when the store confirms the ride.
+    const finalStop = stops[stops.length - 1];
+    let requestIds: string[] = [];
+    if (finalStop.kind === 'store' && requestedRequestIds.length > 0) {
+      const found = await Promise.all(requestedRequestIds.map((id) => kv.get(`production_request_${id}`)));
+      requestIds = requestedRequestIds.filter((id, i) => found[i] && found[i].storeId === finalStop.id && !REQUEST_DONE.includes(found[i].status));
+    }
+    const now = new Date().toISOString();
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 7)}`;
+    const trip = {
+      id,
+      date: today,
+      tripNumber: todaysCount + 1,
+      tripType,
+      direction: tripType === 'to_production' ? 'to_production' : 'to_store',
+      stops,
+      legIndex: 0,
+      legs: [],
+      requestIds,
+      riderEmployeeId,
+      riderName: profile?.name || rider.name,
+      storeId: primaryStore?.id || null,
+      storeName: primaryStore?.name || '',
+      productionHouseId: primaryHouse?.id || null,
+      productionHouseName: primaryHouse?.name || null,
+      note: typeof note === 'string' ? note.trim() : '',
+      fare: startingFare,
+      defaultFare: startingFare,
+      proposedFare: null,
+      fareStatus: startingFare > 0 ? 'agreed' : 'needs_rate',
+      status: 'called',
+      calledAt: now,
+      calledBy: actor.employeeId,
+      calledByName: actor.name,
+      onTheWayAt: null,
+      arrivedAt: null,
+      readyAt: null,
+      readyByName: null,
+      pickedUpAt: null,
+      deliveredAt: null,
+      cancelledAt: null,
+    };
+    await kv.set(`rider-trip:${id}`, trip);
+
+    const route = stops.map((st) => st.name).join(' → ');
+    await notifyEmployeeIds(
+      [rider],
+      'rider_called',
+      stops[0].kind === 'production' ? 'Come to the production house now' : `Pick up at ${stops[0].name} now`,
+      `${actor.name} is calling you for a ride: ${route}${startingFare > 0 ? ` (fare ₹${startingFare})` : ''}${trip.note ? ` - ${trip.note}` : ''}.`,
+      trip
+    );
+    return c.json({ success: true, trip });
+  } catch (error) {
+    console.log('Error calling rider:', error);
+    return c.json({ error: 'Failed to call rider' }, 500);
+  }
+});
+
+// Whoever hands the order over marks it ready: dispatch roles always; for store -> production
+// rides the store incharge of that store too.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/ready', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    const pickupStop = rideEnds(trip).pickup;
+    const isPickupStoreStaff = pickupStop.kind === 'store' &&
+      (actor.designation === 'store_incharge' || actor.designation === 'store_ops') && !!actor.storeId && actor.storeId === pickupStop.id;
+    if (!actor.canDispatch && !isPickupStoreStaff) return c.json({ error: 'Not allowed' }, 403);
+    if (!['called', 'on_the_way', 'arrived'].includes(trip.status)) {
+      return c.json({ error: 'This ride is already picked up or closed' }, 400);
+    }
+    if (trip.readyAt) return c.json({ success: true, trip });
+
+    const updated = { ...trip, readyAt: new Date().toISOString(), readyByName: actor.name };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    await notifyEmployeeIds(
+      [rider],
+      'rider_ready',
+      'Order ready for pickup',
+      trip.status === 'arrived' ? 'Your order is ready - collect it now.' : `The order is ready. Collect it when you reach ${rideEnds(trip).pickupName}.`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error marking trip ready:', error);
+    return c.json({ error: 'Failed to mark ready' }, 500);
+  }
+});
+
+// Rider moves their own trip to the next stage.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/advance', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    const { status, override } = await c.req.json();
+    // Dispatch can confirm a step on the rider's behalf (e.g. their GPS is not working) - skips the
+    // location check, and is recorded on the ride.
+    const isOverride = !!override && actor.canDispatch;
+    if (!isOverride && (!actor.isRider || trip.riderEmployeeId !== actor.employeeId)) {
+      return c.json({ error: 'This is not your ride' }, 403);
+    }
+    if (RIDER_NEXT_STATUS[trip.status] !== status) {
+      return c.json({ error: 'That is not the next step for this ride' }, 400);
+    }
+    // The fare has to be settled before the ride starts: either the default was accepted, or
+    // the rider's changed rate was approved by production. (Rides created before fares existed
+    // have no fareStatus and are never blocked.)
+    if (status === 'on_the_way' && trip.fareStatus && trip.fareStatus !== 'agreed') {
+      return c.json({
+        error: trip.fareStatus === 'proposed'
+          ? "Production hasn't approved your rate yet. Wait for their reply."
+          : 'Set your rate for this ride first - production has to agree to it.',
+      }, 400);
+    }
+    if (status === 'picked_up' && !trip.readyAt) {
+      return c.json({ error: "The order hasn't been marked ready for pickup yet. Wait for the go-ahead." }, 400);
+    }
+    // Location guardrails: arriving and picking up happen at the pickup stop, delivering at the drop.
+    let geo: any = isOverride ? { overriddenBy: actor.name } : null;
+    if (!isOverride && (status === 'arrived' || status === 'picked_up' || status === 'delivered')) {
+      const here = rideEnds(trip);
+      const check = await checkRiderAtStop(trip, status === 'delivered' ? here.drop : here.pickup, status === 'arrived' ? 'arrived' : status === 'picked_up' ? 'picked up' : 'delivered');
+      if (!check.ok) return c.json({ error: check.error }, 400);
+      geo = { verified: check.verified, meters: check.meters };
+    }
+    const geoKey = `${tripLegIndex(trip)}:${status}`;
+
+    const now = new Date().toISOString();
+    const stampField: Record<string, string> = {
+      on_the_way: 'onTheWayAt',
+      arrived: 'arrivedAt',
+      picked_up: 'pickedUpAt',
+      delivered: 'deliveredAt',
+    };
+    const ends = rideEnds(trip);
+    const who = trip.riderName;
+    const pickupParty = await stopParty(ends.pickup, trip);
+    const dropParty = await stopParty(ends.drop, trip);
+
+    // Delivering a leg that is not the last one (e.g. store -> production on a round trip): the
+    // rider is now AT the next pickup, so the ride carries on from "arrived" for the next leg.
+    if (status === 'delivered' && !isFinalLeg(trip)) {
+      const legRecord = {
+        pickup: ends.pickupName, drop: ends.dropName,
+        onTheWayAt: trip.onTheWayAt, arrivedAt: trip.arrivedAt, readyAt: trip.readyAt, pickedUpAt: trip.pickedUpAt, deliveredAt: now,
+      };
+      const next = tripStops(trip)[tripLegIndex(trip) + 2];
+      const advanced = {
+        ...trip,
+        legs: [...(trip.legs || []), legRecord],
+        legIndex: tripLegIndex(trip) + 1,
+        status: 'arrived',
+        onTheWayAt: null, arrivedAt: now, readyAt: null, readyByName: null, pickedUpAt: null, deliveredAt: null,
+        geo: { ...(trip.geo || {}), [geoKey]: geo },
+      };
+      await kv.set(`rider-trip:${trip.id}`, advanced);
+      await notifyEmployeeIds(dropParty, 'rider_arrived', 'Rider has arrived', `${who} delivered to ${ends.dropName} and is there for the next pickup (on to ${next?.name || 'the next stop'}). Mark the order ready.`, advanced);
+      await notifyEmployeeIds(pickupParty, 'rider_delivered', 'Leg delivered', `${who} delivered the order to ${ends.dropName}.`, advanced);
+      return c.json({ success: true, trip: advanced });
+    }
+
+    const updated = { ...trip, status, [stampField[status]]: now, ...(geo ? { geo: { ...(trip.geo || {}), [geoKey]: geo } } : {}) };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    if (status === 'on_the_way') {
+      await notifyEmployeeIds(pickupParty, 'rider_on_the_way', 'Rider is on the way', `${who} is heading to ${ends.pickupName} for the pickup.`, updated);
+    } else if (status === 'arrived') {
+      await notifyEmployeeIds(pickupParty, 'rider_arrived', 'Rider has arrived', `${who} is at ${ends.pickupName} for the pickup.`, updated);
+    } else if (status === 'picked_up') {
+      await notifyEmployeeIds(dropParty, 'rider_picked_up', 'Order is on its way', `${who} has picked up the order and is heading to ${ends.dropName}.`, updated);
+      await notifyEmployeeIds(pickupParty, 'rider_picked_up', 'Order picked up', `${who} has picked up the order for ${ends.dropName}.`, updated);
+    } else if (status === 'delivered') {
+      await notifyEmployeeIds(dropParty, 'rider_delivered', 'Order delivered', `${who} has delivered the order to ${ends.dropName}. Please check it and confirm you received it.`, updated);
+      await notifyEmployeeIds(pickupParty, 'rider_delivered', 'Order delivered', `${who} delivered the order to ${ends.dropName}.`, updated);
+    }
+    // The store may already have marked the carried stock requests delivered - then the ride's
+    // receipt is confirmed right away.
+    if (status === 'delivered') {
+      const settled = await autoReceiptFromRequests(updated);
+      if (settled) return c.json({ success: true, trip: settled });
+    }
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error advancing rider trip:', error);
+    return c.json({ error: 'Failed to update the ride' }, 500);
+  }
+});
+
+// Rider proposes a different rate for a ride that is waiting for them (before accepting it).
+app.post('/make-server-c2dd9b9d/rider/trips/:id/fare', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!actor.isRider || trip.riderEmployeeId !== actor.employeeId) return c.json({ error: 'This is not your ride' }, 403);
+    if (trip.status !== 'called') return c.json({ error: 'The rate can only be changed before you start the ride' }, 400);
+
+    const { amount } = await c.req.json();
+    if (typeof amount !== 'number' || !isFinite(amount) || amount <= 0 || amount > 100000) {
+      return c.json({ error: 'Enter a valid rate in rupees' }, 400);
+    }
+    const rounded = Math.round(amount);
+    // Same as the agreed fare: nothing to approve.
+    if (rounded === trip.fare && trip.fareStatus === 'agreed') return c.json({ success: true, trip });
+
+    const updated = { ...trip, proposedFare: rounded, fareStatus: 'proposed', fareProposedAt: new Date().toISOString() };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const productionHeads = await getAllProductionHeads();
+    const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+    await notifyEmployeeIds(
+      [...productionHeads, caller],
+      'rider_fare_proposed',
+      'Rider asks for a different rate',
+      `${trip.riderName} wants ₹${rounded} for the ride to ${rideEnds(trip).dropName}${trip.fare > 0 ? ` instead of ₹${trip.fare}` : ''}. Approve or reject it in Riders.`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error proposing rider fare:', error);
+    return c.json({ error: 'Failed to send your rate' }, 500);
+  }
+});
+
+// Production approves or rejects the rider's proposed rate.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/fare-decision', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (trip.fareStatus !== 'proposed' || !trip.proposedFare) return c.json({ error: 'There is no rate waiting for a decision' }, 400);
+
+    const { approve } = await c.req.json();
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    let updated;
+    if (approve) {
+      updated = { ...trip, fare: trip.proposedFare, proposedFare: null, fareStatus: 'agreed', fareDecidedByName: actor.name, fareDecidedAt: new Date().toISOString() };
+      await kv.set(`rider-trip:${trip.id}`, updated);
+      await notifyEmployeeIds([rider], 'rider_fare_decided', 'Rate approved', `${actor.name} approved ₹${updated.fare} for this ride. You can start now.`, updated);
+    } else {
+      // Rejected: the previous fare stands (if there was none, the rider must name a rate again).
+      updated = { ...trip, proposedFare: null, fareStatus: trip.fare > 0 ? 'agreed' : 'needs_rate', fareDecidedByName: actor.name, fareDecidedAt: new Date().toISOString() };
+      await kv.set(`rider-trip:${trip.id}`, updated);
+      await notifyEmployeeIds(
+        [rider],
+        'rider_fare_decided',
+        'Rate not approved',
+        updated.fare > 0 ? `${actor.name} kept the fare at ₹${updated.fare}. Start the ride, or ask the production incharge to talk.` : `${actor.name} did not approve that rate. Enter a new one.`,
+        updated
+      );
+    }
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error deciding rider fare:', error);
+    return c.json({ error: 'Failed to record the decision' }, 500);
+  }
+});
+
+// The receiving end confirms the delivery (or reports a problem): the store incharge of the final
+// stop, or dispatch roles. Does not hold up the rider's earnings - it is a record for production.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/receipt', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (trip.status !== 'delivered') return c.json({ error: 'The ride has not been delivered yet' }, 400);
+
+    const stops = tripStops(trip);
+    const lastStop = stops[stops.length - 1];
+    const isReceivingStoreStaff = lastStop.kind === 'store' &&
+      (actor.designation === 'store_incharge' || actor.designation === 'store_ops') && !!actor.storeId && actor.storeId === lastStop.id;
+    if (!actor.canDispatch && !isReceivingStoreStaff) return c.json({ error: 'Not allowed' }, 403);
+
+    const { ok, note } = await c.req.json();
+    const cleanNote = typeof note === 'string' ? note.trim() : '';
+    if (!ok && cleanNote.length < 3) return c.json({ error: 'Say what was wrong with the delivery' }, 400);
+
+    // Confirming the ride also marks the stock requests it carried as delivered, so the store only
+    // confirms once. (Reporting a problem leaves them as they are - use Stock Requests for a partial
+    // delivery.) A request production never marked shipped can't be delivered and is reported back.
+    let requestsDelivered = 0;
+    const requestsNotShipped: string[] = [];
+    if (ok) {
+      for (const requestId of Array.isArray(trip.requestIds) ? trip.requestIds : []) {
+        const outcome = await deliverRequestFromRide(requestId, actor.name);
+        if (outcome === 'delivered' || outcome === 'already') requestsDelivered++;
+        else if (outcome === 'not_shipped') requestsNotShipped.push(requestId);
+      }
+    }
+    const linkNote = requestsNotShipped.length > 0
+      ? ` ${requestsNotShipped.length} stock request${requestsNotShipped.length === 1 ? ' was' : 's were'} not shipped in Stock Requests yet, so ${requestsNotShipped.length === 1 ? 'it was' : 'they were'} left open.`
+      : '';
+    const receipt = {
+      status: ok ? 'confirmed' : 'issue',
+      note: cleanNote + (ok ? linkNote : ''),
+      byName: actor.name,
+      at: new Date().toISOString(),
+      requestsDelivered,
+    };
+    const updated = { ...trip, receipt };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const heads = await getAllProductionHeads();
+    const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+    await notifyEmployeeIds(
+      [...heads, caller],
+      'rider_receipt',
+      ok ? 'Delivery received' : 'Problem with a delivery',
+      ok ? `${actor.name} confirmed ${lastStop.name} received the delivery from ${trip.riderName}.` : `${actor.name} reported a problem at ${lastStop.name}: ${cleanNote}`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error recording delivery receipt:', error);
+    return c.json({ error: 'Failed to record the confirmation' }, 500);
+  }
+});
+
+// ---- Rider's own profile, availability and earnings ----
+app.get('/make-server-c2dd9b9d/rider/profile', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have a rider profile' }, 403);
+    const profile = await loadRiderProfile(actor.employeeId);
+    const avail = riderAvailability(profile);
+    return c.json({
+      profile: {
+        name: profile?.name || actor.name,
+        aadhaar: profile?.aadhaar || '',
+        defaultRate: profile?.defaultRate ?? null,
+        availability: profile?.availability || null,
+        unavailableUntil: profile?.unavailableUntil || null,
+      },
+      available: avail.available,
+      unavailableReason: avail.reason,
+    });
+  } catch (error) {
+    console.log('Error fetching rider profile:', error);
+    return c.json({ error: 'Failed to load your profile' }, 500);
+  }
+});
+
+app.put('/make-server-c2dd9b9d/rider/profile', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have a rider profile' }, 403);
+    const body = await c.req.json();
+
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (name.length < 2 || name.length > 80) return c.json({ error: 'Enter your full name' }, 400);
+
+    const aadhaar = typeof body.aadhaar === 'string' ? body.aadhaar.replace(/\s+/g, '') : '';
+    if (aadhaar && !/^\d{12}$/.test(aadhaar)) return c.json({ error: 'Aadhaar number must be 12 digits' }, 400);
+
+    const rate = body.defaultRate === null || body.defaultRate === '' || body.defaultRate === undefined ? null : Number(body.defaultRate);
+    if (rate !== null && (!isFinite(rate) || rate < 0 || rate > 100000)) return c.json({ error: 'Enter a valid rate per ride' }, 400);
+
+    // Availability: one from/to range per weekday.
+    const availability: Record<string, { enabled: boolean; from: string; to: string }> = {};
+    for (const day of RIDER_DAY_KEYS) {
+      const d = body.availability?.[day];
+      if (!d) continue;
+      const enabled = !!d.enabled;
+      const from = String(d.from || '');
+      const to = String(d.to || '');
+      if (enabled) {
+        const f = hhmmToMinutes(from);
+        const t = hhmmToMinutes(to);
+        if (isNaN(f) || isNaN(t) || f >= t) return c.json({ error: `${RIDER_DAY_LABELS[day]}: the end time must be after the start time` }, 400);
+      }
+      availability[day] = { enabled, from, to };
+    }
+
+    const existing = await loadRiderProfile(actor.employeeId);
+    const profile = {
+      ...(existing || {}),
+      employeeId: actor.employeeId,
+      name,
+      aadhaar,
+      defaultRate: rate,
+      availability: Object.keys(availability).length ? availability : existing?.availability || null,
+      updatedAt: new Date().toISOString(),
+    };
+    await kv.set(`rider-profile:${actor.employeeId}`, profile);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider profile:', error);
+    return c.json({ error: 'Failed to save your profile' }, 500);
+  }
+});
+
+// Rider marks themselves unavailable for a while (or available again) on top of their schedule.
+app.post('/make-server-c2dd9b9d/rider/availability', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders can change availability' }, 403);
+    const { unavailable, duration } = await c.req.json();
+
+    const { now, endOfDayIso } = riderIstNow();
+    let until: string | null = null;
+    if (unavailable) {
+      if (duration === 'hour') until = new Date(now.getTime() + 3600 * 1000).toISOString();
+      else if (duration === 'three_hours') until = new Date(now.getTime() + 3 * 3600 * 1000).toISOString();
+      else if (duration === 'rest_of_day') until = endOfDayIso;
+      else until = 'indefinite';
+    }
+    const existing = (await loadRiderProfile(actor.employeeId)) || { employeeId: actor.employeeId, name: actor.name };
+    await kv.set(`rider-profile:${actor.employeeId}`, { ...existing, unavailableUntil: until, updatedAt: new Date().toISOString() });
+    const avail = riderAvailability({ ...existing, unavailableUntil: until });
+    return c.json({ success: true, unavailableUntil: until, available: avail.available, unavailableReason: avail.reason });
+  } catch (error) {
+    console.log('Error saving rider availability:', error);
+    return c.json({ error: 'Failed to update availability' }, 500);
+  }
+});
+
+// What the rider has earned from delivered rides, and what has been paid out so far this month.
+app.get('/make-server-c2dd9b9d/rider/summary', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have earnings' }, 403);
+    const today = getTodayIST();
+    const month = today.slice(0, 7);
+    const [trips, payouts] = await Promise.all([getAllByPrefixWithRetry('rider-trip:'), getAllByPrefixWithRetry('payout:')]);
+    const mine = (trips || []).filter((t: any) => t.riderEmployeeId === actor.employeeId && t.status === 'delivered');
+    const sum = (rows: any[]) => rows.reduce((t, r) => t + (r.fare || 0), 0);
+    const todayRides = mine.filter((t: any) => t.date === today);
+    const monthRides = mine.filter((t: any) => (t.date || '').startsWith(month));
+    const paid = (payouts || [])
+      .filter((p: any) => p.employeeId === actor.employeeId && ((p.forMonth || (p.date || '').slice(0, 7)) === month))
+      .reduce((t: number, p: any) => t + (p.amount || 0), 0);
+    return c.json({
+      today: { rides: todayRides.length, earned: sum(todayRides) },
+      month: { rides: monthRides.length, earned: sum(monthRides), paid, balance: sum(monthRides) - paid },
+    });
+  } catch (error) {
+    console.log('Error computing rider summary:', error);
+    return c.json({ error: 'Failed to load earnings' }, 500);
+  }
+});
+
+// Dispatch cancels a ride that is not yet delivered.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/cancel', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!RIDER_ACTIVE_STATUSES.includes(trip.status)) return c.json({ error: 'This ride is already closed' }, 400);
+
+    const updated = { ...trip, status: 'cancelled', cancelledAt: new Date().toISOString() };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    await notifyEmployeeIds([rider], 'rider_cancelled', 'Ride cancelled', `${actor.name} cancelled the ride to ${trip.storeName}.`, updated);
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error cancelling rider trip:', error);
+    return c.json({ error: 'Failed to cancel the ride' }, 500);
+  }
+});
+
+// ---- Phase 2: live location + map pins ----
+// Location lives in its OWN record per trip (rider-location:{tripId}) rather than on the trip
+// itself: the rider's phone writes every few seconds, and a read-modify-write on the trip
+// record could overwrite a status change (arrived / picked up) that landed in between.
+const RIDER_LOCATION_STATUSES = ['on_the_way', 'arrived', 'picked_up'];
+const RIDER_TRACK_MAX_POINTS = 500;
+const RIDER_TRACK_MIN_STEP_METRES = 20;
+
+const isValidLatLng = (lat: any, lng: any) =>
+  typeof lat === 'number' && typeof lng === 'number' && isFinite(lat) && isFinite(lng) &&
+  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+
+function haversineMetres(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+// The rider's phone reports its position here while a ride is on the way / arrived / picked up.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/location', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!actor.isRider || trip.riderEmployeeId !== actor.employeeId) return c.json({ error: 'This is not your ride' }, 403);
+    // 409 tells the phone this ride no longer needs tracking, so it can stop sharing.
+    if (!RIDER_LOCATION_STATUSES.includes(trip.status)) return c.json({ error: 'Ride is not being tracked', status: trip.status }, 409);
+
+    const { latitude, longitude, accuracy, speed, bearing } = await c.req.json();
+    if (!isValidLatLng(latitude, longitude)) return c.json({ error: 'Invalid location' }, 400);
+
+    const key = `rider-location:${trip.id}`;
+    const existing = await kv.get(key);
+    const track: [number, number, string][] = Array.isArray(existing?.track) ? existing.track : [];
+    const now = new Date().toISOString();
+    const last = track[track.length - 1];
+    if (!last || haversineMetres(last[0], last[1], latitude, longitude) >= RIDER_TRACK_MIN_STEP_METRES) {
+      track.push([latitude, longitude, now]);
+      if (track.length > RIDER_TRACK_MAX_POINTS) track.splice(0, track.length - RIDER_TRACK_MAX_POINTS);
+    }
+    await kv.set(key, {
+      tripId: trip.id,
+      latitude,
+      longitude,
+      accuracy: typeof accuracy === 'number' ? accuracy : null,
+      speed: typeof speed === 'number' ? speed : null,
+      bearing: typeof bearing === 'number' ? bearing : null,
+      updatedAt: now,
+      track,
+    });
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider location:', error);
+    return c.json({ error: 'Failed to save location' }, 500);
+  }
+});
+
+// Live position + the pins for every stop of one trip. Riders see their own; dispatch roles see
+// any active trip; store staff see a ride that is coming to / leaving from their store.
+app.get('/make-server-c2dd9b9d/rider/trips/:id/location', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+
+    const isOwnRider = actor.isRider && trip.riderEmployeeId === actor.employeeId;
+    if (!(isOwnRider || actor.canDispatch || storeStaffMayWatch(trip, actor))) return c.json({ error: 'Not allowed' }, 403);
+
+    const location = await kv.get(`rider-location:${trip.id}`);
+    const stops = tripStops(trip);
+    const places: { kind: string; name: string; latitude: number; longitude: number }[] = [];
+    const missingPins: string[] = [];
+    const seen = new Set<string>();
+    for (const stop of stops) {
+      const key = `${stop.kind}:${stop.id || stop.name}`;
+      if (seen.has(key)) continue;   // a round trip passes the same store twice
+      seen.add(key);
+      const coords = await stopCoordinates(stop);
+      if (coords) places.push({ kind: stop.kind, name: stop.name, ...coords });
+      else missingPins.push(stop.name);
+    }
+    const firstOf = (kind: string) => places.find((p) => p.kind === kind) || null;
+    return c.json({
+      status: trip.status,
+      location: location || null,
+      places,
+      missingPins,
+      // Kept for app versions that predate multi-stop rides.
+      production: firstOf('production'),
+      store: firstOf('store'),
+    });
+  } catch (error) {
+    console.log('Error fetching rider location:', error);
+    return c.json({ error: 'Failed to fetch location' }, 500);
+  }
+});
+
+// ---- ETA, distance and traffic for an active ride ----
+// Route distance/duration come from the free OSRM public router (free-flow driving time - it has
+// NO live traffic). Traffic is therefore judged from how fast the rider is actually moving
+// compared with that free-flow speed, and "late / early" compares the predicted leg time with
+// what this leg usually takes (median of past rides in the same direction, or - until there are
+// enough past rides - the route's free-flow time plus a 25% city buffer). If a paid traffic
+// provider (e.g. Google Directions) is added later, only osrmRoute() below needs to change.
+const OSRM_BASE = 'https://router.project-osrm.org';
+const ETA_CACHE_MS = 40_000;
+
+async function osrmRoute(aLat: number, aLng: number, bLat: number, bLng: number): Promise<{ distance: number; duration: number; source: string }> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`${OSRM_BASE}/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=false`, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'BunnyMomosInventory/1.0 (rider ETA)' },
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const json = await res.json();
+      const r = json?.routes?.[0];
+      if (r && typeof r.distance === 'number' && typeof r.duration === 'number') {
+        return { distance: r.distance, duration: r.duration, source: 'osrm' };
+      }
+    }
+  } catch (_) { /* fall through to the straight-line estimate */ }
+  // Straight-line distance x 1.35 for real roads, at a slow 22 km/h city average.
+  const distance = haversineMetres(aLat, aLng, bLat, bLng) * 1.35;
+  return { distance, duration: distance / (22 / 3.6), source: 'estimate' };
+}
+
+const median = (xs: number[]) => {
+  const a = [...xs].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+app.get('/make-server-c2dd9b9d/rider/trips/:id/eta', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+
+    const isOwnRider = actor.isRider && trip.riderEmployeeId === actor.employeeId;
+    if (!(isOwnRider || actor.canDispatch || storeStaffMayWatch(trip, actor))) return c.json({ error: 'Not allowed' }, 403);
+
+    // Which leg is the rider on? On the way = heading to the pickup, picked up = heading to the drop.
+    const ends = rideEnds(trip);
+    const leg = trip.status === 'on_the_way' ? 'pickup' : trip.status === 'picked_up' ? 'drop' : null;
+    if (!leg) return c.json({ leg: null });
+    const targetStop = leg === 'pickup' ? ends.pickup : ends.drop;
+    const targetKind = targetStop.kind;
+    const targetName = targetStop.name;
+    const targetPlace = await stopCoordinates(targetStop);
+    const location = await kv.get(`rider-location:${trip.id}`);
+    if (!location) return c.json({ leg, targetName, unavailable: 'waiting_for_location' });
+    if (!targetPlace) return c.json({ leg, targetName, unavailable: 'destination_not_pinned' });
+
+    const legKey = `${tripLegIndex(trip)}:${leg}`;
+    const prev = await kv.get(`rider-eta:${trip.id}`);
+    const sameLeg = prev && prev.legKey === legKey;
+    if (sameLeg && Date.now() - new Date(prev.computedAt).getTime() < ETA_CACHE_MS) return c.json(prev);
+
+    const route = await osrmRoute(location.latitude, location.longitude, targetPlace.latitude, targetPlace.longitude);
+    // OSRM's driving times are free-flow and optimistic for a city like this (it happily assumes
+    // 50-80 km/h), which produced a 3 minute ETA for 3.8 km. Use a realistic city pace instead:
+    // at least 1.3x OSRM's time and never faster than a 25 km/h average.
+    const baseDuration = Math.max(route.duration * 1.3, route.distance / (25 / 3.6));
+    const freeFlowMps = baseDuration > 0 ? route.distance / baseDuration : 0;
+
+    // Observed speed over the last few minutes (stops included, so a jam shows up as slow).
+    const track: [number, number, string][] = Array.isArray(location.track) ? location.track : [];
+    const endMs = new Date(location.updatedAt).getTime();
+    const windowStart = endMs - 8 * 60 * 1000;
+    const recent = track.filter((p) => new Date(p[2]).getTime() >= windowStart);
+    let observedMps: number | null = null;
+    if (recent.length >= 2) {
+      let path = 0;
+      for (let i = 1; i < recent.length; i++) path += haversineMetres(recent[i - 1][0], recent[i - 1][1], recent[i][0], recent[i][1]);
+      const spanSec = (endMs - new Date(recent[0][2]).getTime()) / 1000;
+      if (spanSec >= 120) observedMps = path / spanSec;
+    } else if (recent.length <= 1 && track.length > 0) {
+      const lastMs = new Date(track[track.length - 1][2]).getTime();
+      if (endMs - lastMs >= 120 * 1000) observedMps = 0; // no movement for 2+ minutes
+    }
+
+    const nearTarget = route.distance < 150;
+    let level: 'light' | 'moderate' | 'heavy' | 'unknown' = 'unknown';
+    if (observedMps !== null && freeFlowMps > 0 && !nearTarget) {
+      const ratio = observedMps / freeFlowMps;
+      level = ratio < 0.35 ? 'heavy' : ratio < 0.7 ? 'moderate' : 'light';
+    }
+
+    let etaSeconds = baseDuration;
+    if (observedMps !== null && observedMps > 0.5 && !nearTarget) {
+      // A burst of speed (or a GPS jump) must not collapse the ETA - clip to 45 km/h.
+      const usable = Math.min(observedMps, 12.5);
+      etaSeconds = Math.min(baseDuration * 3, 0.5 * baseDuration + 0.5 * (route.distance / usable));
+    } else if (observedMps === 0 && !nearTarget) {
+      etaSeconds = baseDuration * 1.5;
+    }
+    etaSeconds = Math.round(Math.max(etaSeconds, nearTarget ? 0 : route.distance / 12.5)); // never faster than a 45 km/h average
+
+    // What this leg normally takes: median of past rides of the same type to/from the same store
+    // once there are three, else free-flow time + 25%. Fixed at the first estimate of the leg.
+    let expectedSeconds: number = sameLeg && prev.expectedSeconds ? prev.expectedSeconds : 0;
+    if (!expectedSeconds) {
+      const typeOf = (t: any) => t.tripType || t.direction;
+      const history = trip.storeId
+        ? (await getAllByPrefixWithRetry('rider-trip:'))
+            .filter((t: any) => t.status === 'delivered' && typeOf(t) === typeOf(trip) && t.storeId === trip.storeId && t.id !== trip.id)
+            .map((t: any) => leg === 'drop'
+              ? (t.deliveredAt && t.pickedUpAt ? (new Date(t.deliveredAt).getTime() - new Date(t.pickedUpAt).getTime()) / 1000 : 0)
+              : (t.arrivedAt && t.onTheWayAt ? (new Date(t.arrivedAt).getTime() - new Date(t.onTheWayAt).getTime()) / 1000 : 0))
+            .filter((x: number) => x > 60 && x < 3 * 3600)
+        : [];
+      expectedSeconds = history.length >= 3 ? Math.round(median(history)) : Math.round(baseDuration * 1.1);
+    }
+    const legStartIso = leg === 'drop' ? trip.pickedUpAt : trip.onTheWayAt;
+    const elapsedSeconds = legStartIso ? Math.max(0, (Date.now() - new Date(legStartIso).getTime()) / 1000) : 0;
+    const deltaSeconds = Math.round(elapsedSeconds + etaSeconds - expectedSeconds);
+    const tolerance = Math.max(300, expectedSeconds * 0.2);
+    const timing: 'late' | 'early' | 'on_time' = deltaSeconds > tolerance ? 'late' : deltaSeconds < -tolerance ? 'early' : 'on_time';
+
+    const result = {
+      leg,
+      legKey,
+      targetName,
+      distanceMeters: Math.round(route.distance),
+      etaSeconds,
+      etaAt: new Date(Date.now() + etaSeconds * 1000).toISOString(),
+      traffic: {
+        level,
+        observedKmh: observedMps === null ? null : Math.round(observedMps * 3.6),
+        freeFlowKmh: Math.round(freeFlowMps * 3.6),
+      },
+      timing,
+      deltaMinutes: Math.round(deltaSeconds / 60),
+      expectedMinutes: Math.round(expectedSeconds / 60),
+      source: route.source,
+      computedAt: new Date().toISOString(),
+      expectedSeconds,
+      lateNotified: !!(sameLeg && prev.lateNotified),
+    };
+
+    // Tell the people waiting at the destination once, when the rider is clearly running late.
+    if (timing === 'late' && deltaSeconds >= 600 && !result.lateNotified) {
+      result.lateNotified = true;
+      const party = await stopParty(targetStop, trip);
+      const why = level === 'heavy' ? ' - heavy traffic' : level === 'moderate' ? ' - slow traffic' : '';
+      await notifyEmployeeIds(
+        party,
+        'rider_running_late',
+        'Rider is running late',
+        `${trip.riderName} is about ${Math.round(deltaSeconds / 60)} min later than usual to ${targetName}${why}. New ETA ${new Date(result.etaAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}.`,
+        trip
+      );
+    }
+
+    await kv.set(`rider-eta:${trip.id}`, result);
+    return c.json(result);
+  } catch (error) {
+    console.log('Error computing rider ETA:', error);
+    return c.json({ error: 'Failed to compute ETA' }, 500);
+  }
+});
+
+// Which production houses / stores already have a map pin (dispatch roles).
+app.get('/make-server-c2dd9b9d/rider/places', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const [stores, houses, places] = await Promise.all([
+      kv.getByPrefix('store:'),
+      kv.getByPrefix('production_house_'),
+      kv.getByPrefix('rider-place:'),
+    ]);
+    const placeFor = (kind: string, id: string) => (places || []).find((p: any) => p.kind === kind && p.id === id) || null;
+    const shape = (kind: 'production' | 'store', e: any) => {
+      const p = placeFor(kind, e.id);
+      return { kind, id: e.id, name: e.name, latitude: p?.latitude ?? null, longitude: p?.longitude ?? null, setByName: p?.setByName ?? null, setAt: p?.setAt ?? null };
+    };
+    return c.json({
+      places: [
+        ...(houses || []).filter((h: any) => h?.id).map((h: any) => shape('production', h)),
+        ...(stores || []).filter((s: any) => s?.id).map((s: any) => shape('store', s)),
+      ],
+    });
+  } catch (error) {
+    console.log('Error fetching rider places:', error);
+    return c.json({ error: 'Failed to fetch places' }, 500);
+  }
+});
+
+// Pin a production house or store on the map (dispatch roles) - done while standing there.
+app.post('/make-server-c2dd9b9d/rider/places', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const { kind, id, latitude, longitude } = await c.req.json();
+    if (kind !== 'production' && kind !== 'store') return c.json({ error: 'Invalid place type' }, 400);
+    if (!id || !isValidLatLng(latitude, longitude)) return c.json({ error: 'Invalid location' }, 400);
+    const entity = await kv.get(kind === 'production' ? `production_house_${id}` : `store:${id}`);
+    if (!entity) return c.json({ error: 'Place not found' }, 404);
+    await kv.set(`rider-place:${kind}:${id}`, { kind, id, latitude, longitude, setByName: actor.name, setAt: new Date().toISOString() });
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider place:', error);
+    return c.json({ error: 'Failed to save place' }, 500);
+  }
+});
+
+// ============================================
 // PRODUCTION REQUESTS ROUTES
 // ============================================
 
@@ -9013,6 +10289,11 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     
     await kv.set(`production_request_${id}`, updatedRequest);
     
+    // If a rider delivered this request, confirming it here also confirms that ride's receipt.
+    if (status === 'delivered' || status === 'partially-delivered') {
+      await confirmRidesForRequest(id, typeof updatedBy === 'string' ? updatedBy : undefined);
+    }
+
     console.log('Production request status updated:', { id, status, updatedBy });
     
     // Send notifications based on status change
@@ -11445,8 +12726,9 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
     }
 
     const allEmployees = await kv.getByPrefix('unified-employee:');
+    // Riders don't fill attendance, so they are never reminded about it.
     const attendees = allEmployees.filter((e: any) =>
-      (e.role === 'employee' || e.role === 'manager') && e.employeeId && e.authUserId
+      (e.role === 'employee' || e.role === 'manager') && e.employeeId && e.authUserId && e.designation !== 'rider'
     );
 
     console.log(`Checking attendance for ${attendees.length} employees/managers`);

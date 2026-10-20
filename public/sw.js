@@ -94,7 +94,18 @@ const NOTIFICATION_VIEW_MAP = {
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
   fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' }, // covers both stock + production requests; lands on the fulfillment screen
-  data_entry_reminder: { view: 'inventory' }, // covers both inventory + sales reminders
+  data_entry_reminder: { view: 'inventory' },
+  rider_called: { view: 'riders' },
+  rider_ready: { view: 'riders' },
+  rider_on_the_way: { view: 'riders' },
+  rider_arrived: { view: 'riders' },
+  rider_picked_up: { view: 'riders' },
+  rider_delivered: { view: 'riders' },
+  rider_cancelled: { view: 'riders' },
+  rider_running_late: { view: 'riders' },
+  rider_fare_proposed: { view: 'riders' },
+  rider_fare_decided: { view: 'riders' },
+  rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
 };
 
 function getNavigationTarget(data) {

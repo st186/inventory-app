@@ -112,6 +112,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
         'operations_manager': 'Operations Manager',
         'store_ops': 'Store Operations',
         'production_ops': 'Production Operations',
+        'rider': 'Rider',
       };
       
       return designationMap[designation] || designation;

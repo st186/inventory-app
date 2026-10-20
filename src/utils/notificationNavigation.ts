@@ -43,6 +43,17 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stock_recalibration: { view: 'analytics' },
   fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' },
   data_entry_reminder: { view: 'inventory' },
+  rider_called: { view: 'riders' },
+  rider_ready: { view: 'riders' },
+  rider_on_the_way: { view: 'riders' },
+  rider_arrived: { view: 'riders' },
+  rider_picked_up: { view: 'riders' },
+  rider_delivered: { view: 'riders' },
+  rider_cancelled: { view: 'riders' },
+  rider_running_late: { view: 'riders' },
+  rider_fare_proposed: { view: 'riders' },
+  rider_fare_decided: { view: 'riders' },
+  rider_receipt: { view: 'riders' },
 };
 
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {

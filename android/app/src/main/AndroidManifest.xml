@@ -54,9 +54,23 @@
         <receiver
             android:name=".QuickActionReceiver"
             android:exported="false" />
+
+        <!-- Rings the horn + vibrates for an incoming ride request (RiderCallAlert). -->
+        <service
+            android:name=".RiderCallService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Rider ride-request alert (RiderCallAlert): full-screen alarm-style notification, vibration,
+         ringing through Do Not Disturb (user-granted), and surviving battery optimisation. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>
