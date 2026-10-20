@@ -2784,7 +2784,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.15.1';
+const LATEST_APP_VERSION = '1.15.2';
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.

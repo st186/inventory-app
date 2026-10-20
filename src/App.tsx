@@ -1780,7 +1780,9 @@ export default function App() {
  }
 
  // Floating button + panel to let any logged-in user enable/check push notifications
- const pushNotificationWidget = (
+ // The floating bell is for the website: it lets a browser user switch web push on and check it.
+ // The Android app registers for push by itself at login, so there it is just clutter - hidden.
+ const pushNotificationWidget = nativePushNotifications.isNativePushSupported() ? null : (
  <>
  <button
  onClick={() => setShowPushNotificationPanel(true)}

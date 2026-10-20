@@ -3,4 +3,4 @@
 // /app-version) - the two are compared to power the soft "update available" banner
 // (see UpdateAvailableBanner.tsx). Plain dot-separated integers, compared numerically
 // segment-by-segment - keep it to that shape, no pre-release suffixes.
-export const APP_VERSION = '1.15.1';
+export const APP_VERSION = '1.15.2';
