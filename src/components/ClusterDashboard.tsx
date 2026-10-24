@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { InventoryContextType } from '../App';
-import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { formatDateIST } from '../utils/timezone';
 import {
   BarChart,
@@ -73,9 +73,7 @@ export function ClusterDashboard({ context }: Props) {
 
     return Array.from(categoryMap.entries())
       .map(([key, value]) => ({
-        name: INVENTORY_CATEGORIES[key as keyof typeof INVENTORY_CATEGORIES] || 
-              OVERHEAD_CATEGORIES[key as keyof typeof OVERHEAD_CATEGORIES] || 
-              key,
+        name: expenseCategoryLabel(key),
         value
       }))
       .sort((a, b) => b.value - a.value);

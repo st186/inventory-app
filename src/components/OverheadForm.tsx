@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
-import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES } from '../utils/inventoryData';
+import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES, SELECTABLE_OVERHEAD_CATEGORY_KEYS } from '../utils/inventoryData';
 import { X, Loader2 } from 'lucide-react';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
@@ -24,22 +24,19 @@ const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
   operating: 'Operating Expenses',
   meals: 'Staff Meals',
   payroll_linked: 'Fixed & Payroll-Linked',
+  asset: 'Equipment Purchases (₹1,000+, counted over its life)',
 };
 
 // Selectable categories, grouped for the <optgroup> UI, scoped to store vs production.
 // 'personal_expense' is always excluded: it's a salary advance/loan, not an operating
-// cost — use the Salary Advance flow in Payroll instead. For production, 'miscellaneous'
-// stays excluded (kept only for historical data display); the store list re-includes it.
+// cost — use the Salary Advance flow in Payroll instead. Legacy categories (party,
+// equipments, miscellaneous, service charge) are kept for old records only.
 function buildSelectableCategoriesByGroup(entityScope: 'store' | 'production', canUseRestricted: boolean): Record<OverheadCategoryGroup, { value: string; label: string }[]> {
-  const result: Record<OverheadCategoryGroup, { value: string; label: string }[]> = { operating: [], meals: [], payroll_linked: [] };
-  for (const [value, meta] of Object.entries(OVERHEAD_CATEGORY_META)) {
-    if (value === 'personal_expense') continue;
+  const result: Record<OverheadCategoryGroup, { value: string; label: string }[]> = { operating: [], meals: [], payroll_linked: [], asset: [] };
+  for (const value of SELECTABLE_OVERHEAD_CATEGORY_KEYS) {
+    const meta = OVERHEAD_CATEGORY_META[value];
     if (!canUseRestricted && RESTRICTED_OVERHEAD_CATEGORIES.includes(value)) continue;
-    if (entityScope === 'store') {
-      if (!STORE_OVERHEAD_CATEGORY_KEYS.includes(value)) continue;
-    } else if (value === 'miscellaneous') {
-      continue;
-    }
+    if (entityScope === 'store' && !STORE_OVERHEAD_CATEGORY_KEYS.includes(value)) continue;
     result[meta.group].push({ value, label: meta.label });
   }
   return result;

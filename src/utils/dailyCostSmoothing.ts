@@ -11,7 +11,8 @@
 //  - Until the real figure exists, the current and previous month are ESTIMATED from the month
 //    before: per employee for salaries (base only - last month's variable pay isn't repeated),
 //    per category for rent/electricity. Archived employees are never estimated. Estimates
-//    disappear for an employee/category as soon as their actual is recorded.
+//    disappear for an employee/category as soon as their actual is recorded (a payout that is
+//    only variable pay doesn't count - the base salary is still estimated).
 //  - The monthly pool is divided by the number of days in that month and only the days inside
 //    the viewed window (up to today) are returned.
 
@@ -38,6 +39,8 @@ export type SmoothedCosts = {
   // Part of the spread amount inside the window that comes from estimates, not recorded figures.
   estimatedAmount: number;
   estimatedMonths: string[];
+  // The window's spread amount split into permanent salaries and rent + electricity.
+  byGroup: { staff: number; occupancy: number };
 };
 
 export function buildSmoothedCosts(opts: {
@@ -79,45 +82,53 @@ export function buildSmoothedCosts(opts: {
 
   const curMonth = todayIST.slice(0, 7);
   const estimateMonths = [curMonth, monthAdd(curMonth, -1)];
-  const monthActual = new Map<string, number>();
-  const monthEstimate = new Map<string, number>();
+  type Split = { staff: number; occupancy: number };
+  const monthActual = new Map<string, Split>();
+  const monthEstimate = new Map<string, Split>();
 
   const months = new Set<string>([...salary.keys(), ...fixed.keys(), ...estimateMonths]);
   for (const m of months) {
-    let actual = 0;
-    for (const row of salary.get(m)?.values() || []) actual += row.total;
-    for (const v of fixed.get(m)?.values() || []) actual += v;
+    const actual: Split = { staff: 0, occupancy: 0 };
+    for (const row of salary.get(m)?.values() || []) actual.staff += row.total;
+    for (const v of fixed.get(m)?.values() || []) actual.occupancy += v;
     monthActual.set(m, actual);
 
-    let estimate = 0;
+    const estimate: Split = { staff: 0, occupancy: 0 };
     if (estimateMonths.includes(m)) {
       const prev = monthAdd(m, -1);
       const have = salary.get(m);
       for (const [empId, row] of salary.get(prev) || []) {
-        if (have?.has(empId)) continue;
+        // A variable-pay-only payout (no base salary yet) doesn't mean the salary is recorded.
+        const paid = have?.get(empId);
+        if (paid && paid.total - paid.variable > 0) continue;
         if (isArchived(empById.get(empId))) continue;
-        estimate += Math.max(0, row.total - row.variable);
+        estimate.staff += Math.max(0, row.total - row.variable);
       }
       const haveFixed = fixed.get(m);
       for (const [cat, total] of fixed.get(prev) || []) {
         if (haveFixed?.has(cat)) continue;
-        estimate += total;
+        estimate.occupancy += total;
       }
     }
     monthEstimate.set(m, estimate);
   }
 
   const byDate: Record<string, SmoothedDay> = {};
+  const byGroup = { staff: 0, occupancy: 0 };
   let estimatedAmount = 0;
   const estimatedMonths = new Set<string>();
+  const zero: Split = { staff: 0, occupancy: 0 };
   for (let d = windowStart; d <= windowEnd; d = addDay(d)) {
     const m = d.slice(0, 7);
     const n = daysInMonth(m);
-    const actual = (monthActual.get(m) || 0) / n;
-    const estimated = (monthEstimate.get(m) || 0) / n;
+    const a = monthActual.get(m) || zero, e = monthEstimate.get(m) || zero;
+    const actual = (a.staff + a.occupancy) / n;
+    const estimated = (e.staff + e.occupancy) / n;
     if (actual === 0 && estimated === 0) continue;
     byDate[d] = { amount: actual + estimated, estimated };
+    byGroup.staff += (a.staff + e.staff) / n;
+    byGroup.occupancy += (a.occupancy + e.occupancy) / n;
     if (estimated > 0) { estimatedAmount += estimated; estimatedMonths.add(m); }
   }
-  return { byDate, estimatedAmount, estimatedMonths: [...estimatedMonths] };
+  return { byDate, estimatedAmount, estimatedMonths: [...estimatedMonths], byGroup };
 }

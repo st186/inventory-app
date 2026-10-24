@@ -35,7 +35,7 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
   // start from UTILITIES_START_DATE, since that's as far back as POS order data is synced.
   const purchasedPackaging = useMemo(() => {
     const relevant = context.inventory.filter((item) => {
-      if (item.category !== 'packaging') return false;
+      if (item.category !== 'packaging' && item.category !== 'packaging_bulk') return false;
       if (selectedStore && item.storeId !== selectedStore) return false;
       return true;
     });

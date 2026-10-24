@@ -6,7 +6,7 @@ import { TrendingUp, TrendingDown, Package, AlertTriangle, Activity, Target, Dol
 import { Card } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
-import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 
 type Props = {
   context: InventoryContextType;
@@ -157,7 +157,7 @@ export function InventoryDashboard({ context, stores }: Props) {
     context.inventory
       .filter(item => new Date(item.date) >= cutoffDate)
       .forEach(item => {
-        const category = (INVENTORY_CATEGORIES as Record<string, string>)[item.category]
+        const category = (expenseCategoryLabel(item.category) !== item.category ? expenseCategoryLabel(item.category) : null)
           || item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         inventoryCostByCategory[category] = (inventoryCostByCategory[category] || 0) + item.totalCost;
       });

@@ -6,6 +6,7 @@ import * as api from '../utils/api';
 import { parseZomatoSettlementFile, parseSwiggySettlementFile, ParsedSettlement } from '../utils/aggregatorSettlementParser';
 import { getSettlementPeriod, settlementOverlapsPeriod } from '../utils/settlementPeriod';
 import { getTodayIST, addDays } from '../utils/timezone';
+import { SettlementCoverage } from './SettlementCoverage';
 
 type Props = {
   context: InventoryContextType;
@@ -144,6 +145,15 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       ? context.aggregatorSettlements
       : context.aggregatorSettlements.filter(s => s.storeId === effectiveStoreId),
     [context.aggregatorSettlements, effectiveStoreId]
+  );
+  // POS online sales and old manual payout entries for the same store, for the settlement check.
+  const storeOnlineSales = useMemo(
+    () => (context.onlineSalesData || []).filter((s: any) => !effectiveStoreId || effectiveStoreId === 'all' || s.storeId === effectiveStoreId),
+    [context.onlineSalesData, effectiveStoreId]
+  );
+  const storeOnlinePayouts = useMemo(
+    () => (context.onlinePayoutData || []).filter((p: any) => !effectiveStoreId || effectiveStoreId === 'all' || p.storeId === effectiveStoreId),
+    [context.onlinePayoutData, effectiveStoreId]
   );
 
   // A settlement's real identity - same aggregator, same settlement date - used to catch
@@ -951,6 +961,17 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           </div>
         )}
       </div>
+
+      {/* Which days have a settlement and which are missing */}
+      {hasActiveRange && (
+        <SettlementCoverage
+          settlements={settlements}
+          onlineSales={storeOnlineSales}
+          onlinePayouts={storeOnlinePayouts}
+          start={filterStart}
+          end={filterEnd}
+        />
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

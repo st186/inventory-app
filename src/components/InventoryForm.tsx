@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { InventoryItem } from '../App';
-import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, STORE_SELECTABLE_INVENTORY_CATEGORIES, STORE_CATEGORY_ITEMS, BUILT_IN_ITEM_BENGALI } from '../utils/inventoryData';
+import { SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, STORE_SELECTABLE_INVENTORY_CATEGORIES, STORE_CATEGORY_ITEMS, BUILT_IN_ITEM_BENGALI, LEGACY_CATEGORY_CANONICAL, expenseCategoryLabel } from '../utils/inventoryData';
 import { X, Loader2, Search, ChevronDown, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
 import { findSimilarItem } from '../utils/stringSimilarity';
@@ -106,7 +106,9 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
     try {
       const [items, categories] = await Promise.all([api.getCustomItems(), api.getCustomCategories()]);
       setAllCustomItems(items);
-      setCustomCategories(categories.filter((cat) => cat.scope === (isStoreEntry ? 'store' : 'production')));
+      // Custom categories that duplicated a built-in non-food one (Experiment, License &
+      // Paperwork, ...) are retired - those costs are logged as overheads now.
+      setCustomCategories(categories.filter((cat) => cat.scope === (isStoreEntry ? 'store' : 'production') && !(cat.key in LEGACY_CATEGORY_CANONICAL)));
       // Transform array to Record<category, itemName[]>
       const itemsByCategory: Record<string, string[]> = {};
       items.forEach((item) => {
@@ -373,7 +375,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
               {/* If editing an item whose category is legacy/no longer offered, keep it visible */}
               {editingItem && !(editingItem.category in selectableCategories) && (
                 <option value={editingItem.category}>
-                  {(INVENTORY_CATEGORIES as Record<string, string>)[editingItem.category] || editingItem.category}
+                  {expenseCategoryLabel(editingItem.category)}
                 </option>
               )}
             </select>
@@ -851,7 +853,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
               <p className="text-gray-700">
                 "{formData.itemName}" looks {duplicateWarning.exact ? 'identical to' : 'very similar to'} the existing item{' '}
                 <span className="font-semibold">"{duplicateWarning.match.itemName}"</span> under{' '}
-                <span className="font-semibold">{(INVENTORY_CATEGORIES as Record<string, string>)[duplicateWarning.match.category] || duplicateWarning.match.category}</span>.
+                <span className="font-semibold">{expenseCategoryLabel(duplicateWarning.match.category)}</span>.
               </p>
               <p className="text-sm text-gray-500 mt-2">Use the existing item to avoid splitting cost history across two entries, or add this as a genuinely new item.</p>
             </div>

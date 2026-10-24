@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FixedCostItem } from '../App';
 import { X, Loader2 } from 'lucide-react';
-import { FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { FIXED_COST_CATEGORIES, SELECTABLE_FIXED_COST_CATEGORIES } from '../utils/inventoryData';
 
 type Props = {
   selectedDate: string;
@@ -129,11 +129,15 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             >
-              {Object.entries(FIXED_COST_CATEGORIES).map(([key, label]) => (
+              {Object.entries(SELECTABLE_FIXED_COST_CATEGORIES).map(([key, label]) => (
                 <option key={key} value={key}>
                   {label}
                 </option>
               ))}
+              {/* An old LPG entry being edited keeps its category visible */}
+              {!(formData.category in SELECTABLE_FIXED_COST_CATEGORIES) && (
+                <option value={formData.category}>{FIXED_COST_CATEGORIES[formData.category] || formData.category}</option>
+              )}
             </select>
           </div>
 

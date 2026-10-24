@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TrendingUp, TrendingDown, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus, BarChart3, Wallet, ChevronDown, ChevronUp, ChevronRight, Clock, CalendarDays, Smartphone, Briefcase, Receipt, Zap, Home, Target, AlertTriangle, XCircle, Percent } from 'lucide-react';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line, ReferenceLine, ComposedChart, AreaChart, Area } from 'recharts';
 import { toast } from 'sonner@2.0.3';
@@ -17,7 +17,12 @@ import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { DatePicker } from './DatePicker';
 import { RecalibrationReports } from './RecalibrationReports';
 import { StockAnalysis } from './StockAnalysis';
-import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, costBucketFor, canonicalCategory, expenseCategoryLabel, isSpreadCategory, isDatedProfitCost } from '../utils/inventoryData';
+import { buildSpreadCosts } from '../utils/spreadCosts';
+import { buildOnlineCostIndex, onlineCostsForRange } from '../utils/onlineCosts';
+import { UnitEconomics, normalizePnl, type PnlBreakdown, type CostLineKey } from './UnitEconomics';
+import { CostLineModal, type CostLineGroup } from './CostLineModal';
+import { counterValueByChannel } from '../utils/channelFoodValue';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { logger } from '../utils/logger';
 import { ExpenseBreakdownModal } from './ExpenseBreakdownModal';
@@ -365,7 +370,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // and each view's content changed. 'datacapture' (Performance Tracker) is no longer a
  // top-level tab - it's now a collapsible section inside 'overview' (see the Analytics
  // page redesign).
- type ActiveView = 'overview' | 'profit' | 'expense' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports';
+ type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports';
  const [activeView, setActiveView] = useState<ActiveView>(
  highlightRequestId ? 'production-requests' : 'overview'
  );
@@ -380,6 +385,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // show for them).
  type?: 'salary' | 'commission' | 'interest';
  } | null>(null);
+ // Unit Economics: the ladder line whose detail sheet is open (see buildCostLine below).
+ const [costLine, setCostLine] = useState<CostLineKey | null>(null);
  
  // Debug: Log activeView changes
  useEffect(() => {
@@ -1519,6 +1526,23 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  );
  }, [timeFilteredFixedCostsData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
+ // Equipment purchases and yearly subscriptions from all three expense lists, scoped like the
+ // filtered data above but NOT time-filtered - a scooter bought in October still counts a
+ // little in every month of its life (see utils/spreadCosts.ts).
+ const spreadSourceRecords = useMemo(() => {
+ const inScope = (item: any) => !effectiveStoreId ||
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
+ const pick = (items: any[], amountOf: (x: any) => number) => (items || [])
+ .filter((x: any) => x?.date && isSpreadCategory(x.category || '') && inScope(x))
+ .map((x: any) => ({ date: x.date, amount: amountOf(x), category: x.category, id: x.id, name: x.itemName || x.description || '' }));
+ return [
+ ...pick(inventoryData, (x) => x.totalCost || 0),
+ ...pick(overheadData, (x) => x.amount || 0),
+ ...pick(fixedCostsData, (x) => x.amount || 0),
+ ];
+ }, [inventoryData, overheadData, fixedCostsData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
+
  const filteredEmployeesData = useMemo(() => {
  if (!effectiveStoreId) return employeesData;
  // See entityAccess.ts's employeeBelongsToStore - without its production-house case, a
@@ -1851,6 +1875,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  };
  const activeSettlementDateRange = getActiveSettlementDateRange();
 
+ // Zomato/Swiggy commission and ads for any window come from here (utils/onlineCosts.ts),
+ // so the cards, the daily chart, the carry-forward and Unit Economics all agree.
+ const onlineCostIndex = useMemo(
+ () => buildOnlineCostIndex(aggregatorSettlements || [], effectiveStoreId),
+ [aggregatorSettlements, effectiveStoreId]
+ );
+ const storeOnlineSales = useMemo(
+ () => (onlineSalesData || []).filter((s: any) => !effectiveStoreId || s.storeId === effectiveStoreId),
+ [onlineSalesData, effectiveStoreId]
+ );
+ const storeOnlinePayouts = useMemo(
+ () => (onlinePayoutData || []).filter((p: any) => !effectiveStoreId || p.storeId === effectiveStoreId),
+ [onlinePayoutData, effectiveStoreId]
+ );
+
  // Calculate analytics metrics
  const calculateMetrics = () => {
  console.log('💰 === METRICS CALCULATION DEBUG ===');
@@ -1873,21 +1912,38 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0);
  }, 0);
 
- // Calculate expenses from inventory
- const inventoryExpenses = filteredInventoryData.reduce((sum, item) => sum + (item.totalCost || 0), 0);
- console.log('Inventory expenses:', inventoryExpenses);
- 
+ // Food cost = food & packaging inventory only. Supplies/tools logged as inventory count as
+ // running costs, a WiFi recharge as a fixed cost, and equipment is spread over its life
+ // (spreadExpenses below) - see costBucketFor in utils/inventoryData.ts.
+ const inventoryIn = (bucket: string) => filteredInventoryData
+ .filter(item => costBucketFor(item.category || '', 'inventory') === bucket)
+ .reduce((sum, item) => sum + (item.totalCost || 0), 0);
+ const inventoryPurchases = inventoryIn('food'); // + this window's share of bulk packaging stock, below
+ const inventorySupplyExpenses = inventoryIn('operating');
+ const inventoryFixedExpenses = inventoryIn('fixed');
+ const packagingPurchases = filteredInventoryData
+ .filter(item => canonicalCategory(item.category || '') === 'packaging')
+ .reduce((sum, item) => sum + (item.totalCost || 0), 0);
+ console.log('Inventory expenses:', inventoryPurchases);
+
  // Calculate overhead expenses (EXCLUDING legacy commission entries)
  // Separate personal_expense items (employee salary-related) from other overhead
  const personalExpenseItems = filteredOverheadData.filter(item => item.category === 'personal_expense');
  const personalExpenseTotal = personalExpenseItems.reduce((sum, item) => sum + (item.amount || 0), 0);
  console.log('💼 Personal expense overhead items:', personalExpenseItems.length, 'Total:', personalExpenseTotal);
- 
+
  const overheadExpenses = filteredOverheadData
  .filter(item => !isCommissionEntry(item)) // Exclude legacy commission entries
- .filter(item => item.category !== 'personal_expense') // Exclude personal expenses (counted under salaries)
+ .filter(item => costBucketFor(item.category || '', 'overhead') === 'operating') // not salary-linked, equipment or fixed
+ .reduce((sum, item) => sum + (item.amount || 0), 0) + inventorySupplyExpenses;
+ const overheadFixedExpenses = filteredOverheadData
+ .filter(item => !isCommissionEntry(item) && costBucketFor(item.category || '', 'overhead') === 'fixed')
  .reduce((sum, item) => sum + (item.amount || 0), 0);
- 
+ // Part of overheadExpenses - Unit Economics shows it with the platform ads.
+ const marketingExpenses = filteredOverheadData
+ .filter(item => !isCommissionEntry(item) && canonicalCategory(item.category || '') === 'marketing')
+ .reduce((sum, item) => sum + (item.amount || 0), 0);
+
  // Calculate commission expenses from online sales and payout data
  // Commission = Total Sales - Total Payouts for the filtered time period
  console.log('🔍 DEBUG COMMISSION - Calculating from online sales/payout data');
@@ -1988,37 +2044,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const totalOnlinePayouts = filteredOnlinePayouts.reduce((sum, payout) =>
  sum + (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0), 0);
 
- // Commission should only be counted for days that actually have a recorded payout or
- // settlement - treating every day of un-reconciled online sales as "100% commission"
- // (the old totalOnlineSales - totalOnlinePayouts formula) massively overstates commission
- // once online sales volume is auto-synced from POS but payouts haven't been reconciled yet.
- const legacyPayoutDates = new Set(filteredOnlinePayouts.map(p => p.date));
- const matchedOnlineSales = filteredOnlineSales
- .filter(sale => legacyPayoutDates.has(sale.date))
- .reduce((sum, sale) => sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
- const legacyCommission = matchedOnlineSales - totalOnlinePayouts;
-
- const filteredSettlements = aggregatorSettlements.filter(settlement => {
- const storeMatch = effectiveStoreId ? settlement.storeId === effectiveStoreId : true;
- return settlementOverlapsAnalyticsRange(settlement, activeSettlementDateRange) && storeMatch;
- });
- const settlementCommission = filteredSettlements.reduce((sum, s) => sum + s.netCommission, 0);
- const settlementGrossSales = filteredSettlements.reduce((sum, s) => sum + (s.grossSales || 0), 0);
- const adSpend = filteredSettlements.reduce((sum, s) => sum + (s.adSpend || 0), 0);
-
- const commissionExpenses = legacyCommission + settlementCommission;
- // Revenue basis for the Commission % figure specifically - matched the same way
- // legacyCommission already is above, for the same reason: settlement payouts lag order
- // dates by several days, so the last few days of any "this month"-style window always
- // have orders that are fully counted in onlineRevenue but haven't settled yet, and so
- // contribute 0 to commissionExpenses. Dividing by the FULL online revenue (onlineRevenue,
- // used everywhere else) against only the settled slice of commissionExpenses silently
- // understates the true commission rate - the more recent/unsettled the window, the worse
- // the understatement. Using each source's own matched revenue (settlement grossSales for
- // the settlement path, matchedOnlineSales for the legacy path) keeps numerator and
- // denominator on the same footing.
- const matchedOnlineRevenueForCommission = matchedOnlineSales + settlementGrossSales;
- 
  // Combine online revenue from both sources:
  // 1. Main sales table's onlineSales field (manual entry)
  // 2. Separate online sales table (Swiggy + Zomato from Online Sales Management)
@@ -2033,7 +2058,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log('🔍 DEBUG COMMISSION - Filtered online payouts:', filteredOnlinePayouts.length);
  console.log('🔍 DEBUG COMMISSION - Total online sales:', totalOnlineSales);
  console.log('🔍 DEBUG COMMISSION - Total online payouts:', totalOnlinePayouts);
- console.log('🔍 DEBUG COMMISSION - Commission expenses:', commissionExpenses);
 
  // Calculate fixed costs
  const electricityExpenses = filteredFixedCostsData
@@ -2103,8 +2127,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses + personalExpenseTotal;
  console.log('💰 Salary breakdown: contract=', contractWorkerExpenses, 'permanent payouts=', permanentEmployeeExpenses, 'personal expenses=', personalExpenseTotal, 'TOTAL=', salaryExpenses);
 
- // Total fixed costs = electricity + rent (salary is tracked separately as its own expense category)
- const fixedCostsTotal = electricityExpenses + rentExpenses;
+ // Total fixed costs = rent, electricity, internet/phone (and old LPG entries) - salary is
+ // tracked separately; the yearly software subscription is spread like equipment.
+ const fixedCostsTotal = filteredFixedCostsData
+ .filter(fc => costBucketFor(fc.category || '', 'fixedcost') === 'fixed')
+ .reduce((sum, fc) => sum + (fc.amount || 0), 0) + inventoryFixedExpenses + overheadFixedExpenses;
  
  // Calculate interest expense (accrual basis)
  // Get the date range for the current filter
@@ -2158,11 +2185,27 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  
  const { startDate, endDate } = getDateRangeForFilter();
  const interestExpenses = calculateAccruedInterest(startDate, endDate, effectiveStoreId || undefined);
- 
+
  console.log('💸 Interest expense for period:', interestExpenses.toFixed(2));
 
- // Total costs now includes commission, interest, and salary as separate categories
- const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses + interestExpenses + salaryExpenses;
+ // This window's share of equipment purchases and yearly subscriptions (up to today). Bulk
+ // packaging stock is spread too, but it's food & packaging cost, not equipment.
+ const spreadEnd = endDate > getTodayIST() ? getTodayIST() : endDate;
+ const spread = buildSpreadCosts(spreadSourceRecords, startDate, spreadEnd);
+ const packagingStockShare = spread.byCategory.packaging_bulk || 0;
+ const spreadExpenses = spread.total - packagingStockShare;
+ const inventoryExpenses = inventoryPurchases + packagingStockShare;
+ const packagingExpenses = packagingPurchases + packagingStockShare;
+
+ // Zomato/Swiggy commission (without the GST they pay on our behalf) and ads - settled,
+ // from old payout entries, or estimated for days not settled yet. See utils/onlineCosts.ts.
+ const online = onlineCostsForRange(onlineCostIndex, storeOnlineSales, storeOnlinePayouts, startDate, endDate, getTodayIST());
+ const commissionExpenses = online.commission;
+ const adSpend = online.ads;
+ const matchedOnlineRevenueForCommission = online.commissionBase;
+
+ // Total costs now includes commission, ads, interest, and salary as separate categories
+ const totalCosts = inventoryExpenses + overheadExpenses + fixedCostsTotal + commissionExpenses + adSpend + interestExpenses + salaryExpenses + spreadExpenses;
  
  // Net profit calculation (commission is now separate)
  const netProfit = totalRevenue - totalCosts;
@@ -2191,9 +2234,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  offlineRevenue,
  commissionExpenses,
  adSpend,
+ online,
  interestExpenses,
  totalExpenses: totalCosts,
  inventoryExpenses,
+ packagingExpenses,
+ marketingExpenses,
  overheadExpenses,
  fixedCostsTotal,
  electricityExpenses,
@@ -2202,6 +2248,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  contractWorkerExpenses,
  permanentEmployeeExpenses,
  personalExpenseTotal,
+ spreadExpenses,
+ spreadByCategory: spread.byCategory,
  netProfit,
  profitMargin
  };
@@ -2218,27 +2266,47 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onlineLoans,
  onlineSalesData,
  onlinePayoutData,
+ onlineCostIndex,
+ storeOnlineSales,
+ storeOnlinePayouts,
+ spreadSourceRecords,
  timeFilter,
  dateRange,
  effectiveStoreId
  ]);
 
- // ---- Loss carry-forward. A month that ends in a loss is brought forward into the next
- // month's realized profit, and stays there until later profits pay it back (a running
- // balance, not just last month: Sept -10k, Oct +4k leaves -6k to carry into Nov). Profits
- // never carry forward. Counted from LOSS_CARRY_FORWARD_START onward, and one-off purchases
- // are deliberately included - they are real money out, same as every other expense here.
- // Each past month's profit is built with the same ingredients calculateMetrics uses
- // (revenue, inventory, overhead, rent/electricity, commission, interest, salaries), scoped
- // to the same store and its linked production house, so it matches the number you see
- // when that month is selected. Only shown on This month / Last month. ----
- const carryForward = useMemo(() => {
- const LOSS_CARRY_FORWARD_START = '2026-09';
- const currentMonth = getTodayIST().slice(0, 7);
- const viewMonth = timeFilter === 'thisMonth' ? currentMonth : timeFilter === 'lastMonth' ? monthAdd(currentMonth, -1) : null;
- const empty = { amount: 0, viewMonth, parts: [] as { month: string; profit: number; carried: number }[] };
- if (!viewMonth || viewMonth <= LOSS_CARRY_FORWARD_START) return empty;
+ // ---- One calendar month's profit and loss, line by line (up to today for the current
+ // month). Built with the same buckets and sources calculateMetrics uses - scoped to the
+ // same store and its linked production house - so a month's Net Profit here matches the
+ // card when that month is selected. Used by the loss carry-forward below and the Unit
+ // Economics trend. ----
+ // Rent, electricity and permanent salaries for any window, counted day by day (estimated from
+ // last month until the real figure is recorded) - see utils/dailyCostSmoothing.ts. Used by the
+ // Net Normalized Profit card and by Unit Economics' normalized view.
+ const accrualFor = useCallback((start: string, end: string) => {
+ const today = getTodayIST();
+ const last = end > today ? today : end;
+ if (!start || !last || start > last) return null;
+ const inScopeFixed = (item: any) => !effectiveStoreId ||
+ item.storeId === effectiveStoreId ||
+ (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
+ const scopedEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
+ return buildSmoothedCosts({
+ fixedCosts: fixedCostsData.filter(inScopeFixed),
+ payouts: payoutsData.filter((p: any) => !effectiveStoreId || scopedEmployeeIds.has(p.employeeId)),
+ employees: employeesData,
+ windowStart: start,
+ windowEnd: last,
+ todayIST: today
+ });
+ }, [fixedCostsData, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
+ const pnlForMonth = useCallback((ym: string): PnlBreakdown => {
+ const today = getTodayIST();
+ const start = `${ym}-01`;
+ const end = addDays(`${monthAdd(ym, 1)}-01`, -1);
+ const inMonth = (d?: string) => !!d && d >= start && d <= end;
+ const sum = (items: any[], pick: (x: any) => number) => items.reduce((t, x) => t + pick(x), 0);
  const inStoreOrHouse = (item: any) => !effectiveStoreId ||
  item.storeId === effectiveStoreId ||
  (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
@@ -2246,67 +2314,119 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const storeEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
  const employeeIds = new Set(employeesData.map((e: any) => e.id));
 
- const monthProfit = (ym: string) => {
- const start = `${ym}-01`;
- const end = addDays(`${monthAdd(ym, 1)}-01`, -1);
- const inMonth = (d?: string) => !!d && d >= start && d <= end;
- const sum = (items: any[], pick: (x: any) => number) => items.reduce((t, x) => t + pick(x), 0);
-
  const monthSales = salesData.filter((x: any) => inMonth(x.date) && storeOnly(x));
- const monthOnline = onlineSalesData.filter((x: any) => inMonth(x.date) && storeOnly(x));
- const monthPayouts = onlinePayoutData.filter((x: any) => inMonth(x.date) && storeOnly(x));
- const onlineTotal = sum(monthOnline, (x) => (x.swiggySales || 0) + (x.zomatoSales || 0));
- const revenue = sum(monthSales, (x) => (x.paytmAmount || 0) + (x.cashAmount || 0) + (x.onlineSales || 0)) + onlineTotal;
+ const monthOnline = storeOnlineSales.filter((x: any) => inMonth(x.date));
+ const counterRevenue = sum(monthSales, (x) => (x.paytmAmount || 0) + (x.cashAmount || 0));
+ const zomatoRevenue = sum(monthOnline, (x) => x.zomatoSales || 0);
+ const swiggyRevenue = sum(monthOnline, (x) => x.swiggySales || 0);
+ const onlineRevenue = sum(monthSales, (x) => x.onlineSales || 0) + zomatoRevenue + swiggyRevenue;
+ const online = onlineCostsForRange(onlineCostIndex, storeOnlineSales, storeOnlinePayouts, start, end, today);
 
- const payoutDates = new Set(monthPayouts.map((x: any) => x.date));
- const matchedOnline = sum(monthOnline.filter((x: any) => payoutDates.has(x.date)), (x) => (x.swiggySales || 0) + (x.zomatoSales || 0));
- const legacyCommission = matchedOnline - sum(monthPayouts, (x) => (x.swiggyPayout || 0) + (x.zomatoPayout || 0));
- const settlementCommission = sum(
- aggregatorSettlements.filter((x: any) => settlementOverlapsAnalyticsRange(x, { start, end }) && (!effectiveStoreId || x.storeId === effectiveStoreId)),
- (x) => x.netCommission || 0
- );
-
- const inventory = sum(inventoryData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x)), (x) => x.totalCost || 0);
+ const line = {
+ food: 0, packaging: 0, marketing: 0, staff: 0, occupancy: 0, otherOpex: 0,
+ };
+ const addCost = (category: string, source: 'inventory' | 'overhead' | 'fixedcost', amount: number) => {
+ const bucket = costBucketFor(category, source);
+ const canonical = canonicalCategory(category);
+ if (bucket === 'food' && source === 'inventory') line[canonical === 'packaging' ? 'packaging' : 'food'] += amount;
+ else if (bucket === 'operating' && source !== 'fixedcost') line[canonical === 'marketing' ? 'marketing' : 'otherOpex'] += amount;
+ else if (bucket === 'fixed') line.occupancy += amount;
+ };
+ inventoryData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x))
+ .forEach((x: any) => addCost(x.category || '', 'inventory', x.totalCost || 0));
  const monthOverheads = overheadData.filter((x: any) =>
  (x.category === 'personal_expense' && x.expenseMonth ? x.expenseMonth === ym : inMonth(x.date)) && inStoreOrHouse(x)
  );
- const personal = sum(monthOverheads.filter((x: any) => x.category === 'personal_expense'), (x) => x.amount || 0);
- const overhead = sum(monthOverheads.filter((x: any) => x.category !== 'personal_expense' && !isCommissionEntry(x)), (x) => x.amount || 0);
- const fixed = sum(
- fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x) && (x.category === 'electricity' || x.category === 'rent')),
- (x) => x.amount || 0
- );
- const salaries = sum(
- payoutsData.filter((x: any) =>
+ monthOverheads.filter((x: any) => !isCommissionEntry(x)).forEach((x: any) => addCost(x.category || '', 'overhead', x.amount || 0));
+ fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x))
+ .forEach((x: any) => addCost(x.category || '', 'fixedcost', x.amount || 0));
+
+ // Equipment, the scooter and yearly subscriptions are spread over their life; bulk packaging
+ // stock over the days it's used.
+ const spread = buildSpreadCosts(spreadSourceRecords, start, end > today ? today : end);
+ const packagingStock = spread.byCategory.packaging_bulk || 0;
+ const software = spread.byCategory.software_subscription || 0;
+ line.packaging += packagingStock;
+ line.otherOpex += software;
+ const depreciation = spread.total - packagingStock - software;
+
+ const monthPayouts = payoutsData.filter((x: any) =>
  (x.forMonth ? x.forMonth === ym : inMonth(x.date)) &&
  employeeIds.has(x.employeeId) &&
  (!effectiveStoreId || storeEmployeeIds.has(x.employeeId))
- ),
- (x) => x.amount || 0
- ) + personal;
+ );
+ line.staff = sum(monthPayouts, (x) => x.amount || 0) + sum(monthOverheads.filter((x: any) => x.category === 'personal_expense'), (x) => x.amount || 0);
+ // The parts the normalized view spreads over the month instead (same rules as dailyCostSmoothing).
+ const isContractEmp = (id: string) => { const e = employeesData.find((emp: any) => emp.id === id); return (e?.type || e?.employmentType) === 'contract'; };
+ const staffSmoothable = sum(monthPayouts.filter((x: any) => !isContractEmp(x.employeeId)), (x) => x.amount || 0);
+ const occupancySmoothable = sum(fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x) && (x.category === 'rent' || x.category === 'electricity')), (x) => x.amount || 0);
  const interest = calculateAccruedInterest(start, end, effectiveStoreId || undefined);
 
  // Approved cash shortages are deducted by the Net Profit card (see calculateCashDiscrepancy),
- // so the figure carried forward has to deduct them too or it won't match what that month showed.
- const approvedShortages = sum(
+ // so they're deducted here too or the month wouldn't match what that month showed.
+ const shortages = sum(
  monthSales.filter((x: any) => x.approvalRequired === false && x.approvedBy),
  (x) => {
  const offset = x.salesDiscrepancy !== undefined ? x.salesDiscrepancy : (x.cashOffset || 0);
  return offset < 0 ? Math.abs(offset) : 0;
  }
  );
- return revenue - (inventory + overhead + fixed + legacyCommission + settlementCommission + interest + salaries) - approvedShortages;
+
+ const revenue = counterRevenue + onlineRevenue;
+ const costs = line.food + line.packaging + online.commission + online.ads + line.marketing + line.staff +
+ line.occupancy + line.otherOpex + depreciation + interest + shortages;
+ return {
+ revenue, counterRevenue, onlineRevenue, zomatoRevenue, swiggyRevenue,
+ onlineDiscounts: online.discounts,
+ food: line.food, packaging: line.packaging, commission: online.commission,
+ platformAds: online.ads, marketing: line.marketing,
+ staff: line.staff, occupancy: line.occupancy, otherOpex: line.otherOpex,
+ depreciation, interest, shortages,
+ netProfit: revenue - costs,
+ estimatedCommission: online.estimatedCommission + online.estimatedAds,
+ estimatedDays: online.estimatedDays,
+ staffSmoothable,
+ occupancySmoothable,
  };
+ }, [salesData, inventoryData, overheadData, fixedCostsData, storeOnlineSales, storeOnlinePayouts, onlineCostIndex, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts, onlineLoans, spreadSourceRecords]);
+
+ // ---- Loss carry-forward. A month that ends in a loss is brought forward into the next
+ // month's realized profit, and stays there until later profits pay it back (a running
+ // balance, not just last month: Sept -10k, Oct +4k leaves -6k to carry into Nov). Profits
+ // never carry forward. Counted from LOSS_CARRY_FORWARD_START onward, and one-off purchases
+ // are deliberately included - they are real money out, same as every other expense here.
+ // Only shown on This month / Last month. ----
+ const carryForward = useMemo(() => {
+ const LOSS_CARRY_FORWARD_START = '2026-09';
+ const currentMonth = getTodayIST().slice(0, 7);
+ const viewMonth = timeFilter === 'thisMonth' ? currentMonth : timeFilter === 'lastMonth' ? monthAdd(currentMonth, -1) : null;
+ const empty = { amount: 0, viewMonth, parts: [] as { month: string; profit: number; carried: number }[] };
+ if (!viewMonth || viewMonth <= LOSS_CARRY_FORWARD_START) return empty;
 
  const parts: { month: string; profit: number; carried: number }[] = [];
  let carried = 0;
  for (let m = LOSS_CARRY_FORWARD_START; m < viewMonth; m = monthAdd(m, 1)) {
- const profit = monthProfit(m);
+ const profit = pnlForMonth(m).netProfit;
  carried = Math.min(0, carried + profit);
  parts.push({ month: m, profit, carried });
  }
  return { amount: carried, viewMonth, parts };
- }, [timeFilter, salesData, inventoryData, overheadData, fixedCostsData, onlineSalesData, onlinePayoutData, aggregatorSettlements, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts, onlineLoans]);
+ }, [timeFilter, pnlForMonth]);
+
+ // Unit Economics: the last 6 months, line by line (only built while that tab is open).
+ const unitEconomicsTrend = useMemo(() => {
+ if (activeView !== 'unit-economics') return [];
+ const currentMonth = getTodayIST().slice(0, 7);
+ const months = Array.from({ length: 6 }, (_, i) => monthAdd(currentMonth, i - 5));
+ return months
+ .map((m) => {
+ const p = pnlForMonth(m);
+ // The month in progress has no salaries or rent paid yet: count them day by day instead.
+ const acc = m === currentMonth ? accrualFor(`${m}-01`, getTodayIST()) : null;
+ return { month: m, label: monthLabel(m), partial: m === currentMonth, pnl: acc ? normalizePnl(p, acc.byGroup) : p };
+ })
+ .filter((t) => t.pnl.revenue > 0);
+ }, [activeView, pnlForMonth, accrualFor]);
 
  // ---- Data behind the Salaries / Commission / Interest breakdown modals. Built from the
  // same filtered sources calculateMetrics uses, so each modal's rows add up to the headline
@@ -2330,10 +2450,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  (!effectiveStoreId || st.storeId === effectiveStoreId) && settlementOverlapsAnalyticsRange(st, activeSettlementDateRange)
  ),
  [aggregatorSettlements, effectiveStoreId, timeFilter, dateRange]
- );
- const legacyCommissionAmount = Math.max(
- 0,
- metrics.commissionExpenses - commissionBreakdownSettlements.reduce((sum: number, st: any) => sum + (st.netCommission || 0), 0)
  );
 
  // Date range for the current timeFilter, usable outside calculateMetrics() (which has its
@@ -2445,7 +2561,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // 'profit' (Revenue & Channels) no longer needs this fetch - the Channel Economics
  // comparison that was its only consumer here moved to OnlineSalesTab.tsx, which fetches
  // its own copy scoped to that page's date range.
- if ((activeView !== 'sales' && activeView !== 'overview') || !context.user?.accessToken) return;
+ if ((activeView !== 'sales' && activeView !== 'overview' && activeView !== 'unit-economics') || !context.user?.accessToken) return;
  const accessToken = context.user.accessToken;
  let cancelled = false;
  (async () => {
@@ -2584,6 +2700,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  }));
  };
  const ordersPerDayData = useMemo(() => buildOrdersPerDay(orderItemDetail), [orderItemDetail]);
+ // Unit Economics: each channel's food valued at counter prices, so food cost follows food sold.
+ const channelFoodValue = useMemo(() => (activeView === 'unit-economics' ? counterValueByChannel(orderItemDetail) : null), [activeView, orderItemDetail]);
  const previousOrdersPerDayData = useMemo(() => buildOrdersPerDay(previousOrderItemDetail), [previousOrderItemDetail]);
  const ordersPerDayChartData = useMemo(
  () => zipPrev(ordersPerDayData, previousOrdersPerDayData, ['offline', 'zomato', 'swiggy']),
@@ -3119,8 +3237,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // month they belong to - see utils/dailyCostSmoothing.ts for the rules (estimates, true-up).
  // Built from ALL records (not the time-filtered ones) so a payment made outside the viewed
  // window still contributes its daily share to the days inside it.
- const smoothedCosts = useMemo(() => {
- if (!smoothFixedCosts) return null;
+ const fixedCostAccrual = useMemo(() => {
  const today = getTodayIST();
  const dow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); };
  let start = today;
@@ -3134,21 +3251,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  case 'custom': start = dateRange.from; end = dateRange.to; break;
  default: break;
  }
- if (end > today) end = today;
- if (!start || !end || start > end) return null;
- const inScopeFixed = (item: any) => !effectiveStoreId ||
- item.storeId === effectiveStoreId ||
- (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
- const scopedEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
- return buildSmoothedCosts({
- fixedCosts: fixedCostsData.filter(inScopeFixed),
- payouts: payoutsData.filter((p: any) => !effectiveStoreId || scopedEmployeeIds.has(p.employeeId)),
- employees: employeesData,
- windowStart: start,
- windowEnd: end,
- todayIST: today
- });
- }, [smoothFixedCosts, timeFilter, dateRange, fixedCostsData, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
+ return accrualFor(start, end);
+ }, [timeFilter, dateRange, accrualFor]);
+ // The daily charts only use the spread when the toggle is on; the Net Normalized Profit card always does.
+ const smoothedCosts = smoothFixedCosts ? fixedCostAccrual : null;
 
  // Prepare profit chart data with revenue, expenses, profit based on time filter
  const prepareProfitChartData = () => {
@@ -3211,48 +3317,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  return dateMatch && storeMatch;
  });
  
- const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
- const dateMatch = (() => {
- // IST calendar-date string arithmetic (see getDateRangeForFilter above for why).
- const today = getTodayIST();
- const dayOfWeek = (dateStr: string) => {
- const [y, m, d] = dateStr.split('-').map(Number);
- return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
- };
- switch (timeFilter) {
- case 'today':
- return payout.date === today;
- case 'yesterday':
- return payout.date === addDays(today, -1);
- case 'thisWeek': {
- const startOfWeek = addDays(today, -dayOfWeek(today));
- return payout.date >= startOfWeek && payout.date <= today;
- }
- case 'lastWeek': {
- const thisWeekStart = addDays(today, -dayOfWeek(today));
- const lastWeekEnd = addDays(thisWeekStart, -1);
- const lastWeekStart = addDays(lastWeekEnd, -6);
- return payout.date >= lastWeekStart && payout.date <= lastWeekEnd;
- }
- case 'thisMonth':
- return payout.date.startsWith(today.slice(0, 7));
- case 'lastMonth': {
- const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
- return payout.date.startsWith(lastMonthEnd.slice(0, 7));
- }
- case 'custom':
- return payout.date >= dateRange.from && payout.date <= dateRange.to;
- default:
- return true;
- }
- })();
- const storeMatch = effectiveStoreId ? payout.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- });
- 
- // Group commission by date - only for dates that actually have a recorded legacy
- // payout, same reasoning as the main metrics calculation above: treating every day of
- // un-reconciled online sales as "100% commission" massively overstates it.
  filteredOnlineSales.forEach(sale => {
  const date = sale.date;
  if (!dailyData[date]) {
@@ -3267,61 +3331,47 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  dailyData[date].revenue += onlineSales;
  });
 
- filteredOnlinePayouts.forEach(payout => {
- const date = payout.date;
+ // Zomato/Swiggy commission and ads on the days of the orders they're for - the same
+ // per-day figures behind the cards (settled, old payout entries, or estimated).
+ Object.entries(metrics.online.byDate).forEach(([date, day]) => {
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
- const onlinePayouts = (payout.swiggyPayout || 0) + (payout.zomatoPayout || 0);
- if (!dailyData[date].onlinePayouts) dailyData[date].onlinePayouts = 0;
- dailyData[date].onlinePayouts += onlinePayouts;
- dailyData[date].hasLegacyPayout = true;
+ dailyData[date].expenses += day.commission + day.ads;
  });
 
- // Calculate and add commission expense only for days with a recorded legacy payout
- Object.keys(dailyData).forEach(date => {
- if (!dailyData[date].hasLegacyPayout) return;
- const onlineSales = dailyData[date].onlineSales || 0;
- const onlinePayouts = dailyData[date].onlinePayouts || 0;
- const commission = onlineSales - onlinePayouts;
- dailyData[date].expenses += commission;
- });
-
- // Aggregator settlements (the document-upload replacement) contribute their own
- // netCommission by settlement date, independent of the legacy payout matching above.
- aggregatorSettlements
- .filter(s => {
- const storeMatch = !effectiveStoreId || s.storeId === effectiveStoreId;
- return storeMatch && settlementOverlapsAnalyticsRange(s, activeSettlementDateRange);
- })
- .forEach(s => {
- const date = settlementAnalyticsReportingDate(s);
- if (!dailyData[date]) {
- dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
- }
- dailyData[date].expenses += s.netCommission;
- });
- 
- // Add inventory expenses by date
+ // Add inventory expenses by date (equipment is spread over its life instead - see below)
  filteredInventoryData.forEach(item => {
+ if (!isDatedProfitCost(item.category || '', 'inventory')) return;
  const date = item.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
  dailyData[date].expenses += (item.totalCost || 0);
  });
- 
+
  // Add overhead expenses by date
  filteredOverheadData.forEach(item => {
+ if (!isDatedProfitCost(item.category || '', 'overhead')) return;
  const date = item.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
  dailyData[date].expenses += (item.amount || 0);
  });
- 
+
+ // Each day's share of equipment purchases and yearly subscriptions
+ const chartSpreadEnd = itemPerfDateRange.endDate > getTodayIST() ? getTodayIST() : itemPerfDateRange.endDate;
+ Object.entries(buildSpreadCosts(spreadSourceRecords, itemPerfDateRange.startDate, chartSpreadEnd).byDate).forEach(([date, amount]) => {
+ if (!dailyData[date]) {
+ dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
+ }
+ dailyData[date].expenses += amount;
+ });
+
  // Add fixed costs by date
  filteredFixedCostsData.forEach(item => {
+ if (!isDatedProfitCost(item.category || '', 'fixedcost')) return;
  // Smoothed mode spreads rent/electricity over the month instead (smoothedCosts)
  if (smoothedCosts && (item.category === 'electricity' || item.category === 'rent')) return;
  const date = item.date;
@@ -3384,9 +3434,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  filteredPayoutsData,
  filteredEmployeesData,
  onlineSalesData,
- onlinePayoutData,
- aggregatorSettlements,
+ metrics,
  smoothedCosts,
+ spreadSourceRecords,
+ itemPerfDateRange,
  timeFilter,
  effectiveStoreId,
  dateRange
@@ -3405,19 +3456,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  previousPeriodSalesData.forEach((sale: any) => {
  bump(sale.date, 'revenue', (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0));
  });
+ // Equipment and yearly subscriptions are left out of this trend-shape comparison (they'd
+ // show as one-day spikes; the main chart spreads them instead).
  (context.inventory || []).forEach((item: any) => {
  if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
  if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ if (!isDatedProfitCost(item.category || '', 'inventory')) return;
  bump(item.date, 'expenses', item.totalCost || 0);
  });
  (context.overheads || []).forEach((item: any) => {
  if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
  if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ if (!isDatedProfitCost(item.category || '', 'overhead')) return;
  bump(item.date, 'expenses', item.amount || 0);
  });
  (context.fixedCosts || []).forEach((item: any) => {
  if (!item?.date || item.date < previousPeriodRange.startDate || item.date > previousPeriodRange.endDate) return;
  if (effectiveStoreId && item.storeId !== effectiveStoreId) return;
+ if (!isDatedProfitCost(item.category || '', 'fixedcost')) return;
  bump(item.date, 'expenses', item.amount || 0);
  });
  return Object.entries(byDate)
@@ -3455,20 +3511,28 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  + (context.onlineSalesData || []).filter(inRange).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
  const revenue = offlineRevenue + onlineRevenue;
 
- const inventoryExp = (context.inventory || []).filter(inRange).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
+ // Same buckets as calculateMetrics (food / running / fixed / spread equipment).
+ const prevInventory = (context.inventory || []).filter(inRange);
+ const inventoryIn = (bucket: string) => prevInventory
+ .filter((i: any) => costBucketFor(i.category || '', 'inventory') === bucket)
+ .reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
+ const inventoryExp = inventoryIn('food');
  const overheadExp = (context.overheads || [])
  .filter(inRange)
- .filter((o: any) => !isCommissionEntry(o) && o.category !== 'personal_expense')
- .reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
- const fixedExp = (context.fixedCosts || []).filter(inRange).reduce((sum: number, f: any) => sum + (f.amount || 0), 0);
+ .filter((o: any) => !isCommissionEntry(o) && costBucketFor(o.category || '', 'overhead') === 'operating')
+ .reduce((sum: number, o: any) => sum + (o.amount || 0), 0) + inventoryIn('operating');
+ const prevSpreadEnd = previousPeriodRange.endDate > getTodayIST() ? getTodayIST() : previousPeriodRange.endDate;
+ const fixedExp = (context.fixedCosts || []).filter(inRange)
+ .filter((f: any) => costBucketFor(f.category || '', 'fixedcost') === 'fixed')
+ .reduce((sum: number, f: any) => sum + (f.amount || 0), 0)
+ + inventoryIn('fixed')
+ + buildSpreadCosts(spreadSourceRecords, previousPeriodRange.startDate, prevSpreadEnd).total;
 
- const previousSettlements = (context.aggregatorSettlements || [])
- .filter((s: any) => settlementOverlapsPeriod(s, previousPeriodRange.startDate, previousPeriodRange.endDate) && (effectiveStoreId ? s.storeId === effectiveStoreId : true));
- const commissionExpenses = previousSettlements.reduce((sum: number, s: any) => sum + (s.netCommission || 0), 0);
- const settlementGrossSales = previousSettlements.reduce((sum: number, s: any) => sum + (s.grossSales || 0), 0);
- const adSpend = previousSettlements.reduce((sum: number, s: any) => sum + (s.adSpend || 0), 0);
+ const prevOnline = onlineCostsForRange(onlineCostIndex, storeOnlineSales, storeOnlinePayouts, previousPeriodRange.startDate, previousPeriodRange.endDate, getTodayIST());
+ const commissionExpenses = prevOnline.commission;
+ const adSpend = prevOnline.ads;
 
- const totalExpenses = inventoryExp + overheadExp + fixedExp + commissionExpenses;
+ const totalExpenses = inventoryExp + overheadExp + fixedExp + commissionExpenses + adSpend;
  const netProfit = revenue - totalExpenses;
  const profitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
 
@@ -3515,7 +3579,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  fixedCostsTotal: fixedExp,
  salaryExpenses,
  commissionExpenses,
- matchedOnlineRevenueForCommission: settlementGrossSales,
+ matchedOnlineRevenueForCommission: prevOnline.commissionBase,
  adSpend,
  netProfit,
  profitMargin,
@@ -3523,7 +3587,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  posSalesDiscrepancy,
  paytmDiscrepancy,
  };
- }, [previousPeriodSalesData, context.onlineSalesData, context.inventory, context.overheads, context.fixedCosts, context.aggregatorSettlements, payoutsData, previousPeriodRange, effectiveStoreId, effectiveProductionHouseIdForCosts]);
+ }, [previousPeriodSalesData, context.onlineSalesData, context.inventory, context.overheads, context.fixedCosts, onlineCostIndex, storeOnlineSales, storeOnlinePayouts, payoutsData, previousPeriodRange, effectiveStoreId, effectiveProductionHouseIdForCosts, spreadSourceRecords]);
 
  // % change vs. the previous period, and a short label naming what "previous period"
  // means for the currently selected filter - mirrors previousPeriodRange's own logic.
@@ -3617,12 +3681,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const commissionAdSpendChartData = useMemo(() => {
  const timeFiltered = context.aggregatorSettlements.filter((s: any) => settlementOverlapsAnalyticsRange(s, activeSettlementDateRange));
  const storeFiltered = effectiveStoreId ? timeFiltered.filter((s: any) => s.storeId === effectiveStoreId) : timeFiltered;
+ // Commission % without the GST the platform collects and pays for us (utils/onlineCosts.ts).
  const byDate: Record<string, { grossSales: number; netCommission: number; adSpend: number }> = {};
  storeFiltered.forEach((s: any) => {
  const date = settlementAnalyticsReportingDate(s);
+ const gst = s.gstCollected ?? ((s.grossSales || 0) * 5) / 105;
  if (!byDate[date]) byDate[date] = { grossSales: 0, netCommission: 0, adSpend: 0 };
- byDate[date].grossSales += s.grossSales || 0;
- byDate[date].netCommission += s.netCommission || 0;
+ byDate[date].grossSales += (s.grossSales || 0) - gst;
+ byDate[date].netCommission += (s.netCommission || 0) - gst;
  byDate[date].adSpend += s.adSpend || 0;
  });
  return Object.keys(byDate).sort().map(date => ({
@@ -3716,53 +3782,52 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const categoryItems: any = {}; // Track items by category
  const categoryTypes: any = {}; // Track type (inventory/overhead/fixed/salary)
 
- filteredInventoryData.forEach(item => {
+ // Every record is grouped by where it really belongs, whichever form it was logged from:
+ // only food & packaging shows under Inventory Items; supplies and tools logged as
+ // inventory join their overhead category (labels are shared, so old "Cleaning &
+ // Sanitation" items merge into "Cleaning Supplies"); equipment shows as this period's
+ // spread share further down.
+ const addToBreakdown = (item: any, source: 'inventory' | 'overhead' | 'fixedcost', amount: number) => {
  const category = item.category || 'Other';
- let displayName = (INVENTORY_CATEGORIES as Record<string, string>)[category] || category;
- 
+ const bucket = costBucketFor(category, source);
+ if (bucket === 'spread' || bucket === 'financing') return; // spread shown below; EMIs aren't a profit cost
+ const canonical = canonicalCategory(category);
  // Combine Meat and Dairy into a single display category for Analytics
- if (category === 'meat' || category === 'dairy') {
- displayName = '🍖🧈 Meat & Dairy';
- }
- 
- if (!categoryExpenses[displayName]) {
- categoryExpenses[displayName] = 0;
- categoryItems[displayName] = [];
- categoryTypes[displayName] = 'inventory';
- }
- categoryExpenses[displayName] += (item.totalCost || 0);
- categoryItems[displayName].push(item);
- });
-
- // Add overhead expenses by category (EXCLUDING legacy commission entries)
- filteredOverheadData.forEach(item => {
- // Skip legacy commission entries - they're now calculated from online sales/payout data
- if (isCommissionEntry(item)) return;
-
- const category = item.category || 'Other';
- const displayName = (OVERHEAD_CATEGORIES as Record<string, string>)[category] || category;
+ const displayName = bucket === 'food' && (canonical === 'meat' || canonical === 'dairy')
+ ? '🍖🧈 Meat & Dairy'
+ : expenseCategoryLabel(category);
  if (!categoryExpenses[displayName]) {
  categoryExpenses[displayName] = 0;
  categoryItems[displayName] = [];
  // personal_expense is salary-deducted (already summed separately into
  // salaryExpenses above) — display it under Fixed Costs, not Operating.
- categoryTypes[displayName] = category === 'personal_expense' ? 'fixed' : 'overhead';
+ categoryTypes[displayName] = bucket === 'food' ? 'inventory'
+ : bucket === 'fixed' || bucket === 'payroll_linked' ? 'fixed'
+ : 'overhead';
  }
- categoryExpenses[displayName] += (item.amount || 0);
+ categoryExpenses[displayName] += amount;
  categoryItems[displayName].push(item);
+ };
+
+ filteredInventoryData.forEach(item => addToBreakdown(item, 'inventory', item.totalCost || 0));
+
+ // Add overhead expenses by category (EXCLUDING legacy commission entries)
+ filteredOverheadData.forEach(item => {
+ // Skip legacy commission entries - they're now calculated from online sales/payout data
+ if (isCommissionEntry(item)) return;
+ addToBreakdown(item, 'overhead', item.amount || 0);
  });
 
  // Add fixed costs by category
- filteredFixedCostsData.forEach(item => {
- const category = item.category || 'Other';
- const displayName = FIXED_COST_CATEGORIES[category] || category;
- if (!categoryExpenses[displayName]) {
- categoryExpenses[displayName] = 0;
- categoryItems[displayName] = [];
- categoryTypes[displayName] = 'fixed';
- }
- categoryExpenses[displayName] += (item.amount || 0);
- categoryItems[displayName].push(item);
+ filteredFixedCostsData.forEach(item => addToBreakdown(item, 'fixedcost', item.amount || 0));
+
+ // This period's share of equipment purchases, yearly subscriptions and bulk packaging stock
+ Object.entries(metrics.spreadByCategory || {}).forEach(([category, amount]) => {
+ if (amount <= 0) return;
+ const displayName = expenseCategoryLabel(category);
+ categoryExpenses[displayName] = (categoryExpenses[displayName] || 0) + amount;
+ categoryItems[displayName] = categoryItems[displayName] || [];
+ categoryTypes[displayName] = category === 'packaging_bulk' ? 'inventory' : 'fixed';
  });
 
  // Add salaries separately (contract + permanent)
@@ -3777,6 +3842,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  categoryExpenses['🍔 Aggregator Commission'] = metrics.commissionExpenses;
  categoryItems['🍔 Aggregator Commission'] = []; // Calculated from online sales/payout data
  categoryTypes['🍔 Aggregator Commission'] = 'commission';
+ }
+ if (metrics.adSpend > 0) {
+ categoryExpenses['📣 Zomato/Swiggy Ads'] = metrics.adSpend;
+ categoryItems['📣 Zomato/Swiggy Ads'] = [];
+ categoryTypes['📣 Zomato/Swiggy Ads'] = 'commission';
  }
  
  // Add interest expense as a separate category
@@ -3803,6 +3873,86 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  const expenseBreakdown = prepareExpenseBreakdown();
 
+ // ---- Unit Economics: what's inside each cost line on the ladder. Same buckets and sources as
+ // calculateMetrics, so each detail sheet adds up to the line it was opened from. ----
+ const buildCostLine = (line: CostLineKey): { title: string; groups: CostLineGroup[]; note?: string } => {
+ const groups = new Map<string, CostLineGroup>();
+ const add = (groupLabel: string, entry: { id: string; date: string; name: string; detail?: string; amount: number }) => {
+ if (!entry.amount) return;
+ const g = groups.get(groupLabel) || { label: groupLabel, amount: 0, entries: [] };
+ g.amount += entry.amount;
+ g.entries.push(entry);
+ groups.set(groupLabel, g);
+ };
+ const label = (category?: string) => expenseCategoryLabel(category || 'Other');
+ const fromInventory = (x: any) => ({ id: `inv-${x.id}`, date: x.date, name: x.itemName || label(x.category), detail: x.quantity ? `${x.quantity} ${x.unit || ''}`.trim() : undefined, amount: x.totalCost || 0 });
+ const fromOverhead = (x: any) => ({ id: `ovh-${x.id}`, date: x.date, name: x.description || label(x.category), detail: x.employeeName || undefined, amount: x.amount || 0 });
+ const fromFixed = (x: any) => ({ id: `fix-${x.id}`, date: x.date, name: x.description || label(x.category), amount: x.amount || 0 });
+ const today = getTodayIST();
+ const spreadEnd = itemPerfDateRange.endDate > today ? today : itemPerfDateRange.endDate;
+ // Spread purchases show this period's share, next to what was paid.
+ const addSpread = (keep: (canonical: string) => boolean) => {
+ spreadSourceRecords.filter((r) => keep(canonicalCategory(r.category))).forEach((r, i) => {
+ const share = buildSpreadCosts([r], itemPerfDateRange.startDate, spreadEnd).total;
+ if (share < 0.5) return;
+ add(label(r.category), {
+ id: `spr-${r.id || i}`, date: r.date, name: r.name || label(r.category),
+ detail: `this period's share of ₹${Math.round(r.amount).toLocaleString('en-IN')}`, amount: share,
+ });
+ });
+ };
+ const inventoryBucket = (x: any) => costBucketFor(x.category || '', 'inventory');
+ const overheadBucket = (x: any) => costBucketFor(x.category || '', 'overhead');
+ const groupList = () => [...groups.values()];
+ switch (line) {
+ case 'food':
+ filteredInventoryData.filter((x) => inventoryBucket(x) === 'food' && canonicalCategory(x.category || '') !== 'packaging')
+ .forEach((x) => add(label(x.category), fromInventory(x)));
+ return { title: 'Food ingredients', groups: groupList() };
+ case 'packaging':
+ filteredInventoryData.filter((x) => canonicalCategory(x.category || '') === 'packaging').forEach((x) => add(label(x.category), fromInventory(x)));
+ addSpread((c) => c === 'packaging_bulk');
+ return { title: 'Packaging', groups: groupList(), note: 'Bulk box and tray orders are counted evenly over the 120 days they last.' };
+ case 'marketing':
+ filteredOverheadData.filter((x) => !isCommissionEntry(x) && canonicalCategory(x.category || '') === 'marketing').forEach((x) => add(label(x.category), fromOverhead(x)));
+ return { title: 'Marketing', groups: groupList() };
+ case 'occupancy':
+ filteredFixedCostsData.filter((x) => costBucketFor(x.category || '', 'fixedcost') === 'fixed').forEach((x) => add(label(x.category), fromFixed(x)));
+ filteredInventoryData.filter((x) => inventoryBucket(x) === 'fixed').forEach((x) => add(label(x.category), fromInventory(x)));
+ filteredOverheadData.filter((x) => !isCommissionEntry(x) && overheadBucket(x) === 'fixed').forEach((x) => add(label(x.category), fromOverhead(x)));
+ return { title: 'Rent, electricity & internet', groups: groupList(), note: 'Counted on the day each bill was paid. Net Normalized Profit spreads rent, electricity and salaries evenly over the month instead.' };
+ case 'otherOpex':
+ filteredOverheadData.filter((x) => !isCommissionEntry(x) && overheadBucket(x) === 'operating' && canonicalCategory(x.category || '') !== 'marketing')
+ .forEach((x) => add(label(x.category), fromOverhead(x)));
+ filteredInventoryData.filter((x) => inventoryBucket(x) === 'operating').forEach((x) => add(label(x.category), fromInventory(x)));
+ addSpread((c) => c === 'software_subscription');
+ return { title: 'Other running costs', groups: groupList() };
+ case 'depreciation':
+ addSpread((c) => c !== 'packaging_bulk' && c !== 'software_subscription');
+ return { title: 'Equipment & scooter', groups: groupList(), note: 'Each purchase is counted evenly over 3 years; this is the share that falls in the period.' };
+ case 'shortages':
+ filteredSalesData.filter((x: any) => x.approvalRequired === false && x.approvedBy).forEach((x: any) => {
+ const offset = x.salesDiscrepancy !== undefined ? x.salesDiscrepancy : (x.cashOffset || 0);
+ if (offset < 0) add('Approved cash shortages', { id: `sale-${x.id}`, date: x.date, name: 'Cash short at closing', detail: `approved by ${x.approvedBy}`, amount: Math.abs(offset) });
+ });
+ return { title: 'Approved cash shortages', groups: groupList() };
+ default:
+ return { title: '', groups: [] };
+ }
+ };
+ // Commission, salaries and interest already have purpose-built breakdowns.
+ const openCostLine = (line: CostLineKey) => {
+ if (line === 'commission' || line === 'ads') {
+ setSelectedExpenseCategory({ category: '🍔 Aggregator Commission', items: [], amount: metrics.commissionExpenses + metrics.adSpend, type: 'commission' });
+ } else if (line === 'staff') {
+ setSelectedExpenseCategory({ category: '💰 Salaries', items: [], amount: metrics.salaryExpenses, type: 'salary' });
+ } else if (line === 'interest') {
+ setSelectedExpenseCategory({ category: '💸 Loan Interest', items: [], amount: metrics.interestExpenses, type: 'interest' });
+ } else {
+ setCostLine(line);
+ }
+ };
+
  const COLORS = ['#f43f5e', '#38bdf8', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c', '#14b8a6', '#10b981', '#f59e0b'];
 
  // Calculate total approved cash discrepancies (losses only - negative cashOffset)
@@ -3826,6 +3976,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const realizedProfit = unrealizedProfit - totalCashDiscrepancy;
  // Net realised profit = this month's profit after a loss brought forward from earlier months.
  const netRealisedProfit = realizedProfit + carryForward.amount;
+ // Net normalized profit = net realised profit (after any loss brought forward) with the lumpy fixed costs (rent, electricity, permanent
+ // salaries incl. variable pay) swapped from "when it was paid" to "an even daily share of the
+ // month it belongs to, up to today". So payday no longer wipes out the month's profit.
+ const normalizedFixedRecorded = metrics.rentExpenses + metrics.electricityExpenses + metrics.permanentEmployeeExpenses;
+ const normalizedFixedAccrued = Object.values(fixedCostAccrual?.byDate || {}).reduce((sum, d) => sum + d.amount, 0);
+ const netNormalizedProfit = netRealisedProfit + normalizedFixedRecorded - normalizedFixedAccrued;
+ const normalizedDaysCounted = Object.keys(fixedCostAccrual?.byDate || {}).length;
+ const normalizedMonthPool = timeFilter === 'thisMonth' && normalizedDaysCounted > 0
+ ? Math.round(normalizedFixedAccrued * new Date(Date.UTC(Number(getTodayIST().slice(0, 4)), Number(getTodayIST().slice(5, 7)), 0)).getUTCDate() / normalizedDaysCounted)
+ : 0;
+ const normalizedCardNote = `Fixed costs spread daily: ₹${Math.round(normalizedFixedAccrued).toLocaleString('en-IN')} accrued${normalizedMonthPool > 0 ? ` for ${normalizedDaysCounted} days (full month ≈ ₹${normalizedMonthPool.toLocaleString('en-IN')})` : ''} vs ₹${Math.round(normalizedFixedRecorded).toLocaleString('en-IN')} paid${fixedCostAccrual && fixedCostAccrual.estimatedAmount > 0 ? `; ₹${Math.round(fixedCostAccrual.estimatedAmount).toLocaleString('en-IN')} of it estimated from last month's base salaries, rent and electricity` : ''}`;
 
  // POS sales discrepancy: how much Cash + Paytm (entered by the store incharge) falls
  // short of the Net offline sales the POS reported for that day - duplicate KOTs, cash
@@ -4193,13 +4354,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Store Analytics Tabs - reorganized around business questions rather than the
  // org chart (see the Analytics page redesign). 'profit'/'expense'/'sales' keep
  // their original internal activeView values, just relabeled + given new content.
- <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-2">
+ <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-2">
  <button
  onClick={() => setActiveView('overview')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'overview'
- ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4213,10 +4374,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <button
  onClick={() => setActiveView('profit')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'profit'
- ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4230,10 +4391,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <button
  onClick={() => setActiveView('sales')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'sales'
- ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4247,10 +4408,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <button
  onClick={() => setActiveView('expense')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'expense'
- ? 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-lg shadow-rose-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-lg shadow-rose-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4263,11 +4424,28 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </button>
 
  <button
+ onClick={() => setActiveView('unit-economics')}
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
+ activeView === 'unit-economics'
+ ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
+ }`}
+ >
+ <div className="flex flex-col items-center gap-2">
+ <Percent className={`w-6 h-6 ${activeView === 'unit-economics' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Unit Economics</span>
+ </div>
+ {activeView === 'unit-economics' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-violet-500 rounded-full"></div>
+ )}
+ </button>
+
+ <button
  onClick={() => setActiveView('cash-reconciliation')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'cash-reconciliation'
- ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4281,10 +4459,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <button
  onClick={() => setActiveView('production-requests')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'production-requests'
- ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4298,10 +4476,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <button
  onClick={() => setActiveView('stock-request-analysis')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'stock-request-analysis'
- ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4323,10 +4501,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className={`grid gap-2 ${(isProductionIncharge || isOperationsManager || isClusterHead) && onNavigateToProductionManagement ? 'grid-cols-3' : 'grid-cols-2'}`}>
  <button
  onClick={() => setActiveView('production')}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'production'
- ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4343,10 +4521,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  console.log('🔄 Recalibration button clicked!');
  setActiveView('recalibration-reports');
  }}
- className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
  activeView === 'recalibration-reports'
- ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50'
- : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
+ ? 'bg-gradient-to-br from-teal-500 to-teal-600 text-white shadow-lg shadow-teal-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
  }`}
  >
  <div className="flex flex-col items-center gap-2">
@@ -4361,7 +4539,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {(isProductionIncharge || isOperationsManager || isClusterHead) && onNavigateToProductionManagement && (
  <button
  onClick={onNavigateToProductionManagement}
- className="group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md"
+ className="group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md"
  title="Open Production Management to log today's production"
  >
  <div className="flex flex-col items-center gap-2">
@@ -4423,7 +4601,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Metrics Cards - same saturated-gradient card language as the Overview tab, so the
  whole Analytics section reads as one consistent design instead of each tab having its
  own take on "metric card". */}
- <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-blue-100 mb-1">Total Revenue</div>
  <div className="text-2xl font-semibold">₹{metrics.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
@@ -4442,7 +4620,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Aggregator Commission</div>
  <div className="text-2xl font-semibold">₹{metrics.commissionExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-orange-100 mt-1">
- {metrics.matchedOnlineRevenueForCommission > 0 ? `${((metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100).toFixed(1)}% of online` : 'No data'}
+ {metrics.matchedOnlineRevenueForCommission > 0 ? `${((metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100).toFixed(1)}% of online, excl. GST` : 'No data'}
+ {metrics.online.estimatedCommission > 0.5 && ` · incl. ₹${Math.round(metrics.online.estimatedCommission).toLocaleString('en-IN')} estimated for ${metrics.online.estimatedDays} unsettled day${metrics.online.estimatedDays === 1 ? '' : 's'}`}
  </div>
  {renderPctChangeOnColor(metrics.commissionExpenses, previousPeriodMetrics.commissionExpenses)}
  </div>
@@ -4453,7 +4632,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {metrics.totalRevenue > 0 ? (
  <div className="flex items-center gap-1 text-xs text-emerald-100 mt-1">
  <TrendingUp className="w-3 h-3" />
- Includes commission
+ After commission & ads
  </div>
  ) : (
  <div className="text-xs text-emerald-100 mt-1">No data yet</div>
@@ -4470,8 +4649,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
     : (timeFilter === 'thisMonth' || timeFilter === 'lastMonth') ? 'No loss brought forward' : 'Carry-forward shows on This month / Last month'}
   </div>
  </div>
+ <div className="bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl p-4 shadow-lg shadow-indigo-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-indigo-100 mb-1">Net Normalized Profit</div>
+ <div className="text-2xl font-semibold">₹{netNormalizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-indigo-100 mt-1">{normalizedCardNote}</div>
+ </div>
 
- <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
+ <div className="sm:col-span-2 lg:col-span-3 bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-yellow-100 mb-1">Profit Margin</div>
  <div className="text-2xl font-semibold">{metrics.profitMargin.toFixed(1)}%</div>
  <div className="text-xs text-yellow-100 mt-1">Of total revenue</div>
@@ -4811,6 +4995,97 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  )}
 
+ {/* Unit Economics View - the same P&L as the cards above, laid out as a margin ladder */}
+ {activeView === 'unit-economics' && (() => {
+ const software = metrics.spreadByCategory?.software_subscription || 0;
+ const inRange = (d: string) => d >= itemPerfDateRange.startDate && d <= itemPerfDateRange.endDate;
+ const periodOnline = storeOnlineSales.filter((s: any) => inRange(s.date));
+ const zomatoRevenue = periodOnline.reduce((t: number, s: any) => t + (s.zomatoSales || 0), 0);
+ const swiggyRevenue = periodOnline.reduce((t: number, s: any) => t + (s.swiggySales || 0), 0);
+ const lastDay = itemPerfDateRange.endDate > getTodayIST() ? getTodayIST() : itemPerfDateRange.endDate;
+ const daysInPeriod = lastDay >= itemPerfDateRange.startDate
+ ? Math.round((Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${itemPerfDateRange.startDate}T00:00:00Z`)) / 86400000) + 1
+ : 0;
+ const pnl: PnlBreakdown = {
+ revenue: metrics.totalRevenue,
+ counterRevenue: metrics.offlineRevenue,
+ onlineRevenue: metrics.onlineRevenue,
+ zomatoRevenue,
+ swiggyRevenue,
+ onlineDiscounts: metrics.online.discounts,
+ food: metrics.inventoryExpenses - metrics.packagingExpenses,
+ packaging: metrics.packagingExpenses,
+ commission: metrics.commissionExpenses,
+ platformAds: metrics.adSpend,
+ marketing: metrics.marketingExpenses,
+ staff: metrics.salaryExpenses,
+ occupancy: metrics.fixedCostsTotal,
+ otherOpex: metrics.overheadExpenses - metrics.marketingExpenses + software,
+ depreciation: metrics.spreadExpenses - software,
+ interest: metrics.interestExpenses,
+ shortages: totalCashDiscrepancy,
+ netProfit: realizedProfit,
+ estimatedCommission: metrics.online.estimatedCommission + metrics.online.estimatedAds,
+ estimatedDays: metrics.online.estimatedDays,
+ staffSmoothable: metrics.permanentEmployeeExpenses,
+ occupancySmoothable: metrics.rentExpenses + metrics.electricityExpenses,
+ };
+ const pnlNormalized = fixedCostAccrual ? normalizePnl(pnl, fixedCostAccrual.byGroup) : null;
+ const orderTotals = ordersPerDayData.reduce(
+ (t, d) => ({ counter: t.counter + d.offline, zomato: t.zomato + d.zomato, swiggy: t.swiggy + d.swiggy }),
+ { counter: 0, zomato: 0, swiggy: 0 }
+ );
+ const byAgg = metrics.online.byAggregator;
+ return (
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6 mb-4 sm:mb-6">
+ <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md shadow-violet-500/30 flex-shrink-0">
+ <Percent className="w-5 h-5 text-white" />
+ </div>
+ <div>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Unit Economics</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Gross margin, CM1-CM3, EBITDA and net margin - how much of every ₹100 we keep at each step</p>
+ </div>
+ </div>
+ <div className="w-full sm:w-auto">
+ <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ </div>
+ </div>
+ {timeFilter === 'custom' && (
+ <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
+ <div className="flex items-center gap-2">
+ <Calendar className="w-4 h-4 text-gray-500" />
+ <label className="text-xs sm:text-sm text-gray-600">From:</label>
+ <input type="date" value={dateRange.from} onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })} className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm" />
+ </div>
+ <div className="flex items-center gap-2">
+ <label className="text-xs sm:text-sm text-gray-600">To:</label>
+ <input type="date" value={dateRange.to} onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })} className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm" />
+ </div>
+ </div>
+ )}
+ <UnitEconomics
+ pnl={pnl}
+ periodLabel={getPeriodLabel()}
+ daysInPeriod={daysInPeriod}
+ netRealisedProfit={netRealisedProfit}
+ carryForwardAmount={carryForward.amount}
+ showRealised={timeFilter === 'thisMonth' || timeFilter === 'lastMonth'}
+ netNormalizedProfit={netNormalizedProfit}
+ orders={orderTotals}
+ platformCut={{ zomato: byAgg.zomato.commission + byAgg.zomato.ads, swiggy: byAgg.swiggy.commission + byAgg.swiggy.ads }}
+ trend={unitEconomicsTrend}
+ onOpenLine={openCostLine}
+ pnlNormalized={pnlNormalized}
+ foodValue={channelFoodValue}
+ normalizedEstimate={fixedCostAccrual?.estimatedAmount || 0}
+ defaultBasis={lastDay >= getTodayIST() ? 'normalized' : 'paid'}
+ />
+ </div>
+ );
+ })()}
+
  {/* Expense Breakdown View */}
  {activeView === 'expense' && (
  <div>
@@ -4858,14 +5133,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
 
  {/* Total Expense Summary - same saturated-gradient card language as the Overview tab. */}
- <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
- <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+ <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
+ <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white sm:col-span-2 lg:col-span-3">
  <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Total Expenses</div>
  <div className="text-2xl font-semibold">₹{metrics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  {renderPctChangeOnColor(metrics.totalExpenses, previousPeriodMetrics.totalExpenses)}
  </div>
  <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
- <div className="text-xs uppercase tracking-wide text-rose-100 mb-1">Inventory Costs</div>
+ <div className="text-xs uppercase tracking-wide text-rose-100 mb-1">Food &amp; Packaging</div>
  <div className="text-2xl font-semibold">₹{metrics.inventoryExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
  <div className="text-xs text-rose-100 mt-1">{((metrics.inventoryExpenses / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
  {renderPctChangeOnColor(metrics.inventoryExpenses, previousPeriodMetrics.inventoryExpenses)}
@@ -4877,16 +5152,19 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {renderPctChangeOnColor(metrics.overheadExpenses, previousPeriodMetrics.overheadExpenses)}
  </div>
  <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
- <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Commission</div>
- <div className="text-2xl font-semibold">₹{metrics.commissionExpenses.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
- <div className="text-xs text-orange-100 mt-1">{metrics.totalExpenses > 0 ? ((metrics.commissionExpenses / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total</div>
- {renderPctChangeOnColor(metrics.commissionExpenses, previousPeriodMetrics.commissionExpenses)}
+ <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Commission &amp; Ads</div>
+ <div className="text-2xl font-semibold">₹{(metrics.commissionExpenses + metrics.adSpend).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-orange-100 mt-1">{metrics.totalExpenses > 0 ? (((metrics.commissionExpenses + metrics.adSpend) / metrics.totalExpenses) * 100).toFixed(1) : '0.0'}% of total{metrics.adSpend > 0.5 ? ` · ads ₹${Math.round(metrics.adSpend).toLocaleString('en-IN')}` : ''}</div>
+ {renderPctChangeOnColor(metrics.commissionExpenses + metrics.adSpend, previousPeriodMetrics.commissionExpenses + previousPeriodMetrics.adSpend)}
  </div>
  <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl p-4 shadow-lg shadow-indigo-500/20 text-white">
- <div className="text-xs uppercase tracking-wide text-indigo-100 mb-1">Fixed Costs</div>
- <div className="text-2xl font-semibold">₹{(metrics.fixedCostsTotal || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
- <div className="text-xs text-indigo-100 mt-1">{(((metrics.fixedCostsTotal || 0) / metrics.totalExpenses) * 100).toFixed(1)}% of total</div>
- {renderPctChangeOnColor(metrics.fixedCostsTotal || 0, previousPeriodMetrics.fixedCostsTotal)}
+ <div className="text-xs uppercase tracking-wide text-indigo-100 mb-1">Fixed Costs &amp; Equipment</div>
+ <div className="text-2xl font-semibold">₹{((metrics.fixedCostsTotal || 0) + (metrics.spreadExpenses || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-indigo-100 mt-1">
+ {((((metrics.fixedCostsTotal || 0) + (metrics.spreadExpenses || 0)) / metrics.totalExpenses) * 100).toFixed(1)}% of total
+ {(metrics.spreadExpenses || 0) > 0 && <> · incl. ₹{Math.round(metrics.spreadExpenses).toLocaleString('en-IN')} equipment &amp; subscriptions, spread over their life</>}
+ </div>
+ {renderPctChangeOnColor((metrics.fixedCostsTotal || 0) + (metrics.spreadExpenses || 0), previousPeriodMetrics.fixedCostsTotal)}
  </div>
  <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-amber-100 mb-1">Salary Costs</div>
@@ -4986,7 +5264,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Inventory Items */}
  {expenseBreakdown.filter(item => item.type === 'inventory').length > 0 && (
  <div>
- <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">📦 Inventory Items</h4>
+ <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">📦 Inventory Items (Food &amp; Packaging)</h4>
  <div className="space-y-2">
  {expenseBreakdown.filter(item => item.type === 'inventory').map((item, index) => {
  const colorIndex = expenseBreakdown.indexOf(item);
@@ -5090,7 +5368,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  {/* Fixed Costs */}
  {expenseBreakdown.filter(item => item.type === 'fixed').length > 0 && (
  <div>
- <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">🏠 Fixed Costs</h4>
+ <h4 className="text-sm font-semibold text-gray-700 mb-2 px-2">🏠 Fixed Costs &amp; Equipment (spread)</h4>
  <div className="space-y-2">
  {expenseBreakdown.filter(item => item.type === 'fixed').map((item, index) => {
  const colorIndex = expenseBreakdown.indexOf(item);
@@ -5823,7 +6101,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  immediately surfaces what needs attention instead of digging through tabs. */}
  {activeView === 'overview' && (
  <div className="space-y-6">
+ <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
+ <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-md shadow-purple-500/30 flex-shrink-0">
+ <BarChart3 className="w-5 h-5 text-white" />
+ </div>
+ <div>
+ <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Overview</h2>
+ <p className="text-xs sm:text-sm text-gray-500">Profit, discrepancies and channel health at a glance</p>
+ </div>
+ </div>
+ <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
  <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ </div>
+ </div>
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Net Profit</div>
@@ -5839,6 +6131,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  ? `After -₹${Math.abs(Math.round(carryForward.amount)).toLocaleString('en-IN')} loss brought forward (${carryForward.parts.filter((p) => p.profit < 0 || p.carried < 0).map((p) => monthLabel(p.month)).join(', ')})`
  : (timeFilter === 'thisMonth' || timeFilter === 'lastMonth') ? 'No loss brought forward' : 'Carry-forward shows on This month / Last month'}
  </div>
+ </div>
+ <div className="bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl p-4 shadow-lg shadow-indigo-500/20 text-white">
+ <div className="text-xs uppercase tracking-wide text-indigo-100 mb-1">Net Normalized Profit</div>
+ <div className="text-2xl font-semibold">₹{netNormalizedProfit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+ <div className="text-xs text-indigo-100 mt-1">{normalizedCardNote}</div>
  </div>
  <div className={`rounded-xl p-4 shadow-lg text-white ${totalCashDiscrepancy > 0 ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/20' : 'bg-gradient-to-br from-gray-400 to-gray-500 shadow-gray-400/20'}`}>
  <div className="text-xs uppercase tracking-wide text-white/80 mb-1">Cash Discrepancy Losses</div>
@@ -5857,7 +6154,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="text-2xl font-semibold">
  {metrics.matchedOnlineRevenueForCommission > 0 ? `${((metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100).toFixed(1)}%` : '—'}
  </div>
- <div className="text-xs text-orange-100 mt-1">of settled online revenue, {getPeriodLabel()}</div>
+ <div className="text-xs text-orange-100 mt-1">of online revenue, excl. GST, {getPeriodLabel()}</div>
  {metrics.matchedOnlineRevenueForCommission > 0 && previousPeriodMetrics.matchedOnlineRevenueForCommission > 0 && (() => {
  const currentPct = (metrics.commissionExpenses / metrics.matchedOnlineRevenueForCommission) * 100;
  const previousPct = (previousPeriodMetrics.commissionExpenses / previousPeriodMetrics.matchedOnlineRevenueForCommission) * 100;
@@ -5870,11 +6167,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  );
  })()}
  </div>
- <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
+ <div className="sm:col-span-2 lg:col-span-3 bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
  <div className="text-xs uppercase tracking-wide text-sky-100 mb-1">Ad Spend</div>
  <div className="text-2xl font-semibold">₹{metrics.adSpend.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
- <div className="text-xs text-sky-100 mt-1">{getPeriodLabel()} · Zomato + Swiggy</div>
+ <div className="text-xs text-sky-100 mt-1">{getPeriodLabel()} · Zomato + Swiggy · counted in costs</div>
  {renderPctChangeOnColor(metrics.adSpend, previousPeriodMetrics.adSpend)}
+ </div>
  </div>
  </div>
 
@@ -9358,9 +9656,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  )}
  {selectedExpenseCategory && selectedExpenseCategory.type === 'commission' && (
  <CommissionBreakdownModal
- totalAmount={selectedExpenseCategory.amount}
+ totalAmount={metrics.commissionExpenses + metrics.adSpend}
  settlements={commissionBreakdownSettlements}
- legacyAmount={legacyCommissionAmount}
+ costs={metrics.online}
  periodLabel={getPeriodLabel()}
  onClose={() => setSelectedExpenseCategory(null)}
  />
@@ -9374,6 +9672,19 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onClose={() => setSelectedExpenseCategory(null)}
  />
  )}
+ {costLine && (() => {
+ const detail = buildCostLine(costLine);
+ return (
+ <CostLineModal
+ title={detail.title}
+ periodLabel={getPeriodLabel()}
+ groups={detail.groups}
+ note={detail.note}
+ revenue={metrics.totalRevenue}
+ onClose={() => setCostLine(null)}
+ />
+ );
+ })()}
  {selectedExpenseCategory && !selectedExpenseCategory.type && (
  <ExpenseBreakdownModal
  category={selectedExpenseCategory.category}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, AlertTriangle, Loader2 } from 'lucide-react';
 import * as api from '../utils/api';
-import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, expenseCategoryLabel } from '../utils/inventoryData';
 import { ITEM_SUGGESTIONS } from '../utils/itemEnrichmentSuggestions';
 import { normalizeItemName } from '../utils/stringSimilarity';
 
@@ -155,7 +155,7 @@ export function ItemCatalogCleanup({ onClose }: Props) {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-gray-500">
                         Current: <span className="font-medium text-gray-900">{row.item.itemName}</span> ·{' '}
-                        {(INVENTORY_CATEGORIES as Record<string, string>)[row.item.category] || row.item.category}
+                        {expenseCategoryLabel(row.item.category)}
                       </p>
                       {row.note && (
                         <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">

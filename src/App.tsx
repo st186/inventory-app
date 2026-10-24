@@ -53,7 +53,9 @@ import { getTodayIST } from './utils/timezone';
 export type InventoryItem = {
  id: string;
  date: string;
- category: 'fresh_produce' | 'spices_seasonings' | 'dairy' | 'meat' | 'packaging' | 'beverages' | 'cleaning_sanitation' | 'equipment_smallwares' | 'staff_welfare_ppe' | 'office_admin_supplies';
+ // Food & packaging only for new entries; older records can carry a retired key (see
+ // LEGACY_CATEGORY_CANONICAL in utils/inventoryData.ts) or a cluster-head custom category.
+ category: 'fresh_produce' | 'staples' | 'spices_seasonings' | 'bread_buns' | 'dairy' | 'meat' | 'packaging' | 'packaging_bulk' | 'beverages' |'cleaning_sanitation' | 'equipment_smallwares' | 'staff_welfare_ppe' | 'office_admin_supplies';
  itemName: string;
  quantity: number;
  unit: string;
@@ -91,7 +93,7 @@ export type OverheadItem = {
  // written here typechecks against it. 'miscellaneous' and 'commission' are legacy
  // categories kept for backwards compatibility with old records; no longer selectable
  // in the form.
- category: 'fuel' | 'ev_charging' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'renovation' | 'labour_charge' | 'puja_expense' | 'office_supplies' | 'deep_cleaning' | 'party' | 'breakfast' | 'lunch' | 'dinner' | 'evening_snacks' | 'emergency_online' | 'staff_emergency_services' | 'personal_expense' | 'utensils' | 'cleaning_supplies' | 'equipments' | 'license' | 'water_jar' | 'vehicle_maintenance' | 'donations_community' | 'staff_welfare' | 'miscellaneous' | 'commission';
+ category: 'fuel' | 'ev_charging' | 'travel' | 'transportation' | 'marketing' | 'service_charge' | 'repair' | 'renovation' | 'labour_charge' | 'puja_expense' | 'office_supplies' | 'deep_cleaning' | 'party' | 'breakfast' | 'lunch' | 'dinner' | 'evening_snacks' | 'emergency_online' | 'staff_emergency_services' | 'personal_expense' | 'utensils' | 'cleaning_supplies' | 'equipments' | 'license' | 'water_jar' | 'vehicle_maintenance' | 'donations_community' | 'staff_welfare' | 'miscellaneous' | 'commission' | 'hygiene_ppe' | 'professional_fees' | 'losses_writeoffs' | 'asset_kitchen_equipment' | 'asset_furniture' | 'asset_electrical' | 'asset_vehicle' | 'vehicle_emi';
  description: string;
  amount: number;
  storeId?: string; // Optional storeId for multi-store filtering
@@ -109,7 +111,7 @@ export type OverheadItem = {
 
 export type FixedCostItem = {
  id: string;
- category: 'electricity' | 'rent' | 'lpg_gas';
+ category: 'electricity' | 'rent' | 'internet_phone' | 'software_subscription' | 'lpg_gas';
  amount: number;
  description: string;
  date: string;

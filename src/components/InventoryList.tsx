@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
-import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, BUILT_IN_ITEM_BENGALI } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, BUILT_IN_ITEM_BENGALI, expenseCategoryLabel } from '../utils/inventoryData';
 import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle, Banknote, Smartphone, Coins } from 'lucide-react';
 import * as api from '../utils/api';
 
@@ -163,7 +163,7 @@ export function InventoryList({
                   <div key={category}>
                     <div className="flex items-center justify-between mb-2 px-1">
                       <h4 className="text-xs text-muted-foreground uppercase tracking-wide">
-                        {INVENTORY_CATEGORIES[category as keyof typeof INVENTORY_CATEGORIES]}
+                        {expenseCategoryLabel(category)}
                       </h4>
                       <span className="text-xs text-primary">
                         ₹{categoryTotal.toLocaleString()}
@@ -262,7 +262,7 @@ export function InventoryList({
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">{(OVERHEAD_CATEGORIES as Record<string, string>)[item.category]}</p>
+                    <p className="text-sm text-foreground">{expenseCategoryLabel(item.category)}</p>
                     {item.category === 'personal_expense' && item.employeeId && item.employeeName && (
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {item.employeeName} · {item.employeeId}
@@ -331,7 +331,7 @@ export function InventoryList({
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">{FIXED_COST_CATEGORIES[item.category]}</p>
+                    <p className="text-sm text-foreground">{expenseCategoryLabel(item.category)}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
                     {item.category === 'lpg_gas' && item.units && item.unitPrice && (
                       <p className="text-xs text-muted-foreground mt-0.5">

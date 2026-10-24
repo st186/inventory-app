@@ -855,6 +855,9 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     if (item?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission. Use Electric Bike Charging for the e-bike.' }, 403);
     }
+    if (item?.category === 'losses_writeoffs' && role !== 'cluster_head') {
+      return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
+    }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -921,6 +924,9 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const updates = await c.req.json();
     if (updates?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission.' }, 403);
+    }
+    if (updates?.category === 'losses_writeoffs' && role !== 'cluster_head') {
+      return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     
     const overheadItem = {
@@ -1854,6 +1860,9 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
 const SCOOTER_EMI_AMOUNT = 5543;
 const SCOOTER_EMI_STORE_ID = 'STORE-1766938921191-9LCH05'; // Bunny Momos 1
 const SCOOTER_EMI_REQUESTER_EMPLOYEE_ID = 'BM004'; // Aniket Prasad
+// 36 EMIs, 5 Nov 2026 to 5 Oct 2029 - no request is raised after the last one.
+const SCOOTER_EMI_FIRST_MONTH = '2026-11';
+const SCOOTER_EMI_LAST_MONTH = '2029-10';
 
 app.post('/make-server-c2dd9b9d/cron/scooter-emi-cash-topup', async (c) => {
   const cronSecret = c.req.header('X-Cron-Secret');
@@ -1864,6 +1873,10 @@ app.post('/make-server-c2dd9b9d/cron/scooter-emi-cash-topup', async (c) => {
 
   try {
     const today = getTodayIST();
+    const month = today.slice(0, 7);
+    if (month < SCOOTER_EMI_FIRST_MONTH || month > SCOOTER_EMI_LAST_MONTH) {
+      return c.json({ success: true, skipped: `outside the EMI period (${SCOOTER_EMI_FIRST_MONTH} to ${SCOOTER_EMI_LAST_MONTH})` });
+    }
 
     // Guard against double-creation if the cron ever fires twice in one day (pg_cron
     // retries, a manual re-trigger while debugging, etc.) - never raise two requests for
@@ -2784,7 +2797,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.15.2';
+const LATEST_APP_VERSION = '1.15.15';
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -3728,6 +3741,43 @@ function computeProductionCashExpected(
   return { productionExpenses, cashTopupCredited, expectedClosingCashInHand: openingBalance + cashTopupCredited - productionExpenses };
 }
 
+// A day with no saved production-cash record (nobody counted that day, or the shop was shut,
+// e.g. Dashami 21 Oct) still has real money moving through it: the store's prior-night cash
+// handed over, top-ups and production expenses. It used to be skipped entirely - the next
+// day's opening jumped straight back to the last SAVED day's count, so on 22 Oct production
+// opened at ₹10,385 (19 Oct's count) instead of ₹16,041, losing 19 Oct's ₹3,350 handover,
+// 20 Oct's ₹1,314 of expenses and 20 Oct's ₹3,620 handover. Unsaved days are now walked
+// through at their expected closing. Only from this date on: the three earlier gaps (27 Aug,
+// 12 Sep, 1 Oct) were already absorbed by the physical counts and approvals on the days
+// after them, and re-deriving them would rewrite those approved records.
+const PRODUCTION_CASH_GAP_CARRY_FROM = '2026-10-20';
+
+type ProductionCashData = {
+  allInventory: any[]; allOverheads: any[]; allFixedCosts: any[]; allTopups: any[]; allSales: any[]; allStores: any[];
+};
+
+// Production's own closing balance after an unsaved `date`, given what it opened with.
+function carryThroughUnsavedDay(carry: number, data: ProductionCashData, productionHouseId: string, date: string): number {
+  if (date < PRODUCTION_CASH_GAP_CARRY_FROM) return carry;
+  const opening = carry + getStoreHandoverForDate(data.allSales, data.allStores, productionHouseId, date);
+  return computeProductionCashExpected(data.allInventory, data.allOverheads, data.allFixedCosts, data.allTopups, productionHouseId, date, opening).expectedClosingCashInHand;
+}
+
+// Production's own leftover carried into `date` (store handover for `date` itself NOT
+// included): the last saved record's count (or expected closing), then walked forward
+// through any unsaved days in between.
+function productionCarryIntoDate(houseRecords: any[], data: ProductionCashData, productionHouseId: string, date: string): number {
+  const prior = houseRecords
+    .filter((r: any) => r.date < date)
+    .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+  if (!prior) return 0;
+  let carry = prior.actualCashInHand ?? prior.expectedClosingCashInHand ?? 0;
+  for (let d = addDaysToDateString(prior.date, 1); d < date; d = addDaysToDateString(d, 1)) {
+    carry = carryThroughUnsavedDay(carry, data, productionHouseId, d);
+  }
+  return carry;
+}
+
 async function cascadeRecomputeProductionCash(productionHouseId: string, fromDate: string): Promise<void> {
   try {
     const today = getTodayIST();
@@ -3752,19 +3802,15 @@ async function cascadeRecomputeProductionCash(productionHouseId: string, fromDat
     ]);
 
     const houseRecords = (allProductionCash || []).filter((r: any) => r.productionHouseId === productionHouseId && r.date);
+    const data: ProductionCashData = { allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores };
 
     // Production's OWN carried-forward leftover only (not the store handover - that's
     // looked up fresh per-day below via getStoreHandoverForDate, since it's new money
     // coming in each day, not part of production's own running balance). Anchor: the most
     // recent record strictly before fromDate - trust its actual count if one was entered,
-    // otherwise fall through to its own (already-recomputed) expected closing balance.
-    let ownCarryAnchor = 0;
-    const priorRecord = houseRecords
-      .filter((r: any) => r.date < fromDate)
-      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
-    if (priorRecord) {
-      ownCarryAnchor = priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0;
-    }
+    // otherwise its own (already-recomputed) expected closing - walked through any unsaved
+    // days between it and fromDate.
+    let ownCarryAnchor = productionCarryIntoDate(houseRecords, data, productionHouseId, fromDate);
 
     let cursor = fromDate;
     let updated = 0;
@@ -3797,9 +3843,11 @@ async function cascadeRecomputeProductionCash(productionHouseId: string, fromDat
         }
 
         ownCarryAnchor = typeof existing.actualCashInHand === 'number' ? existing.actualCashInHand : expectedClosingCashInHand;
+      } else {
+        // No record for this date - nothing to save, but its handover, top-ups and expenses
+        // still move the running balance (see carryThroughUnsavedDay).
+        ownCarryAnchor = carryThroughUnsavedDay(ownCarryAnchor, data, productionHouseId, cursor);
       }
-      // No record for this date - nothing to recompute, and the anchor passes through
-      // unchanged to the next date (idle day, or a day nobody has reconciled yet).
       cursor = addDaysToDateString(cursor, 1);
     }
     console.log(`Cascade production-cash recompute for house ${productionHouseId} from ${fromDate}: ${updated} record(s) updated`);
@@ -3873,19 +3921,16 @@ app.get('/make-server-c2dd9b9d/production-cash', async (c) => {
 
     // Nothing saved for this date yet - live-compute what it WOULD be, same formula the
     // cascade uses: production's own carried-forward leftover (anchored on the last
-    // actual/expected balance strictly before this date) PLUS the linked store's actual
-    // cash-in-hand handed over the prior day (see getStoreHandoverForDate above).
-    const priorRecord = allRecords
-      .filter((r: any) => r.date < date)
-      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
-    const ownCarry = priorRecord ? (priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0) : 0;
-
+    // actual/expected balance strictly before this date, walked through any unsaved days)
+    // PLUS the linked store's actual cash-in-hand handed over the prior day (see
+    // getStoreHandoverForDate above).
     // getAllByPrefixWithRetry, not plain kv.getByPrefix - see the cascade's own comment on
     // this exact bug (Supabase/PostgREST's silent 1000-row cap).
     const [allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores] = await Promise.all([
       getAllByPrefixWithRetry('inventory:'), getAllByPrefixWithRetry('overhead:'), getAllByPrefixWithRetry('fixedcost:'), getAllByPrefixWithRetry('cash-topup:'),
       getAllByPrefixWithRetry('sales:'), kv.getByPrefix('store:'),
     ]);
+    const ownCarry = productionCarryIntoDate(allRecords, { allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores }, productionHouseId, date);
     const storeHandover = getStoreHandoverForDate(allSales, allStores, productionHouseId, date);
     const openingBalance = storeHandover + ownCarry;
     const { productionExpenses, cashTopupCredited, expectedClosingCashInHand } = computeProductionCashExpected(
@@ -3943,8 +3988,6 @@ app.post('/make-server-c2dd9b9d/production-cash', async (c) => {
     // this applies from day one, not just once history exists, since the store handover is
     // a real number even on the very first day (confirmed via a real worked example).
     const hasAnyPriorRecord = allRecords.some((r: any) => r.date < date);
-    const priorRecord = allRecords.filter((r: any) => r.date < date).sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
-    const ownCarry = priorRecord ? (priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0) : 0;
 
     // getAllByPrefixWithRetry, not plain kv.getByPrefix - see the cascade's own comment on
     // this exact bug (Supabase/PostgREST's silent 1000-row cap).
@@ -3952,6 +3995,7 @@ app.post('/make-server-c2dd9b9d/production-cash', async (c) => {
       getAllByPrefixWithRetry('inventory:'), getAllByPrefixWithRetry('overhead:'), getAllByPrefixWithRetry('fixedcost:'), getAllByPrefixWithRetry('cash-topup:'),
       getAllByPrefixWithRetry('sales:'), kv.getByPrefix('store:'),
     ]);
+    const ownCarry = productionCarryIntoDate(allRecords, { allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores }, productionHouseId, date);
     const storeHandover = getStoreHandoverForDate(allSales, allStores, productionHouseId, date);
     const openingBalance = !hasAnyPriorRecord && typeof manualOpeningOverride === 'number'
       ? manualOpeningOverride
@@ -7750,10 +7794,10 @@ app.delete('/make-server-c2dd9b9d/cluster-heads/by-email/:email', async (c) => {
 // Prevents orphaned category values (e.g. a stray "gas_utilities" found in the data)
 // from entering the catalog again.
 const VALID_INVENTORY_CATEGORIES = new Set([
-  'fresh_produce', 'spices_seasonings', 'dairy', 'meat', 'packaging',
-  'beverages', 'cleaning_sanitation', 'equipment_smallwares', 'staff_welfare_ppe', 'office_admin_supplies',
-  'puja_items',
-  'staff_essentials', // legacy — still valid on historical data
+  'fresh_produce', 'staples', 'spices_seasonings', 'bread_buns', 'dairy', 'meat', 'packaging', 'packaging_bulk', 'beverages',
+  // legacy (moved to overheads 23 Oct 2026) — still valid on historical data
+  'cleaning_sanitation', 'equipment_smallwares', 'staff_welfare_ppe', 'office_admin_supplies', 'puja_items',
+  'staff_essentials',
 ]);
 
 // Cluster-head-created categories (see /custom-categories below) extend the fixed set
@@ -7777,9 +7821,10 @@ const VALID_OVERHEAD_CATEGORIES = new Set([
   'emergency_online', 'staff_emergency_services', 'utensils', 'cleaning_supplies',
   'equipments', 'license', 'water_jar', 'vehicle_maintenance', 'donations_community',
   'staff_welfare', 'breakfast', 'lunch', 'dinner', 'evening_snacks', 'personal_expense',
-  'miscellaneous',
+  'miscellaneous', 'hygiene_ppe', 'professional_fees', 'losses_writeoffs',
+  'asset_kitchen_equipment', 'asset_furniture', 'asset_electrical', 'asset_vehicle', 'vehicle_emi',
 ]);
-const VALID_FIXEDCOST_CATEGORIES = new Set(['electricity', 'rent', 'lpg_gas']);
+const VALID_FIXEDCOST_CATEGORIES = new Set(['electricity', 'rent', 'internet_phone', 'software_subscription', 'lpg_gas']);
 
 const isValidCategoryForType = (entryType: string | undefined, category: string): boolean => {
   if (entryType === 'overhead') return VALID_OVERHEAD_CATEGORIES.has(category);

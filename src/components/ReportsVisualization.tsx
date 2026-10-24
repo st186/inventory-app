@@ -6,7 +6,7 @@ import { FileText, Download, TrendingUp, DollarSign, Package, Users, Calendar } 
 import { Card } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
-import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { getTodayIST } from '../utils/timezone';
 
 type Props = {
@@ -145,7 +145,7 @@ export function ReportsVisualization({ context, stores }: Props) {
     // Category-wise spending
     const categorySpending: Record<string, number> = {};
     filteredInventory.forEach(item => {
-      const category = (INVENTORY_CATEGORIES as Record<string, string>)[item.category]
+      const category = (expenseCategoryLabel(item.category) !== item.category ? expenseCategoryLabel(item.category) : null)
         || item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
       categorySpending[category] = (categorySpending[category] || 0) + item.totalCost;
     });

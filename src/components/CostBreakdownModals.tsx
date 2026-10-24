@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { X, Percent, Landmark } from 'lucide-react';
 import type { AggregatorSettlement, OnlineLoan } from '../utils/api';
+import type { OnlineCosts } from '../utils/onlineCosts';
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 const inr2 = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -30,22 +31,27 @@ function Shell({ title, subtitle, icon, onClose, children }: { title: string; su
 
 // ---------------------------------------------------------------- Commission
 
+// Commission shown without the GST the platform collects from the customer and pays on our
+// behalf - same rule as utils/onlineCosts.ts.
+const gstOf = (s: AggregatorSettlement) => s.gstCollected ?? ((s.grossSales || 0) * 5) / 105;
+const commissionExGst = (s: AggregatorSettlement) => (s.netCommission || 0) - gstOf(s);
+
 export function CommissionBreakdownModal({
-  totalAmount, settlements, legacyAmount, periodLabel, onClose,
+  totalAmount, settlements, costs, periodLabel, onClose,
 }: {
-  totalAmount: number;
+  totalAmount: number; // commission + ads
   settlements: AggregatorSettlement[];
-  // Commission from the older manual online-sales vs payout reconciliation (days that have
-  // a recorded payout but no uploaded settlement file) - part of the headline total too.
-  legacyAmount: number;
+  // The headline split: settled, old manual payout entries, and estimates for days the
+  // platforms haven't settled yet (see utils/onlineCosts.ts).
+  costs: OnlineCosts;
   periodLabel: string;
   onClose: () => void;
 }) {
   const perAggregator = useMemo(() => {
     return (['zomato', 'swiggy'] as const).map((agg) => {
       const rows = settlements.filter((s) => s.aggregator === agg);
-      const gross = rows.reduce((s, r) => s + (r.grossSales || 0), 0);
-      const commission = rows.reduce((s, r) => s + (r.netCommission || 0), 0);
+      const gross = rows.reduce((s, r) => s + (r.grossSales || 0) - gstOf(r), 0);
+      const commission = rows.reduce((s, r) => s + commissionExGst(r), 0);
       return {
         agg, count: rows.length, gross, commission,
         adSpend: rows.reduce((s, r) => s + (r.adSpend || 0), 0),
@@ -63,7 +69,7 @@ export function CommissionBreakdownModal({
 
   return (
     <Shell
-      title="Aggregator Commission Breakdown"
+      title="Zomato & Swiggy Commission and Ads"
       subtitle={`${periodLabel} • Total ${inr(totalAmount)} • ${settlements.length} settlement${settlements.length === 1 ? '' : 's'}`}
       icon={<Percent className="w-6 h-6 text-white" />}
       onClose={onClose}
@@ -93,16 +99,36 @@ export function CommissionBreakdownModal({
         ))}
       </div>
 
-      {legacyAmount > 0.5 && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-          <b>{inr(legacyAmount)}</b> of this total comes from the older manual online-sales vs payout reconciliation (days with a recorded payout but no uploaded settlement file), not from the settlements below.
-        </div>
-      )}
+      <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 text-sm">
+        {[
+          { label: 'Commission from settlement files', value: costs.settledCommission },
+          { label: 'Commission from old manual payout entries', value: costs.legacyCommission },
+          {
+            label: `Estimated commission for ${costs.estimatedDays} day${costs.estimatedDays === 1 ? '' : 's'} not settled yet`,
+            value: costs.estimatedCommission,
+            note: `At the last 60 days' rate: Zomato ${(costs.rates.zomato.commission * 100).toFixed(1)}%, Swiggy ${(costs.rates.swiggy.commission * 100).toFixed(1)}% of sales. Replaced by the real figure once the settlement is uploaded.`,
+          },
+          { label: 'Platform ads', value: costs.ads, note: costs.estimatedAds > 0.5 ? `incl. ${inr(costs.estimatedAds)} estimated` : undefined },
+        ].filter((row) => Math.abs(row.value) > 0.5).map((row) => (
+          <div key={row.label} className="flex items-start justify-between gap-4 px-4 py-3">
+            <div>
+              <p className="text-gray-800">{row.label}</p>
+              {row.note && <p className="text-xs text-gray-500 mt-0.5">{row.note}</p>}
+            </div>
+            <p className="font-semibold tabular-nums text-gray-900">{inr(row.value)}</p>
+          </div>
+        ))}
+        {costs.gstExcluded > 0.5 && (
+          <p className="px-4 py-3 text-xs text-gray-500">
+            Not counted: {inr(costs.gstExcluded)} GST the platforms collected from customers and paid to the government for us. It was never part of our revenue, so it isn't our cost.
+          </p>
+        )}
+      </div>
 
       <div className="rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
           <h3 className="text-base font-semibold text-gray-900">Settlements in this period</h3>
-          <p className="text-xs text-gray-500">Counted by the orders' period, not the day the money arrived - a settlement paid in October for September orders belongs to September.</p>
+          <p className="text-xs text-gray-500">Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it.</p>
         </div>
         {sorted.length === 0 ? (
           <p className="text-sm text-gray-500 p-5 text-center">No settlements cover this period.</p>
@@ -127,9 +153,9 @@ export function CommissionBreakdownModal({
                     <td className="px-4 py-2 capitalize font-medium text-gray-900">{s.aggregator}</td>
                     <td className="px-4 py-2 text-gray-600">{shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</td>
                     <td className="px-4 py-2 text-gray-600">{shortDate(s.settlementDate)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{inr2(s.grossSales || 0)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(s.netCommission || 0)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-rose-600">{s.grossSales > 0 ? ((s.netCommission / s.grossSales) * 100).toFixed(1) : '-'}%</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{inr2((s.grossSales || 0) - gstOf(s))}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(commissionExGst(s))}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-rose-600">{s.grossSales - gstOf(s) > 0 ? ((commissionExGst(s) / (s.grossSales - gstOf(s))) * 100).toFixed(1) : '-'}%</td>
                     <td className="px-4 py-2 text-right tabular-nums">{s.adSpend ? inr2(s.adSpend) : '-'}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{inr2(s.netPayout || 0)}</td>
                   </tr>

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { X, Loader2, Check, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
 import {
-  INVENTORY_CATEGORIES,
   SELECTABLE_INVENTORY_CATEGORIES,
   STORE_SELECTABLE_INVENTORY_CATEGORIES,
   OVERHEAD_CATEGORIES,
   STORE_OVERHEAD_CATEGORY_KEYS,
   RESTRICTED_OVERHEAD_CATEGORIES,
-  FIXED_COST_CATEGORIES,
+  SELECTABLE_OVERHEAD_CATEGORY_KEYS,
+  SELECTABLE_FIXED_COST_CATEGORIES,
+  expenseCategoryLabel,
 } from '../utils/inventoryData';
 import {
   ExpenseCandidate,
@@ -114,10 +115,11 @@ export function QuickAddExpense({
     }
     if (manualType === 'overhead') {
       const entries = Object.entries(OVERHEAD_CATEGORIES)
+        .filter(([key]) => SELECTABLE_OVERHEAD_CATEGORY_KEYS.includes(key))
         .filter(([key]) => canUseRestrictedCategories || !RESTRICTED_OVERHEAD_CATEGORIES.includes(key));
       return entity === 'store' ? entries.filter(([key]) => STORE_OVERHEAD_CATEGORY_KEYS.includes(key)) : entries;
     }
-    return Object.entries(FIXED_COST_CATEGORIES);
+    return Object.entries(SELECTABLE_FIXED_COST_CATEGORIES);
   }, [manualType, entity, canUseRestrictedCategories]);
 
   useEffect(() => {
@@ -650,7 +652,5 @@ function normalize(s: string) {
 }
 
 function categoryLabel(c: { entryType: ExpenseEntryType; category: string }): string {
-  if (c.entryType === 'fixedcost') return (FIXED_COST_CATEGORIES as Record<string, string>)[c.category] || c.category;
-  if (c.entryType === 'overhead') return (OVERHEAD_CATEGORIES as Record<string, string>)[c.category] || c.category;
-  return (INVENTORY_CATEGORIES as Record<string, string>)[c.category] || c.category;
+  return expenseCategoryLabel(c.category);
 }

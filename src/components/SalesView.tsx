@@ -817,8 +817,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
     const carriedCash = includeCarriedCash
       ? carriedBalances.reduce((sum, item) => sum + (item.cash?.actualCashInHand ?? 0), 0)
       : 0;
-    const carriedPaytm = carriedBalances.reduce((sum, item) => sum + (item.paytm?.actualPaytmBalance ?? 0), 0);
-    const hasCarriedData = carriedBalances.some((item) => item.cash || item.paytm);
+    const recalibratedToday = (context.onlineCashRecalibrations || []).some((r) => scopeStoreIds.includes(r.storeId) && r.date === selectedDate);
+    const hasCarriedData = carriedBalances.some((item) => item.cash || item.paytm) || recalibratedToday;
 
     // Excludes production_inventory top-ups - those fund the production house's own till,
     // not the store's, and already count toward productionAmount below via the production
@@ -853,6 +853,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
     let cashExpenses = 0;
     let onlineExpenses = 0;
     for (const item of todaysStoreExpenses as any[]) {
+      // Aggregator commission entries are already taken off inside the Paytm formula below.
+      if ((item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) || item.category === 'commission') continue;
       const amount = item.totalCost ?? item.amount ?? 0;
       if (item.paymentMethod === 'both') {
         cashExpenses += item.cashAmount || 0;
@@ -872,18 +874,44 @@ export function SalesView({ context, selectedStoreId }: Props) {
       : (productionCashEntry?.actualCashInHand ?? productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand ?? 0);
     const storeCash = carriedCash + approvedTopupsToday - cashExpenses;
 
+    // Paytm uses the same formula as the main Paytm card and the entry form
+    // (utils/paytmBalance.ts), so a recalibration, settlements, payouts and loans since the
+    // last saved day all count. Carrying forward only the last sales record's balance used
+    // to ignore a recalibration logged after it (24 Oct: showed ₹24,456 against a ₹56,658
+    // recalibration). Today's sales aren't in yet, so todaysPaytmReceived is 0. Today's
+    // store-reason top-ups go in as used online money: the formula takes them off, and both
+    // top-up reasons on a recalibration day only when approved after the count.
+    const paytmOpening = scopeStoreIds.reduce((sum, storeId, i) => {
+      // A store with no Paytm history at all (no saved balance, no recalibration) counts as
+      // ₹0, as before: the formula's from-scratch branch would sum every untagged payout ever.
+      if (!carriedBalances[i].paytm && !(context.onlineCashRecalibrations || []).some((r) => r.storeId === storeId)) return sum;
+      const storeTopupsToday = topupRequests
+        .filter((r) => r.storeId === storeId && r.date === selectedDate && r.status === 'approved' && r.reason !== 'production_inventory')
+        .reduce((s, r) => s + r.requestedAmount, 0);
+      return sum + computeExpectedPaytmBalance({
+        salesData: context.salesData,
+        overheads: context.overheads,
+        aggregatorSettlements: context.aggregatorSettlements || [],
+        onlinePayoutData: [], // legacy manual payout table not loaded here; effectively dead
+        onlineLoans,
+        employeePayouts,
+        topupRequests,
+        onlineCashRecalibrations: context.onlineCashRecalibrations || [],
+        selectedDate,
+        effectiveStoreId: storeId,
+        todaysPaytmReceived: 0,
+        todaysUsedOnlineMoney: storeTopupsToday,
+      }).balance;
+    }, 0);
+
     return {
-      carriedCash, carriedPaytm, hasCarriedData, approvedTopupsToday, productionTopupsToday, cashExpenses, onlineExpenses, prevDateStr,
+      carriedCash, paytmOpening, recalibratedToday, hasCarriedData, approvedTopupsToday, productionTopupsToday, cashExpenses, onlineExpenses, prevDateStr,
       storeCount: scopeStoreIds.length,
       storeCash, productionAmount, isPostGoLive: !includeCarriedCash,
       liveCash: storeCash + productionAmount,
-      // Both top-up reasons drain Paytm the moment they're approved (see
-      // productionTopupsToday above) - a bug fix, not new behavior: this line previously
-      // subtracted neither, overstating this estimate by the full top-up amount on any day
-      // with an approved top-up but no sales entry saved yet.
-      livePaytm: carriedPaytm - onlineExpenses - approvedTopupsToday - productionTopupsToday,
+      livePaytm: paytmOpening - onlineExpenses,
     };
-  }, [hasSalesEntries, scopedStoreIds, selectedDate, context.stores, context.salesData, context.inventory, context.overheads, context.fixedCosts, topupRequests, productionCashEntry, productionCashLive]);
+  }, [hasSalesEntries, scopedStoreIds, selectedDate, context.stores, context.salesData, context.inventory, context.overheads, context.fixedCosts, context.aggregatorSettlements, context.onlineCashRecalibrations, onlineLoans, employeePayouts, topupRequests, productionCashEntry, productionCashLive]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1057,9 +1085,9 @@ export function SalesView({ context, selectedStoreId }: Props) {
                 <p className="text-xs text-sky-100">Estimated Paytm Balance</p>
                 <p className="text-xl font-semibold">₹{liveCashPosition.livePaytm.toLocaleString()}</p>
                 <p className="text-[11px] text-sky-100/90 mt-1">
-                  ₹{liveCashPosition.carriedPaytm.toLocaleString()} carried − ₹{liveCashPosition.onlineExpenses.toLocaleString()} expenses
+                  ₹{Math.round(liveCashPosition.paytmOpening).toLocaleString()} {liveCashPosition.recalibratedToday ? "from today's recalibration" : 'carried'} − ₹{liveCashPosition.onlineExpenses.toLocaleString()} expenses
                   {(liveCashPosition.approvedTopupsToday > 0 || liveCashPosition.productionTopupsToday > 0)
-                    ? ` − ₹${(liveCashPosition.approvedTopupsToday + liveCashPosition.productionTopupsToday).toLocaleString()} top-ups`
+                    ? ` · ₹${(liveCashPosition.approvedTopupsToday + liveCashPosition.productionTopupsToday).toLocaleString()} top-ups already taken off`
                     : ''}
                 </p>
               </div>
@@ -1077,7 +1105,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
           </div>
       )}
 
-      {(hasSalesEntries || onlineSalesTotal) && (
+      {(hasSalesEntries || onlineSalesTotal > 0) && (
         <>
           {/* Total Sales - shown first */}
           <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-5 mt-6 mb-4 shadow-lg shadow-emerald-500/20 text-white">

@@ -10,7 +10,7 @@ import { DateSelector } from './DateSelector';
 import { Plus, Search, Settings, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
-import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { CategoryManagerModal } from './CategoryManagerModal';
 
 type Props = {
@@ -468,7 +468,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <td className="py-3 text-gray-600 whitespace-nowrap">{formatDate(item.date)}</td>
  <td className="py-3 font-medium text-gray-900">{item.itemName}</td>
  <td className="py-3 text-gray-500 text-xs">
- {INVENTORY_CATEGORIES[item.category as keyof typeof INVENTORY_CATEGORIES] || item.category}
+ {expenseCategoryLabel(item.category)}
  </td>
  <td className="py-3 text-right text-gray-700">{item.quantity} {item.unit}</td>
  <td className="py-3 text-right text-gray-700">₹{item.costPerUnit?.toLocaleString()}</td>
