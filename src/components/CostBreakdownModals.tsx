@@ -1,7 +1,8 @@
 import { useMemo, type ReactNode } from 'react';
 import { X, Percent, Landmark } from 'lucide-react';
 import type { AggregatorSettlement, OnlineLoan } from '../utils/api';
-import type { OnlineCosts } from '../utils/onlineCosts';
+import { settlementShareInRange, type OnlineCosts } from '../utils/onlineCosts';
+import { getTodayIST } from '../utils/timezone';
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 const inr2 = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -37,30 +38,47 @@ const gstOf = (s: AggregatorSettlement) => s.gstCollected ?? ((s.grossSales || 0
 const commissionExGst = (s: AggregatorSettlement) => (s.netCommission || 0) - gstOf(s);
 
 export function CommissionBreakdownModal({
-  totalAmount, settlements, costs, periodLabel, onClose,
+  totalAmount, settlements, costs, range, periodLabel, onClose,
 }: {
   totalAmount: number; // commission + ads
   settlements: AggregatorSettlement[];
   // The headline split: settled, old manual payout entries, and estimates for days the
   // platforms haven't settled yet (see utils/onlineCosts.ts).
   costs: OnlineCosts;
+  // The period the headline covers (null = no limit).
+  range: { start: string; end: string } | null;
   periodLabel: string;
   onClose: () => void;
 }) {
   const perAggregator = useMemo(() => {
+    // Each settlement counts only for its days inside the period (up to today), split by order
+    // value - the same per-day share the card uses - so a settlement straddling the period's
+    // edge isn't counted whole and these figures add up to "Commission from settlement files".
+    const today = getTodayIST();
+    const last = range ? (range.end > today ? today : range.end) : null;
+    const shareOf = (s: AggregatorSettlement) => (range && last ? settlementShareInRange(s, range.start, last) : 1);
+    const ordersIn = (s: AggregatorSettlement, share: number) => {
+      const dated = (s.orders || []).filter((o) => o.orderDate);
+      if (!range || !last || dated.length === 0) return Math.round((s.orderCount || 0) * share);
+      return dated.filter((o) => o.orderDate! >= range.start && o.orderDate! <= last).length;
+    };
     return (['zomato', 'swiggy'] as const).map((agg) => {
-      const rows = settlements.filter((s) => s.aggregator === agg);
-      const gross = rows.reduce((s, r) => s + (r.grossSales || 0) - gstOf(r), 0);
-      const commission = rows.reduce((s, r) => s + commissionExGst(r), 0);
+      const rows = settlements
+        .filter((s) => s.aggregator === agg)
+        .map((s) => ({ s, share: shareOf(s) }))
+        .filter((r) => r.share > 0);
+      const sum = (pick: (s: AggregatorSettlement) => number) => rows.reduce((t, r) => t + pick(r.s) * r.share, 0);
+      const gross = sum((r) => (r.grossSales || 0) - gstOf(r));
+      const commission = sum(commissionExGst);
       return {
         agg, count: rows.length, gross, commission,
-        adSpend: rows.reduce((s, r) => s + (r.adSpend || 0), 0),
-        net: rows.reduce((s, r) => s + (r.netPayout || 0), 0),
-        orders: rows.reduce((s, r) => s + (r.orderCount || 0), 0),
+        adSpend: sum((r) => r.adSpend || 0),
+        net: sum((r) => r.netPayout || 0),
+        orders: rows.reduce((t, r) => t + ordersIn(r.s, r.share), 0),
         pct: gross > 0 ? (commission / gross) * 100 : null,
       };
     });
-  }, [settlements]);
+  }, [settlements, range]);
 
   const sorted = useMemo(
     () => [...settlements].sort((a, b) => ((a.periodEnd || a.settlementDate) < (b.periodEnd || b.settlementDate) ? 1 : -1)),

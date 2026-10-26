@@ -8798,6 +8798,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  totalAmount={metrics.commissionExpenses + metrics.adSpend}
  settlements={commissionBreakdownSettlements}
  costs={metrics.online}
+ range={activeSettlementDateRange}
  periodLabel={getPeriodLabel()}
  onClose={() => setSelectedExpenseCategory(null)}
  />
