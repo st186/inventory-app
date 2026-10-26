@@ -221,12 +221,21 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
 
   const saveWeek = async () => {
     const weekDates = getWeekDates(currentWeekStart);
-    const entries = weekDates
+    const filled = weekDates
       .map(date => ({ date, entry: getTimesheetEntry(date) }))
       .filter(({ entry }) => entry.startTime && entry.endTime);
 
-    if (entries.length === 0) {
+    if (filled.length === 0) {
       alert('Please enter timesheet data for at least one day');
+      return;
+    }
+
+    // Only days edited since the last load go out. Resending every filled day gave pending
+    // days new ids (breaking the notification's Approve/Reject buttons and restarting the
+    // auto-approve clock) and sent corrected rejected days back still marked rejected.
+    const entries = filled.filter(({ entry }) => entry.status !== 'approved' && isDirty(entry));
+    if (entries.length === 0) {
+      alert('Nothing new to send - every filled day this week is already submitted.');
       return;
     }
 
@@ -246,13 +255,20 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
       }
     }
 
-    const bulkEntries = entries.map(({ entry }) => entry);
+    // An edited rejected day is a fresh submission: back to pending, old rejection cleared.
+    const bulkEntries = entries.map(({ entry }) => ({
+      ...entry,
+      status: 'pending' as const,
+      rejectedBy: undefined,
+      rejectedAt: undefined,
+      rejectionReason: undefined,
+    }));
 
     try {
       setLoading(true);
       await api.saveTimesheetBulk(bulkEntries);
       await loadTimesheetData();
-      alert('Week timesheet saved successfully');
+      alert(`Sent ${bulkEntries.length} day(s) for approval`);
     } catch (error) {
       console.error('Error saving week timesheet:', error);
       alert('Error saving week timesheet');
@@ -322,8 +338,9 @@ export function EmployeeTimesheet({ user }: EmployeeTimesheetProps) {
         const onLeave = isOnLeave(currentDate);
 
         if (!onLeave && !isFutureDate(currentDate) && previousEntry && previousEntry.startTime && previousEntry.endTime) {
-          // Only copy if current date doesn't have approved data
-          if (!existingEntry || existingEntry.status !== 'approved') {
+          // Only copy over an empty, unsent or rejected day - not an approved one, and not
+          // one already submitted and waiting (that would turn it into a new submission).
+          if (!existingEntry || existingEntry.status === 'rejected' || (!existingEntry.id && existingEntry.status !== 'approved')) {
             newEntries.push({
               employeeId: user.employeeId,
               date: currentDateStr,

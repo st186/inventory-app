@@ -2587,16 +2587,18 @@ export async function deleteLeave(leaveId: string): Promise<{ success: boolean }
   });
 }
 
-export async function getLeaveBalance(employeeId: string, joiningDate: string): Promise<number> {
+// This leave year's balance (approved leave deducted) and the days still waiting for a
+// decision. The server takes the joining date from the employee's own record.
+export async function getLeaveBalance(employeeId: string): Promise<{ balance: number; pendingDays: number }> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
     throw new Error('Not authenticated');
   }
-  
-  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance?joiningDate=${joiningDate}`, session.access_token);
-  return data.balance || 0;
+
+  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance`, session.access_token);
+  return { balance: data.balance || 0, pendingDays: data.pendingDays || 0 };
 }
 
 // Leave approval and rejection functions
