@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, BarChart3, DollarSign, Package, Users, TrendingUp, Factory, Eye, ShieldCheck } from 'lucide-react';
+import { LogOut, BarChart3, DollarSign, Package, Users, TrendingUp, Factory, Eye, ShieldCheck, KeyRound } from 'lucide-react';
 import type { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData, InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { Analytics } from './Analytics';
@@ -23,6 +23,8 @@ type Props = {
  stores: api.Store[];
  inventoryItems: api.DynamicInventoryItem[];
  onLogout: () => void;
+ // Opens App's change-password sheet (components/PasswordSecurity.tsx).
+ onChangePassword?: () => void;
  onDataUpdate: (accessToken: string) => Promise<void>;
 };
 
@@ -41,6 +43,7 @@ export function AuditDashboard({
  stores,
  inventoryItems,
  onLogout,
+ onChangePassword,
  onDataUpdate
 }: Props) {
  const [activeView, setActiveView] = useState<'analytics' | 'inventory' | 'sales' | 'production' | 'payroll'>('analytics');
@@ -136,6 +139,16 @@ export function AuditDashboard({
  Read-Only Access
  </p>
  </div>
+ {onChangePassword && (
+ <button
+ onClick={onChangePassword}
+ className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+ title="Change password"
+ >
+ <KeyRound className="w-4 h-4" />
+ <span className="hidden sm:inline">Password</span>
+ </button>
+ )}
  <button
  onClick={onLogout}
  className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"

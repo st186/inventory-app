@@ -40,6 +40,11 @@ export async function getSession() {
 // Global flag to prevent multiple logout redirects
 let isHandlingUnauthorized = false;
 
+// Fired on window when the server answers 403 PASSWORD_EXPIRED (password past 90 days, or the
+// owner forced a reset - see passwords.ts on the server). App.tsx listens and shows the blocking
+// change-password screen; the event detail is the error body ({ error, code, reason }).
+export const PASSWORD_EXPIRED_EVENT = 'bunny:password-expired';
+
 // Supabase refresh tokens are single-use/rotating: if several requests 401 at once
 // (e.g. loadData's ~14 parallel fetches after the token expired while the app was
 // backgrounded) and each independently calls refreshSession(), only the first actually
@@ -110,6 +115,10 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
       }
 
       console.error(`API Error [${url}]:`, errorMessage);
+
+      if (response.status === 403 && errorBody?.code === 'PASSWORD_EXPIRED' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(PASSWORD_EXPIRED_EVENT, { detail: errorBody }));
+      }
 
       // If unauthorized and a refresh was already tried (or isn't possible), force logout
       // (but only once to prevent reload loops)
@@ -3793,4 +3802,49 @@ export interface RiderTripEta {
 export async function getRiderTripEta(id: string): Promise<RiderTripEta> {
   const token = await riderToken();
   return fetchWithAuth(`${API_BASE}/rider/trips/${id}/eta`, token);
+}
+
+// ---- Password rotation (server: supabase/functions/make-server-c2dd9b9d/passwords.ts) ----
+
+export interface PasswordStatus {
+  changedAt: string;
+  expiresAt: string;
+  // Whole IST calendar days until the expiry day (0 = expires today).
+  daysLeft: number;
+  mustChange: boolean;
+  reason: 'expired' | 'reset' | null;
+  changedBy: 'self' | 'owner' | null;
+  assumed?: boolean;
+}
+
+export async function getPasswordStatus(accessToken: string): Promise<PasswordStatus> {
+  return fetchWithAuth(`${API_BASE}/auth/password-status`, accessToken);
+}
+
+// Errors carry details.code: WRONG_CURRENT_PASSWORD, WEAK_PASSWORD (with details.problems),
+// TOO_MANY_TRIES, AUTH_BUSY or MISSING_FIELDS.
+export async function changePassword(accessToken: string, currentPassword: string, newPassword: string): Promise<PasswordStatus & { success: boolean; otherSessionsSignedOut: boolean }> {
+  return fetchWithAuth(`${API_BASE}/auth/change-password`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+export interface ForcedPasswordReset {
+  success: boolean;
+  employeeId: string;
+  name: string;
+  email: string;
+  // Shown once to the owner; the server never stores it.
+  temporaryPassword: string;
+  signedOutEverywhere: boolean;
+}
+
+// Owner only: sets a temporary password, signs the person out everywhere and makes them choose a
+// new password at their next sign-in.
+export async function forcePasswordReset(employeeId: string): Promise<ForcedPasswordReset> {
+  return fetchWithAuth(`${API_BASE}/admin/employees/${encodeURIComponent(employeeId)}/force-password-reset`, await currentAccessToken(), {
+    method: 'POST',
+    cache: 'no-store',
+  });
 }

@@ -111,6 +111,7 @@ const NOTIFICATION_VIEW_MAP = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
+  password_expiring: { view: 'analytics' }, // home, where the expiry banner is (plain employees/riders are moved on to their own first screen)
 };
 
 function getNavigationTarget(data) {
