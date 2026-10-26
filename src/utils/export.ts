@@ -129,7 +129,7 @@ export function exportOverheadData(overheadData: OverheadItem[], storeName?: str
     Category: item.category,
     Description: item.description || 'N/A',
     Amount: item.amount,
-    'Payment Mode': item.paymentMethod || 'N/A'
+    'Payment Mode': item.paymentMethod === 'owner' ? 'Own money (cluster head)' : item.paidFromProductionHouseId ? 'Cash (production house)' : (item.paymentMethod || 'N/A')
   }));
   
   downloadCSV('overhead_report', formatted);

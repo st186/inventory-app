@@ -23,13 +23,23 @@ function PaymentBadge({
   cashAmount,
   onlineAmount,
   onlineLabel = 'Online',
+  fromProductionCash = false,
 }: {
   paymentMethod?: string;
   cashAmount?: number;
   onlineAmount?: number;
   onlineLabel?: string;
+  fromProductionCash?: boolean; // store bill paid out of production's cash in hand
 }) {
   if (!paymentMethod) return null;
+
+  if (fromProductionCash) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs rounded-full">
+        <Banknote className="w-3 h-3" /> Production cash
+      </span>
+    );
+  }
 
   if (paymentMethod === 'both') {
     return (
@@ -41,6 +51,14 @@ function PaymentBadge({
           <Smartphone className="w-3 h-3" /> ₹{(onlineAmount || 0).toLocaleString()}
         </span>
       </div>
+    );
+  }
+
+  if (paymentMethod === 'owner') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs rounded-full">
+        <Coins className="w-3 h-3" /> Own money
+      </span>
     );
   }
 
@@ -208,6 +226,7 @@ export function InventoryList({
                                   paymentMethod={item.paymentMethod}
                                   cashAmount={item.cashAmount}
                                   onlineAmount={item.onlineAmount}
+                                  fromProductionCash={!!item.paidFromProductionHouseId}
                                 />
                               </div>
                             </div>
@@ -281,6 +300,7 @@ export function InventoryList({
                           cashAmount={item.cashAmount}
                           onlineAmount={item.onlineAmount}
                           onlineLabel="Paytm"
+                          fromProductionCash={!!item.paidFromProductionHouseId}
                         />
                       </div>
                     )}
@@ -345,6 +365,7 @@ export function InventoryList({
                           cashAmount={item.cashAmount}
                           onlineAmount={item.onlineAmount}
                           onlineLabel="Paytm"
+                          fromProductionCash={!!item.paidFromProductionHouseId}
                         />
                       </div>
                     )}

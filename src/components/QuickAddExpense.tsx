@@ -19,6 +19,9 @@ import {
   buildExpenseCandidates,
   searchExpenseCandidates,
 } from '../utils/expenseMatcher';
+import { productionShouldCover } from '../utils/cashSource';
+import { useCashCover, type LoadCashCover } from './useCashCover';
+import { ProductionCashNotice } from './ProductionCashChoice';
 
 type Props = {
   selectedDate: string;
@@ -38,6 +41,14 @@ type Props = {
   // Cluster head only - unlocks RESTRICTED_OVERHEAD_CATEGORIES (fuel), which is otherwise
   // hidden from search and the manual category list (the server rejects it too).
   canUseRestrictedCategories?: boolean;
+  // Cluster head: choose where the money came from (own money, the entity's cash, or Paytm),
+  // and which store when no single store is selected.
+  ownerPaymentOption?: boolean;
+  storeOptions?: { id: string; name: string }[];
+  // Cluster head: the production house linked to a store, and both tills' cash for the day, so
+  // a store bill the store's cash can't cover is paid from production's cash instead.
+  productionHouseForStore?: (storeId: string) => string | null;
+  loadCashCover?: LoadCashCover;
 };
 
 const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
@@ -56,8 +67,15 @@ export function QuickAddExpense({
   onSubmitFixedCost,
   canCreateNewItems = true,
   canUseRestrictedCategories = false,
+  ownerPaymentOption = false,
+  storeOptions,
+  productionHouseForStore,
+  loadCashCover,
 }: Props) {
   const [amount, setAmount] = useState('');
+  // Default: the expense's own cash (store cash for a store bill, production cash for production).
+  const [paidFrom, setPaidFrom] = useState<'owner' | 'cash' | 'online'>('cash');
+  const [pickedStoreId, setPickedStoreId] = useState(effectiveStoreId || storeOptions?.[0]?.id || '');
   const [query, setQuery] = useState('');
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
   const [matched, setMatched] = useState<ExpenseSuggestion | null>(null);
@@ -152,7 +170,30 @@ export function QuickAddExpense({
   const entityFieldsFor = (targetEntity: 'store' | 'production_house') =>
     targetEntity === 'production_house'
       ? { entityType: 'production_house' as const, productionHouseId: targetProductionHouseId }
-      : { entityType: 'store' as const, storeId: effectiveStoreId || undefined };
+      : { entityType: 'store' as const, storeId: (storeOptions?.length ? pickedStoreId : effectiveStoreId) || undefined };
+
+  // A store bill comes off the store's own cash. Only when the store's cash for the day can't
+  // cover it and the linked production house's cash can is it paid from production's cash
+  // instead - automatically, with a one-tap way back to store cash.
+  const storeIdForCash = (storeOptions?.length ? pickedStoreId : effectiveStoreId) || '';
+  const productionCashHouseId = ownerPaymentOption && entity === 'store' && storeIdForCash
+    ? productionHouseForStore?.(storeIdForCash) || null
+    : null;
+  const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, selectedDate);
+  const [keepStoreCash, setKeepStoreCash] = useState(false);
+  const enteredAmount = parseFloat(amount) || 0;
+  const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId && productionShouldCover(cashCover, enteredAmount);
+  const useProductionCash = productionCanCover && !keepStoreCash;
+
+  // Everyone else's quick-add expense is paid from the cash in hand.
+  const paymentFieldsFor = (amt: number) =>
+    paidFrom === 'online'
+      ? { paymentMethod: 'online' as const, cashAmount: 0, onlineAmount: amt }
+      : paidFrom === 'owner'
+      ? { paymentMethod: 'owner' as const, cashAmount: 0, onlineAmount: 0 }
+      : useProductionCash
+      ? { paymentMethod: 'cash' as const, cashAmount: amt, onlineAmount: 0, paidFromProductionHouseId: productionCashHouseId }
+      : { paymentMethod: 'cash' as const, cashAmount: amt, onlineAmount: 0 };
 
   // Resolved outside handleSubmit too, so the render below can decide whether to show
   // the beverage packaging UI instead of a plain quantity/unit field.
@@ -227,9 +268,7 @@ export function QuickAddExpense({
           unit: isBeverage || isBundlePurchase ? 'pcs' : (unit || 'pcs'),
           costPerUnit: Math.round((amt / qty) * 100) / 100,
           totalCost: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...paymentFieldsFor(amt),
           ...(isBeverage ? {
             packageType,
             ...(packageType === 'carton' ? {
@@ -254,9 +293,7 @@ export function QuickAddExpense({
           category,
           description: query.trim(),
           amount: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...paymentFieldsFor(amt),
           ...entityFieldsFor(entity),
         });
       } else {
@@ -265,9 +302,7 @@ export function QuickAddExpense({
           category,
           description: query.trim(),
           amount: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...paymentFieldsFor(amt),
           ...entityFieldsFor(entity),
         });
       }
@@ -312,6 +347,15 @@ export function QuickAddExpense({
             ))}
           </div>
 
+          {entity === 'store' && storeOptions && storeOptions.length > 1 && (
+            <div>
+              <label htmlFor="qa-store" className="block text-xs font-medium text-gray-600 mb-2">Which store</label>
+              <select id="qa-store" value={pickedStoreId} onChange={(e) => setPickedStoreId(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-white">
+                {storeOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-2">Amount (₹)</label>
             <input
@@ -325,6 +369,34 @@ export function QuickAddExpense({
               required
             />
           </div>
+
+          {ownerPaymentOption && (
+            <div>
+              <label htmlFor="qa-paid-from" className="block text-xs font-medium text-gray-600 mb-2">Paid from</label>
+              <select id="qa-paid-from" value={paidFrom} onChange={(e) => setPaidFrom(e.target.value as 'owner' | 'cash' | 'online')} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-white">
+                <option value="cash">{entity === 'store' ? 'Store cash in hand' : 'Production cash in hand'}</option>
+                <option value="online">Business Paytm / online</option>
+                <option value="owner">My own money</option>
+              </select>
+              {!useProductionCash && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {paidFrom === 'owner'
+                    ? `Counts as a cost, but nothing comes off the ${entity === 'store' ? "store's" : "production house's"} cash or Paytm.`
+                    : paidFrom === 'cash'
+                    ? `Comes off the ${entity === 'store' ? "store's" : "production house's"} cash in hand for the day.`
+                    : 'Comes off the business Paytm balance.'}
+                </p>
+              )}
+              {productionCanCover && cashCover && (
+                <ProductionCashNotice
+                  cover={cashCover}
+                  amount={enteredAmount}
+                  usingProduction={useProductionCash}
+                  onChange={(useProduction) => setKeepStoreCash(!useProduction)}
+                />
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-2">What was this for?</label>

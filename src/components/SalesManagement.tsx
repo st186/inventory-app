@@ -12,6 +12,7 @@ import * as api from '../utils/api';
 import { addDays, getTodayIST, formatDateIST, formatDateTimeIST } from '../utils/timezone';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
+import { paidOutsideStoreTill } from '../utils/cashSource';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
 
@@ -481,9 +482,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // go-live keep the old blended behavior exactly as-is (historical data was never captured
  // split, so it isn't retroactively re-split here).
  const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
+ // Paid with the cluster head's own money, or out of production's cash: a store cost, but
+ // never out of this store's own cash.
+ const fromStoreMoney = (item: { paymentMethod?: string; paidFromProductionHouseId?: string | null }) => !paidOutsideStoreTill(item);
 
  const inventoryCost = context.inventory
  .filter(item => {
+ if (!fromStoreMoney(item)) return false;
  const dateMatch = item.date === selectedDate;
  const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
@@ -494,6 +499,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Include ALL overhead costs (both cash and online/paytm) for the current store
  const allOverheadCosts = context.overheads
  .filter(item => {
+ if (!fromStoreMoney(item)) return false;
  const dateMatch = item.date === selectedDate;
  const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
@@ -504,6 +510,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Include ALL fixed costs (both cash and online/paytm) for the current store
  const allFixedCosts = context.fixedCosts
  .filter(item => {
+ if (!fromStoreMoney(item)) return false;
  const dateMatch = item.date === selectedDate;
  const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
@@ -523,8 +530,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
  const isProdHouseSpend = (item: { entityType?: string; productionHouseId?: string }) =>
  includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
- const belongsToday = (item: { date: string; storeId?: string }) =>
- item.date === selectedDate && (effectiveStoreId ? (item.storeId === effectiveStoreId || isProdHouseSpend(item)) : true);
+ const belongsToday = (item: { date: string; storeId?: string; paymentMethod?: string; entityType?: string; productionHouseId?: string; paidFromProductionHouseId?: string | null }) =>
+ !paidOutsideStoreTill(item) && item.date === selectedDate && (effectiveStoreId ? (item.storeId === effectiveStoreId || isProdHouseSpend(item)) : true);
 
  const split = (list: any[], amountKey: 'totalCost' | 'amount') => {
  let store = 0;

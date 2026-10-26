@@ -13,6 +13,10 @@ import { PreparedLineItemsList } from './production/PreparedLineItemsList';
 import { EndOfDayCloseForm } from './production/EndOfDayCloseForm';
 import { AdditionalWastageForm } from './production/AdditionalWastageForm';
 import { MOMO_TYPES } from '../constants/momoTypes';
+import { ProductionCoverage } from './ProductionCoverage';
+import { BatchPiecesCard } from './production/BatchPiecesCard';
+import { BATCH_TRACKING_FROM, ProductionBatch } from '../utils/batches';
+import { ProductionPlanCards } from './insights/ProductionPlanCards';
 
 // Matches the backend's PRODUCTION_LEDGER_GO_LIVE_DATE (index.ts) exactly - dates before
 // this keep using the old write-only dough/stuffing/batter/coating fields on `production:`
@@ -295,10 +299,10 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     }
   };
 
-  const handleAddWastageNote = async (description: string, quantity: number, unit: string) => {
+  const handleAddWastageNote = async (description: string, quantity: number, unit: string, reason: string) => {
     if (!context.user?.accessToken || !resolvedProductionHouseId) return;
     try {
-      await api.addProductionWastageNote(context.user.accessToken, resolvedProductionHouseId, selectedDate, description, quantity, unit);
+      await api.addProductionWastageNote(context.user.accessToken, resolvedProductionHouseId, selectedDate, description, quantity, unit, reason);
       toast.success('Wastage logged');
       await fetchLedger();
     } catch (error: any) {
@@ -336,6 +340,29 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     return filteredProduction.find(p => p.date === selectedDate);
   }, [context.productionData, selectedDate, resolvedProductionHouseId]);
 
+  // Batch codes this house made in the 3 days before the selected date, per type - offered
+  // when momos are folded from a batch's leftover stuffing.
+  const earlierBatchCodes = useMemo(() => {
+    const codes: Record<string, string[]> = {};
+    const from = new Date(`${selectedDate}T00:00:00`);
+    from.setDate(from.getDate() - 3);
+    const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`;
+    const houseProduction = resolvedProductionHouseId
+      ? context.productionData.filter(p => p.productionHouseId === resolvedProductionHouseId || p.storeId === resolvedProductionHouseId)
+      : context.productionData;
+    houseProduction
+      .filter((p) => p.date >= fromStr && p.date < selectedDate)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .forEach((p) => {
+        MOMO_TYPES.forEach((t) => {
+          (p.batches?.[t.key] || []).forEach((b) => {
+            if (b.code && !b.code.endsWith('-L')) codes[t.key] = [...(codes[t.key] || []), b.code];
+          });
+        });
+      });
+    return codes;
+  }, [context.productionData, selectedDate, resolvedProductionHouseId]);
+
   // Initialize form data
   const [formData, setFormData] = useState<Omit<ProductionData, 'id' | 'createdBy' | 'approvalStatus' | 'approvedBy' | 'approvedAt' | 'storeId'>>({
     date: selectedDate,
@@ -347,6 +374,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     vegKurkureMomos: { batter: 0, coating: 0, final: 0 },
     chickenKurkureMomos: { batter: 0, coating: 0, final: 0 },
     wastage: { dough: 0, stuffing: 0, batter: 0, coating: 0 },
+    batches: {},
     sauces: {
       panfriedSauce: 0,
       chilliChickenSauce: 0,
@@ -372,6 +400,13 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         vegKurkureMomos: productionForDate.vegKurkureMomos,
         chickenKurkureMomos: productionForDate.chickenKurkureMomos,
         wastage: productionForDate.wastage,
+        // An entry saved before batch codes keeps its pieces as one uncoded row, so editing
+        // it never silently drops them.
+        batches: Object.fromEntries(MOMO_TYPES.map((t) => {
+          const saved = productionForDate.batches?.[t.key];
+          const final = (productionForDate as any)[t.key]?.final || 0;
+          return [t.key, saved && saved.length > 0 ? saved : final > 0 ? [{ code: '', pieces: final }] : []];
+        })),
         sauces: productionForDate.sauces,
       });
     } else {
@@ -385,6 +420,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         vegKurkureMomos: { batter: 0, coating: 0, final: 0 },
         chickenKurkureMomos: { batter: 0, coating: 0, final: 0 },
         wastage: { dough: 0, stuffing: 0, batter: 0, coating: 0 },
+        batches: {},
         sauces: {
           panfriedSauce: 0,
           chilliChickenSauce: 0,
@@ -424,6 +460,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
 
     const productionData: Omit<ProductionData, 'id'> = {
       ...formData,
+      batches: Object.fromEntries(Object.entries(formData.batches || {}).map(([key, list]) => [key, (list || []).filter((b) => b.pieces > 0)])),
       date: selectedDate,
       createdBy: context.user?.employeeId || context.user?.email || 'unknown',
       approvalStatus: 'pending',
@@ -750,6 +787,26 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
       {/* Date Selector */}
       <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
+      {/* This week's plan and today's purchases, from the forecast of every store this house supplies */}
+      {resolvedProductionHouseId && context.user?.accessToken && (context.stores || []).some((st) => st.productionHouseId === resolvedProductionHouseId) && (
+        <ProductionPlanCards
+          accessToken={context.user.accessToken}
+          storeIds={(context.stores || []).filter((st) => st.productionHouseId === resolvedProductionHouseId).map((st) => st.id)}
+        />
+      )}
+
+      {/* Which days this month have no production logged (same idea as the settlement check) */}
+      {resolvedProductionHouseId && (
+        <ProductionCoverage
+          productionData={context.productionData}
+          productionRequests={context.productionRequests}
+          stores={context.stores || []}
+          productionHouseId={resolvedProductionHouseId}
+          selectedDate={selectedDate}
+          onPickDate={setSelectedDate}
+        />
+      )}
+
       {/* Weekly Production Goal - navigable Monday-start week, independent of the
           Production Entry date selector above. Progress is computed live from real
           production: records, not a separately tracked counter, so it can never drift
@@ -1018,10 +1075,31 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
               <ChefHat className="w-6 h-6 text-orange-600" />
               Final Pieces
             </h2>
-            <p className="text-sm text-gray-500 mb-6">How many finished pieces of each type came out today</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            <p className="text-sm text-gray-500 mb-6">
+              {selectedDate >= BATCH_TRACKING_FROM
+                ? 'Pieces from each stuffing batch today. One mix = one batch, coded date-type-batch (2510-CHK-B2) - the same code that goes on the tray card and bag labels.'
+                : 'How many finished pieces of each type came out today'}
+            </p>
+            <div className={`grid gap-4 ${selectedDate >= BATCH_TRACKING_FROM ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'}`}>
               {MOMO_TYPES.map((t) => {
                 const typeData = (formData as any)[t.key];
+                if (selectedDate >= BATCH_TRACKING_FROM) {
+                  return (
+                    <BatchPiecesCard
+                      key={t.key}
+                      momoType={t}
+                      date={selectedDate}
+                      batches={formData.batches?.[t.key] || []}
+                      earlierBatchCodes={earlierBatchCodes[t.key] || []}
+                      disabled={!canEdit}
+                      onChange={(next: ProductionBatch[]) => setFormData((prev) => ({
+                        ...prev,
+                        batches: { ...(prev.batches || {}), [t.key]: next },
+                        [t.key]: { ...(prev as any)[t.key], final: next.reduce((sum, b) => sum + (b.pieces || 0), 0) },
+                      } as typeof prev))}
+                    />
+                  );
+                }
                 return (
                   <div
                     key={t.key}

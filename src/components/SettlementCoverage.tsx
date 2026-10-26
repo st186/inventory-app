@@ -1,23 +1,30 @@
 // Which days in the selected range have a Zomato/Swiggy settlement, and which don't. A day is
 // covered when an uploaded settlement includes orders from that date (the same rule
 // utils/onlineCosts.ts uses for profit, so a red day here is a day whose commission is being
-// estimated), or when an old manual payout entry exists for it.
+// estimated), or when an old manual payout entry exists for it. A day is only missing once
+// its payout date has passed (utils/payoutSchedule.ts); before that it is "not due yet".
 
 import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { buildOnlineCostIndex, type Aggregator } from '../utils/onlineCosts';
 import { getTodayIST, addDays } from '../utils/timezone';
+import { payoutDateFor, settlementDueBy } from '../utils/payoutSchedule';
 
 type Status = 'settled' | 'missing' | 'awaiting' | 'none';
 
-// Settlements land a few days after the orders: Zomato daily about 3 days later, Swiggy once a
-// week for the week before. Days this recent are "not due yet", not missing.
-const NOT_DUE_DAYS: Record<Aggregator, number> = { zomato: 3, swiggy: 10 };
 const NAME: Record<Aggregator, string> = { zomato: 'Zomato', swiggy: 'Swiggy' };
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 const dayNum = (iso: string) => Number(iso.slice(8, 10));
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+const dayDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+// "21-23 Oct", or "30 Sep-2 Oct" across a month end, from a sorted list of dates.
+const dateSpan = (dates: string[]) => {
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  if (first === last) return shortDate(first);
+  return first.slice(0, 7) === last.slice(0, 7) ? `${dayNum(first)}-${shortDate(last)}` : `${shortDate(first)}-${shortDate(last)}`;
+};
 const monthName = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { month: 'short' });
 
 const CHIP: Record<Status, string> = {
@@ -62,21 +69,30 @@ export function SettlementCoverage({
     for (let d = start; d <= last; d = addDays(d, 1)) days.push(d);
 
     return (['zomato', 'swiggy'] as Aggregator[]).map((agg) => {
-      const notDueFrom = addDays(today, -NOT_DUE_DAYS[agg] + 1);
       const cells = days.map((date) => {
         const amount = sales.get(date)?.[agg] || 0;
+        const payout = payoutDateFor(agg, date);
         let status: Status;
         if (index.covered[agg].has(date) || (manual.get(date)?.[agg] || 0) > 0) status = 'settled';
         else if (amount <= 0) status = 'none';
-        else if (date >= notDueFrom) status = 'awaiting';
+        else if (today <= settlementDueBy(agg, date)) status = 'awaiting';
         else status = 'missing';
-        return { date, amount, status };
+        return { date, amount, status, payout };
       });
       const missing = cells.filter((c) => c.status === 'missing');
+      // Payouts still to come, one row per payout date with the order days it pays for.
+      const upcoming = new Map<string, { dates: string[]; amount: number }>();
+      cells.filter((c) => c.status === 'awaiting').forEach((c) => {
+        const u = upcoming.get(c.payout) || { dates: [], amount: 0 };
+        u.dates.push(c.date);
+        u.amount += c.amount;
+        upcoming.set(c.payout, u);
+      });
       return {
         agg,
         cells,
         missing,
+        upcoming: [...upcoming.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([payout, u]) => ({ payout, ...u })),
         missingAmount: missing.reduce((t, c) => t + c.amount, 0),
         settledDays: cells.filter((c) => c.status === 'settled').length,
         awaitingDays: cells.filter((c) => c.status === 'awaiting').length,
@@ -126,7 +142,7 @@ export function SettlementCoverage({
                   {(i === 0 || dayNum(c.date) === 1) && <span className="text-[10px] font-semibold uppercase text-gray-400 pr-0.5">{monthName(c.date)}</span>}
                   <span
                     className={`inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-semibold tabular-nums ${CHIP[c.status]}`}
-                    title={`${shortDate(c.date)} · ${LABEL[c.status]}${c.amount > 0 ? ` · ${inr(c.amount)} of ${NAME[r.agg]} orders` : ''}`}
+                    title={`${shortDate(c.date)} · ${LABEL[c.status]}${c.amount > 0 ? ` · ${inr(c.amount)} of ${NAME[r.agg]} orders` : ''}${c.status === 'awaiting' || c.status === 'missing' ? ` · payout ${c.status === 'missing' ? 'was ' : ''}due ${dayDate(c.payout)}` : ''}`}
                   >
                     {dayNum(c.date)}
                   </span>
@@ -139,15 +155,26 @@ export function SettlementCoverage({
                   <span key={c.date} className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-xs text-rose-800">
                     <span className="font-semibold">{shortDate(c.date)}</span>
                     <span className="tabular-nums">{inr(c.amount)}</span>
+                    <span className="text-rose-600">· was due {shortDate(c.payout)}</span>
                   </span>
                 ))}
               </div>
+            )}
+            {r.upcoming.length > 0 && (
+              <ul className="mt-2 space-y-1" aria-label={`${NAME[r.agg]} payouts still to come`}>
+                {r.upcoming.map((u) => (
+                  <li key={u.payout} className="flex items-baseline justify-between gap-3 text-xs text-amber-900 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                    <span><span className="font-semibold">{dayDate(u.payout)}</span>{r.agg === 'swiggy' && ' (in bank next day)'} · for {dateSpan(u.dates)} orders</span>
+                    <span className="tabular-nums font-semibold">{inr(u.amount)}</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         ))}
       </div>
       <p className="mt-3 text-[11px] text-gray-500">
-        Order amounts come from the POS. Zomato pays daily about 3 days after the orders and Swiggy weekly, so the most recent days show as not due yet. Until a settlement is uploaded, its commission is estimated in profit.
+        Order amounts come from the POS (before commission). Zomato pays 3 days after the orders, Monday to Friday only, so Wednesday to Friday orders are paid the next Monday. Swiggy pays every Tuesday for the Sunday to Saturday week before (in the bank on Wednesday), and pays a month's last days separately 3 days after the month ends. A day turns red when its settlement still isn't uploaded the day after its payout. Until then its commission is estimated in profit.
       </p>
     </div>
   );

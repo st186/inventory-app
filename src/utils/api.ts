@@ -1,6 +1,9 @@
 import { projectId, publicAnonKey } from './supabase/info';
 import { getSupabaseClient } from './supabase/client';
 import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData } from '../App';
+import type { DispatchInfo, DeliveryReceipt } from './batches';
+import type { StockOutEntry } from './stockOuts';
+import type { CalendarEvent, DayRecord, EffectLearning, ForecastDay } from './forecast';
 
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
@@ -389,10 +392,12 @@ export async function fetchCashTopupRequests(accessToken: string): Promise<CashT
 
 // targetStoreId is required only for production incharges (who have no cash-in-hand ledger
 // of their own) - store incharges and operations managers credit their own store automatically.
-export async function requestCashTopup(accessToken: string, date: string, requestedAmount: number, reason: CashTopupReason, targetStoreId?: string): Promise<CashTopupRequest> {
+// A cluster head names the store (targetStoreId) or production house (targetProductionHouseId);
+// their request comes back already approved.
+export async function requestCashTopup(accessToken: string, date: string, requestedAmount: number, reason: CashTopupReason, targetStoreId?: string, targetProductionHouseId?: string): Promise<CashTopupRequest> {
   const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ date, requestedAmount, reason, targetStoreId }),
+    body: JSON.stringify({ date, requestedAmount, reason, targetStoreId, targetProductionHouseId }),
   });
   return data.request;
 }
@@ -512,6 +517,7 @@ export interface StockWastageEntry {
   storeId: string;
   date: string; // YYYY-MM-DD
   wastage: Record<string, number>; // momo type key -> pieces wasted, zero entries omitted
+  reasons?: Record<string, Record<string, number>>; // type key -> SOP reason code -> pieces
   notes?: string;
   submittedBy: string;
   submittedByName?: string;
@@ -529,12 +535,130 @@ export async function getStockWastageRange(accessToken: string, storeId: string,
   return data.entries || [];
 }
 
-export async function saveStockWastageEntry(accessToken: string, storeId: string, date: string, wastage: Record<string, number>, notes?: string): Promise<StockWastageEntry> {
+export async function saveStockWastageEntry(accessToken: string, storeId: string, date: string, wastage: Record<string, number>, notes?: string, reasons?: Record<string, Record<string, number>>): Promise<StockWastageEntry> {
   const data = await fetchWithAuth(`${API_BASE}/stock-wastage`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ storeId, date, wastage, ...(notes !== undefined ? { notes } : {}) }),
+    body: JSON.stringify({ storeId, date, wastage, ...(notes !== undefined ? { notes } : {}), ...(reasons ? { reasons } : {}) }),
   });
   return data.entry;
+}
+
+// Insights: festival calendar, demand forecast and the Claude-written parts (server
+// insights.ts). The forecast numbers come from utils/forecast.ts, run on the server.
+export interface InsightsOverview {
+  today: string;
+  storeId: string | null;
+  history: DayRecord[];
+  events: CalendarEvent[];
+  forecast: ForecastDay[];
+  yesterday: { date: string; actual: number | null; actualPieces: DayRecord['pieces']; expected: ForecastDay };
+  learned: Record<string, EffectLearning>;
+}
+
+export async function getInsightsOverview(accessToken: string, storeId?: string | null): Promise<InsightsOverview> {
+  return fetchWithAuth(`${API_BASE}/insights/overview${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ''}`, accessToken);
+}
+
+export async function getStoreCalendar(accessToken: string, from: string, to: string): Promise<CalendarEvent[]> {
+  const data = await fetchWithAuth(`${API_BASE}/store-calendar?from=${from}&to=${to}`, accessToken);
+  return data.events || [];
+}
+
+export async function saveCalendarDay(accessToken: string, event: CalendarEvent): Promise<CalendarEvent> {
+  const data = await fetchWithAuth(`${API_BASE}/store-calendar/${event.date}`, accessToken, { method: 'PUT', body: JSON.stringify(event) });
+  return data.event;
+}
+
+export async function deleteCalendarDay(accessToken: string, date: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/store-calendar/${date}`, accessToken, { method: 'DELETE' });
+}
+
+export interface AiStatus { configured: boolean; model: string; spentThisMonthUsd: number; capUsd: number; canManage: boolean }
+
+export async function getAiStatus(accessToken: string): Promise<AiStatus> {
+  return fetchWithAuth(`${API_BASE}/ai/status`, accessToken);
+}
+
+export interface AiBrief { text: string; generatedAt: string; model: string; storeId: string | null; date: string; refreshes: number }
+
+export async function getAiBrief(accessToken: string, storeId: string | null, refresh = false): Promise<{ brief: AiBrief | null; note?: string }> {
+  return fetchWithAuth(`${API_BASE}/ai/brief`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, refresh }) });
+}
+
+export interface GrowthIdea {
+  id: string;
+  storeId: string;
+  title: string;
+  why: string;
+  action: string;
+  expectedImpact: string;
+  effort: 'low' | 'medium' | 'high';
+  category: string;
+  status: 'new' | 'trying' | 'done' | 'dropped';
+  note?: string;
+  createdAt: string;
+}
+
+export async function getGrowthIdeas(accessToken: string, storeId: string | null): Promise<GrowthIdea[]> {
+  const data = await fetchWithAuth(`${API_BASE}/growth-ideas?storeId=${encodeURIComponent(storeId || 'all')}`, accessToken);
+  return data.ideas || [];
+}
+
+export async function generateGrowthIdeas(accessToken: string, storeId: string | null): Promise<GrowthIdea[]> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/growth`, accessToken, { method: 'POST', body: JSON.stringify({ storeId }) });
+  return data.ideas || [];
+}
+
+export async function updateGrowthIdea(accessToken: string, storeId: string, id: string, status: GrowthIdea['status'], note?: string): Promise<GrowthIdea> {
+  const data = await fetchWithAuth(`${API_BASE}/growth-ideas/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'PUT', body: JSON.stringify({ status, note }) });
+  return data.idea;
+}
+
+export interface CalendarSuggestion { date: string; name: string; effect: CalendarEvent['effect']; reason: string; confidence: 'high' | 'medium' }
+
+export async function draftCalendar(accessToken: string, from: string, to: string): Promise<CalendarSuggestion[]> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/calendar-draft`, accessToken, { method: 'POST', body: JSON.stringify({ from, to }) });
+  return data.suggestions || [];
+}
+
+export async function askBunny(accessToken: string, storeId: string | null, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<{ answer: string; toolsUsed: string[] }> {
+  return fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages }) });
+}
+
+export interface ScannedInvoiceLine { asWritten: string; englishName: string; quantity: number; unit: string; rate: number; amount: number; unsure: boolean }
+export interface ScannedInvoice { readable: boolean; vendor: string; invoiceDate: string; invoiceNumber: string; language: string; items: ScannedInvoiceLine[]; billTotal: number; note: string }
+
+export async function readInvoice(accessToken: string, dataUrl: string): Promise<ScannedInvoice> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/invoice-read`, accessToken, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return data.invoice;
+}
+
+// Out-of-stock log (store SOP ST-28) - see utils/stockOuts.ts.
+export async function getStockOuts(accessToken: string, storeId: string, from: string, to: string): Promise<StockOutEntry[]> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs?storeId=${encodeURIComponent(storeId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
+  return data.entries || [];
+}
+
+export async function createStockOut(
+  accessToken: string,
+  entry: Pick<StockOutEntry, 'storeId' | 'item' | 'category' | 'reason' | 'reasonNote' | 'startAt' | 'endAt' | 'offOnline' | 'backOnline'>
+): Promise<StockOutEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs`, accessToken, { method: 'POST', body: JSON.stringify(entry) });
+  return data.entry;
+}
+
+export async function updateStockOut(
+  accessToken: string,
+  storeId: string,
+  id: string,
+  changes: Partial<Pick<StockOutEntry, 'item' | 'category' | 'reason' | 'reasonNote' | 'startAt' | 'endAt' | 'offOnline' | 'backOnline'>>
+): Promise<StockOutEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'PUT', body: JSON.stringify(changes) });
+  return data.entry;
+}
+
+export async function deleteStockOut(accessToken: string, storeId: string, id: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/stock-outs/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'DELETE' });
 }
 
 // Production Ledger - the raw-stock counterpart to Production Cash above. Dough/stuffing/
@@ -664,6 +788,7 @@ export interface ProductionWastageNote {
   description: string;
   quantity: number;
   unit: string;
+  reason?: string; // SOP 1.7 waste reason code
   loggedBy: string;
   loggedByName: string;
   loggedAt: string;
@@ -674,10 +799,10 @@ export async function getProductionWastageNotes(accessToken: string, productionH
   return data.notes || [];
 }
 
-export async function addProductionWastageNote(accessToken: string, productionHouseId: string, date: string, description: string, quantity: number, unit: string): Promise<ProductionWastageNote> {
+export async function addProductionWastageNote(accessToken: string, productionHouseId: string, date: string, description: string, quantity: number, unit: string, reason?: string): Promise<ProductionWastageNote> {
   const data = await fetchWithAuth(`${API_BASE}/production-wastage-notes`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ productionHouseId, date, description, quantity, unit }),
+    body: JSON.stringify({ productionHouseId, date, description, quantity, unit, ...(reason ? { reason } : {}) }),
   });
   return data.note;
 }
@@ -2602,6 +2727,8 @@ export interface ProductionRequest {
   shippingNotes?: Record<string, string>; // Notes for items with different quantities
   deliveredAt?: string;
   deliveredBy?: string; // Store In-Charge employee ID
+  dispatch?: DispatchInfo; // bags, batch codes, boxes - set when shipped from app 1.15.17
+  receipt?: DeliveryReceipt; // the store's count - set when received from app 1.15.17
   createdAt: string;
   updatedAt: string;
 }
@@ -2645,13 +2772,40 @@ export async function shipProductionRequest(
   shippedQuantities: Record<string, number>,
   shippingNotes: Record<string, string>,
   shippedBy: string,
-  shippedSauces?: Record<string, boolean>
+  shippedSauces?: Record<string, boolean>,
+  dispatch?: DispatchInfo
 ): Promise<ProductionRequest> {
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces }),
+    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch }),
   });
   return data.request;
+}
+
+// The store's count of a shipped request - any store login (crew included) can send it.
+export async function receiveProductionRequest(
+  accessToken: string,
+  id: string,
+  receipt: Omit<DeliveryReceipt, 'receivedBy' | 'receivedByName' | 'receivedAt'>
+): Promise<ProductionRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/receive`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify({ receipt }),
+  });
+  return data.request;
+}
+
+export async function uploadReceiptPhoto(accessToken: string, requestId: string, dataUrl: string): Promise<string> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${requestId}/receipt-photos`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ dataUrl }),
+  });
+  return data.photoId;
+}
+
+export async function getReceiptPhotos(accessToken: string, requestId: string): Promise<{ id: string; dataUrl: string; uploadedBy?: string; uploadedAt?: string }[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${requestId}/receipt-photos`, accessToken);
+  return data.photos || [];
 }
 
 export async function checkPendingProductionRequests(accessToken: string): Promise<{

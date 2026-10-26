@@ -1,4 +1,5 @@
 // Bhandar-IMS - Performance optimized with lazy loading
+import { isPhase1Live, type ProductionBatch } from './utils/batches';
 import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
 import { InventoryView } from './components/InventoryView';
 const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
@@ -15,6 +16,9 @@ const ProductionManagement = lazy(() => import('./components/ProductionManagemen
 const ProductionHouseManagement = lazy(() => import('./components/ProductionHouseManagement').then(module => ({ default: module.ProductionHouseManagement })));
 const AssetsManagement = lazy(() => import('./components/AssetsManagement').then(module => ({ default: module.AssetsManagement })));
 const RiderProfile = lazy(() => import('./components/RiderProfile').then(module => ({ default: module.RiderProfile })));
+const AskBunny = lazy(() => import('./components/insights/AskBunny').then(module => ({ default: module.AskBunny })));
+const StockOutLog = lazy(() => import('./components/StockOutLog').then(module => ({ default: module.StockOutLog })));
+const IncomingDeliveries = lazy(() => import('./components/dispatch/IncomingDeliveries').then(module => ({ default: module.IncomingDeliveries })));
 const RiderTrips = lazy(() => import('./components/RiderTrips').then(module => ({ default: module.RiderTrips })));
 const StockRequestManagement = lazy(() => import('./components/StockRequestManagement').then(module => ({ default: module.StockRequestManagement })));
 const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInventoryManagement').then(module => ({ default: module.AdvancedInventoryManagement })));
@@ -41,7 +45,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike } from 'lucide-react';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, MessageCircleQuestion } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -68,9 +72,10 @@ export type InventoryItem = {
  createdByName?: string; // User name who created this entry
  createdByEmail?: string; // User email who created this entry
  // Payment method fields
- paymentMethod?: 'cash' | 'online' | 'both';
+ paymentMethod?: 'cash' | 'online' | 'both' | 'owner'; // owner = cluster head's own money
  cashAmount?: number; // Amount paid via cash (for 'both' option)
  onlineAmount?: number; // Amount paid via online (for 'both' option)
+ paidFromProductionHouseId?: string | null; // store bill paid from this production house's cash (utils/cashSource.ts)
  // Beverage packaging detail (category === 'beverages') - lets Utilities stock status
  // convert a purchase into a real piece count regardless of whether it was bought by
  // the carton or loose. quantity/unit above are still set to the resulting total pieces
@@ -83,6 +88,8 @@ export type InventoryItem = {
  // Only meaningful when quantity/unit is a piece count ('pcs'/'units') - deliberately
  // optional since plenty of piece-counted items (tissues, cutlery) have no useful weight.
  weightPerUnitGrams?: number;
+ vendor?: string; // set when read from a scanned invoice
+ invoiceRef?: string; // scanned invoice's number, if it had one
 };
 
 export type OverheadItem = {
@@ -103,10 +110,13 @@ export type OverheadItem = {
  employeeName?: string; // For personal_expense category
  employeeIds?: string[]; // For breakfast/lunch/evening_snacks: which employees this meal covered
  expenseMonth?: string; // For personal_expense: YYYY-MM format to map expense to specific month (for backlogged salaries)
+ vendor?: string; // set when read from a scanned invoice
+ invoiceRef?: string;
  // Payment method fields
- paymentMethod?: 'cash' | 'online' | 'both';
+ paymentMethod?: 'cash' | 'online' | 'both' | 'owner'; // owner = cluster head's own money
  cashAmount?: number; // Amount paid via cash (for 'both' option)
  onlineAmount?: number; // Amount paid via online (for 'both' option)
+ paidFromProductionHouseId?: string | null; // store bill paid from this production house's cash (utils/cashSource.ts)
 };
 
 export type FixedCostItem = {
@@ -123,9 +133,10 @@ export type FixedCostItem = {
  units?: number;
  unitPrice?: number;
  // Payment method fields
- paymentMethod?: 'cash' | 'online' | 'both';
+ paymentMethod?: 'cash' | 'online' | 'both' | 'owner'; // owner = cluster head's own money
  cashAmount?: number; // Amount paid via cash (for 'both' option)
  onlineAmount?: number; // Amount paid via online (for 'both' option)
+ paidFromProductionHouseId?: string | null; // store bill paid from this production house's cash (utils/cashSource.ts)
 };
 
 export type SalesData = {
@@ -275,6 +286,10 @@ export type ProductionData = {
  coating: number;
  };
  
+ // Pieces per stuffing batch for each type (key = chickenMomos etc.), from 25 Oct 2026.
+ // Each type's `final` is the sum of its batches.
+ batches?: Partial<Record<string, ProductionBatch[]>>;
+
  // Sauces and Chutneys
  sauces: {
  panfriedSauce: number;
@@ -347,7 +362,7 @@ export type InventoryContextType = {
 
 export default function App() {
  // All useState hooks must be at the top, before any conditional returns
- const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile'>('analytics');
+ const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs' | 'ask-bunny'>('analytics');
  // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
  const setActiveView = useCallback((view: typeof activeView) => {
  startTransition(() => { setActiveViewRaw(view); });
@@ -1819,12 +1834,27 @@ export default function App() {
  const isProductionHead = isProductionIncharge; // Alias for clarity
  const isAnyIncharge = isStoreIncharge || isProductionIncharge;
   const isRider = user.designation === 'rider';
+  // Store crew (any plain employee at a store, not a rider or production crew) can receive
+  // and count deliveries - the incharge does it from Stock Requests.
+  const canReceiveStock = user.role === 'employee' && !isRider && !isAnyIncharge && user.designation !== 'production_ops' && !!user.storeId && isPhase1Live(getTodayIST());
   // Production incharge, operations manager and cluster head can call riders / mark orders ready.
   const canDispatchRiders = user.role === 'cluster_head' || user.designation === 'production_incharge' || (user.role === 'manager' && user.designation !== 'store_incharge');
  const isOperationsManager = user.role === 'manager' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
  const isManager = user.role === 'manager';
  const isStoreInchargeManager = user.role === 'manager' && user.designation === 'store_incharge';
  const canViewProduction = isProductionIncharge || isOperationsManager || isClusterHead;
+ // Out-of-stock log (store SOP ST-28): whoever bills at the store - crew and the store incharge -
+ // logs it; production incharge, operations manager and cluster head can open it (from the
+ // stock-out notification) to see what's out.
+ const canLogStockOuts = !!user.storeId && !isRider && user.designation !== 'production_ops' && user.designation !== 'production_incharge' && (user.role === 'employee' || isStoreInchargeManager);
+ const canViewStockOuts = canLogStockOuts || isProductionIncharge || isOperationsManager || isClusterHead;
+ const stockOutStores = canLogStockOuts && user.storeId
+ ? [{ id: user.storeId, name: stores.find((st) => st.id === user.storeId)?.name || 'My store' }]
+ : (stores || []).map((st) => ({ id: st.id, name: st.name }));
+ const stockOutDefaultStore = user.storeId && String(user.storeId).startsWith('STORE-') ? user.storeId : (stores[0]?.id || null);
+ // Ask Bunny (AI questions about the business): cluster head and operations manager.
+ const canAskBunny = isClusterHead || isOperationsManager;
+ const askBunnyStoreId = selectedStoreId || (stores || []).find((st) => st.productionHouseId)?.id || stores[0]?.id || null;
 
  // Debug: Log user permissions
  console.log('👤 User Permissions:', {
@@ -2027,6 +2057,34 @@ export default function App() {
  </button>
  )}
 
+ {canReceiveStock && (
+ <button
+ onClick={() => setActiveView('receive-stock')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
+ activeView === 'receive-stock'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <PackageCheck className="w-4 h-4" />
+ <span>Receive Stock</span>
+ </button>
+ )}
+
+ {canLogStockOuts && (
+ <button
+ onClick={() => setActiveView('stock-outs')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
+ activeView === 'stock-outs'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <PackageX className="w-4 h-4" />
+ <span>Out of Stock</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => setActiveView('payroll')}
@@ -2217,6 +2275,40 @@ export default function App() {
  </button>
  )}
 
+ {canReceiveStock && (
+ <button
+ onClick={() => {
+ setActiveView('receive-stock');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+ activeView === 'receive-stock'
+ ? 'bg-white text-orange-600'
+ : 'bg-white/20 text-white hover:bg-white/30'
+ }`}
+ >
+ <PackageCheck className="w-5 h-5" />
+ <span>Receive Stock</span>
+ </button>
+ )}
+
+ {canLogStockOuts && (
+ <button
+ onClick={() => {
+ setActiveView('stock-outs');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+ activeView === 'stock-outs'
+ ? 'bg-white text-orange-600'
+ : 'bg-white/20 text-white hover:bg-white/30'
+ }`}
+ >
+ <PackageX className="w-5 h-5" />
+ <span>Out of Stock</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => {
@@ -2282,6 +2374,10 @@ export default function App() {
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
+ ) : activeView === 'receive-stock' && canReceiveStock ? (
+ <IncomingDeliveries accessToken={user.accessToken || ''} storeId={user.storeId || ''} />
+ ) : activeView === 'stock-outs' && canViewStockOuts ? (
+ <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isAnyIncharge} />
  ) : activeView === 'riders' && (isRider || isAnyIncharge) ? (
  <RiderTrips
  mode={isRider ? 'rider' : 'staff'}
@@ -2445,6 +2541,19 @@ export default function App() {
  <TrendingUp className="w-4 h-4" />
  <span className="hidden xl:inline">Analytics</span>
  </button>
+ {canAskBunny && (
+ <button
+ onClick={() => setActiveView('ask-bunny')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'ask-bunny'
+ ? 'bg-white text-violet-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <MessageCircleQuestion className="w-4 h-4" />
+ <span className="hidden xl:inline">Ask Bunny</span>
+ </button>
+ )}
  <button
  onClick={() => setActiveView('inventory')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2467,6 +2576,19 @@ export default function App() {
  <DollarSign className="w-4 h-4" />
  <span className="hidden xl:inline">Sales</span>
  </button>
+ {canLogStockOuts && (
+ <button
+ onClick={() => setActiveView('stock-outs')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'stock-outs'
+ ? 'bg-white text-rose-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <PackageX className="w-4 h-4" />
+ <span className="hidden xl:inline">Out of Stock</span>
+ </button>
+ )}
  <button
  onClick={() => setActiveView('employees')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2525,6 +2647,19 @@ export default function App() {
  <TrendingUp className="w-4 h-4" />
  <span className="hidden xl:inline">Analytics</span>
  </button>
+ {canAskBunny && (
+ <button
+ onClick={() => setActiveView('ask-bunny')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'ask-bunny'
+ ? 'bg-white text-violet-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <MessageCircleQuestion className="w-4 h-4" />
+ <span className="hidden xl:inline">Ask Bunny</span>
+ </button>
+ )}
  <button
  onClick={() => setActiveView('sales')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2536,6 +2671,19 @@ export default function App() {
  <DollarSign className="w-4 h-4" />
  <span className="hidden xl:inline">Sales</span>
  </button>
+ {canLogStockOuts && (
+ <button
+ onClick={() => setActiveView('stock-outs')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'stock-outs'
+ ? 'bg-white text-rose-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <PackageX className="w-4 h-4" />
+ <span className="hidden xl:inline">Out of Stock</span>
+ </button>
+ )}
  <button
  onClick={() => setActiveView('inventory')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2625,6 +2773,20 @@ export default function App() {
  >
  <TrendingUp className="w-4 h-4" />
  <span>Analytics</span>
+ </button>
+ <button
+ onClick={() => {
+ setActiveView('ask-bunny');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
+ activeView === 'ask-bunny'
+ ? 'bg-white text-orange-600 font-semibold shadow-sm'
+ : 'bg-white/10 text-white hover:bg-white/20'
+ }`}
+ >
+ <MessageCircleQuestion className="w-4 h-4" />
+ <span>Ask Bunny</span>
  </button>
  <button
  onClick={() => {
@@ -2727,6 +2889,22 @@ export default function App() {
                     <TrendingUp className="w-5 h-5" />
                     <span>Analytics</span>
                   </button>
+                  {canAskBunny && (
+                    <button
+                      onClick={() => {
+                        setActiveView('ask-bunny');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                        activeView === 'ask-bunny'
+                          ? 'bg-[#E4D4FF] text-gray-800'
+                          : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
+                      }`}
+                    >
+                      <MessageCircleQuestion className="w-5 h-5" />
+                      <span>Ask Bunny</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setActiveView('sales');
@@ -2741,6 +2919,22 @@ export default function App() {
                     <DollarSign className="w-5 h-5" />
                     <span>Sales</span>
                   </button>
+                  {canLogStockOuts && (
+                    <button
+                      onClick={() => {
+                        setActiveView('stock-outs');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                        activeView === 'stock-outs'
+                          ? 'bg-[#FFD4D4] text-gray-800'
+                          : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F5]'
+                      }`}
+                    >
+                      <PackageX className="w-5 h-5" />
+                      <span>Out of Stock</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setActiveView('inventory');
@@ -2854,7 +3048,11 @@ export default function App() {
  {/* Main Content */}
  <main className="pb-6">
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'riders' ? (
+ {activeView === 'ask-bunny' && canAskBunny ? (
+ <AskBunny accessToken={user.accessToken || ''} storeId={askBunnyStoreId} />
+ ) : activeView === 'stock-outs' && canViewStockOuts ? (
+ <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />
+ ) : activeView === 'riders' ? (
  <RiderTrips
  mode="staff"
  stockRequests={contextValue.productionRequests}
@@ -2873,8 +3071,8 @@ export default function App() {
  <SalesView context={contextValue} selectedStoreId={selectedStoreId} />
  )
  ) : activeView === 'inventory' ? (
- // Only Operations Manager can edit, others get read-only view
- user.role === 'manager' ? (
+ // Managers and the cluster head can add and edit expenses; others get a read-only view.
+ user.role === 'manager' || user.role === 'cluster_head' ? (
  <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} employees={employees} />
  ) : (
  <InventoryView context={contextValue} selectedStoreId={selectedStoreId} />

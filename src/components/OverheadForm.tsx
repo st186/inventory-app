@@ -5,6 +5,8 @@ import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_O
 import { X, Loader2 } from 'lucide-react';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
+import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
+import type { CashCover } from '../utils/cashSource';
 
 type Props = {
   selectedDate: string;
@@ -18,6 +20,12 @@ type Props = {
   entityScope: 'store' | 'production';
   // Cluster head only - unlocks categories in RESTRICTED_OVERHEAD_CATEGORIES (fuel).
   canUseRestrictedCategories?: boolean;
+  // Cluster head only: "My own money" - a cost that takes nothing from store/production cash or Paytm.
+  allowOwnerPayment?: boolean;
+  // Cluster head, store expense: the linked production house, and both tills' cash for the
+  // day - production's cash is offered only when the store's can't cover the bill.
+  productionCashHouseId?: string | null;
+  productionCashCover?: CashCover | null;
 };
 
 const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
@@ -46,7 +54,8 @@ function isMealCategory(category: string): boolean {
   return (MEAL_CATEGORIES as string[]).includes(category);
 }
 
-export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [], entityScope, canUseRestrictedCategories = false }: Props) {
+export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [], entityScope, canUseRestrictedCategories = false, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null }: Props) {
+  const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   const selectableCategoriesByGroup = buildSelectableCategoriesByGroup(entityScope, canUseRestrictedCategories);
   const defaultCategory = (Object.values(selectableCategoriesByGroup).flat()[0]?.value || 'miscellaneous') as OverheadItem['category'];
   const [formData, setFormData] = useState({
@@ -57,7 +66,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     employeeName: editingItem?.employeeName || '',
     employeeIds: editingItem?.employeeIds || [] as string[],
     expenseMonth: editingItem?.expenseMonth || selectedDate.slice(0, 7), // Default to current month (YYYY-MM)
-    paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both',
+    paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both' | 'owner',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
   });
@@ -162,6 +171,13 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
       // For cash payment, set cashAmount to total amount
       paymentData.cashAmount = parseFloat(formData.amount);
       paymentData.onlineAmount = 0;
+    } else if (formData.paymentMethod === 'owner') {
+      paymentData.cashAmount = 0;
+      paymentData.onlineAmount = 0;
+    }
+    if (productionCashHouseId) {
+      paymentData.paidFromProductionHouseId = formData.paymentMethod === 'cash' && fromProductionCash
+        && productionCashChoiceAvailable(parseFloat(formData.amount) || 0, productionCashCover, editingItem) ? productionCashHouseId : null;
     }
 
     const finalSubmission = {
@@ -375,6 +391,25 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
                   <p className="text-xs text-gray-500">Paid using both Cash and Online</p>
                 </div>
               </label>
+              {(allowOwnerPayment || editingItem?.paymentMethod === 'owner') && (
+                <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value="owner"
+                    checked={formData.paymentMethod === 'owner'}
+                    onChange={() => setFormData({ ...formData, paymentMethod: 'owner' })}
+                    className="w-4 h-4 text-orange-600"
+                  />
+                  <div className="flex-1">
+                    <span className="text-gray-900">🙋 My own money (cluster head)</span>
+                    <p className="text-xs text-gray-500">Counts as a cost, but takes nothing from the store's or production house's cash or Paytm</p>
+                  </div>
+                </label>
+              )}
+              {productionCashHouseId && formData.paymentMethod === 'cash' && (
+                <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={parseFloat(formData.amount) || 0} cover={productionCashCover} editingItem={editingItem} />
+              )}
             </div>
           </div>
 

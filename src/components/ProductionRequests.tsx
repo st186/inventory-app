@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw, FileText, Trash2 } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw, FileText, Trash2, Sparkles, Loader2 } from 'lucide-react';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { DatePicker } from './DatePicker';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
@@ -10,6 +10,12 @@ import { StockThresholdSettings } from './StockThresholdSettings';
 import { RecalibrationReports } from './RecalibrationReports';
 import { StockWastageModal } from './StockWastageModal';
 import { getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
+import { bagSize, bagsLabel, roundUpToBags, isPhase1Live } from '../utils/batches';
+import { getTodayIST } from '../utils/timezone';
+import { suggestRequest, type ForecastDay, type MomoKey } from '../utils/forecast';
+import { ShipDialogBags, PackingFields, DispatchDraft, emptyDispatchDraft, buildDispatchInfo } from './dispatch/ShipDialogBags';
+import { DispatchSlipModal, DispatchDetails } from './dispatch/DispatchSlip';
+import { ReceiveDeliveryDialog, ReceiptSummary } from './dispatch/ReceiveDeliveryDialog';
 
 type StockFilterPreset = 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom';
 
@@ -180,6 +186,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const [shippedSauces, setShippedSauces] = useState<Record<string, boolean>>({});
   const [shippingNotes, setShippingNotes] = useState<Record<string, string>>({});
   const [shippingResponsibility, setShippingResponsibility] = useState(false);
+  const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft>(() => emptyDispatchDraft(''));
+  // Dispatch slip shown after shipping (and from a request card); the store's receive dialog.
+  const [slipRequest, setSlipRequest] = useState<api.ProductionRequest | null>(null);
+  const [receivingRequest, setReceivingRequest] = useState<api.ProductionRequest | null>(null);
 
   // Plate Conversion Settings - Shared with Production Analytics
   const [momosPerPlate, setMomosPerPlate] = useState<number>(() => {
@@ -347,13 +357,59 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     return stock;
   }, [isStoreIncharge, selectedConcreteStoreId, defaultStoreId, myStoreRequests, finishedProducts, context.salesData]);
 
+  // "Suggest from the forecast": the request date's expected sales + 15%, less what is likely
+  // left from the last delivery (sent minus sold that day), in whole bags (utils/forecast.ts).
+  const [suggestion, setSuggestion] = useState<{ day: ForecastDay; rows: ReturnType<typeof suggestRequest>; carryFrom: string | null } | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const handleSuggest = async () => {
+    const sid = selectedConcreteStoreId || defaultStoreId;
+    if (!context.user?.accessToken || !sid) return;
+    setSuggesting(true);
+    try {
+      const ov = await api.getInsightsOverview(context.user.accessToken, sid);
+      const day = ov.forecast.find((f) => f.date === requestDate);
+      if (!day) {
+        toast.error('The forecast covers today and the next 6 days - pick a request date in that range');
+        return;
+      }
+      const lastSent = myStoreRequests.find((r) => r.requestDate < requestDate && r.shippedQuantities && ['shipped', 'partially-shipped', 'delivered', 'partially-delivered'].includes(r.status));
+      const carry: Partial<Record<MomoKey, number>> = {};
+      if (lastSent) {
+        const soldDay = ov.history.find((d) => d.date === lastSent.requestDate)?.pieces || ov.forecast.find((f) => f.date === lastSent.requestDate)?.pieces || null;
+        for (const key of Object.keys(lastSent.shippedQuantities || {})) {
+          const sent = Number((lastSent.shippedQuantities as any)[key]) || 0;
+          const sold = soldDay ? Number((soldDay as any)[key]) || 0 : sent;
+          carry[key as MomoKey] = Math.max(0, sent - sold);
+        }
+      }
+      const rows = suggestRequest(day, carry);
+      const known = new Set(finishedProducts.map((p) => p.camelKey));
+      setMomoQuantities((prev) => {
+        const next = { ...prev };
+        for (const r of rows) if (known.has(r.key)) next[r.key] = r.pieces;
+        return next;
+      });
+      setSuggestion({ day, rows, carryFrom: lastSent?.requestDate || null });
+      toast.success('Quantities filled from the forecast - check them before sending');
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not load the forecast');
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   const handleRepeatLastRequest = () => {
     if (!lastRequest) return;
     const newQuantities: Record<string, number> = {};
+    let rounded = false;
+    const wholeBags = isPhase1Live(requestDate);
     finishedProducts.forEach(({ camelKey }) => {
-      newQuantities[camelKey] = getRequestedQty(lastRequest, camelKey);
+      const qty = getRequestedQty(lastRequest, camelKey);
+      newQuantities[camelKey] = wholeBags ? roundUpToBags(qty, camelKey) : qty;
+      if (newQuantities[camelKey] !== qty) rounded = true;
     });
     setMomoQuantities(newQuantities);
+    if (rounded) toast.info('Rounded up to whole bags (50 chicken, 20 of the others)');
     setKitchenUtilities(lastRequest.kitchenUtilities || {});
     setSauces(lastRequest.sauces || {});
     setUtilities(lastRequest.utilities || {});
@@ -767,6 +823,20 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     }
 
     const totalQuantity = Object.values(momoQuantities).reduce((sum, qty) => sum + qty, 0);
+
+    // Requests go out in whole bags - 50 chicken, 20 of every other type (from Phase 1 go-live).
+    const notWholeBags = isPhase1Live(requestDate)
+      ? Object.entries(momoQuantities).filter(([key, qty]) => qty > 0 && qty % bagSize(key) !== 0)
+      : [];
+    if (notWholeBags.length > 0) {
+      setMomoQuantities((prev) => {
+        const next = { ...prev };
+        notWholeBags.forEach(([key, qty]) => { next[key] = roundUpToBags(qty, key); });
+        return next;
+      });
+      toast.error('Quantities rounded up to whole bags - check them and submit again');
+      return;
+    }
     
     if (totalQuantity === 0) {
       console.log('❌ No quantities specified');
@@ -907,6 +977,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
     setShippedSauces(initialSauces);
     setShippingNotes({});
     setShippingResponsibility(false);
+    setDispatchDraft(emptyDispatchDraft(context.user?.name || ''));
     setShowShippingDialog(true);
   };
 
@@ -961,18 +1032,31 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       return;
     }
 
+    const momoKeys = finishedProducts.map((p) => p.camelKey).filter((k) => k in shippedQuantities);
+    const shipsMomos = momoKeys.some((k) => (shippedQuantities[k] || 0) > 0);
+    if (shipsMomos && isPhase1Live(getTodayIST()) && !(parseInt(dispatchDraft.boxes, 10) > 0)) {
+      toast.error('Enter how many boxes are going on this trip');
+      return;
+    }
+
     try {
-      await api.shipProductionRequest(
+      const shipped = await api.shipProductionRequest(
         context.user.accessToken,
         shippingRequest.id,
         shippedQuantities,
         shippingNotes,
         context.user.employeeId,
-        shippedSauces
+        shippedSauces,
+        shipsMomos && isPhase1Live(getTodayIST()) ? buildDispatchInfo(dispatchDraft, shippedQuantities, momoKeys) : undefined
       );
-      
-      toast.success('Request marked as shipped with quantities recorded');
+
       setShowShippingDialog(false);
+      if (shipped?.dispatch) {
+        toast.success('Shipped - share the dispatch slip with the store');
+        setSlipRequest(shipped);
+      } else {
+        toast.success('Request marked as shipped with quantities recorded');
+      }
       await loadRequests();
     } catch (error: any) {
       console.error('Error shipping request:', error);
@@ -1607,6 +1691,38 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             </div>
           )}
 
+          {/* Suggest from the forecast (store incharge) */}
+          {isStoreIncharge && (
+            <div className="mb-3 bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-200 rounded-lg p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-violet-500 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">Suggest from the forecast</p>
+                    <p className="text-xs text-gray-600">Expected sales for the day + 15%, less what's left from the last delivery, in whole bags</p>
+                  </div>
+                </div>
+                <button type="button" onClick={handleSuggest} disabled={suggesting} className="flex-shrink-0 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold active:scale-95 transition-all shadow-sm disabled:opacity-60 inline-flex items-center gap-1.5">
+                  {suggesting && <Loader2 className="w-4 h-4 animate-spin" />} Suggest
+                </button>
+              </div>
+              {suggestion && (
+                <div className="mt-2 pt-2 border-t border-violet-100 text-xs text-gray-700 space-y-0.5">
+                  <p className="font-semibold text-violet-900">
+                    {new Date(`${suggestion.day.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}: expected about ₹{suggestion.day.revenue.toLocaleString('en-IN')}
+                    {suggestion.day.event && suggestion.day.event.effect !== 'normal' ? ` - ${suggestion.day.event.name}` : ''}
+                  </p>
+                  {suggestion.rows.filter((r) => r.expected > 0 || r.pieces > 0).map((r) => (
+                    <p key={r.key} className="tabular-nums">
+                      <span className="font-semibold">{r.label} {r.pieces}</span>{r.pieces ? ` (${r.bags} bag${r.bags === 1 ? '' : 's'})` : ''} = expected {r.expected} + 15%{r.carry ? ` − ${r.carry} left from ${suggestion.carryFrom ? new Date(`${suggestion.carryFrom}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : 'last'}'s delivery` : ''}
+                    </p>
+                  ))}
+                  <p className="text-gray-500 pt-1">Counted stock in the freezer differs? Adjust the numbers below before sending.</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Repeat last request - day-to-day quantities are usually very similar, so
               pre-filling from the last submission saves re-typing the same numbers. */}
           {lastRequest && (
@@ -1670,7 +1786,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                     ? 'bg-amber-50 text-amber-700'
                     : 'bg-green-50 text-green-700';
                   const current = momoQuantities[camelKey] || 0;
-                  const step = camelKey === 'chicken' ? 30 : 15;
+                  // Whole bags from Phase 1 go-live; before that the old free steps.
+                  const wholeBags = isPhase1Live(requestDate);
+                  const step = wholeBags ? bagSize(camelKey) : (camelKey === 'chicken' ? 30 : 15);
 
                   return (
                     <div key={camelKey} className="border border-gray-200 rounded-lg p-2 sm:p-3 bg-white shadow-sm hover:shadow-md hover:border-orange-200 transition-all min-w-0">
@@ -1683,7 +1801,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                       <div className="flex items-center gap-1 sm:gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setMomoQuantities({ ...momoQuantities, [camelKey]: Math.max(0, current - step) })}
+                          onClick={() => setMomoQuantities({ ...momoQuantities, [camelKey]: wholeBags ? Math.max(0, Math.ceil(current / step) * step - step) : Math.max(0, current - step) })}
                           className="w-5 h-5 sm:w-6 sm:h-6 flex-shrink-0 flex items-center justify-center border-2 border-gray-300 rounded-md text-gray-700 text-xs sm:text-sm font-bold hover:bg-gray-50"
                         >
                           −
@@ -1697,16 +1815,27 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                             ...momoQuantities,
                             [camelKey]: parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0
                           })}
+                          onBlur={() => {
+                            if (!wholeBags) return;
+                            const rounded = roundUpToBags(current, camelKey);
+                            if (rounded !== current) setMomoQuantities((prev) => ({ ...prev, [camelKey]: rounded }));
+                          }}
+                          aria-label={`${label} pieces`}
                           className="w-full min-w-0 px-1 py-2.5 sm:px-2 sm:py-3 border-2 border-gray-300 rounded-lg focus:border-teal-500 focus:outline-none text-sm sm:text-lg text-center font-bold tabular-nums"
                         />
                         <button
                           type="button"
-                          onClick={() => setMomoQuantities({ ...momoQuantities, [camelKey]: current + step })}
+                          onClick={() => setMomoQuantities({ ...momoQuantities, [camelKey]: wholeBags ? Math.floor(current / step) * step + step : current + step })}
                           className="w-5 h-5 sm:w-6 sm:h-6 flex-shrink-0 flex items-center justify-center border-2 border-gray-300 rounded-md text-gray-700 text-xs sm:text-sm font-bold hover:bg-gray-50"
                         >
                           +
                         </button>
                       </div>
+                      {wholeBags && (
+                        <p className="mt-1 text-[11px] text-gray-500 text-center tabular-nums">
+                          {current > 0 ? bagsLabel(current, camelKey) : `bags of ${step}`}
+                        </p>
+                      )}
                       <div className="grid grid-cols-4 gap-1 mt-1.5 sm:mt-2">
                         {presetValues.map(val => (
                           <button
@@ -2891,16 +3020,25 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
                                 {/* Store In-Charge Actions */}
                                 {isStoreIncharge && (request.status === 'shipped' || request.status === 'partially-shipped') && (
-                                  <button
-                                    onClick={() => handleStatusUpdate(request.id, request.status === 'partially-shipped' ? 'partially-delivered' : 'delivered')}
-                                    disabled={updatingRequestId === request.id}
-                                    className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
-                                  >
-                                    {updatingRequestId === request.id && (
-                                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                    )}
-                                    {updatingRequestId === request.id ? 'Confirming...' : 'Confirm Delivery'}
-                                  </button>
+                                  isPhase1Live(getTodayIST()) ? (
+                                    <button
+                                      onClick={() => setReceivingRequest(request)}
+                                      className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+                                    >
+                                      Receive &amp; Count
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleStatusUpdate(request.id, request.status === 'partially-shipped' ? 'partially-delivered' : 'delivered')}
+                                      disabled={updatingRequestId === request.id}
+                                      className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
+                                    >
+                                      {updatingRequestId === request.id && (
+                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      )}
+                                      {updatingRequestId === request.id ? 'Confirming...' : 'Confirm Delivery'}
+                                    </button>
+                                  )
                                 )}
                               </div>
                             </div>
@@ -3012,6 +3150,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                     ))}
                                   </div>
                                 )}
+
+                                <DispatchDetails request={request} products={finishedProducts} onOpenSlip={() => setSlipRequest(request)} />
+                                <ReceiptSummary request={request} products={finishedProducts} accessToken={context.user?.accessToken || ''} />
                               </div>
                             )}
 
@@ -3627,62 +3768,21 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-220px)]">
               <div className="space-y-6">
-                {/* Momos Section */}
-                {Object.entries(shippedQuantities).filter(([key]) => 
-                  !key.startsWith('kitchenUtility_') && !key.startsWith('utility_')
-                ).length > 0 && (
-                  <div>
-                    <h3 className="font-bold text-lg text-gray-900 mb-3">Momos</h3>
-                    <div className="space-y-3">
-                      {Object.entries(shippedQuantities)
-                        .filter(([key]) => !key.startsWith('kitchenUtility_') && !key.startsWith('utility_'))
-                        .map(([key, qty]) => {
-                          const requestedQty = (shippingRequest as any)[key] || 0;
-                          const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-                          const isDifferent = qty !== requestedQty;
-                          
-                          return (
-                            <div key={key} className={`border rounded-lg p-4 ${isDifferent ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
-                              <div className="flex items-start gap-4">
-                                <div className="flex-1">
-                                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    {label}
-                                    <span className="ml-2 text-xs text-gray-500">(Requested: {requestedQty})</span>
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={qty}
-                                    onChange={(e) => setShippedQuantities({
-                                      ...shippedQuantities,
-                                      [key]: parseInt(e.target.value) || 0
-                                    })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                                  />
-                                </div>
-                                {isDifferent && (
-                                  <div className="flex-1">
-                                    <label className="block text-sm font-medium text-amber-700 mb-1">
-                                      Reason for difference *
-                                    </label>
-                                    <input
-                                      type="text"
-                                      value={shippingNotes[key] || ''}
-                                      onChange={(e) => setShippingNotes({
-                                        ...shippingNotes,
-                                        [key]: e.target.value
-                                      })}
-                                      placeholder="e.g., Insufficient stock"
-                                      className="w-full px-3 py-2 border border-amber-300 rounded-lg bg-white"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
+                {/* Momos - in whole bags, with the batches each type comes from */}
+                {finishedProducts.some((p) => p.camelKey in shippedQuantities) && (
+                  <ShipDialogBags
+                    request={shippingRequest}
+                    momoKeys={finishedProducts.map((p) => p.camelKey).filter((k) => k in shippedQuantities)}
+                    labels={Object.fromEntries(finishedProducts.map((p) => [p.camelKey, p.label]))}
+                    shippedQuantities={shippedQuantities}
+                    setShippedQuantities={setShippedQuantities}
+                    shippingNotes={shippingNotes}
+                    setShippingNotes={setShippingNotes}
+                    draft={dispatchDraft}
+                    setDraft={setDispatchDraft}
+                    productionData={context.productionData || []}
+                    allRequests={requests}
+                  />
                 )}
 
                 {/* Kitchen Utilities Section */}
@@ -3858,6 +3958,10 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                   </div>
                 )}
 
+                {isPhase1Live(getTodayIST()) && finishedProducts.some((p) => (shippedQuantities[p.camelKey] || 0) > 0) && (
+                  <PackingFields draft={dispatchDraft} setDraft={setDispatchDraft} />
+                )}
+
                 {/* Responsibility Checkbox */}
                 <div className="border-t border-gray-200 pt-4">
                   <label className="flex items-start gap-3 cursor-pointer">
@@ -3892,6 +3996,23 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
             </div>
           </div>
         </div>
+      )}
+
+      {slipRequest && (
+        <DispatchSlipModal request={slipRequest} products={finishedProducts} onClose={() => setSlipRequest(null)} />
+      )}
+
+      {receivingRequest && (
+        <ReceiveDeliveryDialog
+          request={receivingRequest}
+          products={finishedProducts}
+          accessToken={context.user?.accessToken || ''}
+          onClose={() => setReceivingRequest(null)}
+          onReceived={async () => {
+            setReceivingRequest(null);
+            await loadRequests();
+          }}
+        />
       )}
     </div>
   );

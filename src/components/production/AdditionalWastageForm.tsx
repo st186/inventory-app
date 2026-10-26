@@ -2,6 +2,9 @@ import { useState, useMemo } from 'react';
 import { PlusCircle, Trash2 } from 'lucide-react';
 import { MOMO_TYPES } from '../../constants/momoTypes';
 import type { ProductionWastageNote } from '../../utils/api';
+import { WASTE_REASONS, isPhase1Live } from '../../utils/batches';
+
+const PRODUCTION_REASONS = WASTE_REASONS.filter((r) => r.where !== 'store');
 
 // Real sauce/chutney names this kitchen actually makes (matches the existing "Sauces &
 // Chutneys" section below, all logged in L) - suggested alongside the ledger's own
@@ -12,13 +15,15 @@ const KNOWN_SAUCES = [
   'Tandoori Sauce', 'Soup Premix', 'Green Mayo Chutney', 'Spicy Red Chutney',
 ];
 
-const SUGGESTIONS: { label: string; unit: 'kg' | 'g' | 'L' | 'ml' }[] = [
+const SUGGESTIONS: { label: string; unit: 'kg' | 'g' | 'L' | 'ml' | 'pcs' }[] = [
   { label: 'Dough (shared)', unit: 'kg' },
   { label: 'Batter (shared)', unit: 'kg' },
   ...MOMO_TYPES.flatMap((t) => [
     { label: `${t.label} ${t.perTypePoolField === 'coating' ? 'Coating' : 'Stuffing'}`, unit: 'kg' as const },
   ]),
   ...KNOWN_SAUCES.map((name) => ({ label: name, unit: 'L' as const })),
+  // Finished momos rejected at folding, steaming or packing - counted in pieces.
+  ...MOMO_TYPES.map((t) => ({ label: `${t.label} momos (finished)`, unit: 'pcs' as const })),
 ];
 
 type Props = {
@@ -26,7 +31,7 @@ type Props = {
   date: string;
   disabled?: boolean;
   notes: ProductionWastageNote[];
-  onAdd: (description: string, quantity: number, unit: string) => void | Promise<void>;
+  onAdd: (description: string, quantity: number, unit: string, reason: string) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
 };
 
@@ -38,8 +43,11 @@ type Props = {
 export function AdditionalWastageForm({ productionHouseId, date, disabled, notes, onAdd, onDelete }: Props) {
   const [description, setDescription] = useState('');
   const [quantity, setQuantity] = useState('');
-  const [unit, setUnit] = useState<'kg' | 'g' | 'L' | 'ml'>('kg');
+  const [unit, setUnit] = useState<'kg' | 'g' | 'L' | 'ml' | 'pcs'>('kg');
+  const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Reason codes become required from Phase 1 go-live; optional before it.
+  const reasonRequired = isPhase1Live(date);
 
   const matchedSuggestion = useMemo(
     () => SUGGESTIONS.find((s) => s.label.toLowerCase() === description.trim().toLowerCase()),
@@ -54,13 +62,14 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
 
   const handleAdd = async () => {
     const q = parseFloat(quantity);
-    if (!description.trim() || !q || q <= 0) return;
+    if (!description.trim() || !q || q <= 0 || (reasonRequired && !reason)) return;
     setSubmitting(true);
     try {
-      await onAdd(description.trim(), q, unit);
+      await onAdd(description.trim(), q, unit, reason);
       setDescription('');
       setQuantity('');
       setUnit('kg');
+      setReason('');
     } finally {
       setSubmitting(false);
     }
@@ -81,7 +90,8 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
             <div key={note.id} className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
               <div className="text-sm text-gray-900">
                 <span className="font-semibold">{note.description}</span>
-                <span className="text-gray-500"> · {note.quantity}{note.unit}</span>
+                <span className="text-gray-500"> · {note.quantity}{note.unit === 'pcs' ? ' pcs' : note.unit}</span>
+                {note.reason && <span className="ml-1 font-mono text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-700" title={PRODUCTION_REASONS.find((r) => r.code === note.reason)?.label}>{note.reason}</span>}
                 {note.loggedByName && <span className="text-gray-400 text-xs"> · by {note.loggedByName}</span>}
               </div>
               {!disabled && (
@@ -144,14 +154,33 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
             <option value="g">g</option>
             <option value="L">L</option>
             <option value="ml">ml</option>
+            <option value="pcs">pcs</option>
           </select>
+        </div>
+        <div className="md:col-span-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">{reasonRequired ? 'Why? *' : 'Why?'}</label>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Waste reason">
+            {PRODUCTION_REASONS.map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                role="radio"
+                aria-checked={reason === r.code}
+                onClick={() => setReason(r.code)}
+                disabled={disabled}
+                className={`px-3 py-1.5 rounded-full text-sm border ${reason === r.code ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300'}`}
+              >
+                <span className="font-mono font-semibold">{r.code}</span> {r.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       <button
         type="button"
         onClick={handleAdd}
-        disabled={disabled || submitting || !description.trim() || !quantity}
+        disabled={disabled || submitting || !description.trim() || !quantity || (reasonRequired && !reason)}
         className="mt-4 px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-semibold text-sm"
       >
         <PlusCircle className="w-4 h-4" />

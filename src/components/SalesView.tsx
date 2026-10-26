@@ -9,6 +9,7 @@ import { addDays, formatDateIST, formatDateTimeIST, getTodayIST } from '../utils
 import { getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
+import { paidOutsideStoreTill } from '../utils/cashSource';
 import { PaytmLedger } from './PaytmLedger';
 import { Eye, Lock, Banknote, Smartphone, Wallet, CheckCircle, Clock, PlusCircle, XCircle, IndianRupee, RefreshCw, FileSpreadsheet, HandCoins, AlertTriangle, TrendingUp, Factory } from 'lucide-react';
 import { PaytmWeeklyReconciliation } from './PaytmWeeklyReconciliation';
@@ -55,6 +56,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
   const [topupDate, setTopupDate] = useState(selectedDate);
   const [topupAmount, setTopupAmount] = useState('');
   const [topupTargetStoreId, setTopupTargetStoreId] = useState('');
+  // Cluster head only: where the cash goes - 'store:<id>' or 'ph:<productionHouseId>'.
+  const [topupDestination, setTopupDestination] = useState('');
   const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
   const [resolvingTopupId, setResolvingTopupId] = useState<string | null>(null);
   const [resolvingDiscrepancyId, setResolvingDiscrepancyId] = useState<string | null>(null);
@@ -195,6 +198,14 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const productionCashOpening = productionCashEntry?.openingBalance ?? productionCashLive?.openingBalance ?? 0;
   const productionCashExpenses = productionCashEntry?.productionExpenses ?? productionCashLive?.productionExpenses ?? 0;
+  // The part of those expenses that was store bills paid out of production's cash (the
+  // server already counts them in productionExpenses; this only explains the figure).
+  const productionCashStoreBills = useMemo(() => {
+    if (!productionHouseIdForTotal) return 0;
+    return [...context.inventory, ...context.overheads, ...context.fixedCosts]
+      .filter((item: any) => item.date === selectedDate && item.paidFromProductionHouseId === productionHouseIdForTotal)
+      .reduce((sum: number, item: any) => sum + (item.totalCost ?? item.amount ?? 0), 0);
+  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, productionHouseIdForTotal]);
   const productionCashTopup = productionCashEntry?.cashTopupCredited ?? productionCashLive?.cashTopupCredited ?? 0;
   const productionCashExpectedClosing = productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand ?? 0;
   const productionCashDiscrepancy = productionCashInput ? (parseFloat(productionCashInput) || 0) - productionCashExpectedClosing : 0;
@@ -409,9 +420,30 @@ export function SalesView({ context, selectedStoreId }: Props) {
       toast.error('Please select which store to credit');
       return;
     }
+    if (isClusterHead && !topupDestination) {
+      toast.error('Pick where the cash goes');
+      return;
+    }
 
     setIsSubmittingTopup(true);
     try {
+      if (isClusterHead) {
+        // A cluster head's top-up needs no approval - it is credited straight away.
+        const [kind, targetId] = topupDestination.split(':');
+        const toProduction = kind === 'ph';
+        await api.requestCashTopup(
+          context.user.accessToken,
+          topupDate,
+          amount,
+          toProduction ? 'production_inventory' : (topupReason === 'production_inventory' ? 'store_inventory' : topupReason),
+          toProduction ? undefined : targetId,
+          toProduction ? targetId : undefined
+        );
+        const name = toProduction
+          ? (context.productionHouses || []).find((h) => h.id === targetId)?.name || 'production house'
+          : (context.stores || []).find((st) => st.id === targetId)?.name || 'store';
+        toast.success(`₹${amount.toLocaleString('en-IN')} added to ${name} cash`);
+      } else {
       await api.requestCashTopup(
         context.user.accessToken,
         topupDate,
@@ -420,6 +452,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
         isProductionIncharge ? topupTargetStoreId : undefined
       );
       toast.success('Cash top-up request sent to the cluster head');
+      }
       setShowTopupModal(false);
       setTopupAmount('');
       setTopupReason(defaultTopupReason);
@@ -739,6 +772,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
       })
       .reduce((sum: number, item: any) => {
         const amount = item.totalCost ?? item.amount ?? 0;
+        if (paidOutsideStoreTill(item)) return sum; // own money, or paid from production's cash
         if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
         if (item.paymentMethod === 'online') return sum;
         return sum + amount; // default/'cash'
@@ -765,6 +799,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
       .filter((item: any) => item.date === selectedDate && item.entityType !== 'production_house' && (isAggregateEntry ? matchesStoreScope(item.storeId) : item.storeId === effectiveStoreId))
       .reduce((sum: number, item: any) => {
         const amount = item.totalCost ?? item.amount ?? 0;
+        if (paidOutsideStoreTill(item)) return sum; // own money, or paid from production's cash
         if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
         if (item.paymentMethod === 'online') return sum;
         return sum + amount;
@@ -856,7 +891,10 @@ export function SalesView({ context, selectedStoreId }: Props) {
       // Aggregator commission entries are already taken off inside the Paytm formula below.
       if ((item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) || item.category === 'commission') continue;
       const amount = item.totalCost ?? item.amount ?? 0;
-      if (item.paymentMethod === 'both') {
+      if (paidOutsideStoreTill(item)) {
+        // Cluster head's own money (neither the store's cash nor Paytm), or a store bill paid
+        // from production's cash (already inside productionAmount below).
+      } else if (item.paymentMethod === 'both') {
         cashExpenses += item.cashAmount || 0;
         onlineExpenses += item.onlineAmount || 0;
       } else if (item.paymentMethod === 'online') {
@@ -1368,6 +1406,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
                         })
                         .reduce((sum: number, item: any) => {
                           const amount = item.totalCost ?? item.amount ?? 0;
+                          if (paidOutsideStoreTill(item)) return sum; // own money, or paid from production's cash
                           if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
                           if (item.paymentMethod === 'online') return sum;
                           return sum + amount; // default/'cash'
@@ -1614,6 +1653,11 @@ export function SalesView({ context, selectedStoreId }: Props) {
                           <span className="text-muted-foreground">Today's production expenses</span>
                           <span className="text-foreground font-medium">₹{productionCashExpenses.toLocaleString('en-IN')}</span>
                         </div>
+                        {productionCashStoreBills > 0 && (
+                          <p className="text-xs text-muted-foreground -mt-1">
+                            incl. ₹{productionCashStoreBills.toLocaleString('en-IN')} of store bills paid from production cash
+                          </p>
+                        )}
                         <div className="flex items-center justify-between text-sm pt-2 border-t border-border/70">
                           <span className="text-foreground font-semibold">Expected closing</span>
                           <span className="text-primary font-bold">₹{productionCashExpectedClosing.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
@@ -1816,7 +1860,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
       {/* Cash Top-up Request - operations manager/production incharge can ask the cluster
           head for more physical cash when the offline till is running low. (Store incharge
           has the same section on their own Sales page, SalesManagement.tsx.) */}
-      {(isOperationsManager || isProductionIncharge) && (
+      {(isOperationsManager || isProductionIncharge || isClusterHead) && (
         <div className="mt-6 bg-card rounded-2xl border border-border p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -1832,12 +1876,16 @@ export function SalesView({ context, selectedStoreId }: Props) {
                 if (isProductionIncharge && suppliedStores.length === 1) {
                   setTopupTargetStoreId(suppliedStores[0].id);
                 }
+                if (isClusterHead && !topupDestination) {
+                  const firstStore = effectiveStoreId && effectiveStoreId !== 'all' ? effectiveStoreId : context.stores?.[0]?.id;
+                  if (firstStore) setTopupDestination(`store:${firstStore}`);
+                }
                 setTopupDate(selectedDate);
                 setShowTopupModal(true);
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:opacity-90 transition-opacity"
             >
-              <PlusCircle className="w-4 h-4" /> Request Top-up
+              <PlusCircle className="w-4 h-4" /> {isClusterHead ? 'Add Top-up' : 'Request Top-up'}
             </button>
           </div>
           {myPendingTopups.length === 0 ? (
@@ -1977,7 +2025,26 @@ export function SalesView({ context, selectedStoreId }: Props) {
       {showTopupModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
           <div className="bg-card rounded-2xl max-w-sm w-full p-6 border border-border">
-            <h3 className="text-foreground font-bold mb-4">Request Cash Top-up</h3>
+            <h3 className="text-foreground font-bold mb-4">{isClusterHead ? 'Add Cash Top-up' : 'Request Cash Top-up'}</h3>
+            {isClusterHead && (
+              <>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Give cash to</label>
+                <select
+                  value={topupDestination}
+                  onChange={(e) => setTopupDestination(e.target.value)}
+                  className="w-full px-3 py-2 border border-border rounded-lg mb-1 bg-background text-foreground"
+                >
+                  <option value="">Pick a store or production house...</option>
+                  {(context.stores || []).map((st) => (
+                    <option key={st.id} value={`store:${st.id}`}>{st.name} (store cash)</option>
+                  ))}
+                  {(context.productionHouses || []).map((h) => (
+                    <option key={h.id} value={`ph:${h.id}`}>{h.name} (production cash)</option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mb-3">Added straight away - no approval needed. The money comes off the business Paytm, like any approved top-up.</p>
+              </>
+            )}
             <label className="block text-xs font-medium text-muted-foreground mb-1">Date this top-up is for</label>
             <DatePicker
               value={topupDate}
@@ -1998,16 +2065,20 @@ export function SalesView({ context, selectedStoreId }: Props) {
               placeholder="Enter amount needed"
               autoFocus
             />
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Reason</label>
-            <select
-              value={topupReason}
-              onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
-              className="w-full px-3 py-2 border border-border rounded-lg mb-3 bg-background text-foreground"
-            >
-              <option value="store_inventory">Store Inventory</option>
-              <option value="production_inventory">Production House Inventory</option>
-              <option value="other">Other</option>
-            </select>
+            {!(isClusterHead && topupDestination.startsWith('ph:')) && (
+              <>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Reason</label>
+                <select
+                  value={topupReason}
+                  onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
+                  className="w-full px-3 py-2 border border-border rounded-lg mb-3 bg-background text-foreground"
+                >
+                  <option value="store_inventory">Store Inventory</option>
+                  {!isClusterHead && <option value="production_inventory">Production House Inventory</option>}
+                  <option value="other">Other</option>
+                </select>
+              </>
+            )}
             {isProductionIncharge && suppliedStores.length > 1 && (
               <>
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Which store to credit</label>
@@ -2040,7 +2111,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
                 disabled={isSubmittingTopup}
                 className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {isSubmittingTopup ? 'Sending...' : 'Send Request'}
+                {isSubmittingTopup ? (isClusterHead ? 'Adding...' : 'Sending...') : (isClusterHead ? 'Add top-up' : 'Send Request')}
               </button>
             </div>
           </div>

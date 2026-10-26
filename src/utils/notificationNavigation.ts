@@ -19,6 +19,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   discrepancy_rejected: { view: 'sales' },
   cash_topup_request: { view: 'sales' },
   cash_topup_approved: { view: 'sales' },
+  production_cash_store_bill: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
   paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
@@ -28,6 +29,9 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   loan_rejected: { view: 'sales' },
   production_pending: { view: 'production', tab: 'approvals' },
   production_approved: { view: 'production' },
+  production_log_reminder: { view: 'production' },
+  delivery_incoming: { view: 'receive-stock' },
+  stock_out: { view: 'stock-outs' },
   timesheet_pending: { view: 'attendance', tab: 'approve-timesheet' },
   timesheet_approved: { view: 'attendance', tab: 'timesheet' },
   timesheet_rejected: { view: 'attendance', tab: 'timesheet' },
@@ -59,7 +63,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {
   if (!data || !data.type) return null;
 
-  if (typeof data.type === 'string' && data.type.startsWith('production_request_') && data.relatedId) {
+  if (typeof data.type === 'string' && (data.type.startsWith('production_request_') || data.type === 'delivery_variance') && data.relatedId) {
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {

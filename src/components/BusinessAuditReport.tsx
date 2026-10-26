@@ -4,6 +4,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import * as api from '../utils/api';
 import { InventoryContextType, SalesData } from '../App';
 import { DatePicker } from './DatePicker';
+import { getTodayIST } from '../utils/timezone';
+import { settlementDueBy } from '../utils/payoutSchedule';
 
 interface Props {
   context: InventoryContextType;
@@ -216,8 +218,15 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
       // A day only needs a settlement if there was actual sales activity for THIS
       // aggregator that day - no sales means nothing to settle, not a gap.
       const daysWithOnlineSales = periodDays.filter((day) => (dailyOnlineSales.get(day) || 0) > 0);
-      const pendingDays = daysWithOnlineSales.filter((d) => !coveredDays.has(d));
+      // And only once its payout date has passed (utils/payoutSchedule.ts) - the last few days
+      // simply haven't been paid yet, so they're counted separately, not as gaps.
+      const today = getTodayIST();
+      const unsettled = daysWithOnlineSales.filter((d) => !coveredDays.has(d));
+      const pendingDays = unsettled.filter((d) => today > settlementDueBy(aggregator, d));
+      const notDueDays = unsettled.filter((d) => today <= settlementDueBy(aggregator, d));
       const pendingValue = pendingDays.reduce((sum, d) => sum + (dailyOnlineSales.get(d) || 0), 0);
+      const notDueValue = notDueDays.reduce((sum, d) => sum + (dailyOnlineSales.get(d) || 0), 0);
+      const dueDayCount = daysWithOnlineSales.length - notDueDays.length;
       const settlements = scopedSettlements.filter((s) => s.aggregator === aggregator);
       const totalGross = settlements.reduce((sum, s) => sum + (s.grossSales || 0), 0);
       const totalCommission = settlements.reduce((sum, s) => sum + (s.netCommission || 0), 0);
@@ -225,10 +234,12 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
 
       return {
         aggregator,
-        totalDaysWithSales: daysWithOnlineSales.length,
+        totalDaysWithSales: dueDayCount,
         pendingDays,
         pendingValue,
-        coveragePct: daysWithOnlineSales.length > 0 ? Math.round(((daysWithOnlineSales.length - pendingDays.length) / daysWithOnlineSales.length) * 100) : 100,
+        notDueDays,
+        notDueValue,
+        coveragePct: dueDayCount > 0 ? Math.round(((dueDayCount - pendingDays.length) / dueDayCount) * 100) : 100,
         settlementCount: settlements.length,
         effectiveCommissionPct,
       };
@@ -644,7 +655,10 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
                         <div className={`h-full rounded-full ${t.bar}`} style={{ width: `${row.coveragePct}%` }} />
                       </div>
                       {row.pendingValue > 0 && (
-                        <p className="text-[11px] text-amber-700 font-medium mt-2">{formatMoney(row.pendingValue)} in sales awaiting settlement</p>
+                        <p className="text-[11px] text-amber-700 font-medium mt-2">{formatMoney(row.pendingValue)} in sales past their payout date with no settlement</p>
+                      )}
+                      {row.notDueValue > 0 && (
+                        <p className="text-[11px] text-gray-500 mt-1">{formatMoney(row.notDueValue)} from the last {row.notDueDays.length} day{row.notDueDays.length === 1 ? '' : 's'} not paid out yet</p>
                       )}
                       {row.effectiveCommissionPct !== null && (
                         <p className="text-[11px] text-gray-500 mt-1">Effective commission: {row.effectiveCommissionPct.toFixed(1)}% across {row.settlementCount} settlement{row.settlementCount === 1 ? '' : 's'}</p>
@@ -658,7 +672,7 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
                 <div key={row.aggregator} className="border border-amber-200 rounded-lg overflow-hidden">
                   <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                    <p className="text-xs font-semibold text-amber-900 capitalize">{row.aggregator}: {row.pendingDays.length} day{row.pendingDays.length === 1 ? '' : 's'} with sales but no settlement yet</p>
+                    <p className="text-xs font-semibold text-amber-900 capitalize">{row.aggregator}: {row.pendingDays.length} day{row.pendingDays.length === 1 ? '' : 's'} past the payout date with no settlement on file</p>
                   </div>
                   <div className="px-3 py-2 flex flex-wrap gap-1.5">
                     {row.pendingDays.map((d) => (
@@ -671,7 +685,7 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
               {revenueCompleteness.every((row) => row.pendingDays.length === 0) && (
                 <div className="flex items-center gap-2 text-sm text-emerald-600">
                   <CheckCircle className="w-4 h-4" />
-                  Every day with online sales has a matching settlement on file.
+                  Every day with online sales that should have been paid by now has a settlement on file.
                 </div>
               )}
 

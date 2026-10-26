@@ -2,22 +2,31 @@ import { useState, useEffect } from 'react';
 import { FixedCostItem } from '../App';
 import { X, Loader2 } from 'lucide-react';
 import { FIXED_COST_CATEGORIES, SELECTABLE_FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
+import type { CashCover } from '../utils/cashSource';
 
 type Props = {
   selectedDate: string;
   editingItem?: FixedCostItem | null;
   onSubmit: (item: Omit<FixedCostItem, 'id'>) => void | Promise<void>;
   onClose: () => void;
+  // Cluster head only: "My own money" - a cost that takes nothing from store/production cash or Paytm.
+  allowOwnerPayment?: boolean;
+  // Cluster head, store expense: the linked production house, and both tills' cash for the
+  // day - production's cash is offered only when the store's can't cover the bill.
+  productionCashHouseId?: string | null;
+  productionCashCover?: CashCover | null;
 };
 
-export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: Props) {
+export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null }: Props) {
+  const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   const [formData, setFormData] = useState({
     category: editingItem ? editingItem.category : 'electricity' as FixedCostItem['category'],
     description: editingItem ? editingItem.description : '',
     amount: editingItem ? editingItem.amount.toString() : '',
     units: editingItem?.units ? editingItem.units.toString() : '',
     unitPrice: editingItem?.unitPrice ? editingItem.unitPrice.toString() : '',
-    paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both',
+    paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both' | 'owner',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
   });
@@ -90,6 +99,13 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
       // For cash payment, set cashAmount to total amount
       baseData.cashAmount = calculatedAmount;
       baseData.onlineAmount = 0;
+    } else if (formData.paymentMethod === 'owner') {
+      baseData.cashAmount = 0;
+      baseData.onlineAmount = 0;
+    }
+    if (productionCashHouseId) {
+      baseData.paidFromProductionHouseId = formData.paymentMethod === 'cash' && fromProductionCash
+        && productionCashChoiceAvailable(calculatedAmount, productionCashCover, editingItem) ? productionCashHouseId : null;
     }
 
     console.log('💳 Fixed cost payment data being sent:', {
@@ -264,6 +280,25 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem }: 
                   <p className="text-xs text-gray-500">Paid using both Cash and Online</p>
                 </div>
               </label>
+              {(allowOwnerPayment || editingItem?.paymentMethod === 'owner') && (
+                <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value="owner"
+                    checked={formData.paymentMethod === 'owner'}
+                    onChange={() => setFormData({ ...formData, paymentMethod: 'owner' })}
+                    className="w-4 h-4 text-orange-600"
+                  />
+                  <div className="flex-1">
+                    <span className="text-gray-900">🙋 My own money (cluster head)</span>
+                    <p className="text-xs text-gray-500">Counts as a cost, but takes nothing from the store's or production house's cash or Paytm</p>
+                  </div>
+                </label>
+              )}
+              {productionCashHouseId && formData.paymentMethod === 'cash' && (
+                <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={totalAmount} cover={productionCashCover} editingItem={editingItem} />
+              )}
             </div>
           </div>
 

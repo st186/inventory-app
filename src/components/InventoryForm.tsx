@@ -4,6 +4,8 @@ import { SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, STORE_SELECTABLE_INVEN
 import { X, Loader2, Search, ChevronDown, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
 import { findSimilarItem } from '../utils/stringSimilarity';
+import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
+import type { CashCover } from '../utils/cashSource';
 
 type Props = {
   selectedDate: string;
@@ -16,9 +18,16 @@ type Props = {
   // from what's already there. Defaults to true for callers that haven't been updated to
   // pass this explicitly, so existing behavior doesn't silently change elsewhere.
   canCreateNewItems?: boolean;
+  // Cluster head only: "My own money" - a cost that takes nothing from store/production cash or Paytm.
+  allowOwnerPayment?: boolean;
+  // Cluster head, store expense: the linked production house, and both tills' cash for the
+  // day - production's cash is offered only when the store's can't cover the bill.
+  productionCashHouseId?: string | null;
+  productionCashCover?: CashCover | null;
 };
 
-export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit, onClose, onSuccess, canCreateNewItems = true }: Props) {
+export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit, onClose, onSuccess, canCreateNewItems = true, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null }: Props) {
+  const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   // Store purchases are a small curated subset (see STORE_CATEGORY_ITEMS) - the
   // production house still needs the full fresh-produce/spices/meat lists.
   const isStoreEntry = entityType === 'store';
@@ -26,7 +35,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
   const baseCategoryItems: Record<string, string[]> = isStoreEntry ? (STORE_CATEGORY_ITEMS as Record<string, string[]>) : (CATEGORY_ITEMS as Record<string, readonly string[]>) as Record<string, string[]>;
   const defaultCategory = (Object.keys(baseSelectableCategories)[0] || 'fresh_produce') as InventoryItem['category'];
   // Get last used payment method from localStorage, default to 'cash' if not found
-  const getLastPaymentMethod = (): 'cash' | 'online' | 'both' => {
+  const getLastPaymentMethod = (): 'cash' | 'online' | 'both' | 'owner' => {
     if (editingItem?.paymentMethod) return editingItem.paymentMethod;
     const stored = localStorage.getItem('lastInventoryPaymentMethod');
     return (stored as 'cash' | 'online' | 'both') || 'cash';
@@ -259,8 +268,15 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
       // For cash payment, set cashAmount to totalCost
       paymentData.cashAmount = roundedTotalCost;
       paymentData.onlineAmount = 0;
+    } else if (formData.paymentMethod === 'owner') {
+      paymentData.cashAmount = 0;
+      paymentData.onlineAmount = 0;
     }
-    
+    if (productionCashHouseId) {
+      paymentData.paidFromProductionHouseId = formData.paymentMethod === 'cash' && fromProductionCash
+        && productionCashChoiceAvailable(roundedTotalCost, productionCashCover, editingItem) ? productionCashHouseId : null;
+    }
+
     console.log('💳 [INVENTORY FORM] Payment data being sent:', paymentData);
     
     try {
@@ -743,7 +759,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
             <select
               value={formData.paymentMethod}
               onChange={(e) => {
-                const method = e.target.value as 'cash' | 'online' | 'both';
+                const method = e.target.value as 'cash' | 'online' | 'both' | 'owner';
                 // Save to localStorage to remember for next time
                 localStorage.setItem('lastInventoryPaymentMethod', method);
                 setFormData({ 
@@ -760,7 +776,15 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
               <option value="cash">Cash in Hand 💵</option>
               <option value="online">Online / Paytm 📱</option>
               <option value="both">Split Payment (Both) 💰</option>
+              {(allowOwnerPayment || editingItem?.paymentMethod === 'owner') && (
+                <option value="owner">My own money (cluster head) 🙋</option>
+              )}
             </select>
+            {productionCashHouseId && formData.paymentMethod === 'cash' && (
+              <div className="mt-2">
+                <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={parseFloat(formData.totalCost) || 0} cover={productionCashCover} editingItem={editingItem} />
+              </div>
+            )}
           </div>
 
           {/* Split Payment Fields */}

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Package, Droplet, AlertTriangle, Clock, BarChart3, UserX, Users, Trash2 } from 'lucide-react';
+import { Package, Droplet, AlertTriangle, Clock, BarChart3, UserX, Users, Trash2, PackageX } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import type { ProductionRequest, Employee, Timesheet } from '../utils/api';
 import * as api from '../utils/api';
+import { wasteReasonLabel } from '../utils/batches';
+import { STOCK_OUT_REASONS, istClock, istDate, stockOutDuration, stockOutMinutes, stockOutReasonLabel, type StockOutEntry } from '../utils/stockOuts';
 
 interface StockAnalysisProps {
   requests: ProductionRequest[];
@@ -70,6 +72,11 @@ function resolvePeriodRange(period: Period, custom: { from: string; to: string }
 // store - pending/accepted/shipped requests haven't failed to deliver, they just haven't
 // gotten there yet. Only delivered/partially-delivered rows tell us what really arrived.
 const isDeliveredStatus = (status: string) => status === 'delivered' || status === 'partially-delivered';
+
+// Requests closed in bulk long after the fact (57 Feb-Sep 2026 shipments, closed 25 Oct 2026)
+// carry the shipped time as their delivered time - they count as delivered for stock, but have
+// no real delivery time, so the SLA timings leave them out.
+const deliveryTime = (r: ProductionRequest) => ((r as any).deliveryClosedInBulk ? undefined : r.deliveredAt);
 
 function daysAgo(dateStr: string): number {
   const then = new Date(dateStr.substring(0, 10) + 'T00:00:00');
@@ -153,6 +160,40 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
     return () => { cancelled = true; };
   }, [accessToken, storeIdsKey, periodRange]);
 
+  // ---- Out-of-stock log (store SOP ST-28), for the same period and stores. ----
+  const [stockOuts, setStockOuts] = useState<StockOutEntry[]>([]);
+  useEffect(() => {
+    if (!accessToken || storeIds.length === 0) { setStockOuts([]); return; }
+    let cancelled = false;
+    const from = periodRange?.start || '2026-10-25';
+    const to = periodRange?.end || todayIST();
+    Promise.all(storeIds.map((id) => api.getStockOuts(accessToken, id, from, to).catch(() => [] as StockOutEntry[])))
+      .then((lists) => { if (!cancelled) setStockOuts(lists.flat()); });
+    return () => { cancelled = true; };
+  }, [accessToken, storeIdsKey, periodRange]);
+
+  const stockOutSummary = useMemo(() => {
+    const byItem = new Map<string, { item: string; times: number; minutes: number }>();
+    const byReason = new Map<string, number>();
+    let minutes = 0;
+    for (const e of stockOuts) {
+      const m = stockOutMinutes(e.startAt, e.endAt);
+      minutes += m;
+      const row = byItem.get(e.item) || { item: e.item, times: 0, minutes: 0 };
+      row.times += 1;
+      row.minutes += m;
+      byItem.set(e.item, row);
+      byReason.set(e.reason, (byReason.get(e.reason) || 0) + 1);
+    }
+    return {
+      items: [...byItem.values()].sort((a, b) => b.minutes - a.minutes),
+      reasons: STOCK_OUT_REASONS.filter((r) => byReason.has(r.id)).map((r) => ({ ...r, times: byReason.get(r.id)! })).sort((a, b) => b.times - a.times),
+      open: stockOuts.filter((e) => !e.endAt),
+      latest: [...stockOuts].sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 8),
+      minutes,
+    };
+  }, [stockOuts]);
+
   const wastageSummary = useMemo(() => {
     const labelByKey = new Map(finishedProducts.map((p) => [p.camelKey, p.label]));
     const byType = new Map<string, number>();
@@ -170,7 +211,23 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       .sort((a, b) => (a.date < b.date ? 1 : -1))
       .map((e) => ({ date: e.date, pieces: Object.values(e.wastage || {}).reduce((x, y) => x + (y || 0), 0), by: e.submittedByName || '', notes: e.notes || '' }));
     const lastLogged = days.length > 0 ? days[0].date : null;
-    return { rows, total, days, lastLogged, maxPieces: rows[0]?.pieces || 0 };
+    // Pieces per SOP reason code across the period; totals saved before reason codes (or by
+    // an older app) show as "No reason recorded".
+    const byReason = new Map<string, number>();
+    for (const e of wastageEntries) {
+      for (const [key, pieces] of Object.entries(e.wastage || {})) {
+        let coded = 0;
+        for (const [code, n] of Object.entries(e.reasons?.[key] || {})) {
+          byReason.set(code, (byReason.get(code) || 0) + n);
+          coded += n;
+        }
+        if ((pieces || 0) > coded) byReason.set('', (byReason.get('') || 0) + (pieces || 0) - coded);
+      }
+    }
+    const reasonRows = [...byReason.entries()]
+      .map(([code, pieces]) => ({ code, label: wasteReasonLabel(code || undefined), pieces }))
+      .sort((a, b) => b.pieces - a.pieces);
+    return { rows, total, days, lastLogged, maxPieces: rows[0]?.pieces || 0, reasonRows };
   }, [wastageEntries, finishedProducts]);
 
   const periodLabel = period === 'custom' && periodRange ? `${periodRange.start} to ${periodRange.end}` : PERIOD_LABELS[period];
@@ -399,7 +456,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   // was shipped - this is the case the delivered-stage chart needs to surface, not just
   // the average clock time.
   const isDelayedDelivery = (r: ProductionRequest) =>
-    !!r.shippedAt && !!r.deliveredAt && r.shippedAt.substring(0, 10) !== r.deliveredAt.substring(0, 10);
+    !!r.shippedAt && !!deliveryTime(r) && r.shippedAt.substring(0, 10) !== deliveryTime(r)!.substring(0, 10);
 
   // ---- Section D: what time of day each pipeline stage typically happens, per day -
   // plotted against a fixed 10am-10pm axis rather than elapsed duration. Grouped by the
@@ -431,8 +488,8 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
         byDay[day].ship.push(timeOfDayHours(r.shippedAt));
         if (r.shippedAt.substring(0, 10) !== day) byDay[day].shippedNextDayCount++;
       }
-      if (r.deliveredAt) {
-        byDay[day].deliver.push(timeOfDayHours(r.deliveredAt));
+      if (deliveryTime(r)) {
+        byDay[day].deliver.push(timeOfDayHours(deliveryTime(r)!));
         if (isDelayedDelivery(r)) byDay[day].delayedCount++;
       }
     });
@@ -456,7 +513,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       .filter(isDelayedDelivery)
       .map((r) => {
         const shippedDate = r.shippedAt!.substring(0, 10);
-        const deliveredDate = r.deliveredAt!.substring(0, 10);
+        const deliveredDate = deliveryTime(r)!.substring(0, 10);
         const daysLate = Math.round((new Date(deliveredDate).getTime() - new Date(shippedDate).getTime()) / (1000 * 60 * 60 * 24));
         return {
           id: r.id,
@@ -464,7 +521,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           requestedAt: r.createdAt || r.requestDate || shippedDate,
           acceptedAt: r.acceptedAt || null,
           shippedAt: r.shippedAt!,
-          deliveredAt: r.deliveredAt!,
+          deliveredAt: deliveryTime(r)!,
           daysLate,
         };
       })
@@ -476,11 +533,11 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   const slaStats = useMemo(() => {
     const accepted = periodRequests.filter((r) => !!r.acceptedAt);
     const shipped = periodRequests.filter((r) => !!r.shippedAt);
-    const deliveredWithShip = periodRequests.filter((r) => !!r.shippedAt && !!r.deliveredAt);
+    const deliveredWithShip = periodRequests.filter((r) => !!r.shippedAt && !!deliveryTime(r));
 
     const acceptedOnTime = accepted.filter((r) => timeOfDayHours(r.acceptedAt!) <= ACCEPT_BY_HOUR);
     const shippedOnTime = shipped.filter((r) => timeOfDayHours(r.shippedAt!) <= SHIP_BY_HOUR);
-    const deliveredOnTime = deliveredWithShip.filter((r) => hoursBetween(r.shippedAt!, r.deliveredAt!) <= DELIVER_WITHIN_HOURS);
+    const deliveredOnTime = deliveredWithShip.filter((r) => hoursBetween(r.shippedAt!, deliveryTime(r)!) <= DELIVER_WITHIN_HOURS);
 
     return {
       accepted: { met: acceptedOnTime.length, total: accepted.length },
@@ -512,7 +569,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   const chartEfficiency = useMemo(() => {
     const acceptedTotal = periodRequests.filter((r) => !!r.acceptedAt).length;
     const shippedTotal = periodRequests.filter((r) => !!r.shippedAt).length;
-    const deliveredTotal = periodRequests.filter((r) => !!r.shippedAt && !!r.deliveredAt).length;
+    const deliveredTotal = periodRequests.filter((r) => !!r.shippedAt && !!deliveryTime(r)).length;
     return {
       requestedCount: periodRequests.length,
       acceptedSameDayPct: acceptedTotal > 0 ? Math.round(((acceptedTotal - nextDayCounts.acceptedNextDay) / acceptedTotal) * 100) : null,
@@ -927,6 +984,21 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                 </div>
               ))}
             </div>
+            {wastageSummary.reasonRows.some((r) => r.code) && (
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-2">By reason</p>
+                <div className="flex flex-wrap gap-2">
+                  {wastageSummary.reasonRows.map((r) => (
+                    <span key={r.code || 'none'} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${r.code ? 'bg-white border-gray-200 text-gray-800' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+                      {r.code && <span className="font-mono font-semibold">{r.code}</span>}
+                      {r.label}
+                      <span className="font-semibold tabular-nums">{r.pieces}</span>
+                    </span>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1">Q = short or damaged at delivery (from the store's count). S = staff meals, counted here because they leave stock too.</p>
+              </div>
+            )}
             <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {wastageSummary.days.map((d) => (
                 <div key={d.date} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
@@ -935,6 +1007,73 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                   <span className="font-semibold tabular-nums">{d.pieces} pcs</span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Out of stock - logged by whoever bills at the store (Out of Stock page, SOP ST-28). */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
+          <PackageX className="w-4 h-4 text-rose-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Out of Stock</h3>
+          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+        </div>
+        {stockOuts.length === 0 ? (
+          <div className="p-6 text-center text-sm text-gray-500">
+            No stock-outs logged in this period. The store logs them from the Out of Stock page.
+          </div>
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-rose-50 border border-rose-100 rounded-lg p-3">
+                <p className="text-xs text-rose-700">Times out</p>
+                <p className="text-xl font-bold text-rose-700 tabular-nums">{stockOuts.length}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Time out in total</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{stockOutDuration(new Date(0).toISOString(), new Date(stockOutSummary.minutes * 60000).toISOString())}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Out right now</p>
+                <p className={`text-xl font-bold tabular-nums ${stockOutSummary.open.length ? 'text-rose-700' : 'text-gray-900'}`}>{stockOutSummary.open.length}</p>
+              </div>
+            </div>
+            {stockOutSummary.open.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {stockOutSummary.open.map((e) => (
+                  <span key={e.id} className="text-xs px-2.5 py-1 rounded-full bg-rose-600 text-white">{e.item} · since {istClock(e.startAt)} ({stockOutDuration(e.startAt)})</span>
+                ))}
+              </div>
+            )}
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">By item</p>
+              <div className="space-y-1">
+                {stockOutSummary.items.map((r) => (
+                  <div key={r.item} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="text-gray-800">{r.item}</span>
+                    <span className="text-gray-600 tabular-nums">{r.times}× · {stockOutDuration(new Date(0).toISOString(), new Date(r.minutes * 60000).toISOString())}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">By reason</p>
+              <div className="flex flex-wrap gap-1.5">
+                {stockOutSummary.reasons.map((r) => (
+                  <span key={r.id} className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700">{r.label} · {r.times}</span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Latest</p>
+              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+                {stockOutSummary.latest.map((e) => (
+                  <li key={e.id} className="px-3 py-2 text-xs text-gray-600">
+                    <span className="font-semibold text-gray-900">{e.item}</span> · {new Date(`${istDate(e.startAt)}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} {istClock(e.startAt)} - {e.endAt ? istClock(e.endAt) : 'still out'} · {stockOutDuration(e.startAt, e.endAt)} · {stockOutReasonLabel(e.reason)}{e.reasonNote ? ` (${e.reasonNote})` : ''} · {e.createdByName}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         )}

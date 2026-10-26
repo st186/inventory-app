@@ -1,17 +1,21 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { Employee } from '../utils/api';
+import * as api from '../utils/api';
+import { PRODUCTION_CASH_GO_LIVE_DATE, storeCashOnHand } from '../utils/cashSource';
+import { useCashCover } from './useCashCover';
 import { InventoryForm } from './InventoryForm';
 import { OverheadForm } from './OverheadForm';
 import { FixedCostForm } from './FixedCostForm';
 import { QuickAddExpense } from './QuickAddExpense';
 import { InventoryList } from './InventoryList';
 import { DateSelector } from './DateSelector';
-import { Plus, Search, Settings, Package } from 'lucide-react';
+import { Plus, Search, Settings, Package, ScanText } from 'lucide-react';
 import { toast } from 'sonner';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
 import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { CategoryManagerModal } from './CategoryManagerModal';
+import { InvoiceScanner } from './insights/InvoiceScanner';
 
 type Props = {
  context: InventoryContextType;
@@ -27,6 +31,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [showOverheadForm, setShowOverheadForm] = useState(false);
  const [showFixedCostForm, setShowFixedCostForm] = useState(false);
  const [showQuickAdd, setShowQuickAdd] = useState(false);
+ const [showInvoiceScan, setShowInvoiceScan] = useState(false);
  const [editingInventory, setEditingInventory] = useState<InventoryItem | null>(null);
  const [editingOverhead, setEditingOverhead] = useState<OverheadItem | null>(null);
  const [editingFixedCost, setEditingFixedCost] = useState<FixedCostItem | null>(null);
@@ -41,6 +46,9 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const isOperationsHead = context.user?.designation === 'operations_incharge';
  // Operations manager: any other manager (not tied to a single store or production house).
  const isOperationsManager = context.user?.role === 'manager' && !isStoreIncharge && !isProductionIncharge;
+ // The cluster head can add expenses for any store or production house (often paid with
+ // their own money - the "My own money" payment option).
+ const isClusterHead = context.user?.role === 'cluster_head';
  const defaultsToProduction = isProductionIncharge || isOperationsHead;
  const [activeTab, setActiveTab] = useState<'store' | 'production' | 'combined'>(
  defaultsToProduction ? 'production' : 'store'
@@ -71,17 +79,57 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const canAddOnActiveTab = activeTab === 'combined'
  ? false
  : activeTab === 'production'
- ? (isProductionIncharge || isOperationsManager)
- : (context.isManager && !isProductionIncharge && (!isStoreIncharge || effectiveStoreId === context.user?.storeId));
+ ? (isProductionIncharge || isOperationsManager || isClusterHead)
+ : (isClusterHead || (context.isManager && !isProductionIncharge && (!isStoreIncharge || effectiveStoreId === context.user?.storeId)));
+ // Stores the cluster head can file a store expense under, when no single store is selected.
+ const clusterStoreOptions = isClusterHead ? (context.stores || []).map((st) => ({ id: st.id, name: st.name })) : undefined;
+ const defaultStoreForAdds = effectiveStoreId || (isClusterHead ? ((context.stores || []).find((st) => st.productionHouseId)?.id || context.stores?.[0]?.id) : undefined);
+ // Cluster head: a store bill can be paid out of the store's linked production house's cash
+ // in hand instead of the store's (utils/cashSource.ts).
+ const productionHouseForStore = (storeId?: string | null): string | null =>
+ (isClusterHead && storeId ? (context.stores || []).find((st) => st.id === storeId)?.productionHouseId : null) || null;
+ const productionCashHouseFor = (editing?: { storeId?: string | null } | null) =>
+ activeTab === 'store' ? productionHouseForStore(editing?.storeId || effectiveStoreId || defaultStoreForAdds) : null;
+
+ // What the store's own till and its production house's till hold on a date - production's
+ // cash only steps in for a store bill the store's cash can't cover (utils/cashSource.ts).
+ const accessToken = context.user?.accessToken;
+ const loadCashCover = useCallback(async (storeId: string, date: string) => {
+ const houseId = (context.stores || []).find((st) => st.id === storeId)?.productionHouseId;
+ if (!houseId || !accessToken || date < PRODUCTION_CASH_GO_LIVE_DATE) return null;
+ const [production, topups] = await Promise.all([
+ api.getProductionCashEntry(accessToken, houseId, date),
+ api.fetchCashTopupRequests(accessToken),
+ ]);
+ const productionCash = production.entry
+ ? production.entry.actualCashInHand ?? production.entry.expectedClosingCashInHand
+ : production.live?.expectedClosingCashInHand ?? 0;
+ const store = storeCashOnHand({
+ storeId, date, salesData: context.salesData || [], topups,
+ expenses: [...context.inventory, ...context.overheads, ...context.fixedCosts],
+ });
+ return { storeCash: store.cash, productionCash, storeCounted: store.counted };
+ }, [accessToken, context.stores, context.salesData, context.inventory, context.overheads, context.fixedCosts]);
+
+ // For the edit forms: the cash on the edited store bill's day.
+ const editingStoreBill = editingInventory || editingOverhead || editingFixedCost;
+ const editFormOpen = showInventoryForm || showOverheadForm || showFixedCostForm;
+ const editCashHouseId = editFormOpen ? productionCashHouseFor(editingStoreBill) : null;
+ const editCashCover = useCashCover(
+ editCashHouseId ? loadCashCover : undefined,
+ editCashHouseId ? (editingStoreBill?.storeId || effectiveStoreId || defaultStoreForAdds || null) : null,
+ editingStoreBill?.date || selectedDate
+ );
 
  // Which production house new production-tab entries should be tagged with - the
  // production incharge's own house, or (for an operations manager editing on their
  // behalf) the only production house this business currently has.
  const targetProductionHouseId = isProductionIncharge ? (context.user?.storeId || undefined) : context.productionHouses?.[0]?.id;
- const getEntityFields = (): { entityType: 'store' | 'production_house'; storeId?: string; productionHouseId?: string } =>
+ // An edited entry keeps its own store when no single store is selected (cluster head on "All stores").
+ const getEntityFields = (existing?: { storeId?: string | null } | null): { entityType: 'store' | 'production_house'; storeId?: string; productionHouseId?: string } =>
  activeTab === 'production'
  ? { entityType: 'production_house', productionHouseId: targetProductionHouseId }
- : { entityType: 'store', storeId: effectiveStoreId || undefined };
+ : { entityType: 'store', storeId: effectiveStoreId || existing?.storeId || defaultStoreForAdds || undefined };
 
  // Production-house-tagged items carry a productionHouseId, not a storeId (storeId is
  // null for them) - matching them against effectiveStoreId as if it were a storeId always
@@ -332,7 +380,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  </div>
 
  {/* Action Buttons */}
- <div className={`grid grid-cols-1 sm:grid-cols-2 ${context.user?.role === 'cluster_head' ? 'lg:grid-cols-3' : ''} gap-3 mb-6`}>
+ <div className={`grid grid-cols-1 sm:grid-cols-3 ${context.user?.role === 'cluster_head' ? 'lg:grid-cols-4' : ''} gap-3 mb-6`}>
  <button
  onClick={() => setShowSearchModal(true)}
  className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
@@ -348,6 +396,14 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  >
  <Plus className="w-4 h-4" />
  Add Expense
+ </button>
+ <button
+ onClick={() => setShowInvoiceScan(true)}
+ disabled={!canAddOnActiveTab}
+ className="flex items-center justify-center gap-2 px-4 py-3 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+ >
+ <ScanText className="w-4 h-4" />
+ Scan Invoice
  </button>
  {context.user?.role === 'cluster_head' && (
  <button
@@ -474,9 +530,11 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <td className="py-3 text-right text-gray-700">₹{item.costPerUnit?.toLocaleString()}</td>
  <td className="py-3 text-right font-semibold text-blue-600">₹{item.totalCost.toLocaleString()}</td>
  <td className="py-3 text-center">
- {item.paymentMethod === 'cash' && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Cash</span>}
+ {item.paymentMethod === 'cash' && !item.paidFromProductionHouseId && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Cash</span>}
+ {item.paymentMethod === 'cash' && item.paidFromProductionHouseId && <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded-full">Production cash</span>}
  {item.paymentMethod === 'online' && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Online</span>}
  {item.paymentMethod === 'both' && <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">Split</span>}
+ {item.paymentMethod === 'owner' && <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded-full">Own money</span>}
  </td>
  </tr>
  ))}
@@ -493,14 +551,33 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  {/* Quick Add - the single smart entry point that replaces the old separate
  Inventory/Overhead/Fixed Cost "Add" buttons for new entries. Editing an existing
  item still goes through the type-specific forms below. */}
+ {showInvoiceScan && (
+ <InvoiceScanner
+ context={context}
+ selectedDate={selectedDate}
+ defaultEntity={activeTab === 'production' ? 'production_house' : 'store'}
+ storeId={effectiveStoreId || defaultStoreForAdds}
+ productionHouseId={targetProductionHouseId}
+ storeOptions={!effectiveStoreId ? clusterStoreOptions : undefined}
+ allowOwnerPayment={isClusterHead}
+ productionHouseForStore={productionHouseForStore}
+ loadCashCover={loadCashCover}
+ onClose={() => setShowInvoiceScan(false)}
+ />
+ )}
+
  {showQuickAdd && (
  <QuickAddExpense
  selectedDate={selectedDate}
  defaultEntity={activeTab === 'production' ? 'production_house' : 'store'}
- effectiveStoreId={effectiveStoreId}
+ effectiveStoreId={effectiveStoreId || defaultStoreForAdds}
  targetProductionHouseId={targetProductionHouseId}
  canCreateNewItems={context.user?.role === 'cluster_head'}
  canUseRestrictedCategories={context.user?.role === 'cluster_head'}
+ ownerPaymentOption={isClusterHead}
+ storeOptions={!effectiveStoreId ? clusterStoreOptions : undefined}
+ productionHouseForStore={productionHouseForStore}
+ loadCashCover={loadCashCover}
  onClose={() => setShowQuickAdd(false)}
  onSubmitInventory={async (item) => {
  await context.addInventoryItem(item);
@@ -524,9 +601,12 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  editingItem={editingInventory}
  entityType={activeTab === 'production' ? 'production_house' : 'store'}
  canCreateNewItems={context.user?.role === 'cluster_head'}
+ allowOwnerPayment={isClusterHead}
+ productionCashHouseId={productionCashHouseFor(editingInventory)}
+ productionCashCover={editCashCover}
  onSubmit={async (item) => {
  try {
- const taggedItem = { ...item, ...getEntityFields() };
+ const taggedItem = { ...item, ...getEntityFields(editingInventory) };
  if (editingInventory) {
  await context.updateInventoryItem(editingInventory.id, taggedItem);
  setShowInventoryForm(false);
@@ -556,9 +636,12 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  existingOverheads={context.overheads}
  entityScope={activeTab === 'production' ? 'production' : 'store'}
  canUseRestrictedCategories={context.user?.role === 'cluster_head'}
+ allowOwnerPayment={isClusterHead}
+ productionCashHouseId={productionCashHouseFor(editingOverhead)}
+ productionCashCover={editCashCover}
  onSubmit={async (item) => {
  try {
- const taggedItem = { ...item, ...getEntityFields() };
+ const taggedItem = { ...item, ...getEntityFields(editingOverhead) };
  if (editingOverhead) {
  await context.updateOverheadItem(editingOverhead.id, taggedItem);
  } else {
@@ -584,9 +667,12 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <FixedCostForm
  selectedDate={selectedDate}
  editingItem={editingFixedCost}
+ allowOwnerPayment={isClusterHead}
+ productionCashHouseId={productionCashHouseFor(editingFixedCost)}
+ productionCashCover={editCashCover}
  onSubmit={async (item) => {
  try {
- const taggedItem = { ...item, ...getEntityFields() };
+ const taggedItem = { ...item, ...getEntityFields(editingFixedCost) };
  if (editingFixedCost) {
  await context.updateFixedCostItem(editingFixedCost.id, taggedItem);
  } else {

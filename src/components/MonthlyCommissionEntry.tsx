@@ -74,7 +74,7 @@ export function MonthlyCommissionEntry({
           setExistingCommission(commission);
           setCommissionAmount(commission.amount.toString());
           setNotes(commission.description || '');
-          setPaymentMethod(commission.paymentMethod || 'online');
+          setPaymentMethod(commission.paymentMethod === 'owner' ? 'online' : (commission.paymentMethod || 'online'));
           if (commission.paymentMethod === 'both') {
             setCashAmount(commission.cashAmount?.toString() || '');
             setOnlineAmount(commission.onlineAmount?.toString() || '');

@@ -21,6 +21,10 @@ import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, costB
 import { buildSpreadCosts } from '../utils/spreadCosts';
 import { buildOnlineCostIndex, onlineCostsForRange } from '../utils/onlineCosts';
 import { UnitEconomics, normalizePnl, type PnlBreakdown, type CostLineKey } from './UnitEconomics';
+import { DailyBriefCard } from './insights/DailyBriefCard';
+import { ForecastCard } from './insights/ForecastCard';
+import { TrendsGrowth } from './insights/TrendsGrowth';
+import { useInsightsOverview } from './insights/useInsightsOverview';
 import { CostLineModal, type CostLineGroup } from './CostLineModal';
 import { counterValueByChannel } from '../utils/channelFoodValue';
 import { getSupabaseClient } from '../utils/supabase/client';
@@ -153,17 +157,34 @@ const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
 };
 
 type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastWeek' | 'lastMonth' | 'custom';
+// What the period picker offers. "Last 6 months" and "This year" are ready-made custom ranges:
+// every period calculation sees 'custom' with that range (see presetDateRange).
+type TimeFilterChoice = TimeFilter | 'last6Months' | 'thisYear';
 type WastageTimeFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
-const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
+const TIME_FILTER_OPTIONS: { value: TimeFilterChoice; label: string }[] = [
  { value: 'today', label: 'Today' },
  { value: 'yesterday', label: 'Yesterday' },
  { value: 'thisWeek', label: 'This Week' },
  { value: 'thisMonth', label: 'This Month' },
  { value: 'lastWeek', label: 'Last Week' },
  { value: 'lastMonth', label: 'Last Month' },
+ { value: 'last6Months', label: 'Last 6 Months' },
+ { value: 'thisYear', label: 'This Year' },
  { value: 'custom', label: 'Custom' }
 ];
+
+// The date range behind "Last 6 months" (this month and the 5 before it) and "This year".
+function presetDateRange(choice: TimeFilterChoice): { from: string; to: string } | null {
+ const today = getTodayIST();
+ if (choice === 'thisYear') return { from: `${today.slice(0, 4)}-01-01`, to: today };
+ if (choice === 'last6Months') {
+ const [y, m] = today.split('-').map(Number);
+ const start = new Date(Date.UTC(y, m - 1 - 5, 1)).toISOString().slice(0, 10);
+ return { from: start, to: today };
+ }
+ return null;
+}
 
 // Shortens long item names for chart axis ticks (full name still shows in the tooltip).
 function truncateChartLabel(name: string, max: number): string {
@@ -192,12 +213,17 @@ const settlementAnalyticsReportingDate = (settlement: SettlementPeriodLike) =>
 // Date-range filter used across the Analytics tabs. Mobile gets a compact
 // dropdown (the pill row clips/truncates on narrow screens); desktop keeps
 // the pill row.
-function TimeFilterBar({ value, onChange }: { value: TimeFilter; onChange: (v: TimeFilter) => void }) {
+function TimeFilterBar({ value, onChange, range, onRangeChange }: {
+ value: TimeFilterChoice;
+ onChange: (v: TimeFilterChoice) => void;
+ range: { from: string; to: string };
+ onRangeChange: (r: { from: string; to: string }) => void;
+}) {
  return (
- <>
+ <div className="flex flex-col gap-2 w-full sm:w-auto min-w-0">
  <select
  value={value}
- onChange={(e) => onChange(e.target.value as TimeFilter)}
+ onChange={(e) => onChange(e.target.value as TimeFilterChoice)}
  className="sm:hidden w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
  >
  {TIME_FILTER_OPTIONS.map((filter) => (
@@ -219,7 +245,20 @@ function TimeFilterBar({ value, onChange }: { value: TimeFilter; onChange: (v: T
  </button>
  ))}
  </div>
- </>
+ {value === 'custom' && (
+ <div className="flex flex-wrap items-center gap-2 bg-gray-50 rounded-lg p-2">
+ <Calendar className="w-4 h-4 text-gray-500 flex-shrink-0" />
+ <label className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
+ From
+ <input type="date" value={range.from} max={range.to} onChange={(e) => e.target.value && onRangeChange({ ...range, from: e.target.value })} className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white" />
+ </label>
+ <label className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
+ To
+ <input type="date" value={range.to} min={range.from} max={getTodayIST()} onChange={(e) => e.target.value && onRangeChange({ ...range, to: e.target.value })} className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white" />
+ </label>
+ </div>
+ )}
+ </div>
  );
 }
 
@@ -304,6 +343,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  const houseIds = [...(u?.assignedProductionHouseIds || []), ...(u?.storeId ? [u.storeId] : [])];
  return stores.find((s) => s.productionHouseId && houseIds.includes(s.productionHouseId))?.id || null;
  })();
+ // Forecast, brief and trends need one store; with "All stores" use the main store (the one
+ // with a production house).
+ const insightsStoreId: string | null = selectedStoreId
+ || (context.user?.storeId && String(context.user.storeId).startsWith('STORE-') ? context.user.storeId : null)
+ || (context.stores || []).find((s) => s.productionHouseId)?.id || context.stores?.[0]?.id || null;
+ const canManageInsights = isClusterHead || isOperationsManager;
+ const insightsOverview = useInsightsOverview(context.user?.accessToken, insightsStoreId);
  const effectiveStoreId = analyticsMode === 'store'
  ? (selectedStoreId || productionInchargeDefaultStoreId || (!(isClusterHead || isManager || isProductionIncharge || isAudit) ? (context.user?.storeId || null) : null))
  : null;
@@ -370,7 +416,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // and each view's content changed. 'datacapture' (Performance Tracker) is no longer a
  // top-level tab - it's now a collapsible section inside 'overview' (see the Analytics
  // page redesign).
- type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports';
+ type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
  const [activeView, setActiveView] = useState<ActiveView>(
  highlightRequestId ? 'production-requests' : 'overview'
  );
@@ -416,7 +462,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Performance Tracker (DataCapture) is folded into the Overview tab as a collapsible
  // section instead of its own top-level tab (Analytics page redesign).
  const [showActivityLog, setShowActivityLog] = useState(false);
- const [timeFilter, setTimeFilter] = useState<TimeFilter>('thisMonth');
+ const [timeFilterChoice, setTimeFilterChoice] = useState<TimeFilterChoice>('thisMonth');
+ const timeFilter: TimeFilter = timeFilterChoice === 'last6Months' || timeFilterChoice === 'thisYear' ? 'custom' : timeFilterChoice;
  // Daily charts: spread rent/electricity/salaries over the month (default) vs show them on
  // the day they were actually paid. Remembered per device; storage can be unavailable.
  const [smoothFixedCosts, setSmoothFixedCosts] = useState<boolean>(() => {
@@ -440,7 +487,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  };
  };
  
- const [dateRange, setDateRange] = useState(getDateRangeDefaults());
+ const [customDateRange, setDateRange] = useState(getDateRangeDefaults());
+ const dateRange = useMemo(() => presetDateRange(timeFilterChoice) ?? customDateRange, [timeFilterChoice, customDateRange]);
  const [todayLeaveCount, setTodayLeaveCount] = useState<number>(0);
  const [todayLeaveDetails, setTodayLeaveDetails] = useState<any[]>([]);
  const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -1757,6 +1805,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  // Get period label for summary cards
  const getPeriodLabel = () => {
+ if (timeFilterChoice === 'last6Months') return 'Last 6 months';
+ if (timeFilterChoice === 'thisYear') return 'This year';
  switch (timeFilter) {
  case 'today': return 'Today';
  case 'yesterday': return 'Yesterday';
@@ -4354,7 +4404,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // Store Analytics Tabs - reorganized around business questions rather than the
  // org chart (see the Analytics page redesign). 'profit'/'expense'/'sales' keep
  // their original internal activeView values, just relabeled + given new content.
- <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-2">
+ <div className="grid grid-cols-2 lg:grid-cols-5 xl:grid-cols-9 gap-2">
  <button
  onClick={() => setActiveView('overview')}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
@@ -4490,6 +4540,23 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-indigo-500 rounded-full"></div>
  )}
  </button>
+
+ <button
+ onClick={() => setActiveView('trends')}
+ className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
+ activeView === 'trends'
+ ? 'bg-gradient-to-br from-fuchsia-500 to-violet-600 text-white shadow-lg shadow-violet-500/50 border-transparent'
+ : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:shadow-md'
+ }`}
+ >
+ <div className="flex flex-col items-center gap-2">
+ <TrendingUp className={`w-6 h-6 ${activeView === 'trends' ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
+ <span className="font-semibold text-sm">Trends &amp; Growth</span>
+ </div>
+ {activeView === 'trends' && (
+ <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-2 h-2 bg-violet-500 rounded-full"></div>
+ )}
+ </button>
  </div>
  ) : (
  // Production Analytics Tabs - Production, Recalibration, and (for whoever can
@@ -4569,34 +4636,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
  {/* Time Filter */}
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
 
- {/* Date Range */}
- {timeFilter === 'custom' && (
- <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
- <div className="flex items-center gap-2">
- <Calendar className="w-4 h-4 text-gray-500" />
- <label className="text-xs sm:text-sm text-gray-600">From:</label>
- <input
- type="date"
- value={dateRange.from}
- onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- <div className="flex items-center gap-2">
- <label className="text-xs sm:text-sm text-gray-600">To:</label>
- <input
- type="date"
- value={dateRange.to}
- onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- </div>
- )}
 
  {/* Metrics Cards - same saturated-gradient card language as the Overview tab, so the
  whole Analytics section reads as one consistent design instead of each tab having its
@@ -5049,22 +5092,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  </div>
  <div className="w-full sm:w-auto">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
- {timeFilter === 'custom' && (
- <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
- <div className="flex items-center gap-2">
- <Calendar className="w-4 h-4 text-gray-500" />
- <label className="text-xs sm:text-sm text-gray-600">From:</label>
- <input type="date" value={dateRange.from} onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })} className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm" />
- </div>
- <div className="flex items-center gap-2">
- <label className="text-xs sm:text-sm text-gray-600">To:</label>
- <input type="date" value={dateRange.to} onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })} className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm" />
- </div>
- </div>
- )}
  <UnitEconomics
  pnl={pnl}
  periodLabel={getPeriodLabel()}
@@ -5103,34 +5133,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Time Filter */}
  <div className="w-full sm:w-auto">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
 
- {/* Date Range */}
- {timeFilter === 'custom' && (
- <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
- <div className="flex items-center gap-2">
- <Calendar className="w-4 h-4 text-gray-500" />
- <label className="text-xs sm:text-sm text-gray-600">From:</label>
- <input
- type="date"
- value={dateRange.from}
- onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- <div className="flex items-center gap-2">
- <label className="text-xs sm:text-sm text-gray-600">To:</label>
- <input
- type="date"
- value={dateRange.to}
- onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- </div>
- )}
 
  {/* Total Expense Summary - same saturated-gradient card language as the Overview tab. */}
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
@@ -5683,7 +5689,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  </div>
  <div className="w-full sm:w-auto">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
  </div>
@@ -5820,34 +5826,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
 
  {/* Time Filter */}
  <div className="w-full sm:w-auto">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
 
- {/* Date Range */}
- {timeFilter === 'custom' && (
- <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 bg-gray-50 p-3 sm:p-4 rounded-lg">
- <div className="flex items-center gap-2">
- <Calendar className="w-4 h-4 text-gray-500" />
- <label className="text-xs sm:text-sm text-gray-600">From:</label>
- <input
- type="date"
- value={dateRange.from}
- onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- <div className="flex items-center gap-2">
- <label className="text-xs sm:text-sm text-gray-600">To:</label>
- <input
- type="date"
- value={dateRange.to}
- onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
- className="flex-1 px-2 sm:px-3 py-1 sm:py-1.5 border border-gray-300 rounded-lg text-xs sm:text-sm"
- />
- </div>
- </div>
- )}
 
  {/* Sales Summary Cards - same saturated-gradient card language as the Overview tab. */}
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
@@ -6101,6 +6083,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  immediately surfaces what needs attention instead of digging through tabs. */}
  {activeView === 'overview' && (
  <div className="space-y-6">
+ {analyticsMode === 'store' && insightsStoreId && (
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+ <DailyBriefCard accessToken={context.user?.accessToken || ''} storeId={insightsStoreId} canManage={canManageInsights} />
+ <ForecastCard data={insightsOverview.data} loading={insightsOverview.loading} error={insightsOverview.error} />
+ </div>
+ )}
  <div className="bg-white rounded-lg shadow-sm p-3 sm:p-6">
  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-0">
  <div className="flex items-center gap-3">
@@ -6113,7 +6101,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  </div>
  </div>
  <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
- <TimeFilterBar value={timeFilter} onChange={setTimeFilter} />
+ <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
@@ -9183,6 +9171,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  onNavigateToManageItems={onNavigateToManageItems}
  />
  </div>
+ )}
+
+ {/* Trends & Growth - weekday pattern, item mix, festival effects, calendar, AI growth ideas */}
+ {activeView === 'trends' && analyticsMode === 'store' && (
+ <TrendsGrowth accessToken={context.user?.accessToken || ''} storeId={insightsStoreId} canManage={canManageInsights} />
  )}
 
  {/* Store-Production SLA Analysis View - its own top-level Store Analytics tab (not a modal

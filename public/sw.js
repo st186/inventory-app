@@ -69,6 +69,7 @@ const NOTIFICATION_VIEW_MAP = {
   discrepancy_rejected: { view: 'sales' },
   cash_topup_request: { view: 'sales' },
   cash_topup_approved: { view: 'sales' },
+  production_cash_store_bill: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
   low_stock_alert: { view: 'stock-requests' },
@@ -77,6 +78,9 @@ const NOTIFICATION_VIEW_MAP = {
   loan_rejected: { view: 'sales' },
   production_pending: { view: 'production', tab: 'approvals' },
   production_approved: { view: 'production' },
+  production_log_reminder: { view: 'production' },
+  delivery_incoming: { view: 'receive-stock' },
+  stock_out: { view: 'stock-outs' },
   // Attendance: the recipient of "*_pending" is the approver, so they land on
   // the approval tab; the recipient of "*_approved/rejected" is the employee
   // who submitted it, so they land on their own timesheet/leave tab.
@@ -112,7 +116,7 @@ function getNavigationTarget(data) {
   if (!data || !data.type) return null;
 
   // Production requests always carry a specific request to highlight/scroll to
-  if (data.type.startsWith('production_request_') && data.relatedId) {
+  if ((data.type.startsWith('production_request_') || data.type === 'delivery_variance') && data.relatedId) {
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {
