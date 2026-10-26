@@ -1809,6 +1809,11 @@ export interface Payout {
   // from elsewhere and must NOT drain the Paytm figure. Undefined (legacy records) is
   // treated as 'paytm', which was the implicit assumption before this field existed.
   paidFrom?: 'paytm' | 'bank' | 'cash';
+  // Salary-advance instalment(s) recovered from this payout: `amount` above is what was
+  // transferred, after this. advanceRecovery says which instalments, so deleting the
+  // payout can hand them back to the advance.
+  advanceDeduction?: number;
+  advanceRecovery?: { advanceId: string; month: string; amount: number }[];
 }
 
 export async function getPayouts(): Promise<Payout[]> {
@@ -2108,9 +2113,12 @@ export interface SalaryAdvance {
 export interface SalaryAdvanceDeduction {
   month: string; // YYYY-MM format
   amount: number;
-  deducted: boolean;
+  deducted: boolean; // fully recovered
   deductedDate?: string;
   payoutId?: string;
+  // How much of this instalment has been recovered so far - a payout too small to cover it
+  // recovers part (net pay never goes below zero) and the rest stays due.
+  recovered?: number;
 }
 
 export async function getSalaryAdvances(): Promise<SalaryAdvance[]> {

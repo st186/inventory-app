@@ -5,7 +5,10 @@
 
 export interface PayslipPayout {
   date: string;
+  // What was actually transferred - already net of any salary-advance instalment
+  // recovered from this payout (advanceDeduction).
   amount: number;
+  forMonth?: string;
   // Bank/UPI reference for this specific payment - shown as a note under the earnings
   // table, kept as a paper trail the employee can point to.
   transactionId?: string;
@@ -13,11 +16,76 @@ export interface PayslipPayout {
   // salaryStructure is supplied, alongside the employee's fixed components.
   variablePay?: number;
   variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  // Salary-advance instalment(s) recovered from this payout (amount is after this).
+  advanceDeduction?: number;
 }
 
 export interface PayslipSalaryComponent {
   label: string;
   amount: number;
+}
+
+// Which month a payout is listed under (payslips, My Payouts): the month it is for when
+// set, otherwise the month it was paid.
+export function payoutMonth(p: { forMonth?: string; date: string }): string {
+  return p.forMonth || (p.date || '').slice(0, 7);
+}
+
+// Salaries go out in the first days of the next month. A payment on or before this day of
+// the month is taken to be last month's salary - the Add Payout form's default "Salary For
+// Month" on the Permanent tab, and the month an older payout without forMonth recovers a
+// salary-advance instalment for.
+export const SALARY_PAID_BY_DAY = 10;
+
+export function defaultSalaryMonth(paymentDate: string): string {
+  const [y, m, d] = (paymentDate || '').split('-').map(Number);
+  if (!y || !m || !d || d > SALARY_PAID_BY_DAY) return (paymentDate || '').slice(0, 7);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+// The month a payout's salary is for - what a salary-advance instalment is matched to.
+export function salaryMonthOf(p: { forMonth?: string; date: string }): string {
+  return p.forMonth || defaultSalaryMonth(p.date);
+}
+
+// The monthly salary an advance is capped at: the record's monthlySalary if one was ever
+// set, otherwise the fixed salary structure (Basic + HRA + ...), which is what the forms write.
+export function monthlySalaryOf(employee: { monthlySalary?: number; salaryStructure?: PayslipSalaryComponent[] } | null | undefined): number {
+  if (!employee) return 0;
+  if (employee.monthlySalary && employee.monthlySalary > 0) return employee.monthlySalary;
+  return (employee.salaryStructure || []).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+}
+
+// Every personal expense (advance cash already handed over, booked as an expense) mapped to
+// this person and month: by expenseMonth when set, else by the expense date's month.
+export function personalExpensesForMonth(
+  overheads: { category?: string; employeeId?: string; expenseMonth?: string; date?: string; amount: number }[],
+  employeeId: string,
+  month: string
+): number {
+  return overheads
+    .filter(o => o.category === 'personal_expense' && o.employeeId === employeeId &&
+      (o.expenseMonth ? o.expenseMonth === month : (o.date || '').slice(0, 7) === month))
+    .reduce((sum, o) => sum + (o.amount || 0), 0);
+}
+
+// One month's pay, worked out the same way for the payslip, the employee's own dashboard
+// and Payroll's My Payouts (they used to disagree: one ignored personal expenses).
+// gross = what was earned (transfers + advance instalments recovered from them);
+// net = transfers - personal expenses, as Payroll has always shown it (this assumes the
+// transfer amount did not already have the personal expenses taken off).
+export function computeMonthlyPay(payouts: PayslipPayout[], personalExpenses: number = 0) {
+  const paid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const advanceRecovered = payouts.reduce((sum, p) => sum + (p.advanceDeduction || 0), 0);
+  const variablePay = payouts.reduce((sum, p) => sum + (p.variablePay || 0), 0);
+  return {
+    gross: paid + advanceRecovered,
+    variablePay,
+    advanceRecovered,
+    personalExpenses,
+    paid,
+    net: paid - personalExpenses,
+  };
 }
 
 // Standard Basic/HRA/Special-Allowance split, used only as a placeholder when the
@@ -46,16 +114,18 @@ export function generatePayslip(
   employeeType: string,
   personalExpenses: number = 0,
   // Fixed monthly components (Basic, HRA, etc.) from the employee's record - when
-  // present, each payout's lump amount is itemized against these plus its own
-  // variablePay, with any leftover shown as "Other Adjustment" so the breakdown always
-  // foots to the actual amount paid. Omitted entirely -> falls back to one flat
-  // "Salary Payment" line per payout, same as before this breakdown existed.
+  // present, the month's earnings are itemized against these (once for the month, not
+  // once per payout) plus the variable pay, with any leftover shown as one "Other
+  // Adjustment" so the breakdown always foots to what was earned. Without them a
+  // placeholder Basic/HRA/Special split is used.
   salaryStructure?: PayslipSalaryComponent[]
 ) {
-  const regularPayouts = payouts.reduce((sum, p) => sum + p.amount, 0);
-  // personalExpenses are salary-advance cash already given to the employee - deducted from this month's net pay
-  const totalAmount = regularPayouts - personalExpenses;
+  // Same numbers every screen shows for this month (see computeMonthlyPay).
+  const pay = computeMonthlyPay(payouts, personalExpenses);
+  const totalAmount = pay.net;
   const transactionIds = payouts.map(p => p.transactionId).filter((id): id is string => !!id);
+  const formatDate = (date: string) => new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const rupees = (n: number) => `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN')}`;
   // True whenever this payslip had to fall back to the placeholder Basic/HRA/Special
   // split below for at least one row - drives the disclosure note under the table.
   const usedPlaceholderStructure = employeeType === 'fulltime' && (!salaryStructure || salaryStructure.length === 0);
@@ -268,75 +338,74 @@ export function generatePayslip(
         <table class="earnings-table">
           <thead>
             <tr>
-              <th>Payment Date</th>
-              <th>Description</th>
+              <th>Earnings &amp; Deductions</th>
               <th class="amount-col">Amount (₹)</th>
             </tr>
           </thead>
           <tbody>
-            ${payouts.map(payout => {
-              const formattedDate = new Date(payout.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-
-              if (employeeType === 'fulltime') {
-                // A configured salaryStructure applies to the whole payout amount as-is;
-                // without one, split just the base (amount minus this payout's own
-                // variablePay) into placeholder components so "Variable Pay" below isn't
-                // double-counted inside the placeholder split too.
-                const structure = salaryStructure && salaryStructure.length > 0
-                  ? salaryStructure
-                  : getPlaceholderSalaryComponents(payout.amount - (payout.variablePay || 0));
-                const fixedRows = structure.map(comp => `
+            ${(() => {
+              if (employeeType !== 'fulltime') {
+                return payouts.map(payout => `
                   <tr>
-                    <td>${formattedDate}</td>
-                    <td>${comp.label}</td>
-                    <td class="amount-col">₹${comp.amount.toLocaleString('en-IN')}</td>
+                    <td>Daily Wage Payment &middot; ${formatDate(payout.date)}</td>
+                    <td class="amount-col">${rupees(payout.amount + (payout.advanceDeduction || 0))}</td>
                   </tr>
                 `).join('');
-                const fixedTotal = structure.reduce((s, c) => s + (c.amount || 0), 0);
-                const variableAmount = payout.variablePay || 0;
-                const variableRow = variableAmount > 0 ? `
-                  <tr>
-                    <td>${formattedDate}</td>
-                    <td>${payout.variablePayLabel || 'Variable Pay'}</td>
-                    <td class="amount-col">₹${variableAmount.toLocaleString('en-IN')}</td>
-                  </tr>
-                ` : '';
-                // Whatever's left after the itemized components - keeps the breakdown
-                // honest when the amount actually paid doesn't match the structure exactly
-                // (a raise not yet reflected in salaryStructure, a one-off bonus, etc.).
-                const remainder = payout.amount - fixedTotal - variableAmount;
-                const adjustmentRow = Math.abs(remainder) >= 1 ? `
-                  <tr>
-                    <td>${formattedDate}</td>
-                    <td>Other Adjustment</td>
-                    <td class="amount-col">${remainder < 0 ? '−' : ''}₹${Math.abs(remainder).toLocaleString('en-IN')}</td>
-                  </tr>
-                ` : '';
-                return fixedRows + variableRow + adjustmentRow;
               }
-
-              return `
+              // The month's salary is itemized once. It used to repeat the full structure
+              // for every payout in the month and balance the extra copies with a negative
+              // "Other Adjustment".
+              const structure = salaryStructure && salaryStructure.length > 0
+                ? salaryStructure
+                : getPlaceholderSalaryComponents(pay.gross - pay.variablePay);
+              const fixedRows = structure.map(comp => `
                 <tr>
-                  <td>${formattedDate}</td>
-                  <td>${employeeType === 'fulltime' ? 'Salary Payment' : 'Daily Wage Payment'}</td>
-                  <td class="amount-col">₹${payout.amount.toLocaleString('en-IN')}</td>
+                  <td>${comp.label}</td>
+                  <td class="amount-col">${rupees(comp.amount)}</td>
                 </tr>
-              `;
-            }).join('')}
+              `).join('');
+              const fixedTotal = structure.reduce((s, c) => s + (c.amount || 0), 0);
+              const variableLabel = payouts.find(p => p.variablePay)?.variablePayLabel || 'Variable Pay';
+              const variableRow = pay.variablePay > 0 ? `
+                <tr>
+                  <td>${variableLabel}</td>
+                  <td class="amount-col">${rupees(pay.variablePay)}</td>
+                </tr>
+              ` : '';
+              // Whatever's left after the itemized components - keeps the breakdown
+              // honest when the month's pay doesn't match the structure exactly (unpaid
+              // days, a raise not yet reflected in salaryStructure, a one-off bonus, etc.).
+              const remainder = pay.gross - fixedTotal - pay.variablePay;
+              const adjustmentRow = Math.abs(remainder) >= 1 ? `
+                <tr>
+                  <td>Other Adjustment</td>
+                  <td class="amount-col">${rupees(remainder)}</td>
+                </tr>
+              ` : '';
+              return fixedRows + variableRow + adjustmentRow;
+            })()}
+            <tr>
+              <td><strong>Gross Earnings</strong></td>
+              <td class="amount-col"><strong>${rupees(pay.gross)}</strong></td>
+            </tr>
+            ${pay.advanceRecovered > 0 ? `
+              <tr class="deduction-row">
+                <td>Salary Advance Recovery</td>
+                <td class="amount-col">${rupees(-pay.advanceRecovered)}</td>
+              </tr>
+            ` : ''}
             ${personalExpenses > 0 ? `
               <tr class="deduction-row">
-                <td>Various</td>
                 <td>Advance / Personal Expense Deduction</td>
-                <td class="amount-col">−₹${personalExpenses.toLocaleString('en-IN')}</td>
+                <td class="amount-col">${rupees(-personalExpenses)}</td>
               </tr>
             ` : ''}
           </tbody>
         </table>
-        ${transactionIds.length > 0 ? `
-          <p style="font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 10.5px; color: #78716c; margin: 4px 2px 0;">
-            Transaction ID${transactionIds.length > 1 ? 's' : ''}: ${transactionIds.join(', ')}
-          </p>
-        ` : ''}
+        <p style="font-family: -apple-system, 'Segoe UI', Arial, sans-serif; font-size: 10.5px; color: #78716c; margin: 4px 2px 0;">
+          Paid: ${payouts.map(p => `${formatDate(p.date)} ${rupees(p.amount)}`).join(', ')}
+          ${transactionIds.length > 0 ? `<br />Transaction ID${transactionIds.length > 1 ? 's' : ''}: ${transactionIds.join(', ')}` : ''}
+        </p>
         ${usedPlaceholderStructure ? `
           <p class="placeholder-note">
             ⚠ Basic Pay / HRA / Special Allowance above are an indicative split, not this employee's configured salary structure.

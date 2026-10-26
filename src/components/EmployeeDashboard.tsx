@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Wallet, Calendar, TrendingUp, DollarSign, FileText, Download, User, Phone, Mail, Briefcase, MapPin, CreditCard, AlertCircle, CheckCircle, Clock, XCircle } from 'lucide-react';
 import * as api from '../utils/api';
-import { generatePayslip } from '../utils/payslip';
+import { generatePayslip, computeMonthlyPay, monthlySalaryOf, payoutMonth, personalExpensesForMonth } from '../utils/payslip';
 
 interface EmployeeDashboardProps {
   employeeId: string;
@@ -19,6 +19,8 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
   const [managerDetails, setManagerDetails] = useState<any>(null);
   const [seniorManagerDetails, setSeniorManagerDetails] = useState<any>(null);
   const [salaryAdvances, setSalaryAdvances] = useState<api.SalaryAdvance[]>([]);
+  // Personal expenses (advance cash handed over) come off net pay, same as in Payroll.
+  const [overheads, setOverheads] = useState<any[]>([]);
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceAmount, setAdvanceAmount] = useState('');
 
@@ -48,6 +50,13 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
           (advance: api.SalaryAdvance) => advance.employeeId === currentEmployee.id
         );
         setSalaryAdvances(employeeAdvances);
+
+        try {
+          const allOverheads = await api.getOverheads();
+          setOverheads(allOverheads.filter((o: any) => o.category === 'personal_expense' && o.employeeId === currentEmployee.employeeId));
+        } catch (overheadError) {
+          console.error('Error loading personal expenses:', overheadError);
+        }
 
         // Load manager details if employee has an incharge
         if (currentEmployee.inchargeId) {
@@ -81,13 +90,16 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         return;
       }
 
-      if (!employee.monthlySalary) {
-        alert('Your salary information is not available. Please contact HR.');
+      // No form ever writes monthlySalary, so this used to refuse everyone; the cap is the
+      // fixed salary structure the owner sets in Employee Management.
+      const monthlySalary = monthlySalaryOf(employee);
+      if (!monthlySalary) {
+        alert('Your salary structure is not set up yet. Please ask the owner to add it in Employee Management.');
         return;
       }
 
-      if (amount > employee.monthlySalary) {
-        alert('Advance amount cannot exceed your monthly salary');
+      if (amount > monthlySalary) {
+        alert(`Advance amount cannot exceed your monthly salary (₹${monthlySalary.toLocaleString('en-IN')})`);
         return;
       }
 
@@ -150,20 +162,10 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
   const getFilteredPayouts = () => {
     if (!selectedMonth) return payouts;
 
-    const [year, month] = selectedMonth.split('-');
-    return payouts.filter((payout) => {
-      // A payout's forMonth (when set) is which month it's actually FOR - e.g. a payout
-      // dated June 3rd with forMonth "2026-05" is May's backlogged salary, paid late.
-      // Older payouts without forMonth fall back to the payment date's own month.
-      if (payout.forMonth) {
-        return payout.forMonth === selectedMonth;
-      }
-      const payoutDate = new Date(payout.date);
-      return (
-        payoutDate.getFullYear() === parseInt(year) &&
-        payoutDate.getMonth() + 1 === parseInt(month)
-      );
-    });
+    // A payout's forMonth (when set) is which month it's actually FOR - e.g. a payout
+    // dated June 3rd with forMonth "2026-05" is May's backlogged salary, paid late.
+    // Older payouts without forMonth fall back to the payment date's own month.
+    return payouts.filter((payout) => payoutMonth(payout) === selectedMonth);
   };
 
   const filteredPayouts = getFilteredPayouts();
@@ -219,14 +221,12 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
       // actually FOR, not when it was paid, so a backlogged salary paid late lands on
       // its real month's payslip instead of inflating whatever month it was paid in.
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const monthPayouts = payouts.filter(payout => {
-        if (payout.forMonth) return payout.forMonth === monthKey;
-        const payoutDate = new Date(payout.date);
-        return payoutDate.getMonth() === date.getMonth() &&
-               payoutDate.getFullYear() === date.getFullYear();
-      });
-      
-      const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0);
+      const monthPayouts = payouts.filter(payout => payoutMonth(payout) === monthKey);
+
+      // Net pay for the month - the same function Payroll's My Payouts and the payslip
+      // use (this screen used to ignore personal expenses and show a different figure).
+      const personalExpenses = personalExpensesForMonth(overheads, employee?.employeeId || '', monthKey);
+      const total = computeMonthlyPay(monthPayouts, personalExpenses).net;
 
       // Available as soon as a payout for this month is actually logged - no arbitrary
       // date-based waiting period.
@@ -237,6 +237,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         year,
         payouts: monthPayouts,
         total,
+        personalExpenses,
         isAvailable
       });
     }
@@ -559,7 +560,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                                   slip.year,
                                   slip.payouts,
                                   employee.type,
-                                  0,
+                                  slip.personalExpenses,
                                   employee.salaryStructure
                                 )}
                                 className="flex items-center gap-2 px-3 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm"
@@ -1002,7 +1003,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
                   <p className="text-sm text-teal-700 mb-1">Your Monthly Salary</p>
                   <p className="text-2xl font-semibold text-teal-900">
-                    ₹{employee.monthlySalary?.toLocaleString('en-IN') || 'N/A'}
+                    {monthlySalaryOf(employee) ? `₹${monthlySalaryOf(employee).toLocaleString('en-IN')}` : 'Not set up yet'}
                   </p>
                 </div>
 
@@ -1016,11 +1017,11 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     value={advanceAmount}
                     onChange={(e) => setAdvanceAmount(e.target.value)}
                     placeholder="Enter amount"
-                    max={employee.monthlySalary || 0}
+                    max={monthlySalaryOf(employee)}
                     className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Maximum: ₹{employee.monthlySalary?.toLocaleString('en-IN')}
+                    Maximum: ₹{monthlySalaryOf(employee).toLocaleString('en-IN')}
                   </p>
                 </div>
 
@@ -1079,7 +1080,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 </button>
                 <button
                   onClick={handleApplySalaryAdvance}
-                  disabled={!advanceAmount || parseFloat(advanceAmount) <= 0 || parseFloat(advanceAmount) > (employee.monthlySalary || 0)}
+                  disabled={!advanceAmount || parseFloat(advanceAmount) <= 0 || parseFloat(advanceAmount) > monthlySalaryOf(employee)}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   Submit Request

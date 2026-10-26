@@ -3,7 +3,7 @@ import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText
 import * as api from '../utils/api';
 import { DatePicker } from './DatePicker';
 import { PaymentHistoryModal } from './PaymentHistoryModal';
-import { generatePayslip } from '../utils/payslip';
+import { generatePayslip, computeMonthlyPay, defaultSalaryMonth, monthlySalaryOf, payoutMonth, personalExpensesForMonth, salaryMonthOf, SALARY_PAID_BY_DAY } from '../utils/payslip';
 import { employeeBelongsToStore } from '../utils/entityAccess';
 
 interface SalaryComponent {
@@ -42,6 +42,8 @@ interface Payout {
   transactionId?: string; // Bank/UPI reference for this digital payment, kept as a paper trail
   variablePay?: number; // This month's variable/incentive pay, shown as its own payslip line
   variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  advanceDeduction?: number; // salary-advance instalment(s) recovered - amount is after this
+  advanceRecovery?: { advanceId: string; month: string; amount: number }[];
 }
 
 interface OverheadItem {
@@ -362,6 +364,17 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         return;
       }
 
+      // Same cap as the employee dashboard: up to one month's fixed salary.
+      const monthlySalary = monthlySalaryOf(currentEmployee);
+      if (!monthlySalary) {
+        alert('Your salary structure is not set up yet. Please ask the owner to add it in Employee Management.');
+        return;
+      }
+      if (amount > monthlySalary) {
+        alert(`Advance amount cannot exceed your monthly salary (₹${monthlySalary.toLocaleString('en-IN')})`);
+        return;
+      }
+
       // Check if there's already a pending or active advance
       const hasActiveAdvance = salaryAdvances.some(adv =>
         adv.employeeId === currentEmployee.id &&
@@ -417,16 +430,63 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
   };
 
-  // Find this employee's pending salary-advance deduction (if any) for the month a payout date falls in
-  const getPendingAdvanceDeduction = (employeeId: string, dateStr: string) => {
-    if (!dateStr) return null;
-    const monthStr = dateStr.slice(0, 7); // YYYY-MM
+  // The Add Payout form's default "Salary For Month": a permanent salary paid early in the
+  // month is last month's (see SALARY_PAID_BY_DAY); contract pay is the payment month's.
+  const defaultForMonth = (date: string) => (activeTab === 'permanent' ? defaultSalaryMonth(date) : date.slice(0, 7));
+
+  // How much of an instalment is already recovered. Instalments recovered before partial
+  // recovery existed only carry `deducted`.
+  const recoveredSoFar = (d: any): number =>
+    typeof d.recovered === 'number' ? d.recovered : (d.deducted ? d.amount : 0);
+
+  // The salary-advance instalments a payout recovers. Matched to the month the salary is FOR
+  // (salaryMonthOf: its "Salary For Month"), not the payment date - salaries go out
+  // early the next month, so matching the payment date meant the first instalment never
+  // matched and the advance never closed. Every instalment due up to that month and not yet
+  // recovered is taken (catching up a missed month), but never more than the payout itself,
+  // so net pay can't go below zero - the rest stays due for the next payout.
+  const planAdvanceRecovery = (employeeId: string, salaryMonth: string, grossAmount: number) => {
+    const items: { advanceId: string; month: string; amount: number }[] = [];
+    let budget = Math.max(0, grossAmount);
     for (const advance of salaryAdvances) {
       if (advance.employeeId !== employeeId || advance.status !== 'approved' || advance.remainingAmount <= 0) continue;
-      const deduction = (advance.deductions || []).find((d: any) => d.month === monthStr && !d.deducted);
-      if (deduction) return { advance, deduction };
+      const due = [...(advance.deductions || [])]
+        .filter((d: any) => d.month <= salaryMonth && d.amount - recoveredSoFar(d) > 0.005)
+        .sort((a: any, b: any) => a.month.localeCompare(b.month));
+      for (const d of due) {
+        const take = Math.min(d.amount - recoveredSoFar(d), budget, advance.remainingAmount - items.filter(i => i.advanceId === advance.id).reduce((s, i) => s + i.amount, 0));
+        if (take <= 0.005) continue;
+        items.push({ advanceId: advance.id, month: d.month, amount: Math.round(take * 100) / 100 });
+        budget -= take;
+      }
     }
-    return null;
+    return { items, total: items.reduce((s, i) => s + i.amount, 0) };
+  };
+
+  // Apply (sign = 1) or undo (sign = -1) a payout's recovery on the advance records.
+  const advanceUpdatesFor = (recovery: { advanceId: string; month: string; amount: number }[], payoutId: string, sign: 1 | -1) => {
+    const updates: { advanceId: string; deductions: any[]; remainingAmount: number }[] = [];
+    for (const advanceId of [...new Set(recovery.map(r => r.advanceId))]) {
+      const advance = salaryAdvances.find(a => a.id === advanceId);
+      if (!advance) continue;
+      let changed = 0;
+      const deductions = (advance.deductions || []).map((d: any) => {
+        const amount = recovery.filter(r => r.advanceId === advanceId && r.month === d.month).reduce((s, r) => s + r.amount, 0);
+        if (!amount) return d;
+        changed += amount;
+        const recovered = Math.max(0, Math.round((recoveredSoFar(d) + sign * amount) * 100) / 100);
+        const deducted = recovered >= d.amount - 0.005;
+        return {
+          ...d,
+          recovered,
+          deducted,
+          deductedDate: deducted ? (d.deductedDate || new Date().toISOString()) : undefined,
+          payoutId: sign === 1 ? payoutId : (d.payoutId === payoutId ? undefined : d.payoutId),
+        };
+      });
+      updates.push({ advanceId, deductions, remainingAmount: Math.max(0, Math.round((advance.remainingAmount - sign * changed) * 100) / 100) });
+    }
+    return updates;
   };
 
   const handleAddPayout = async () => {
@@ -460,38 +520,32 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       const newPayouts = payoutData.employeeIds.map(empId => {
         const employee = employees.find(e => e.id === empId);
         const payoutId = crypto.randomUUID();
-        const pending = getPendingAdvanceDeduction(empId, payoutData.date);
+        const forMonth = salaryMonthOf({ forMonth: payoutData.forMonth, date: payoutData.date });
         // Paying "by days" uses each employee's own daily rate; "by month" applies the
         // typed amount as-is (a flat sum, same as before this period-type option existed).
         const empGrossAmount = payingByDays ? days * (employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0) : grossAmount;
-        let netAmount = empGrossAmount;
-
-        if (pending) {
-          netAmount = empGrossAmount - pending.deduction.amount;
-          const updatedDeductions = pending.advance.deductions.map((d: any) =>
-            d.month === pending.deduction.month
-              ? { ...d, deducted: true, deductedDate: new Date().toISOString(), payoutId }
-              : d
-          );
-          advanceUpdates.push({
-            advanceId: pending.advance.id,
-            deductions: updatedDeductions,
-            remainingAmount: Math.max(0, pending.advance.remainingAmount - pending.deduction.amount),
-          });
-        }
+        const recovery = planAdvanceRecovery(empId, forMonth, empGrossAmount);
+        // Never below zero: the recovery is already capped at the gross amount.
+        const netAmount = Math.max(0, empGrossAmount - recovery.total);
+        advanceUpdates.push(...advanceUpdatesFor(recovery.items, payoutId, 1));
 
         return {
           id: payoutId,
           employeeId: empId,
           employeeName: employee?.name || '',
+          // What is transferred - after the advance instalment(s) recovered below.
           amount: netAmount,
           date: payoutData.date,
           storeId: selectedStoreId || undefined, // Add storeId for proper filtering
           createdAt: new Date().toISOString(),
-          forMonth: payoutData.forMonth || payoutData.date.slice(0, 7),
+          forMonth,
           transactionId: payoutData.transactionId || undefined,
           variablePay: payoutData.variablePay ? parseFloat(payoutData.variablePay) : undefined,
           paidFrom: payoutData.paidFrom,
+          // Kept on the payout so the payslip can show gross and the recovery, and so
+          // deleting the payout can hand the instalment(s) back to the advance.
+          advanceDeduction: recovery.total > 0 ? recovery.total : undefined,
+          advanceRecovery: recovery.items.length > 0 ? recovery.items : undefined,
         };
       });
 
@@ -532,8 +586,15 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     if (!editingEmployee) return;
 
     try {
-      console.log('PayrollManagement: Updating employee:', editingEmployee);
-      await api.updateEmployee(editingEmployee.id, editingEmployee);
+      // Only what this form edits. Sending the whole record also sent `role` (a free-text
+      // box here used to change it, which could corrupt the login role) and fields the
+      // server had hidden from this viewer; roles change only via the owner's role control.
+      await api.updateEmployee(editingEmployee.id, {
+        name: editingEmployee.name,
+        phone: editingEmployee.phone,
+        dailyRate: editingEmployee.dailyRate,
+        salaryStructure: editingEmployee.salaryStructure,
+      });
       setEmployees(employees.map(e => e.id === editingEmployee.id ? editingEmployee : e));
       setShowEditEmployee(false);
       setEditingEmployee(null);
@@ -592,9 +653,29 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
 
     try {
+      const payout = payouts.find(p => p.id === id);
       await api.deletePayout(id);
       setPayouts(payouts.filter(p => p.id !== id));
-      alert('Payout deleted successfully!');
+
+      // Give back any salary-advance instalment this payout recovered, so it is due again.
+      // Payouts saved before advanceRecovery existed are found by the payoutId on the
+      // instalment instead.
+      const recovery = payout?.advanceRecovery?.length
+        ? payout.advanceRecovery
+        : salaryAdvances.flatMap(a => (a.deductions || [])
+            .filter((d: any) => d.payoutId === id)
+            .map((d: any) => ({ advanceId: a.id, month: d.month, amount: recoveredSoFar(d) })));
+      const updates = advanceUpdatesFor(recovery, id, -1);
+      for (const update of updates) {
+        await api.updateSalaryAdvance(update.advanceId, {
+          deductions: update.deductions,
+          remainingAmount: update.remainingAmount,
+        });
+      }
+      if (updates.length > 0) await loadData();
+      alert(updates.length > 0
+        ? 'Payout deleted - the salary advance instalment it recovered is due again.'
+        : 'Payout deleted successfully!');
     } catch (error) {
       console.error('Error deleting payout:', error);
       alert('Failed to delete payout');
@@ -831,7 +912,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               {/* Add Payout button - shown based on permissions */}
               {canAddPayout() && (
                 <button
-                  onClick={() => setShowPayoutModal(true)}
+                  onClick={() => {
+                    setPayoutData(prev => ({ ...prev, forMonth: defaultForMonth(prev.date) }));
+                    setShowPayoutModal(true);
+                  }}
                   className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                 >
                   <DollarSign className="w-4 h-4" />
@@ -1167,30 +1251,18 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               // is actually FOR, not when it was paid, so a backlogged salary paid late
               // lands on its real month's payslip instead of inflating the paid-in month.
               const monthKeyForPayouts = `${date.getFullYear()}-${String(monthNumber).padStart(2, '0')}`;
-              const monthPayouts = allMyPayouts.filter(p => {
-                if (p.forMonth) return p.forMonth === monthKeyForPayouts;
-                const payoutDate = new Date(p.date);
-                return payoutDate.getMonth() + 1 === monthNumber &&
-                       payoutDate.getFullYear() === date.getFullYear();
-              });
+              const monthPayouts = allMyPayouts.filter(p => payoutMonth(p) === monthKeyForPayouts);
 
               // Available as soon as a payout for this month is actually logged - no
               // arbitrary date-based waiting period.
               const isAvailable = monthPayouts.length > 0;
 
-              // Get personal expenses mapped to this month (YYYY-MM format)
-              // Note: overhead.employeeId stores the employee ID string (e.g., "BM004"), not the internal database ID
-              const monthStr = `${date.getFullYear()}-${String(monthNumber).padStart(2, '0')}`;
-              const monthPersonalExpenses = overheads
-                .filter(o =>
-                  o.category === 'personal_expense' &&
-                  o.employeeId === userEmployeeId &&
-                  o.expenseMonth === monthStr
-                )
-                .reduce((sum, o) => sum + o.amount, 0);
+              // Personal expenses mapped to this month. overhead.employeeId stores the
+              // employee ID string (e.g., "BM004"), not the internal database ID.
+              const monthPersonalExpenses = personalExpensesForMonth(overheads, userEmployeeId, monthKeyForPayouts);
 
-              // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
-              const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0) - monthPersonalExpenses;
+              // Net pay - the same function the payslip and the employee dashboard use.
+              const total = computeMonthlyPay(monthPayouts, monthPersonalExpenses).net;
               
               monthlyPayslips.push({
                 month: monthName,
@@ -1204,10 +1276,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
             // Filtered payouts for the summary card (respects date filter)
             const myPayouts = filteredPayouts.filter(p => p.employeeId === userEmployeeId);
-            const totalPayout = myPayouts.reduce((sum, p) => sum + p.amount, 0);
             const myPersonalExpenses = currentEmployee ? calculatePersonalExpenses(currentEmployee.id) : 0;
-            // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
-            const myNetAmount = totalPayout - myPersonalExpenses;
+            // Same net-pay function as the payslips (gross includes advance instalments
+            // recovered from the transfers; net = transfers - personal expenses).
+            const myPay = computeMonthlyPay(myPayouts, myPersonalExpenses);
+            const totalPayout = myPay.gross;
+            const myNetAmount = myPay.net;
 
             return (
               <div className="p-4 sm:p-6">
@@ -1370,6 +1444,16 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                         <p className="text-2xl text-green-600">₹{totalPayout.toLocaleString()}</p>
                       </div>
                       
+                      {myPay.advanceRecovered > 0 && (
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <Minus className="w-4 h-4 text-red-600" />
+                            <p className="text-sm text-gray-600">Salary Advance Recovered</p>
+                          </div>
+                          <p className="text-xl text-red-600">₹{myPay.advanceRecovered.toLocaleString()}</p>
+                        </div>
+                      )}
+
                       {myPersonalExpenses > 0 && (
                         <div className="flex justify-between items-center">
                           <div className="flex items-center gap-2">
@@ -2176,15 +2260,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg"
                 />
               </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Role (Optional)</label>
-                <input
-                  type="text"
-                  value={editingEmployee.role || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, role: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
               {editingEmployee.type === 'contract' && (
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Daily Rate (Optional)</label>
@@ -2396,7 +2471,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               <DatePicker
                 label="Date *"
                 value={payoutData.date}
-                onChange={(date) => setPayoutData({ ...payoutData, date, forMonth: date.slice(0, 7) })}
+                onChange={(date) => setPayoutData({ ...payoutData, date, forMonth: defaultForMonth(date) })}
                 className="w-full"
               />
               <div>
@@ -2409,7 +2484,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  💡 Defaults to the payment date's month - change this if paying late (e.g. paid on the 5th for last month's salary)
+                  {activeTab === 'permanent'
+                    ? `💡 Paid on or before the ${SALARY_PAID_BY_DAY}th? This defaults to last month's salary. Salary advance instalments are recovered for this month.`
+                    : "💡 Defaults to the payment date's month - change this if paying late (e.g. paid on the 5th for last month's work)"}
                 </p>
               </div>
               <div>
@@ -2461,17 +2538,17 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   .map((empId) => {
                     const employee = employees.find((e) => e.id === empId);
                     const grossAmount = payingByDays ? days * (employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0) : (parseFloat(payoutData.amount) || parseFloat(payoutData.variablePay) || 0);
-                    const pending = getPendingAdvanceDeduction(empId, payoutData.date);
-                    return { employee, pending, grossAmount };
+                    const recovery = planAdvanceRecovery(empId, salaryMonthOf({ forMonth: payoutData.forMonth, date: payoutData.date }), grossAmount);
+                    return { employee, recovery, grossAmount };
                   })
-                  .filter((r) => r.pending);
+                  .filter((r) => r.recovery.total > 0);
                 if (rows.length === 0) return null;
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
                     <p className="text-sm font-medium text-amber-900">Salary advance deductions will apply:</p>
-                    {rows.map(({ employee, pending, grossAmount }) => (
+                    {rows.map(({ employee, recovery, grossAmount }) => (
                       <p key={employee?.id} className="text-xs text-amber-800">
-                        {employee?.name}: ₹{grossAmount.toLocaleString()} − ₹{pending!.deduction.amount.toLocaleString()} advance = <span className="font-semibold">₹{(grossAmount - pending!.deduction.amount).toLocaleString()} net</span>
+                        {employee?.name}: ₹{grossAmount.toLocaleString()} − ₹{recovery.total.toLocaleString()} advance ({recovery.items.map(i => i.month).join(', ')}) = <span className="font-semibold">₹{Math.max(0, grossAmount - recovery.total).toLocaleString()} net</span>
                       </p>
                     ))}
                   </div>
