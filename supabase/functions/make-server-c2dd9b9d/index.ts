@@ -2447,7 +2447,11 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
 // fired: this route, the inline pending-approvals "Approve" button (which calls this same
 // route), or the 24h auto-approve-stale cron below - confirmed bug this session, both of
 // the latter two skipped crediting entirely since only the client-side path did it.
-async function creditProductionHouseInventory(productionData: any): Promise<void> {
+// Credits only the change since the entry was last credited (creditedPieces, per type): an
+// approved entry that is edited goes back to pending, and approving it again used to add its
+// whole quantity a second time. Returns the pieces now credited, to save on the record, or
+// null when nothing was credited.
+async function creditProductionHouseInventory(productionData: any): Promise<Record<string, number> | null> {
   try {
     let productionHouseId = productionData.productionHouseId;
     let productionHouse = productionHouseId ? await kv.get(`production_house_${productionHouseId}`) : null;
@@ -2461,14 +2465,16 @@ async function creditProductionHouseInventory(productionData: any): Promise<void
     }
     if (!productionHouse || !productionHouseId) {
       console.log('creditProductionHouseInventory: no matching production house found for', productionData.id, '- skipping credit');
-      return;
+      return null;
     }
 
+    const alreadyCredited = productionData.creditedPieces || {};
+    const credited = producedPiecesByType(productionData);
     const newInventory = { ...(productionHouse.inventory || {}) };
     for (const momoType of PRODUCTION_MOMO_TYPES) {
-      const finalQty = productionData[momoType.key]?.final || 0;
-      if (finalQty > 0) {
-        newInventory[momoType.inventoryKey] = (newInventory[momoType.inventoryKey] || 0) + finalQty;
+      const change = credited[momoType.inventoryKey] - (Number(alreadyCredited[momoType.inventoryKey]) || 0);
+      if (change !== 0) {
+        newInventory[momoType.inventoryKey] = (newInventory[momoType.inventoryKey] || 0) + change;
       }
     }
 
@@ -2478,11 +2484,43 @@ async function creditProductionHouseInventory(productionData: any): Promise<void
       updatedAt: getNowIST(),
     });
     console.log(`Credited production house ${productionHouseId} inventory from production ${productionData.id}:`, newInventory);
+    return credited;
   } catch (error) {
     console.log('Error crediting production house inventory:', error);
     // Non-fatal - the approval itself already succeeded; worst case inventory needs a
     // manual fix, same tradeoff every other non-fatal side effect in this file accepts.
+    return null;
   }
+}
+
+// Finished pieces per type (ProductionHouse.inventory keys) on a production entry.
+function producedPiecesByType(productionData: any): Record<string, number> {
+  const pieces: Record<string, number> = {};
+  for (const momoType of PRODUCTION_MOMO_TYPES) {
+    pieces[momoType.inventoryKey] = Math.max(0, Number(productionData?.[momoType.key]?.final) || 0);
+  }
+  return pieces;
+}
+
+// Approves a production entry and credits the production house: the record is saved as
+// approved first, then creditedPieces is saved once the credit went through, so a failed
+// credit never marks pieces as credited.
+async function approveProductionRecord(existing: any, approvedBy: string): Promise<any> {
+  const key = `production:${existing.userId}:${existing.id}`;
+  const approvedItem = { ...existing, approvalStatus: 'approved', approvedBy, approvedAt: getNowIST() };
+  await kv.set(key, approvedItem);
+  const credited = await creditProductionHouseInventory(approvedItem);
+  if (!credited) return approvedItem;
+  const creditedItem = { ...approvedItem, creditedPieces: credited };
+  await kv.set(key, creditedItem);
+  return creditedItem;
+}
+
+// Cluster head, or an operations manager (a manager who is not a store or production incharge).
+function isClusterHeadOrOps(user: any): boolean {
+  const role = user?.user_metadata?.role;
+  const designation = user?.user_metadata?.designation;
+  return role === 'cluster_head' || (role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge');
 }
 
 // Add production data
@@ -2552,14 +2590,41 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
   }
 
   try {
+    // Production incharges edit their own house's entries (an edit goes back to pending for
+    // approval); operations managers and the cluster head can edit any.
+    const isProductionIncharge = authResult.user.user_metadata?.designation === 'production_incharge';
+    if (!isProductionIncharge && !isClusterHeadOrOps(authResult.user)) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can edit production data' }, 403);
+    }
+
     const itemId = c.req.param('id');
     const data = await c.req.json();
 
-    const key = `production:${authResult.user.id}:${itemId}`;
+    // Update the record where it already lives (under whoever created it): writing under the
+    // editor's own id left the original in place and added a second copy. Paginated, as the
+    // plain prefix read stops at 1000 rows.
+    const existing = (await getAllByPrefixWithRetry('production:')).find((p: any) => p.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production data not found' }, 404);
+    }
+    // A production incharge's storeId holds their production house's id.
+    const ownHouseIds = [authResult.user.user_metadata?.storeId, ...(authResult.user.user_metadata?.assignedProductionHouseIds || [])].filter(Boolean);
+    if (isProductionIncharge && !isClusterHeadOrOps(authResult.user) && !ownHouseIds.includes(existing.productionHouseId) && !ownHouseIds.includes(existing.storeId)) {
+      return c.json({ error: 'You can only edit your own production house\'s entries' }, 403);
+    }
+
+    const key = `production:${existing.userId}:${itemId}`;
     const updatedItem = {
       ...data,
       id: itemId,
-      userId: authResult.user.id
+      userId: existing.userId,
+      // The production incharge's own edit always goes back for approval (the app already
+      // sends pending; this stops an edit from marking itself approved).
+      ...(isClusterHeadOrOps(authResult.user) ? {} : { approvalStatus: 'pending', approvedBy: null, approvedAt: null }),
+      // Kept by the server, not the form: what approval has already credited to the production
+      // house, so re-approving the edit credits only the change. An entry approved before this
+      // was tracked had its pieces credited when it was approved.
+      creditedPieces: existing.creditedPieces ?? (existing.approvalStatus === 'approved' ? producedPiecesByType(existing) : undefined),
     };
 
     await kv.set(key, updatedItem);
@@ -2589,28 +2654,23 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    
-    // Find the production item
-    const allProduction = await kv.getByPrefix('production:');
+
+    // Find the production item. Paginated: the plain prefix read stops at 1000 rows, so
+    // entries past that came back "not found".
+    const allProduction = await getAllByPrefixWithRetry('production:');
     const existingProduction = allProduction.find((p: any) => p.id === itemId);
-    
+
     if (!existingProduction) {
       return c.json({ error: 'Production data not found' }, 404);
     }
-    
-    const key = `production:${existingProduction.userId}:${itemId}`;
+    // A second approval (double tap, two approvers at once) would credit the pieces again.
+    if (existingProduction.approvalStatus === 'approved') {
+      return c.json({ error: 'This production entry is already approved' }, 409);
+    }
 
     const approverName = authResult.user.user_metadata?.name || authResult.user.email;
-    const approvedItem = {
-      ...existingProduction,
-      approvalStatus: 'approved',
-      approvedBy: approverName,
-      approvedAt: getNowIST()
-    };
-
-    await kv.set(key, approvedItem);
+    const approvedItem = await approveProductionRecord(existingProduction, approverName);
     console.log('Production data approved:', itemId);
-    await creditProductionHouseInventory(approvedItem);
 
     // Notify the production head who submitted the data
     if (existingProduction.userId) {
@@ -2648,7 +2708,8 @@ app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
 
   try {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const allProduction = await kv.getByPrefix('production:');
+    // Paginated - the plain prefix read stops at 1000 rows, so pending entries past that were skipped.
+    const allProduction = await getAllByPrefixWithRetry('production:');
     const stalePending = allProduction.filter((p: any) => {
       if (p.approvalStatus !== 'pending') return false;
       // Records submitted before createdAt existed have no reliable submission
@@ -2666,16 +2727,9 @@ app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
 
     let approvedCount = 0;
     for (const item of stalePending) {
-      const key = `production:${item.userId}:${item.id}`;
-      const approvedItem = {
-        ...item,
-        approvalStatus: 'approved',
-        approvedBy: 'Auto-approved (no action within 24 hours)',
-        approvedAt: getNowIST()
-      };
-      await kv.set(key, approvedItem);
+      // Same path as a manual approval, so an edited entry is credited only its change.
+      await approveProductionRecord(item, 'Auto-approved (no action within 24 hours)');
       approvedCount++;
-      await creditProductionHouseInventory(approvedItem);
 
       if (item.userId) {
         await notifyUser(
