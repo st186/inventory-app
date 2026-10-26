@@ -73,7 +73,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
     stores.forEach(store => {
       // Find fulfilled stock requests for this store
       const fulfilledRequests = context.stockRequests.filter(
-        req => req.storeId === store.id && 
+        req => req.storeId === store.id &&
         (req.status === 'fulfilled' || req.status === 'partially_fulfilled') &&
         req.fulfilledQuantities
       );
@@ -103,7 +103,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
 
       // Calculate total sales for this store
       const storeSales = context.salesData.filter(sale => sale.storeId === store.id);
-      
+
       // For now, we'll assume equal distribution of sales across momo types
       // In a real scenario, you'd track individual product sales
       const totalSalesCount = storeSales.length;
@@ -123,7 +123,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
       // Determine overall status
       const stockLevels = Object.values(currentStock);
       const avgStock = stockLevels.reduce((a, b) => a + b, 0) / stockLevels.length;
-      
+
       let status: 'healthy' | 'low' | 'critical' | 'out' = 'healthy';
       if (avgStock === 0) status = 'out';
       else if (avgStock < 50) status = 'critical';
@@ -144,7 +144,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
     return statuses;
   }, [stores, context.stockRequests, context.salesData, context.productionHouses]);
 
-  const filteredStatuses = selectedStore 
+  const filteredStatuses = selectedStore
     ? storeStockStatuses.filter(s => s.storeId === selectedStore)
     : storeStockStatuses;
 
@@ -181,13 +181,13 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
   return (
     <div className="space-y-6">
       {/* Info Banner about Dynamic Inventory Items */}
-      <Card className="p-4 bg-gradient-to-r from-blue-50 to-sky-50 border-2 border-blue-200">
+      <Card className="p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-sky-50 border-2 border-blue-200">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <h3 className="font-semibold text-blue-900 mb-1">Dynamic Inventory Items</h3>
             <p className="text-sm text-blue-700 mb-2">
-              You can now add custom inventory items beyond the default 7 momo types! 
+              You can now add custom inventory items beyond the default 7 momo types!
               Manage all items from the <strong>"Manage Items"</strong> page in the navigation.
             </p>
             <p className="text-xs text-blue-600">
@@ -198,10 +198,15 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
       </Card>
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl">Store Stock Status</h2>
-          <p className="text-muted-foreground">Real-time inventory levels across all stores</p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+            <Store className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Store Stock Status</h1>
+            <p className="text-sm sm:text-base text-gray-500">Real-time inventory levels across all stores</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <select
@@ -236,54 +241,54 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Healthy Stock</p>
-              <p className="text-2xl">{storeStockStatuses.filter(s => s.status === 'healthy').length}</p>
+              <div className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Healthy Stock</div>
+              <div className="text-2xl font-semibold">{storeStockStatuses.filter(s => s.status === 'healthy').length}</div>
             </div>
-            <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-              <CheckCircle className="h-6 w-6 text-green-600" />
+            <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
+              <CheckCircle className="h-6 w-6 text-white" />
             </div>
           </div>
-        </Card>
-        
-        <Card className="p-4">
+        </div>
+
+        <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Low Stock</p>
-              <p className="text-2xl">{storeStockStatuses.filter(s => s.status === 'low').length}</p>
+              <div className="text-xs uppercase tracking-wide text-yellow-100 mb-1">Low Stock</div>
+              <div className="text-2xl font-semibold">{storeStockStatuses.filter(s => s.status === 'low').length}</div>
             </div>
-            <div className="h-12 w-12 rounded-full bg-yellow-100 flex items-center justify-center">
-              <TrendingDown className="h-6 w-6 text-yellow-600" />
+            <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
+              <TrendingDown className="h-6 w-6 text-white" />
             </div>
           </div>
-        </Card>
-        
-        <Card className="p-4">
+        </div>
+
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Critical Stock</p>
-              <p className="text-2xl">{storeStockStatuses.filter(s => s.status === 'critical').length}</p>
+              <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Critical Stock</div>
+              <div className="text-2xl font-semibold">{storeStockStatuses.filter(s => s.status === 'critical').length}</div>
             </div>
-            <div className="h-12 w-12 rounded-full bg-orange-100 flex items-center justify-center">
-              <AlertTriangle className="h-6 w-6 text-orange-600" />
+            <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
+              <AlertTriangle className="h-6 w-6 text-white" />
             </div>
           </div>
-        </Card>
-        
-        <Card className="p-4">
+        </div>
+
+        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Out of Stock</p>
-              <p className="text-2xl">{storeStockStatuses.filter(s => s.status === 'out').length}</p>
+              <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Out of Stock</div>
+              <div className="text-2xl font-semibold">{storeStockStatuses.filter(s => s.status === 'out').length}</div>
             </div>
-            <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
-              <Package className="h-6 w-6 text-red-600" />
+            <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
+              <Package className="h-6 w-6 text-white" />
             </div>
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* Plate Configuration Modal */}
@@ -304,7 +309,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                 </button>
               </div>
             </div>
-            
+
             <div className="p-6 space-y-4">
               {Object.entries(productLabels).map(([product, label]) => (
                 <div key={product} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
@@ -323,7 +328,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                 </div>
               ))}
             </div>
-            
+
             <div className="p-6 bg-blue-50 border-t-2 border-blue-200">
               <div className="flex items-start gap-3">
                 <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -337,7 +342,7 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                 </div>
               </div>
             </div>
-            
+
             <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
               <button
                 onClick={() => setShowPlateConfig(false)}
@@ -353,16 +358,16 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
       {/* Store Stock Details */}
       <div className="grid grid-cols-1 gap-4">
         {filteredStatuses.map(storeStatus => (
-          <Card key={storeStatus.storeId} className="p-6">
+          <Card key={storeStatus.storeId} className="p-6 rounded-2xl">
             <div className="space-y-4">
               {/* Store Header */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
+                  <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
                     <Store className="h-5 w-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg">{storeStatus.storeName}</h3>
+                    <h3 className="text-lg font-bold text-gray-900 tracking-tight">{storeStatus.storeName}</h3>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Factory className="h-4 w-4" />
                       <span>{storeStatus.productionHouseName}</span>
@@ -381,12 +386,12 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
                   if (quantity === 0) itemStatus = 'out';
                   else if (quantity < 50) itemStatus = 'critical';
                   else if (quantity < 100) itemStatus = 'low';
-                  
+
                   const plates = Math.floor(quantity / piecesPerPlate[product]);
 
                   return (
-                    <div 
-                      key={product} 
+                    <div
+                      key={product}
                       className={`p-3 rounded-lg border-2 ${
                         itemStatus === 'out' ? 'border-red-200 bg-red-50' :
                         itemStatus === 'critical' ? 'border-orange-200 bg-orange-50' :
@@ -419,9 +424,9 @@ export function StoreStockStatus({ context, stores, onNavigateToManageItems }: P
 
       {/* Empty State */}
       {filteredStatuses.length === 0 && (
-        <Card className="p-12 text-center">
+        <Card className="p-12 rounded-2xl text-center">
           <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg mb-2">No Stock Data Available</h3>
+          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-2">No Stock Data Available</h3>
           <p className="text-muted-foreground">
             Stock requests need to be fulfilled to see inventory levels
           </p>

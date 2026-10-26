@@ -105,8 +105,8 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
   }
 
   return (
-    <Card className="p-4 mb-4 border-2 border-orange-200 bg-orange-50/30">
-      <h3 className="text-sm mb-3 flex items-center gap-2">
+    <Card className="p-4 mb-4 rounded-2xl border-2 border-orange-200 bg-orange-50/30">
+      <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
         <Plus className="w-4 h-4" />
         Add New Item to {entityName}
       </h3>

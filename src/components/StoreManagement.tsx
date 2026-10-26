@@ -25,6 +25,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
   // Edit form
   const [editName, setEditName] = useState('');
   const [editLocation, setEditLocation] = useState('');
+  const [editCiferonStoreId, setEditCiferonStoreId] = useState('');
   const [updating, setUpdating] = useState(false);
   
   // Manager assignment
@@ -105,6 +106,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     setEditingStore(store.id);
     setEditName(store.name);
     setEditLocation(store.location);
+    setEditCiferonStoreId(store.ciferonStoreId || '');
   };
 
   const handleSaveEdit = async (storeId: string) => {
@@ -115,7 +117,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
 
     setUpdating(true);
     try {
-      await api.updateStore(storeId, editName, editLocation);
+      await api.updateStore(storeId, editName, editLocation, editCiferonStoreId.trim() || null);
       setEditingStore(null);
       await loadStores();
     } catch (error: any) {
@@ -130,6 +132,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     setEditingStore(null);
     setEditName('');
     setEditLocation('');
+    setEditCiferonStoreId('');
   };
 
   const handleStartAssignManager = (store: api.Store) => {
@@ -244,13 +247,18 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-gray-900 mb-1">🏪 Store Management</h2>
-          <p className="text-sm text-gray-600">Manage your stores and assign managers</p>
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-lg shadow-teal-500/30 flex-shrink-0">
+            <Store className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Store Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">Manage your stores and assign managers</p>
+          </div>
         </div>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all"
         >
           <Plus className="w-5 h-5" />
           Create Store
@@ -259,8 +267,8 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
 
       {/* Create Form */}
       {showCreateForm && (
-        <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-6">
-          <h3 className="text-lg text-gray-900 mb-4">Create New Store</h3>
+        <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Create New Store</h3>
           <form onSubmit={handleCreateStore} className="space-y-4">
             <div>
               <label className="block text-sm text-gray-700 mb-1">
@@ -314,7 +322,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
       {/* Stores List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {stores.length === 0 ? (
-          <div className="col-span-full bg-white rounded-lg border border-gray-200 p-8 text-center">
+          <div className="col-span-full bg-white rounded-2xl border border-gray-200 p-8 text-center">
             <Store className="w-12 h-12 mx-auto mb-3 text-gray-400" />
             <p className="text-gray-500 mb-2">No stores yet</p>
             <p className="text-sm text-gray-400">Create your first store to get started</p>
@@ -323,7 +331,7 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
           stores.map((store) => (
             <div
               key={store.id}
-              className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow"
+              className="bg-white rounded-2xl border border-gray-200 p-6 hover:shadow-md transition-shadow"
             >
               {editingStore === store.id ? (
                 // Edit Mode
@@ -345,6 +353,19 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                       onChange={(e) => setEditLocation(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Ciferon POS Store ID</label>
+                    <input
+                      type="text"
+                      value={editCiferonStoreId}
+                      onChange={(e) => setEditCiferonStoreId(e.target.value)}
+                      placeholder="e.g. 5909"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enables the nightly POS auto-sync for this store. Leave blank to skip.
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -452,8 +473,8 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
                 <>
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <Store className="w-5 h-5 text-orange-600" />
-                      <h3 className="text-gray-900">{store.name}</h3>
+                      <Store className="w-5 h-5 text-teal-600" />
+                      <h3 className="font-bold text-gray-900">{store.name}</h3>
                     </div>
                     <button
                       onClick={() => handleStartEdit(store)}

@@ -1,245 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Wallet, Calendar, TrendingUp, DollarSign, FileText, Download, User, Phone, Mail, Briefcase, MapPin, CreditCard, AlertCircle, CheckCircle, Clock, XCircle } from 'lucide-react';
 import * as api from '../utils/api';
+import { generatePayslip } from '../utils/payslip';
 
 interface EmployeeDashboardProps {
   employeeId: string;
 }
-
-// Payslip generation function
-const generatePayslip = (
-  employeeName: string,
-  employeeId: string,
-  month: string,
-  year: string,
-  payouts: any[],
-  employeeType: string
-) => {
-  const totalAmount = payouts.reduce((sum, p) => sum + p.amount, 0);
-  
-  const payslipContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Payslip - ${month} ${year}</title>
-      <style>
-        body {
-          font-family: 'Arial', sans-serif;
-          margin: 0;
-          padding: 20px;
-          color: #333;
-        }
-        .payslip-container {
-          max-width: 800px;
-          margin: 0 auto;
-          border: 2px solid #ea580c;
-          padding: 30px;
-          background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
-        }
-        .header {
-          text-align: center;
-          border-bottom: 3px solid #ea580c;
-          padding-bottom: 20px;
-          margin-bottom: 30px;
-        }
-        .company-name {
-          font-size: 32px;
-          font-weight: bold;
-          color: #ea580c;
-          margin-bottom: 5px;
-        }
-        .company-tagline {
-          font-size: 14px;
-          color: #666;
-          font-style: italic;
-        }
-        .payslip-title {
-          font-size: 24px;
-          color: #ea580c;
-          margin: 20px 0 10px 0;
-          font-weight: bold;
-        }
-        .payslip-period {
-          font-size: 16px;
-          color: #666;
-          margin-bottom: 20px;
-        }
-        .info-section {
-          display: table;
-          width: 100%;
-          margin-bottom: 30px;
-        }
-        .info-row {
-          display: table-row;
-        }
-        .info-label {
-          display: table-cell;
-          padding: 10px 0;
-          font-weight: bold;
-          color: #ea580c;
-          width: 40%;
-        }
-        .info-value {
-          display: table-cell;
-          padding: 10px 0;
-          color: #333;
-        }
-        .payment-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 20px 0;
-          background: white;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .payment-table th {
-          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
-          color: white;
-          padding: 12px;
-          text-align: left;
-          font-weight: bold;
-        }
-        .payment-table td {
-          padding: 12px;
-          border-bottom: 1px solid #e5e7eb;
-        }
-        .payment-table tr:last-child td {
-          border-bottom: none;
-        }
-        .payment-table tr:nth-child(even) {
-          background: #fff7ed;
-        }
-        .total-section {
-          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
-          color: white;
-          padding: 20px;
-          margin-top: 30px;
-          border-radius: 8px;
-          text-align: center;
-        }
-        .total-label {
-          font-size: 18px;
-          margin-bottom: 10px;
-        }
-        .total-amount {
-          font-size: 36px;
-          font-weight: bold;
-        }
-        .footer {
-          margin-top: 40px;
-          padding-top: 20px;
-          border-top: 2px solid #ea580c;
-          text-align: center;
-          font-size: 12px;
-          color: #666;
-        }
-        .signature-section {
-          margin-top: 60px;
-          display: flex;
-          justify-content: space-between;
-        }
-        .signature-box {
-          text-align: center;
-          width: 45%;
-        }
-        .signature-line {
-          border-top: 2px solid #ea580c;
-          margin-top: 50px;
-          padding-top: 10px;
-          font-weight: bold;
-          color: #ea580c;
-        }
-        @media print {
-          body {
-            padding: 0;
-          }
-          .payslip-container {
-            border: none;
-            box-shadow: none;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="payslip-container">
-        <div class="header">
-          <div class="company-name">BHANDAR-IMS</div>
-          <div class="company-tagline">Food Business Inventory Management System</div>
-          <div class="payslip-title">SALARY SLIP</div>
-          <div class="payslip-period">For the Month of ${month} ${year}</div>
-        </div>
-        
-        <div class="info-section">
-          <div class="info-row">
-            <div class="info-label">Employee Name:</div>
-            <div class="info-value">${employeeName}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Employee ID:</div>
-            <div class="info-value">${employeeId}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Employee Type:</div>
-            <div class="info-value">${employeeType === 'fulltime' ? 'Permanent' : 'Contract'}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Payment Date:</div>
-            <div class="info-value">${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-          </div>
-        </div>
-
-        <table class="payment-table">
-          <thead>
-            <tr>
-              <th>Payment Date</th>
-              <th>Description</th>
-              <th style="text-align: right;">Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${payouts.map(payout => `
-              <tr>
-                <td>${new Date(payout.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                <td>${employeeType === 'fulltime' ? 'Salary Payment' : 'Daily Wage Payment'}</td>
-                <td style="text-align: right;">₹${payout.amount.toLocaleString('en-IN')}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="total-section">
-          <div class="total-label">Net ${employeeType === 'fulltime' ? 'Salary' : 'Payment'} for ${month} ${year}</div>
-          <div class="total-amount">₹${totalAmount.toLocaleString('en-IN')}</div>
-        </div>
-
-        <div class="signature-section">
-          <div class="signature-box">
-            <div class="signature-line">Employee Signature</div>
-          </div>
-          <div class="signature-box">
-            <div class="signature-line">Authorized Signatory</div>
-          </div>
-        </div>
-
-        <div class="footer">
-          <p>This is a computer-generated payslip and does not require a signature.</p>
-          <p>© ${year} Bhandar-IMS. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.write(payslipContent);
-    printWindow.document.close();
-    
-    printWindow.onload = () => {
-      printWindow.print();
-    };
-  }
-};
 
 export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
   const [employee, setEmployee] = useState<any>(null);
@@ -383,9 +149,15 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
   const getFilteredPayouts = () => {
     if (!selectedMonth) return payouts;
-    
+
     const [year, month] = selectedMonth.split('-');
     return payouts.filter((payout) => {
+      // A payout's forMonth (when set) is which month it's actually FOR - e.g. a payout
+      // dated June 3rd with forMonth "2026-05" is May's backlogged salary, paid late.
+      // Older payouts without forMonth fall back to the payment date's own month.
+      if (payout.forMonth) {
+        return payout.forMonth === selectedMonth;
+      }
       const payoutDate = new Date(payout.date);
       return (
         payoutDate.getFullYear() === parseInt(year) &&
@@ -409,6 +181,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         'operations_manager': 'Operations Manager',
         'store_ops': 'Store Operations',
         'production_ops': 'Production Operations',
+        'rider': 'Rider',
       };
       
       return designationMap[designation] || designation;
@@ -442,19 +215,23 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
       const month = getMonthName(date.getMonth());
       const year = date.getFullYear().toString();
       
-      // Get payouts for this month
+      // Get payouts for this month - forMonth (when set) is which month a payout is
+      // actually FOR, not when it was paid, so a backlogged salary paid late lands on
+      // its real month's payslip instead of inflating whatever month it was paid in.
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const monthPayouts = payouts.filter(payout => {
+        if (payout.forMonth) return payout.forMonth === monthKey;
         const payoutDate = new Date(payout.date);
-        return payoutDate.getMonth() === date.getMonth() && 
+        return payoutDate.getMonth() === date.getMonth() &&
                payoutDate.getFullYear() === date.getFullYear();
       });
       
       const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0);
-      
-      // Payslips are available after the 4th of the following month
-      const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 5);
-      const isAvailable = now >= nextMonth;
-      
+
+      // Available as soon as a payout for this month is actually logged - no arbitrary
+      // date-based waiting period.
+      const isAvailable = monthPayouts.length > 0;
+
       slips.push({
         month,
         year,
@@ -498,11 +275,11 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
   if (!employee) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-sm p-8 max-w-md w-full text-center">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="text-3xl">⚠️</span>
           </div>
-          <h2 className="text-xl text-gray-900 mb-2">Employee Not Found</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Employee Not Found</h2>
           <p className="text-gray-600">
             Your employee profile hasn't been set up yet. Please contact your manager or cluster head.
           </p>
@@ -530,12 +307,14 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <div>
-            <p className="text-sm text-muted-foreground">{greeting}</p>
-            <h1 className="text-2xl text-foreground">{firstName}</h1>
-          </div>
-          <div className="w-11 h-11 rounded-full bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-            {initials}
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0 text-white font-semibold">
+              {initials}
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">{greeting}</p>
+              <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight">{firstName}</h1>
+            </div>
           </div>
         </div>
 
@@ -577,9 +356,9 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         </div>
 
         {/* My Details Section with Tabs */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
           <div className="p-6 border-b border-gray-200">
-            <h2 className="text-xl text-gray-900 mb-4">My Details</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-4">My Details</h2>
             
             {/* Tab Navigation */}
             <div className="flex gap-2">
@@ -633,7 +412,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 {/* Month Selector */}
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg text-gray-900 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                       <Calendar className="w-5 h-5 text-blue-600" />
                       Select Month
                     </h3>
@@ -653,42 +432,42 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
                 {/* Statistics */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-6 border border-green-200">
+                  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 shadow-lg shadow-emerald-500/20 text-white">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-gray-600">Total Payouts</div>
-                      <DollarSign className="w-5 h-5 text-green-600" />
+                      <div className="text-sm text-emerald-100">Total Payouts</div>
+                      <DollarSign className="w-5 h-5 text-emerald-100" />
                     </div>
-                    <div className="text-2xl text-gray-900">₹{totalPayouts.toLocaleString()}</div>
-                    <div className="text-xs text-gray-500 mt-1">
+                    <div className="text-2xl font-semibold">₹{totalPayouts.toLocaleString()}</div>
+                    <div className="text-xs text-emerald-100 mt-1">
                       {filteredPayouts.length} payment{filteredPayouts.length !== 1 ? 's' : ''}
                     </div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-6 border border-blue-200">
+                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/20 text-white">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-gray-600">Average Payout</div>
-                      <TrendingUp className="w-5 h-5 text-blue-600" />
+                      <div className="text-sm text-blue-100">Average Payout</div>
+                      <TrendingUp className="w-5 h-5 text-blue-100" />
                     </div>
-                    <div className="text-2xl text-gray-900">
+                    <div className="text-2xl font-semibold">
                       ₹{filteredPayouts.length > 0 ? Math.round(totalPayouts / filteredPayouts.length).toLocaleString() : 0}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">Per payment</div>
+                    <div className="text-xs text-blue-100 mt-1">Per payment</div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-lg p-6 border border-teal-200">
+                  <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-6 shadow-lg shadow-teal-500/20 text-white">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-gray-600">Payment Days</div>
-                      <Wallet className="w-5 h-5 text-teal-600" />
+                      <div className="text-sm text-teal-100">Payment Days</div>
+                      <Wallet className="w-5 h-5 text-teal-100" />
                     </div>
-                    <div className="text-2xl text-gray-900">{filteredPayouts.length}</div>
-                    <div className="text-xs text-gray-500 mt-1">This month</div>
+                    <div className="text-2xl font-semibold">{filteredPayouts.length}</div>
+                    <div className="text-xs text-teal-100 mt-1">This month</div>
                   </div>
                 </div>
 
                 {/* Payout History Table */}
-                <div className="bg-gray-50 rounded-xl overflow-hidden mb-6">
+                <div className="bg-gray-50 rounded-2xl overflow-hidden mb-6">
                   <div className="p-4 bg-white border-b border-gray-200">
-                    <h3 className="text-lg text-gray-900">Payout History</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Payout History</h3>
                   </div>
                   
                   {filteredPayouts.length === 0 ? (
@@ -696,7 +475,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Wallet className="w-8 h-8 text-gray-400" />
                       </div>
-                      <h4 className="text-lg text-gray-900 mb-2">No Payouts Yet</h4>
+                      <h4 className="text-lg font-bold text-gray-900 mb-2">No Payouts Yet</h4>
                       <p className="text-gray-600">No payouts recorded for the selected month.</p>
                     </div>
                   ) : (
@@ -742,11 +521,11 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 </div>
 
                 {/* Monthly Payslips Section */}
-                <div className="bg-gray-50 rounded-xl overflow-hidden">
+                <div className="bg-gray-50 rounded-2xl overflow-hidden">
                   <div className="p-4 bg-white border-b border-gray-200">
                     <div className="flex items-center gap-2">
                       <FileText className="w-5 h-5 text-teal-600" />
-                      <h3 className="text-lg text-gray-900">Monthly Payslips</h3>
+                      <h3 className="text-lg font-bold text-gray-900">Monthly Payslips</h3>
                     </div>
                     <p className="text-sm text-gray-600 mt-2">
                       Payslips are available for download after the 4th of each month
@@ -779,7 +558,9 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                                   slip.month,
                                   slip.year,
                                   slip.payouts,
-                                  employee.type
+                                  employee.type,
+                                  0,
+                                  employee.salaryStructure
                                 )}
                                 className="flex items-center gap-2 px-3 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm"
                                 title="Download Payslip"
@@ -852,7 +633,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     {salaryAdvances.map((advance) => (
                       <div 
                         key={advance.id}
-                        className={`border-2 rounded-xl p-6 ${
+                        className={`border-2 rounded-2xl p-6 ${
                           advance.status === 'pending' ? 'border-yellow-300 bg-yellow-50' :
                           advance.status === 'approved' ? 'border-green-300 bg-green-50' :
                           'border-red-300 bg-red-50'
@@ -1011,13 +792,13 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                 {managerDetails ? (
                   <div className="space-y-6">
                     {/* Manager Profile Card */}
-                    <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-xl p-6 border-2 border-teal-200">
+                    <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-2xl p-6 border-2 border-teal-200">
                       <div className="flex items-start gap-4">
                         <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
                           {managerDetails.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1">
-                          <h3 className="text-2xl text-gray-900 mb-1">{managerDetails.name}</h3>
+                          <h3 className="text-2xl font-bold text-gray-900 mb-1">{managerDetails.name}</h3>
                           <p className="text-sm text-teal-700 font-medium mb-3">Your Manager / Incharge</p>
                           <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
                             {managerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
@@ -1027,8 +808,8 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     </div>
 
                     {/* Manager Contact Details */}
-                    <div className="bg-white border border-gray-200 rounded-xl p-6">
-                      <h4 className="text-lg text-gray-900 mb-4 flex items-center gap-2">
+                    <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                      <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                         <Phone className="w-5 h-5 text-blue-600" />
                         Contact Information
                       </h4>
@@ -1083,13 +864,13 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
                     {/* Senior Manager Profile Card */}
                     {seniorManagerDetails && (
-                      <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-xl p-6 border-2 border-teal-200">
+                      <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-2xl p-6 border-2 border-teal-200">
                         <div className="flex items-start gap-4">
                           <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
                             {seniorManagerDetails.name.charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1">
-                            <h3 className="text-2xl text-gray-900 mb-1">{seniorManagerDetails.name}</h3>
+                            <h3 className="text-2xl font-bold text-gray-900 mb-1">{seniorManagerDetails.name}</h3>
                             <p className="text-sm text-teal-700 font-medium mb-3">Senior Manager / Incharge</p>
                             <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
                               {seniorManagerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
@@ -1101,8 +882,8 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
 
                     {/* Senior Manager Contact Details */}
                     {seniorManagerDetails && (
-                      <div className="bg-white border border-gray-200 rounded-xl p-6">
-                        <h4 className="text-lg text-gray-900 mb-4 flex items-center gap-2">
+                      <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                        <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                           <Phone className="w-5 h-5 text-blue-600" />
                           Contact Information
                         </h4>
@@ -1163,7 +944,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
                     <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                       <User className="w-10 h-10 text-gray-400" />
                     </div>
-                    <h3 className="text-xl text-gray-900 mb-2">No Manager Assigned</h3>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">No Manager Assigned</h3>
                     <p className="text-gray-600 max-w-md mx-auto">
                       You don't have a manager or incharge assigned yet. Please contact your cluster head for more information.
                     </p>
@@ -1197,7 +978,7 @@ export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
         {/* Salary Advance Application Modal */}
         {showAdvanceModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h3 className="text-xl font-semibold text-gray-900">Apply for Salary Advance</h3>

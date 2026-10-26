@@ -188,13 +188,21 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
     <div className="space-y-6">
       {/* Header with Create Button */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl p-6 text-white flex-1">
-          <h2 className="text-2xl mb-2">Stock Recalibration Reports</h2>
-          <p className="text-orange-100">
-            {view === 'pending' && 'Review and approve monthly stock recalibrations'}
-            {view === 'history' && 'View historical recalibration records'}
-            {view === 'wastage' && 'Analyze monthly wastage and counting errors'}
-          </p>
+        <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-6 shadow-xl flex-1">
+          <div className="absolute inset-0 bg-white/10" />
+          <div className="relative flex items-center gap-4">
+            <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
+              <Calendar className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Stock Recalibration Reports</h1>
+              <p className="text-sm sm:text-base text-white/80 mt-1">
+                {view === 'pending' && 'Review and approve monthly stock recalibrations'}
+                {view === 'history' && 'View historical recalibration records'}
+                {view === 'wastage' && 'Analyze monthly wastage and counting errors'}
+              </p>
+            </div>
+          </div>
         </div>
         {onOpenRecalibration && view === 'history' && locationType !== 'production_house' && (
           <button
@@ -208,15 +216,15 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
       </div>
 
       {/* View Toggle */}
-      <div className="flex gap-2 bg-white rounded-lg p-2 shadow-sm">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
         {/* Only show Pending Approval tab to Cluster Heads and Operations Managers, NOT Production Incharge */}
         {canApproveRecalibrations && (
           <button
             onClick={() => setView('pending')}
-            className={`flex-1 px-4 py-2 rounded-lg transition-all ${
+            className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
               view === 'pending'
-                ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
             }`}
           >
             Pending Approval
@@ -224,20 +232,20 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
         )}
         <button
           onClick={() => setView('history')}
-          className={`flex-1 px-4 py-2 rounded-lg transition-all ${
+          className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
             view === 'history'
-              ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-600 hover:text-gray-900'
           }`}
         >
           History
         </button>
         <button
           onClick={() => setView('wastage')}
-          className={`flex-1 px-4 py-2 rounded-lg transition-all ${
+          className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
             view === 'wastage'
-              ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-600 hover:text-gray-900'
           }`}
         >
           Wastage Report
@@ -246,7 +254,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
       {/* Wastage Report Month Selector */}
       {view === 'wastage' && (
-        <div className="bg-white rounded-lg p-4 shadow-sm">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
           <label className="block text-sm text-gray-700 mb-2">Select Month</label>
           <input
             type="month"
@@ -259,7 +267,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
       {/* Content */}
       {loading ? (
-        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+        <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
           <RefreshCw className="w-12 h-12 text-orange-600 animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Loading...</p>
         </div>
@@ -269,7 +277,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
           {view === 'pending' && (
             <div className="space-y-4">
               {pendingRecalibrations.length === 0 ? (
-                <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
                   <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
                   <p className="text-gray-600">No pending recalibrations</p>
                 </div>
@@ -277,11 +285,11 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
                 pendingRecalibrations.map((recal) => (
                   <div
                     key={recal.id}
-                    className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 hover:border-orange-300 transition-all"
+                    className="bg-white rounded-2xl p-6 shadow-sm border-2 border-gray-200 hover:border-orange-300 transition-all"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
-                        <h3 className="text-lg text-gray-900 mb-1">
+                        <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-1">
                           {recal.locationName}
                         </h3>
                         <p className="text-sm text-gray-500">
@@ -349,7 +357,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
           {view === 'history' && (
             <div className="space-y-4">
               {historyRecalibrations.length === 0 ? (
-                <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
                   <Calendar className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                   <p className="text-gray-600">No recalibration history found</p>
                 </div>
@@ -357,11 +365,11 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
                 historyRecalibrations.map((recal) => (
                   <div
                     key={recal.id}
-                    className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200"
+                    className="bg-white rounded-2xl p-6 shadow-sm border-2 border-gray-200"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
-                        <h3 className="text-lg text-gray-900 mb-1">
+                        <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-1">
                           {recal.locationName}
                         </h3>
                         <p className="text-sm text-gray-500">
@@ -396,7 +404,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
           {/* Wastage Report View */}
           {view === 'wastage' && (
-            <div className="bg-white rounded-lg p-6 shadow-sm">
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
               {!wastageReport || wastageReport.items?.length === 0 ? (
                 <div className="text-center py-12">
                   <TrendingDown className="w-16 h-16 text-gray-400 mx-auto mb-4" />
@@ -406,31 +414,31 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
                 <div className="space-y-6">
                   {/* Summary Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-lg p-4 text-white">
+                    <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
                       <p className="text-sm opacity-90 mb-1">Total Wastage</p>
-                      <p className="text-2xl">{wastageReport.summary?.totalWastage || 0}</p>
+                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalWastage || 0}</p>
                       <p className="text-xs opacity-75 mt-1">items</p>
                     </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-4 text-white">
+                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
                       <p className="text-sm opacity-90 mb-1">Counting Errors</p>
-                      <p className="text-2xl">{wastageReport.summary?.totalCountingErrors || 0}</p>
+                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalCountingErrors || 0}</p>
                       <p className="text-xs opacity-75 mt-1">items</p>
                     </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-4 text-white">
+                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
                       <p className="text-sm opacity-90 mb-1">Recalibrations</p>
-                      <p className="text-2xl">{wastageReport.summary?.totalRecalibrations || 0}</p>
+                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalRecalibrations || 0}</p>
                       <p className="text-xs opacity-75 mt-1">this month</p>
                     </div>
-                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg p-4 text-white">
+                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
                       <p className="text-sm opacity-90 mb-1">Locations</p>
-                      <p className="text-2xl">{wastageReport.summary?.uniqueLocations || 0}</p>
+                      <p className="text-2xl font-semibold">{wastageReport.summary?.uniqueLocations || 0}</p>
                       <p className="text-xs opacity-75 mt-1">stores/houses</p>
                     </div>
                   </div>
 
                   {/* Detailed Items Table */}
                   <div>
-                    <h3 className="text-lg text-gray-900 mb-3">Wastage & Error Details</h3>
+                    <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3">Wastage & Error Details</h3>
                     <div className="overflow-x-auto">
                       <table className="w-full">
                         <thead>
@@ -486,7 +494,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
       {/* Detail Modal */}
       {showDetailModal && selectedRecalibration && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="bg-gradient-to-r from-orange-600 to-red-600 p-6 text-white">
               <h3 className="text-xl mb-1">{selectedRecalibration.locationName}</h3>
               <p className="text-orange-100 text-sm">

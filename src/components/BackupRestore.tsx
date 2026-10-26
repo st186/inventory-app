@@ -306,67 +306,72 @@ export function BackupRestore({ context }: Props) {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 text-white">
-        <div className="flex items-center gap-3 mb-2">
-          <Database className="w-8 h-8" />
-          <h1 className="text-2xl font-bold">Backup & Restore</h1>
+      <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-6 sm:p-8 shadow-xl">
+        <div className="absolute inset-0 bg-white/10" />
+        <div className="relative flex items-center gap-4">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
+            <Database className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Backup & Restore</h1>
+            <p className="text-sm sm:text-base text-white/80 mt-1">
+              Protect your data by creating regular backups. Export your data to JSON files and restore when needed.
+            </p>
+          </div>
         </div>
-        <p className="text-orange-100">
-          Protect your data by creating regular backups. Export your data to JSON files and restore when needed.
-        </p>
       </div>
 
       {/* Current Database Stats */}
-      <div className="bg-white rounded-xl shadow-lg p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center gap-2 mb-4">
           <HardDrive className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900">Current Database</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Current Database</h2>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Inventory Items</p>
-            <p className="text-2xl font-bold text-blue-600">{context.inventory.length}</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-blue-100">Inventory Items</p>
+            <p className="text-2xl font-semibold">{context.inventory.length}</p>
           </div>
-          <div className="bg-orange-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Overhead Costs</p>
-            <p className="text-2xl font-bold text-orange-600">{context.overheads.length}</p>
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-orange-100">Overhead Costs</p>
+            <p className="text-2xl font-semibold">{context.overheads.length}</p>
           </div>
-          <div className="bg-green-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Fixed Costs</p>
-            <p className="text-2xl font-bold text-green-600">{context.fixedCosts.length}</p>
+          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-emerald-100">Fixed Costs</p>
+            <p className="text-2xl font-semibold">{context.fixedCosts.length}</p>
           </div>
-          <div className="bg-orange-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Sales Records</p>
-            <p className="text-2xl font-bold text-orange-600">{context.salesData.length}</p>
+          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-amber-100">Sales Records</p>
+            <p className="text-2xl font-semibold">{context.salesData.length}</p>
           </div>
-          <div className="bg-rose-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Category Sales Data</p>
-            <p className="text-2xl font-bold text-rose-600">{context.categorySalesData.length}</p>
+          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-rose-100">Category Sales Data</p>
+            <p className="text-2xl font-semibold">{context.categorySalesData.length}</p>
           </div>
-          <div className="bg-blue-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Production Data</p>
-            <p className="text-2xl font-bold text-blue-600">{context.productionData.length}</p>
+          <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-sky-100">Production Data</p>
+            <p className="text-2xl font-semibold">{context.productionData.length}</p>
           </div>
-          <div className="bg-yellow-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Production Houses</p>
-            <p className="text-2xl font-bold text-yellow-600">{context.productionHouses.length}</p>
+          <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-yellow-100">Production Houses</p>
+            <p className="text-2xl font-semibold">{context.productionHouses.length}</p>
           </div>
-          <div className="bg-red-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Stock Requests</p>
-            <p className="text-2xl font-bold text-red-600">{context.stockRequests.length}</p>
+          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-red-100">Stock Requests</p>
+            <p className="text-2xl font-semibold">{context.stockRequests.length}</p>
           </div>
-          <div className="bg-teal-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Production Requests</p>
-            <p className="text-2xl font-bold text-teal-600">{context.productionRequests.length}</p>
+          <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-4 shadow-lg shadow-teal-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-teal-100">Production Requests</p>
+            <p className="text-2xl font-semibold">{context.productionRequests.length}</p>
           </div>
-          <div className="bg-cyan-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Stores</p>
-            <p className="text-2xl font-bold text-cyan-600">{context.stores.length}</p>
+          <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-xl p-4 shadow-lg shadow-cyan-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-cyan-100">Stores</p>
+            <p className="text-2xl font-semibold">{context.stores.length}</p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600">Inventory Item Types</p>
-            <p className="text-2xl font-bold text-gray-600">{context.inventoryItems.length}</p>
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 shadow-lg shadow-purple-500/20 text-white">
+            <p className="text-xs uppercase tracking-wide text-purple-100">Inventory Item Types</p>
+            <p className="text-2xl font-semibold">{context.inventoryItems.length}</p>
           </div>
         </div>
 
@@ -378,10 +383,10 @@ export function BackupRestore({ context }: Props) {
       </div>
 
       {/* Export Section */}
-      <div className="bg-white rounded-xl shadow-lg p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center gap-2 mb-4">
           <Download className="w-5 h-5 text-green-600" />
-          <h2 className="text-xl font-semibold text-gray-900">Export Data (Create Backup)</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Export Data (Create Backup)</h2>
         </div>
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
@@ -434,10 +439,10 @@ export function BackupRestore({ context }: Props) {
       </div>
 
       {/* Import Section */}
-      <div className="bg-white rounded-xl shadow-lg p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center gap-2 mb-4">
           <Upload className="w-5 h-5 text-orange-600" />
-          <h2 className="text-xl font-semibold text-gray-900">Import Data (Restore Backup)</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Import Data (Restore Backup)</h2>
         </div>
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
@@ -497,7 +502,7 @@ export function BackupRestore({ context }: Props) {
           <div className="bg-white rounded-lg max-w-md w-full p-6">
             <div className="flex items-center gap-3 mb-4">
               <AlertCircle className="w-6 h-6 text-orange-600" />
-              <h3 className="text-xl font-semibold text-gray-900">Confirm Import</h3>
+              <h3 className="text-xl font-bold text-gray-900 tracking-tight">Confirm Import</h3>
             </div>
 
             <div className="space-y-3 mb-6">
@@ -537,11 +542,11 @@ export function BackupRestore({ context }: Props) {
       )}
 
       {/* Additional Tips */}
-      <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-xl shadow-lg p-6">
+      <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-2xl shadow-sm border border-orange-100 p-6">
         <div className="flex items-start gap-3">
           <Calendar className="w-6 h-6 text-orange-600 flex-shrink-0 mt-1" />
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">📅 Recommended Backup Schedule</h3>
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-2">📅 Recommended Backup Schedule</h3>
             <ul className="space-y-2 text-sm text-gray-700">
               <li className="flex items-start gap-2">
                 <span className="text-orange-600 font-bold">•</span>

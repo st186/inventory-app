@@ -159,13 +159,13 @@ export function StorePerformanceComparison({ context, stores }: Props) {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
-            <Trophy className="h-5 w-5 text-white" />
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Trophy className="h-6 w-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl">Store Performance Comparison</h2>
-            <p className="text-muted-foreground">Compare and rank store performance metrics</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Store Performance Comparison</h1>
+            <p className="text-sm sm:text-base text-gray-500">Compare and rank store performance metrics</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -197,7 +197,7 @@ export function StorePerformanceComparison({ context, stores }: Props) {
           const RankIcon = rankBadge.icon;
           
           return (
-            <Card key={store.storeId} className="p-6 relative overflow-hidden">
+            <Card key={store.storeId} className="rounded-2xl p-6 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-orange-500/10 to-rose-500/10 rounded-bl-full" />
               <div className="relative">
                 <div className="flex items-center justify-between mb-4">
@@ -206,7 +206,7 @@ export function StorePerformanceComparison({ context, stores }: Props) {
                   </Badge>
                   <RankIcon className="h-8 w-8 text-orange-600" />
                 </div>
-                <h3 className="text-xl mb-4">{store.storeName}</h3>
+                <h3 className="text-xl font-bold text-gray-900 mb-4">{store.storeName}</h3>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Overall Score</span>
@@ -233,8 +233,8 @@ export function StorePerformanceComparison({ context, stores }: Props) {
       {/* Performance Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Multi-dimensional Comparison */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Multi-dimensional Performance (Top 3)</h3>
+        <Card className="rounded-2xl p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Multi-dimensional Performance (Top 3)</h3>
           <ResponsiveContainer width="100%" height={350}>
             <RadarChart data={radarData}>
               <PolarGrid />
@@ -271,8 +271,8 @@ export function StorePerformanceComparison({ context, stores }: Props) {
         </Card>
 
         {/* Sales & Score Comparison */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Sales & Performance Score</h3>
+        <Card className="rounded-2xl p-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Sales & Performance Score</h3>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart data={comparisonData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -289,8 +289,8 @@ export function StorePerformanceComparison({ context, stores }: Props) {
       </div>
 
       {/* Detailed Metrics Table */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4">Detailed Performance Metrics</h3>
+      <Card className="rounded-2xl p-6">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Detailed Performance Metrics</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

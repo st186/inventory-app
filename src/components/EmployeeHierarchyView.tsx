@@ -112,6 +112,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
         'operations_manager': 'Operations Manager',
         'store_ops': 'Store Operations',
         'production_ops': 'Production Operations',
+        'rider': 'Rider',
       };
       
       return designationMap[designation] || designation;
@@ -171,15 +172,20 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl text-gray-900 mb-2">Employee Hierarchy</h1>
-          <p className="text-gray-600">
-            View your reporting chain from top to bottom
-          </p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Users className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Employee Hierarchy</h1>
+            <p className="text-sm sm:text-base text-gray-500">
+              View your reporting chain from top to bottom
+            </p>
+          </div>
         </div>
 
         {/* Hierarchy Visualization */}
-        <div className="bg-white rounded-xl shadow-lg p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
           {reportingChain.length > 0 ? (
             <div className="flex flex-col items-center">
               {reportingChain.map((person, index) => {
@@ -229,7 +235,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
           ) : (
             <div className="text-center py-12">
               <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg text-gray-600 mb-2">No Hierarchy Found</h3>
+              <h3 className="text-lg font-bold text-gray-600 mb-2">No Hierarchy Found</h3>
               <p className="text-sm text-gray-500">
                 Your organizational hierarchy hasn't been set up yet.
               </p>
@@ -238,7 +244,7 @@ export function EmployeeHierarchyView({ currentUser }: EmployeeHierarchyViewProp
         </div>
 
         {/* Legend */}
-        <div className="mt-6 bg-white rounded-xl shadow-sm p-6">
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-sm font-semibold text-gray-700 mb-4">Legend</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex items-center gap-3">

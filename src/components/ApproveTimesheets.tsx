@@ -2,16 +2,21 @@ import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Clock, User, Calendar, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
 import { RouteDebugger } from './RouteDebugger';
+import { employeeBelongsToStore } from '../utils/entityAccess';
+import type { Store } from '../utils/api';
 
 interface ApproveTimesheetsProps {
   managerId: string;
   role?: string; // Add role to differentiate between manager and cluster_head
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
+  // For resolving a production incharge/ops employee's storeId (which actually holds
+  // their production house's id) back to this store - see entityAccess.ts.
+  stores?: Store[];
 }
 
-export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null }: ApproveTimesheetsProps) {
+export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null, stores = [] }: ApproveTimesheetsProps) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<string>('');
   const [timesheets, setTimesheets] = useState<any[]>([]);
@@ -27,22 +32,19 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
   const filteredEmployees = useMemo(() => {
     let filtered = employees;
     
-    // Apply store filter (include null/undefined storeIds for backward compatibility)
+    // Apply store filter (also matches this store's linked production house - see
+    // entityAccess.ts's employeeBelongsToStore for why that case matters)
     if (selectedStoreId) {
-      filtered = filtered.filter(emp => 
-        emp.storeId === selectedStoreId || 
-        emp.storeId === null || 
-        emp.storeId === undefined
-      );
+      filtered = filtered.filter(emp => employeeBelongsToStore(emp, selectedStoreId, stores));
     }
-    
+
     // Apply incharge permissions - only show employees under the incharge
     if (isIncharge && managerId) {
       filtered = filtered.filter(emp => emp.inchargeId === managerId);
     }
-    
+
     return filtered;
-  }, [employees, selectedStoreId, isIncharge, managerId]);
+  }, [employees, selectedStoreId, stores, isIncharge, managerId]);
 
   useEffect(() => {
     loadEmployees();
@@ -158,14 +160,19 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Approve {entityType} Timesheets</h1>
-          <p className="text-gray-600">
-            {role === 'cluster_head' 
-              ? 'Review and approve manager timesheet entries. Contract workers are paid per day worked and do not require attendance approval.'
-              : 'Review and approve employee timesheet entries'
-            }
-          </p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Clock className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Approve {entityType} Timesheets</h1>
+            <p className="text-sm sm:text-base text-gray-500">
+              {role === 'cluster_head'
+                ? 'Review and approve manager timesheet entries. Contract workers are paid per day worked and do not require attendance approval.'
+                : 'Review and approve employee timesheet entries'
+              }
+            </p>
+          </div>
         </div>
 
         {/* Error/Warning if no managerId */}
@@ -231,7 +238,7 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
         )}
 
         {/* Employee Selector */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
           <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
           <select
             value={selectedEmployee}
@@ -270,13 +277,13 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
 
         {/* Employee Info Card */}
         {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl shadow-lg p-6 mb-6 text-white">
+          <div className="bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl shadow-lg p-6 mb-6 text-white">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
                 <User className="w-8 h-8" />
               </div>
               <div>
-                <h2 className="text-xl mb-1">{selectedEmployeeData.name}</h2>
+                <h2 className="text-xl font-bold mb-1">{selectedEmployeeData.name}</h2>
                 <p className="text-sm opacity-90">Employee ID: {selectedEmployeeData.employeeId}</p>
                 <p className="text-sm opacity-90">Email: {selectedEmployeeData.email}</p>
               </div>
@@ -285,9 +292,9 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
         )}
 
         {/* Timesheets Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
-            <h3 className="text-lg text-gray-900">Pending Timesheets</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-indigo-100 to-violet-100 border-b border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900">Pending Timesheets</h3>
           </div>
 
           {loading ? (

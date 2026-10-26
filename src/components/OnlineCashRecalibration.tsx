@@ -36,36 +36,45 @@ export function OnlineCashRecalibration({
   const store = context.stores?.find(s => s.id === effectiveStoreId);
   const storeName = store?.name || 'Unknown Store';
   
-  const currentMonth = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const currentMonthKey = new Date().toISOString().slice(0, 7); // "YYYY-MM"
   const today = getTodayIST();
   // Use manualDate if set, otherwise use selectedDate or today
   const recalibrationDate = manualDate || selectedDate || today;
+  const targetDate = selectedDate || today;
 
   useEffect(() => {
     checkLastRecalibration();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetDate]);
 
   async function checkLastRecalibration() {
     try {
       setLoading(true);
       if (!effectiveStoreId || !context.user?.accessToken) return;
-      
-      const response = await api.getLastOnlineCashRecalibration(
+
+      // One recalibration per store PER DATE - look up the exact date being
+      // reconciled (e.g. this Sunday) so re-opening it shows the existing entry
+      // for edit, without clobbering other weeks' entries in the same month.
+      const response = await api.getOnlineCashRecalibrationHistory(
         context.user.accessToken,
         effectiveStoreId
       );
-      
-      // Extract the recalibration data from the response
-      const recalibration = response?.recalibration || null;
-      
-      if (recalibration && recalibration.month === currentMonthKey) {
+
+      const recalibration = (response?.history || []).find((r: any) => r.date === targetDate) || null;
+
+      if (recalibration) {
         setLastRecalibration(recalibration);
         setActualBalance(recalibration.actualBalance.toString());
         setNotes(recalibration.notes || '');
         setDiscrepancyType(recalibration.discrepancyType || 'none');
         setLoanAmount(recalibration.loanAmount?.toString() || '');
         setManualDate(recalibration.date || ''); // Load the recalibration date
+      } else {
+        setLastRecalibration(null);
+        setActualBalance('');
+        setNotes('');
+        setDiscrepancyType('none');
+        setLoanAmount('');
+        setManualDate(targetDate);
       }
     } catch (err) {
       console.error('Error fetching last recalibration:', err);
@@ -95,7 +104,7 @@ export function OnlineCashRecalibration({
       const recalibrationData = {
         storeId: effectiveStoreId,
         storeName,
-        month: currentMonthKey,
+        month: recalibrationDate.substring(0, 7),
         date: recalibrationDate,
         systemBalance: systemBalance,
         actualBalance: actualBalanceNum,
@@ -110,7 +119,7 @@ export function OnlineCashRecalibration({
       console.log('💾 ===== SUBMITTING RECALIBRATION =====');
       console.log('📊 Recalibration data being saved:', recalibrationData);
       console.log('🏪 Store ID:', effectiveStoreId);
-      console.log('📅 Month:', currentMonthKey);
+      console.log('📅 Month:', recalibrationData.month);
       console.log('📅 Date:', recalibrationDate);
       console.log('💰 System Balance:', systemBalance);
       console.log('💰 Actual Balance:', actualBalanceNum);
@@ -158,7 +167,7 @@ export function OnlineCashRecalibration({
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -167,10 +176,10 @@ export function OnlineCashRecalibration({
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Smartphone className="w-6 h-6" />
-                Online Cash Recalibration
+                Paytm Reconciliation
               </h2>
               <p className="text-orange-100 mt-1">
-                {storeName} - {currentMonth}
+                {storeName} - {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
               </p>
             </div>
             <button
@@ -203,11 +212,11 @@ export function OnlineCashRecalibration({
 
         {/* Last Recalibration Info */}
         {lastRecalibration && (
-          <div className="m-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+          <div className="m-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
                 <p className="text-sm text-blue-900">
-                  <strong>Current Recalibration for {currentMonth}:</strong>
+                  <strong>Existing Recalibration for {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}:</strong>
                   <br />
                   <strong>Created:</strong> {lastRecalibration.createdAt ? formatDateTimeIST(lastRecalibration.createdAt) : 'N/A'}
                   <br />
@@ -227,7 +236,7 @@ export function OnlineCashRecalibration({
               <button
                 type="button"
                 onClick={async () => {
-                  if (window.confirm('Are you sure you want to delete this recalibration? This will recalculate the balance from the beginning of time.')) {
+                  if (window.confirm('Are you sure you want to delete this week\'s recalibration?')) {
                     try {
                       console.log('🗑️ [CLIENT] Deleting recalibration:', lastRecalibration.id);
                       const response = await api.deleteOnlineCashRecalibration(context.user!.accessToken, lastRecalibration.id);
@@ -252,7 +261,7 @@ export function OnlineCashRecalibration({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* System Balance (Read-only) */}
-          <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200">
+          <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-xl p-6 border-2 border-orange-200">
             <div className="flex items-center gap-2 mb-2">
               <TrendingUp className="w-5 h-5 text-orange-600" />
               <label className="text-sm font-semibold text-orange-900 uppercase tracking-wide">
@@ -390,10 +399,11 @@ export function OnlineCashRecalibration({
             <div className="flex gap-3">
               <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-yellow-900">
-                <p className="font-semibold mb-1">📅 Monthly Recalibration</p>
+                <p className="font-semibold mb-1">📅 Weekly Recalibration</p>
                 <p>
-                  Recalibrate your online cash balance at the end of each month to ensure accuracy. 
-                  This helps catch any missed entries, fees, or discrepancies.
+                  Check the actual Paytm wallet balance every Sunday and log it here. Comparing it
+                  against the system-calculated balance catches any missed entries, fees, or
+                  discrepancies before they pile up.
                 </p>
               </div>
             </div>

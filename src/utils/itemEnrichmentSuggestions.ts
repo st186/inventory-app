@@ -88,7 +88,7 @@ export const ITEM_SUGGESTIONS: Record<string, ItemSuggestion> = {
   'coke': { name: 'Coca-Cola', category: 'beverages', bengali: 'কোকা কোলা', emoji: '🥤' },
   'cooling': { category: 'equipment_smallwares', needsReview: true, note: 'Unclear what this covers (AC service? cooling item?) — please clarify. Best-guess category filled in.' },
   'dastar': { category: 'staff_welfare_ppe', needsReview: true, note: 'Possibly the same as "Duster" (which would be Cleaning & Sanitation instead) — please confirm before merging.' },
-  'dhup': { name: 'Incense Sticks (Dhup)', category: 'cleaning_sanitation', bengali: 'ধূপ', emoji: '🕯️' },
+  'dhup': { name: 'Incense Sticks (Dhup)', category: 'puja_items', bengali: 'ধূপ', emoji: '🕯️' },
   'dish washer': { name: 'Dish Washing Liquid', category: 'cleaning_sanitation', bengali: 'বাসন মাজার লিকুইড', emoji: '🧽' },
   'duster': { category: 'cleaning_sanitation', bengali: 'ঝাড়ন', emoji: '🧹' },
   'equipment - microwave': { name: 'Microwave (Equipment)', category: 'equipment_smallwares', bengali: 'মাইক্রোওয়েভ', emoji: '📡' },

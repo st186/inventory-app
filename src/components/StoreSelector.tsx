@@ -15,105 +15,79 @@ export const StoreSelector = memo(function StoreSelector({ stores, selectedStore
 
   return (
     <div className="relative">
-      {/* Enhanced Store Selector with Gradient Background */}
-      <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-rose-500 rounded-xl shadow-lg p-[2px]">
-        <div className="bg-white rounded-[10px] p-4">
-          <div className="flex items-center gap-4">
-            {/* Icon Section */}
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-gradient-to-br from-orange-100 to-amber-100 rounded-xl flex items-center justify-center">
-                <Store className="w-6 h-6 text-orange-600" />
-              </div>
-            </div>
+      {/* The single store selector for the whole app - used to also be paired with a
+          second "quick pills" row right below doing the exact same job, plus a third,
+          separate dropdown duplicated inside Analytics. Consolidated down to just this
+          one control (see Analytics.tsx for the other removal). Restyled to the same
+          dark-hero/icon-chip language as Analytics.tsx's other header cards, instead of
+          the pale gradient-border card it used to be. */}
+      <div className="relative overflow-hidden rounded-2xl shadow-xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+        <div className="absolute -top-14 -right-8 w-40 h-40 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
 
-            {/* Store Info and Selector */}
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
-                Current Store View
-              </div>
-              <div className="relative">
-                <select
-                  value={selectedStoreId || 'all'}
-                  onChange={(e) => onStoreChange(e.target.value === 'all' ? null : e.target.value)}
-                  className="w-full appearance-none bg-transparent border-none text-base font-semibold text-gray-900 focus:ring-0 focus:outline-none cursor-pointer pr-8"
-                  style={{ paddingRight: '2rem' }}
-                >
-                  {showAllStores && (
-                    <option value="all">🌐 All Stores (Combined View)</option>
-                  )}
-                  {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
-                      🍜 {store.name} {store.location && `- ${store.location}`}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-orange-600 pointer-events-none" />
-              </div>
-              {/* Location Display */}
-              {selectedStore?.location && (
-                <div className="flex items-center gap-1 mt-1 text-sm text-gray-600">
-                  <MapPin className="w-3 h-3" />
-                  <span>{selectedStore.location}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Store Count Badge */}
-            <div className="flex-shrink-0">
-              <div className="bg-gradient-to-br from-orange-50 to-rose-50 px-4 py-2 rounded-lg border border-orange-200">
-                <div className="text-xs text-gray-600 text-center">Total Stores</div>
-                <div className="text-2xl font-bold text-orange-600 text-center">{stores.length}</div>
-              </div>
+        <div className="relative flex items-center gap-4">
+          {/* Icon Section */}
+          <div className="flex-shrink-0">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-amber-500 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/40">
+              <Store className="w-6 h-6 text-white" />
             </div>
           </div>
 
-          {/* Status Indicator */}
-          <div className="mt-3 pt-3 border-t border-gray-100">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${isAllStores ? 'bg-blue-500' : 'bg-green-500'} animate-pulse`}></div>
-                <span className="text-gray-600">
-                  {isAllStores ? 'Viewing all store data' : `Viewing ${selectedStore?.name || 'store'} only`}
-                </span>
+          {/* Store Info and Selector */}
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
+              Current Store View
+            </div>
+            <div className="relative">
+              <select
+                value={selectedStoreId || 'all'}
+                onChange={(e) => onStoreChange(e.target.value === 'all' ? null : e.target.value)}
+                className="w-full appearance-none bg-transparent border-none text-base font-semibold text-white focus:ring-0 focus:outline-none cursor-pointer pr-8"
+                style={{ paddingRight: '2rem' }}
+              >
+                {showAllStores && (
+                  <option value="all" style={{ color: '#111827', backgroundColor: '#ffffff' }}>🌐 All Stores (Combined View)</option>
+                )}
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id} style={{ color: '#111827', backgroundColor: '#ffffff' }}>
+                    🍜 {store.name} {store.location && `- ${store.location}`}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-orange-400 pointer-events-none" />
+            </div>
+            {/* Location Display */}
+            {selectedStore?.location && (
+              <div className="flex items-center gap-1 mt-1 text-sm text-slate-400">
+                <MapPin className="w-3 h-3" />
+                <span>{selectedStore.location}</span>
               </div>
-              <span className="text-orange-600 font-medium">
-                {isAllStores ? stores.length : 1} store{(isAllStores && stores.length !== 1) || (!isAllStores && false) ? 's' : ''} active
+            )}
+          </div>
+
+          {/* Store Count Badge */}
+          <div className="flex-shrink-0">
+            <div className="bg-white/10 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/10">
+              <div className="text-[11px] text-slate-400 text-center">Total Stores</div>
+              <div className="text-2xl font-bold text-white text-center">{stores.length}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Status Indicator */}
+        <div className="relative mt-3 pt-3 border-t border-white/10">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isAllStores ? 'bg-blue-400' : 'bg-emerald-400'} animate-pulse`}></div>
+              <span className="text-slate-400">
+                {isAllStores ? 'Viewing all store data' : `Viewing ${selectedStore?.name || 'store'} only`}
               </span>
             </div>
+            <span className="text-orange-400 font-medium">
+              {isAllStores ? stores.length : 1} store{(isAllStores && stores.length !== 1) || (!isAllStores && false) ? 's' : ''} active
+            </span>
           </div>
         </div>
       </div>
-
-      {/* Optional: Quick Store Pills for faster switching */}
-      {stores.length <= 5 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {showAllStores && (
-            <button
-              onClick={() => onStoreChange(null)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                isAllStores
-                  ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              🌐 All Stores
-            </button>
-          )}
-          {stores.map((store) => (
-            <button
-              key={store.id}
-              onClick={() => onStoreChange(store.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                selectedStoreId === store.id
-                  ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              🍜 {store.name}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { InventoryItem } from '../App';
-import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, STORE_SELECTABLE_INVENTORY_CATEGORIES, STORE_CATEGORY_ITEMS, BUILT_IN_ITEM_BENGALI } from '../utils/inventoryData';
 import { X, Loader2, Search, ChevronDown, AlertTriangle } from 'lucide-react';
 import * as api from '../utils/api';
 import { findSimilarItem } from '../utils/stringSimilarity';
@@ -8,12 +8,23 @@ import { findSimilarItem } from '../utils/stringSimilarity';
 type Props = {
   selectedDate: string;
   editingItem?: InventoryItem | null;
+  entityType?: 'store' | 'production_house';
   onSubmit: (item: Omit<InventoryItem, 'id'>) => void | Promise<void>;
   onClose: () => void;
   onSuccess?: () => void; // NEW: Optional callback after successful submission
+  // Only cluster heads can expand the item catalog - a store/operations incharge picks
+  // from what's already there. Defaults to true for callers that haven't been updated to
+  // pass this explicitly, so existing behavior doesn't silently change elsewhere.
+  canCreateNewItems?: boolean;
 };
 
-export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, onSuccess }: Props) {
+export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit, onClose, onSuccess, canCreateNewItems = true }: Props) {
+  // Store purchases are a small curated subset (see STORE_CATEGORY_ITEMS) - the
+  // production house still needs the full fresh-produce/spices/meat lists.
+  const isStoreEntry = entityType === 'store';
+  const baseSelectableCategories = isStoreEntry ? STORE_SELECTABLE_INVENTORY_CATEGORIES : SELECTABLE_INVENTORY_CATEGORIES;
+  const baseCategoryItems: Record<string, string[]> = isStoreEntry ? (STORE_CATEGORY_ITEMS as Record<string, string[]>) : (CATEGORY_ITEMS as Record<string, readonly string[]>) as Record<string, string[]>;
+  const defaultCategory = (Object.keys(baseSelectableCategories)[0] || 'fresh_produce') as InventoryItem['category'];
   // Get last used payment method from localStorage, default to 'cash' if not found
   const getLastPaymentMethod = (): 'cash' | 'online' | 'both' => {
     if (editingItem?.paymentMethod) return editingItem.paymentMethod;
@@ -22,19 +33,46 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   };
 
   const [formData, setFormData] = useState({
-    category: (editingItem?.category || 'fresh_produce') as InventoryItem['category'],
+    category: (editingItem?.category || defaultCategory) as InventoryItem['category'],
     itemName: editingItem?.itemName || '',
-    customItem: editingItem ? !(CATEGORY_ITEMS[editingItem.category] as readonly string[]).includes(editingItem.itemName) : false,
+    customItem: editingItem ? !(baseCategoryItems[editingItem.category] || []).includes(editingItem.itemName) : false,
     quantity: editingItem?.quantity.toString() || '',
     unit: editingItem?.unit || 'kg',
     totalCost: editingItem?.totalCost.toString() || '',
     paymentMethod: getLastPaymentMethod(),
     cashAmount: editingItem?.cashAmount?.toString() || '',
-    onlineAmount: editingItem?.onlineAmount?.toString() || ''
+    onlineAmount: editingItem?.onlineAmount?.toString() || '',
+    // Beverage packaging fields
+    packageType: (editingItem?.packageType || 'pieces') as 'carton' | 'pieces',
+    cartonCount: editingItem?.cartonCount?.toString() || '',
+    piecesPerCarton: editingItem?.piecesPerCarton?.toString() || '',
+    pieceCount: editingItem?.packageType === 'pieces' ? editingItem?.quantity.toString() || '' : '',
+    volumeMl: editingItem?.volumeMl?.toString() || '',
+    volumeUnit: 'mL' as 'mL' | 'L'
   });
+
+  const isBeverage = formData.category === 'beverages';
+  const beverageTotalPieces = formData.packageType === 'carton'
+    ? (parseFloat(formData.cartonCount) || 0) * (parseFloat(formData.piecesPerCarton) || 0)
+    : (parseFloat(formData.pieceCount) || 0);
+
+  // Optional weight per piece (e.g. a 200g packet of Aromatic Powder) - only offered when
+  // quantity is a piece count, and only shown once someone opts in, since plenty of
+  // piece-counted items (tissues, cutlery) have no meaningful weight to record.
+  const [showWeightField, setShowWeightField] = useState(!!editingItem?.weightPerUnitGrams);
+  const [weightPerUnit, setWeightPerUnit] = useState(editingItem?.weightPerUnitGrams?.toString() || '');
+  const [weightUnit, setWeightUnit] = useState<'g' | 'kg'>('g');
+
+  // Non-beverage bundle purchase (e.g. 1 bundle of 50 tissues, a bag of 20 foil sheets) -
+  // reuses the same formData.cartonCount/piecesPerCarton fields the beverage packaging UI
+  // already uses, since it's the same "N containers x M pieces each" shape either way.
+  const [isBundleMode, setIsBundleMode] = useState(!isBeverage && editingItem?.packageType === 'carton');
+  const bundleTotalPieces = (parseFloat(formData.cartonCount) || 0) * (parseFloat(formData.piecesPerCarton) || 0);
+  const isBundlePurchase = !isBeverage && isBundleMode && (formData.unit === 'pcs' || formData.unit === 'units');
 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
   const [allCustomItems, setAllCustomItems] = useState<api.CustomItem[]>([]);
+  const [customCategories, setCustomCategories] = useState<api.CustomCategory[]>([]);
   const [loadingCustomItems, setLoadingCustomItems] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState(''); // NEW: Search state
@@ -66,8 +104,9 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
 
   const loadCustomItems = async () => {
     try {
-      const items = await api.getCustomItems();
+      const [items, categories] = await Promise.all([api.getCustomItems(), api.getCustomCategories()]);
       setAllCustomItems(items);
+      setCustomCategories(categories.filter((cat) => cat.scope === (isStoreEntry ? 'store' : 'production')));
       // Transform array to Record<category, itemName[]>
       const itemsByCategory: Record<string, string[]> = {};
       items.forEach((item) => {
@@ -85,6 +124,18 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     }
   };
 
+  // Cluster-head-created categories (see CategoryManagerModal) layered on top of the
+  // fixed built-in list, so a new category is actually selectable here right after it's
+  // created - not just visible in the management modal.
+  const selectableCategories: Record<string, string> = {
+    ...baseSelectableCategories,
+    ...Object.fromEntries(customCategories.map((cat) => [cat.key, `${cat.emoji} ${cat.label}`])),
+  };
+  const categoryItems: Record<string, string[]> = { ...baseCategoryItems };
+  for (const cat of customCategories) {
+    if (!categoryItems[cat.key]) categoryItems[cat.key] = [];
+  }
+
   // Reset form to initial state (for adding multiple items)
   const resetForm = () => {
     const lastPaymentMethod = localStorage.getItem('lastInventoryPaymentMethod') as 'cash' | 'online' | 'both' || 'cash';
@@ -97,7 +148,13 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
       totalCost: '',
       paymentMethod: lastPaymentMethod, // Persist the last used payment method
       cashAmount: '',
-      onlineAmount: ''
+      onlineAmount: '',
+      packageType: 'pieces',
+      cartonCount: '',
+      piecesPerCarton: '',
+      pieceCount: '',
+      volumeMl: '',
+      volumeUnit: 'mL'
     });
     setSearchQuery(''); // Clear search query
   };
@@ -135,7 +192,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     // If adding a brand-new item name, check for a likely duplicate before proceeding —
     // against both existing custom items and the category's built-in item list.
     if (formData.customItem && formData.itemName) {
-      const builtInsAsItems: api.CustomItem[] = (CATEGORY_ITEMS[formData.category] || []).map((name) => ({
+      const builtInsAsItems: api.CustomItem[] = (categoryItems[formData.category] || []).map((name) => ({
         id: '', category: formData.category, itemName: name,
       }));
       const match = findSimilarItem(formData.itemName, [...builtInsAsItems, ...allCustomItems], (item) => item.itemName);
@@ -152,7 +209,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
     console.log('📝 [INVENTORY FORM] Form data validated, setting isSubmitting=true');
     setIsSubmitting(true);
 
-    const quantity = parseFloat(formData.quantity);
+    const quantity = isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : parseFloat(formData.quantity));
     const totalCost = parseFloat(formData.totalCost);
     const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
     
@@ -211,9 +268,25 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
         category: formData.category,
         itemName: formData.itemName,
         quantity: roundedQuantity,
-        unit: formData.unit,
+        unit: isBeverage || isBundlePurchase ? 'pcs' : formData.unit,
         costPerUnit: roundedCostPerUnit,
         totalCost: roundedTotalCost,
+        ...(isBeverage ? {
+          packageType: formData.packageType,
+          ...(formData.packageType === 'carton' ? {
+            cartonCount: parseFloat(formData.cartonCount) || 0,
+            piecesPerCarton: parseFloat(formData.piecesPerCarton) || 0,
+          } : {}),
+          ...(formData.volumeMl ? { volumeMl: formData.volumeUnit === 'L' ? (parseFloat(formData.volumeMl) || 0) * 1000 : (parseFloat(formData.volumeMl) || 0) } : {}),
+        } : {}),
+        ...(isBundlePurchase ? {
+          packageType: 'carton' as const,
+          cartonCount: parseFloat(formData.cartonCount) || 0,
+          piecesPerCarton: parseFloat(formData.piecesPerCarton) || 0,
+        } : {}),
+        ...(!isBeverage && (formData.unit === 'pcs' || formData.unit === 'units') && weightPerUnit
+          ? { weightPerUnitGrams: weightUnit === 'kg' ? (parseFloat(weightPerUnit) || 0) * 1000 : (parseFloat(weightPerUnit) || 0) }
+          : {}),
         ...paymentData
       });
       console.log('✅ [INVENTORY FORM] onSubmit completed successfully');
@@ -244,7 +317,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
   // same item (e.g. built-in "Onion" vs a custom "Onion ") don't both show up —
   // built-ins take priority since their spelling/casing is canonical.
   const dedupedItemsMap = new Map<string, string>();
-  for (const name of CATEGORY_ITEMS[formData.category] || []) {
+  for (const name of categoryItems[formData.category] || []) {
     dedupedItemsMap.set(name.trim().toLowerCase(), name);
   }
   for (const name of customItems[formData.category] || []) {
@@ -292,13 +365,13 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               required
             >
-              {Object.entries(SELECTABLE_INVENTORY_CATEGORIES).map(([key, label]) => (
+              {Object.entries(selectableCategories).map(([key, label]) => (
                 <option key={key} value={key}>
                   {label}
                 </option>
               ))}
               {/* If editing an item whose category is legacy/no longer offered, keep it visible */}
-              {editingItem && !(editingItem.category in SELECTABLE_INVENTORY_CATEGORIES) && (
+              {editingItem && !(editingItem.category in selectableCategories) && (
                 <option value={editingItem.category}>
                   {(INVENTORY_CATEGORIES as Record<string, string>)[editingItem.category] || editingItem.category}
                 </option>
@@ -348,6 +421,7 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
                         const meta = allCustomItems.find(
                           (ci) => ci.category === formData.category && ci.itemName.trim().toLowerCase() === item.trim().toLowerCase()
                         );
+                        const bengali = meta?.itemNameBengali || BUILT_IN_ITEM_BENGALI[item];
                         return (
                           <div
                             key={item}
@@ -360,21 +434,23 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
                               formData.itemName === item ? 'bg-blue-100 font-medium' : ''
                             }`}
                           >
-                            {meta?.emoji ? `${meta.emoji} ` : ''}{item}{meta?.itemNameBengali ? ` (${meta.itemNameBengali})` : ''}
+                            {meta?.emoji ? `${meta.emoji} ` : ''}{item}{bengali ? ` (${bengali})` : ''}
                           </div>
                         );
                       })
                     )}
-                    <div
-                      onClick={() => {
-                        setFormData({ ...formData, customItem: true, itemName: '' });
-                        setSearchQuery('');
-                        setIsDropdownOpen(false);
-                      }}
-                      className="px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors border-t border-gray-200 text-blue-600 font-medium"
-                    >
-                      + Add Custom Item
-                    </div>
+                    {canCreateNewItems && (
+                      <div
+                        onClick={() => {
+                          setFormData({ ...formData, customItem: true, itemName: '' });
+                          setSearchQuery('');
+                          setIsDropdownOpen(false);
+                        }}
+                        className="px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors border-t border-gray-200 text-blue-600 font-medium"
+                      >
+                        + Add Custom Item
+                      </div>
+                    )}
                   </div>
                 )}
                 
@@ -417,39 +493,231 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Quantity</label>
-              <input
-                type="number"
-                step="0.01"
-                value={formData.quantity}
-                onChange={(e) =>
-                  setFormData({ ...formData, quantity: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                required
-              />
+          {isBeverage ? (
+            <div className="space-y-3 bg-sky-50 border-2 border-sky-200 rounded-lg p-4">
+              <p className="text-sm font-semibold text-sky-900">Packaging</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, packageType: 'pieces' })}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
+                    formData.packageType === 'pieces' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
+                  }`}
+                >
+                  Pieces
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, packageType: 'carton' })}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
+                    formData.packageType === 'carton' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
+                  }`}
+                >
+                  Carton
+                </button>
+              </div>
+
+              {formData.packageType === 'carton' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-sky-900 mb-1">Number of Cartons</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={formData.cartonCount}
+                      onChange={(e) => setFormData({ ...formData, cartonCount: e.target.value })}
+                      className="w-full px-3 py-2 border border-sky-300 rounded-lg"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-sky-900 mb-1">Pieces per Carton</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={formData.piecesPerCarton}
+                      onChange={(e) => setFormData({ ...formData, piecesPerCarton: e.target.value })}
+                      className="w-full px-3 py-2 border border-sky-300 rounded-lg"
+                      required
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-sky-900 mb-1">Number of Pieces</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={formData.pieceCount}
+                    onChange={(e) => setFormData({ ...formData, pieceCount: e.target.value })}
+                    className="w-full px-3 py-2 border border-sky-300 rounded-lg"
+                    required
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs text-sky-900 mb-1">Volume per Piece</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="1"
+                    value={formData.volumeMl}
+                    onChange={(e) => setFormData({ ...formData, volumeMl: e.target.value })}
+                    placeholder="e.g. 750"
+                    className="flex-1 px-3 py-2 border border-sky-300 rounded-lg"
+                  />
+                  <select
+                    value={formData.volumeUnit}
+                    onChange={(e) => setFormData({ ...formData, volumeUnit: e.target.value as 'mL' | 'L' })}
+                    className="px-3 py-2 border border-sky-300 rounded-lg bg-white"
+                  >
+                    <option value="mL">mL</option>
+                    <option value="L">L</option>
+                  </select>
+                </div>
+              </div>
+
+              {beverageTotalPieces > 0 && (
+                <p className="text-sm text-sky-800 font-medium">
+                  Total: {beverageTotalPieces} pcs{formData.volumeMl ? ` × ${formData.volumeMl}${formData.volumeUnit}` : ''}
+                </p>
+              )}
             </div>
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Unit</label>
-              <select
-                value={formData.unit}
-                onChange={(e) =>
-                  setFormData({ ...formData, unit: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                required
-              >
-                <option value="kg">kg</option>
-                <option value="g">g</option>
-                <option value="L">L</option>
-                <option value="mL">mL</option>
-                <option value="pcs">pcs</option>
-                <option value="units">units</option>
-              </select>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-gray-700">Quantity</label>
+                  {(formData.unit === 'pcs' || formData.unit === 'units') && (
+                    <button
+                      type="button"
+                      onClick={() => setIsBundleMode(!isBundleMode)}
+                      className="text-xs text-orange-600 hover:text-orange-700 font-medium"
+                    >
+                      {isBundleMode ? 'Loose pieces' : 'Bundle/pack?'}
+                    </button>
+                  )}
+                </div>
+                {isBundlePurchase ? (
+                  // e.g. 1 bundle of 50 tissues, a bag of 20 foil sheets - same
+                  // "N containers x M pieces each" idea as the beverage carton UI.
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        step="1"
+                        value={formData.cartonCount}
+                        onChange={(e) => setFormData({ ...formData, cartonCount: e.target.value })}
+                        placeholder="Bundles"
+                        title="Number of bundles"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        required
+                      />
+                      <input
+                        type="number"
+                        step="1"
+                        value={formData.piecesPerCarton}
+                        onChange={(e) => setFormData({ ...formData, piecesPerCarton: e.target.value })}
+                        placeholder="Pcs/bundle"
+                        title="Pieces per bundle"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        required
+                      />
+                    </div>
+                    {bundleTotalPieces > 0 && (
+                      <p className="text-xs text-gray-500 font-medium">Total: {bundleTotalPieces} pcs</p>
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.quantity}
+                    onChange={(e) =>
+                      setFormData({ ...formData, quantity: e.target.value })
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    required
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Unit</label>
+                <select
+                  value={formData.unit}
+                  onChange={(e) => {
+                    const u = e.target.value;
+                    if (u !== 'pcs' && u !== 'units') setIsBundleMode(false);
+                    setFormData({ ...formData, unit: u });
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                >
+                  <option value="kg">kg</option>
+                  <option value="g">g</option>
+                  <option value="L">L</option>
+                  <option value="mL">mL</option>
+                  <option value="pcs">pcs</option>
+                  <option value="units">units</option>
+                </select>
+              </div>
             </div>
-          </div>
+          )}
+
+          {!isBeverage && (formData.unit === 'pcs' || formData.unit === 'units') && (
+            <div>
+              {!showWeightField ? (
+                <button
+                  type="button"
+                  onClick={() => setShowWeightField(true)}
+                  className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+                >
+                  + Add weight per {formData.unit === 'pcs' ? 'piece' : 'unit'} (optional)
+                </button>
+              ) : (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Weight per {formData.unit === 'pcs' ? 'piece' : 'unit'}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => { setShowWeightField(false); setWeightPerUnit(''); }}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={weightPerUnit}
+                      onChange={(e) => setWeightPerUnit(e.target.value)}
+                      placeholder="e.g. 200"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <select
+                      value={weightUnit}
+                      onChange={(e) => setWeightUnit(e.target.value as 'g' | 'kg')}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
+                    >
+                      <option value="g">g</option>
+                      <option value="kg">kg</option>
+                    </select>
+                  </div>
+                  {weightPerUnit && parseFloat(formData.quantity) > 0 && (
+                    <p className="text-xs text-gray-500 mt-1.5">
+                      Total: {formData.quantity} {formData.unit} × {weightPerUnit}{weightUnit} ={' '}
+                      {(((parseFloat(weightPerUnit) || 0) * (weightUnit === 'kg' ? 1000 : 1) * (parseFloat(formData.quantity) || 0)) / 1000).toFixed(2)} kg
+                    </p>
+                  )}
+                  <p className="text-[11px] text-gray-400 mt-1.5">Skip this if the item doesn't really have a meaningful weight (e.g. tissues, cutlery).</p>
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm text-gray-700 mb-1">
@@ -542,11 +810,11 @@ export function InventoryForm({ selectedDate, editingItem, onSubmit, onClose, on
             </div>
           )}
 
-          {formData.quantity && formData.totalCost && (
+          {((isBeverage ? beverageTotalPieces : parseFloat(formData.quantity)) > 0) && formData.totalCost && (
             <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-sm text-gray-600">Cost per Unit</p>
+              <p className="text-sm text-gray-600">Cost per {isBeverage ? 'Piece' : 'Unit'}</p>
               <p className="text-gray-900">
-                ₹{(parseFloat(formData.totalCost) / parseFloat(formData.quantity)).toFixed(2)}
+                ₹{(parseFloat(formData.totalCost) / (isBeverage ? beverageTotalPieces : parseFloat(formData.quantity))).toFixed(2)}
               </p>
             </div>
           )}

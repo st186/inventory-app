@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText, Bug } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { DatePicker } from './DatePicker';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { formatDateTimeIST, formatDateIST } from '../utils/timezone';
+import { getAssignedProductionHouseIds, getAssignedStoreIds } from '../utils/entityAccess';
 
 type DataCaptureProps = {
   context: InventoryContextType;
@@ -51,12 +52,71 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const [loading, setLoading] = useState(true);
   const [debugInfo, setDebugInfo] = useState<any>(null);
 
-  // Determine the effective store ID for filtering
-  const effectiveStoreId = selectedStoreId || context.user?.storeId;
+  const selectedConcreteStoreId = selectedStoreId && selectedStoreId !== 'all' ? selectedStoreId : null;
+  const isProductionIncharge = context.user?.designation === 'production_incharge';
+  const isStoreIncharge = context.user?.designation === 'store_incharge';
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const isAudit = context.user?.role === 'audit';
+  const isOperationsManager = context.user?.role === 'manager' && !isProductionIncharge && !isStoreIncharge;
+
+  // Production incharges can have `user.storeId` set to their production-house id, not a
+  // store id. Resolve the stores they supply first; otherwise the Expense/Sales/Stock
+  // Request columns compare store rows against a production-house id and show "Not logged".
+  const scopedStoreIds = useMemo<string[] | null>(() => {
+    if (selectedConcreteStoreId) return [selectedConcreteStoreId];
+
+    if (selectedProductionHouseId) {
+      return (context.stores || [])
+        .filter(store => store.productionHouseId === selectedProductionHouseId)
+        .map(store => store.id);
+    }
+
+    if (!context.user) return [];
+    if (isClusterHead || isAudit || isOperationsManager) return null;
+
+    const assigned = getAssignedStoreIds(context.user, context.stores || []);
+    return assigned.length > 0 ? assigned : [];
+  }, [selectedConcreteStoreId, selectedProductionHouseId, context.user, context.stores, isClusterHead, isAudit, isOperationsManager]);
+
+  const scopedStoreIdSet = useMemo(() => scopedStoreIds ? new Set(scopedStoreIds) : null, [scopedStoreIds]);
+  const storeScopeKey = scopedStoreIds === null ? 'all' : scopedStoreIds.join('|');
+  const matchesStoreScope = (storeId?: string | null) => !scopedStoreIdSet || (!!storeId && scopedStoreIdSet.has(storeId));
+
+  const scopedProductionHouseIds = useMemo<string[] | null>(() => {
+    if (selectedProductionHouseId) return [selectedProductionHouseId];
+
+    if (selectedConcreteStoreId) {
+      const store = context.stores?.find(s => s.id === selectedConcreteStoreId);
+      return store?.productionHouseId ? [store.productionHouseId] : [];
+    }
+
+    if (!context.user) return [];
+    if (isClusterHead || isAudit || isOperationsManager) return null;
+
+    if (isProductionIncharge) {
+      const assigned = getAssignedProductionHouseIds(context.user, context.productionHouses || []);
+      return assigned.length > 0 ? assigned : [];
+    }
+
+    const assignedStores = getAssignedStoreIds(context.user, context.stores || []);
+    const productionHouseIds = assignedStores
+      .map(storeId => context.stores?.find(s => s.id === storeId)?.productionHouseId)
+      .filter((id): id is string => !!id);
+    return Array.from(new Set(productionHouseIds));
+  }, [selectedProductionHouseId, selectedConcreteStoreId, context.user, context.stores, context.productionHouses, isClusterHead, isAudit, isOperationsManager, isProductionIncharge]);
+
+  const productionHouseScopeKey = scopedProductionHouseIds === null ? 'all' : scopedProductionHouseIds.join('|');
+  const matchesProductionScope = (prod: any) => {
+    if (!scopedProductionHouseIds) return true;
+    const productionHouseId = prod.productionHouseId
+      || context.stores?.find(s => s.id === prod.storeId)?.productionHouseId
+      || prod.storeId;
+    return !!productionHouseId && scopedProductionHouseIds.includes(productionHouseId);
+  };
 
   useEffect(() => {
     generateDailyLogs();
-  }, [context.inventory, context.salesData, context.productionData, context.productionRequests, dateRange, customStartDate, customEndDate, effectiveStoreId]);
+  }, [context.inventory, context.salesData, context.productionData, context.productionRequests, dateRange, customStartDate, customEndDate, storeScopeKey, productionHouseScopeKey]);
 
   const getDateRangeDates = (): { startDate: Date; endDate: Date } => {
     const today = new Date();
@@ -155,8 +215,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
     // Group inventory by date and manager
     const inventoryByDate = new Map<string, any[]>();
     // Filter inventory by store FIRST
-    const filteredInventory = effectiveStoreId 
-      ? context.inventory.filter(inv => inv.storeId === effectiveStoreId)
+    const filteredInventory = scopedStoreIds !== null
+      ? context.inventory.filter(inv => matchesStoreScope(inv.storeId))
       : context.inventory;
     
     filteredInventory.forEach(inv => {
@@ -220,8 +280,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
     // Process sales data
     // Filter sales by store FIRST
-    const filteredSalesData = effectiveStoreId
-      ? context.salesData.filter(sale => sale.storeId === effectiveStoreId)
+    const filteredSalesData = scopedStoreIds !== null
+      ? context.salesData.filter(sale => matchesStoreScope(sale.storeId))
       : context.salesData;
     
     filteredSalesData.forEach(sale => {
@@ -275,7 +335,9 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
     });
 
     // Process production data
-    const filteredProductionData = context.productionData;
+    const filteredProductionData = scopedProductionHouseIds !== null
+      ? context.productionData.filter(prod => matchesProductionScope(prod))
+      : context.productionData;
     
     filteredProductionData.forEach(prod => {
       if (dateMap.has(prod.date)) {
@@ -328,14 +390,15 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
     // Process stock request data
     // Filter production requests by store FIRST (these are the "stock requests" from store perspective)
-    const filteredStockRequests = effectiveStoreId
-      ? context.productionRequests.filter(req => req.storeId === effectiveStoreId)
+    const filteredStockRequests = scopedStoreIds !== null
+      ? context.productionRequests.filter(req => matchesStoreScope(req.storeId))
       : context.productionRequests;
     
     console.log('📦 DataCapture - Stock Requests Debug:', {
       totalStockRequests: context.productionRequests.length,
       filteredStockRequests: filteredStockRequests.length,
-      effectiveStoreId,
+      storeScopeKey,
+      productionHouseScopeKey,
       stockRequestDates: filteredStockRequests.map(r => r.requestDate),
       dateMapKeys: Array.from(dateMap.keys()),
       stockRequestIds: filteredStockRequests.map(r => r.id),
@@ -398,17 +461,20 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       }
     });
 
-    // Update status based on ONLY inventory, sales, and stock requests (no production)
+    // Update status based on inventory, sales, and production.
+    // Inventory+Sales are the store side's responsibility; Production is the
+    // production incharge's. A production incharge never logs Inventory/Sales, so
+    // without accounting for Production here every one of their days showed as
+    // "Missing" even on days they'd fully logged their own production - despite
+    // Production being one of the columns this same table displays.
     dateMap.forEach((log) => {
       const hasInventory = log.inventoryLogged;
       const hasSales = log.salesLogged;
-      
-      // Complete = Both Inventory AND Sales logged
-      // Partial = At least one logged
-      // Missing = None logged
-      if (hasInventory && hasSales) {
+      const hasProduction = log.productionLogged;
+
+      if ((hasInventory && hasSales) || (hasProduction && !hasInventory && !hasSales)) {
         log.status = 'complete';
-      } else if (hasInventory || hasSales) {
+      } else if (hasInventory || hasSales || hasProduction) {
         log.status = 'partial';
       } else {
         log.status = 'missing';
@@ -528,12 +594,19 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
+          <FileText className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Data Capture Monitor</h1>
+          <p className="text-sm sm:text-base text-gray-500">Track daily data logging and manager performance</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h2 className="text-gray-900 mb-1">📊 Data Capture Monitor</h2>
-            <p className="text-sm text-gray-600">Track daily data logging and manager performance</p>
-          </div>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Select Period</h2>
 
           {/* Date Range Selector */}
           <div className="flex flex-wrap gap-2">
@@ -621,51 +694,125 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
       {/* Period Statistics */}
       {periodStats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Calendar className="w-5 h-5 text-blue-600" />
-              <p className="text-sm text-gray-600">Total Days</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <Calendar className="w-5 h-5 text-blue-100" />
+              <div className="text-xs uppercase tracking-wide text-blue-100">Total Days</div>
             </div>
-            <p className="text-2xl text-gray-900">{periodStats.totalDays}</p>
+            <div className="text-2xl font-semibold">{periodStats.totalDays}</div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle className="w-5 h-5 text-green-600" />
-              <p className="text-sm text-gray-600">Completion Rate</p>
+          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <CheckCircle className="w-5 h-5 text-emerald-100" />
+              <div className="text-xs uppercase tracking-wide text-emerald-100">Completion Rate</div>
             </div>
-            <p className="text-2xl text-gray-900">{periodStats.completionRate.toFixed(1)}%</p>
+            <div className="text-2xl font-semibold">{periodStats.completionRate.toFixed(1)}%</div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Clock className="w-5 h-5 text-orange-600" />
-              <p className="text-sm text-gray-600">On-Time Rate</p>
+          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="w-5 h-5 text-amber-100" />
+              <div className="text-xs uppercase tracking-wide text-amber-100">On-Time Rate</div>
             </div>
-            <p className="text-2xl text-gray-900">{periodStats.onTimeRate.toFixed(1)}%</p>
+            <div className="text-2xl font-semibold">{periodStats.onTimeRate.toFixed(1)}%</div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingDown className="w-5 h-5 text-red-600" />
-              <p className="text-sm text-gray-600">Total Discrepancy</p>
+          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingDown className="w-5 h-5 text-red-100" />
+              <div className="text-xs uppercase tracking-wide text-red-100">Total Discrepancy</div>
             </div>
-            <p className="text-2xl text-gray-900">₹{periodStats.totalDiscrepancy.toFixed(2)}</p>
+            <div className="text-2xl font-semibold">₹{periodStats.totalDiscrepancy.toFixed(2)}</div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-orange-600" />
-              <p className="text-sm text-gray-600">Avg Discrepancy</p>
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingUp className="w-5 h-5 text-orange-100" />
+              <div className="text-xs uppercase tracking-wide text-orange-100">Avg Discrepancy</div>
             </div>
-            <p className="text-2xl text-gray-900">₹{periodStats.avgDiscrepancy.toFixed(2)}</p>
+            <div className="text-2xl font-semibold">₹{periodStats.avgDiscrepancy.toFixed(2)}</div>
           </div>
         </div>
       )}
 
-      {/* Daily Logs Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      {/* Daily Logs - stacked cards on mobile (the 7-column table doesn't fit a phone
+          screen even with horizontal scroll - nothing signals there's more to scroll to,
+          so it just looked cut off), a table on larger screens. */}
+      <div className="sm:hidden space-y-3">
+        {loading ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
+            Loading data...
+          </div>
+        ) : dailyLogs.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
+            No data for selected period
+          </div>
+        ) : (
+          dailyLogs.map((log) => (
+            <div key={log.date} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  {log.lateEntry && (
+                    <span title="Late Entry">
+                      <AlertTriangle className="w-4 h-4 text-orange-500" />
+                    </span>
+                  )}
+                  <span className="text-sm font-medium text-gray-900">{formatDate(log.date)}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {getStatusIcon(log.status)}
+                  <span className={`px-2 py-0.5 text-xs rounded-full ${getStatusColor(log.status)}`}>
+                    {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Expense</span>
+                  {log.inventoryLogged ? (
+                    <span className="text-gray-900 text-right">{log.inventoryCount} items</span>
+                  ) : (
+                    <span className="text-gray-400">Not logged</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Sales</span>
+                  <span className={log.salesLogged ? 'text-gray-900' : 'text-gray-400'}>
+                    {log.salesLogged ? '✓ Logged' : 'Not logged'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Production</span>
+                  <span className={log.productionLogged ? 'text-gray-900' : 'text-gray-400'}>
+                    {log.productionLogged ? '✓ Logged' : 'Not logged'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Stock Requests</span>
+                  <span className={log.stockRequestLogged ? 'text-gray-900' : 'text-gray-400'}>
+                    {log.stockRequestLogged ? '✓ Logged' : 'Not logged'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Cash Discrepancy</span>
+                  {log.salesLogged ? (
+                    <span className={log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}>
+                      ₹{log.cashDiscrepancy.toFixed(2)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">-</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="hidden sm:block bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">

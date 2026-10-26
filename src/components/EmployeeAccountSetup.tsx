@@ -126,16 +126,16 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-              <UserPlus className="w-5 h-5 text-orange-600" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 shadow-lg shadow-orange-500/30 flex items-center justify-center">
+              <UserPlus className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-xl">Prepare Employee Login Credentials</h2>
-              <p className="text-sm text-gray-600">Generate signup credentials for {permanentEmployees.length} permanent employees</p>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Prepare Employee Login Credentials</h2>
+              <p className="text-sm text-gray-500">Generate signup credentials for {permanentEmployees.length} permanent employees</p>
             </div>
           </div>
           <button
@@ -151,7 +151,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
           {results ? (
             <div className="space-y-4">
               {/* Important Message */}
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                 <h3 className="flex items-center gap-2 text-yellow-800 mb-2">
                   <AlertCircle className="w-5 h-5" />
                   <span className="font-semibold">Important: Employees Must Complete Signup</span>
@@ -166,19 +166,19 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
 
               {/* Results Summary */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-blue-700">
+                <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+                  <div className="flex items-center gap-2 text-blue-100">
                     <Check className="w-5 h-5" />
-                    <span>Accounts Prepared</span>
+                    <span className="text-xs uppercase tracking-wide">Accounts Prepared</span>
                   </div>
-                  <div className="text-2xl mt-2">{results.deleted}</div>
+                  <div className="text-2xl font-semibold mt-2">{results.deleted}</div>
                 </div>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-red-700">
+                <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+                  <div className="flex items-center gap-2 text-red-100">
                     <AlertCircle className="w-5 h-5" />
-                    <span>Failed</span>
+                    <span className="text-xs uppercase tracking-wide">Failed</span>
                   </div>
-                  <div className="text-2xl mt-2">{results.failed}</div>
+                  <div className="text-2xl font-semibold mt-2">{results.failed}</div>
                 </div>
               </div>
 
@@ -187,7 +187,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                 {results.details.map((detail, index) => (
                   <div
                     key={index}
-                    className={`p-3 rounded-lg border ${
+                    className={`p-3 rounded-xl border ${
                       detail.status === 'created'
                         ? 'bg-green-50 border-green-200'
                         : detail.status === 'updated'
@@ -207,7 +207,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                 ))}
               </div>
 
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                 <p className="text-sm text-yellow-800">
                   ✓ All accounts have been processed. Download the credentials CSV to share login information with employees.
                 </p>
@@ -215,7 +215,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <p className="text-sm text-blue-800">
                   Review and modify the email addresses and passwords below before creating accounts. Default passwords follow the pattern: Bhandar@{'{EmployeeID}'}
                 </p>
@@ -223,14 +223,14 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
 
               <div className="space-y-3">
                 {permanentEmployees.map((emp) => (
-                  <div key={emp.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <div key={emp.id} className="border border-gray-200 rounded-xl p-4 bg-gray-50">
                     <div className="flex items-center justify-between mb-3">
                       <div>
-                        <div className="text-sm">{emp.name}</div>
-                        <div className="text-xs text-gray-600">ID: {emp.employeeId}</div>
+                        <div className="text-sm font-medium text-gray-900">{emp.name}</div>
+                        <div className="text-xs text-gray-500">ID: {emp.employeeId}</div>
                       </div>
                       {emp.email && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg">
                           Has Account
                         </span>
                       )}
@@ -245,7 +245,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                           type="email"
                           value={credentials[emp.id]?.email || ''}
                           onChange={(e) => handleCredentialChange(emp.id, 'email', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                           placeholder="employee@bhandar.com"
                         />
                       </div>
@@ -258,7 +258,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                           type="text"
                           value={credentials[emp.id]?.password || ''}
                           onChange={(e) => handleCredentialChange(emp.id, 'password', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                           placeholder="Password123"
                         />
                       </div>
@@ -275,14 +275,14 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
           <div className="flex items-center justify-between">
             <button
               onClick={downloadCredentials}
-              className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
             >
               Download Credentials CSV
             </button>
             <div className="flex gap-3">
               <button
                 onClick={onClose}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
               >
                 Close
               </button>
@@ -290,7 +290,7 @@ export function EmployeeAccountSetup({ onClose, employees }: EmployeeAccountSetu
                 <button
                   onClick={createAccounts}
                   disabled={processing}
-                  className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-6 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg hover:shadow-orange-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {processing ? (
                     <>

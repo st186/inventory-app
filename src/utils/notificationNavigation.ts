@@ -11,10 +11,22 @@ export interface NotificationNavigationTarget {
 const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   inventory_logged: { view: 'inventory' },
   sales_logged: { view: 'sales' },
+  sales_pending: { view: 'sales' },
+  sales_approved: { view: 'sales' },
+  sales_rejected: { view: 'sales' },
   discrepancy_request: { view: 'sales' },
   discrepancy_approved: { view: 'sales' },
   discrepancy_rejected: { view: 'sales' },
-  production_pending: { view: 'production' },
+  cash_topup_request: { view: 'sales' },
+  cash_topup_approved: { view: 'sales' },
+  cash_topup_rejected: { view: 'sales' },
+  paytm_recalibration_reminder: { view: 'sales' },
+  pos_sync_stock_failed: { view: 'sales' },
+  low_stock_alert: { view: 'stock-requests' },
+  loan_requested: { view: 'sales' },
+  loan_approved: { view: 'sales' },
+  loan_rejected: { view: 'sales' },
+  production_pending: { view: 'production', tab: 'approvals' },
   production_approved: { view: 'production' },
   timesheet_pending: { view: 'attendance', tab: 'approve-timesheet' },
   timesheet_approved: { view: 'attendance', tab: 'timesheet' },
@@ -23,11 +35,25 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   leave_approved: { view: 'attendance', tab: 'leave' },
   leave_rejected: { view: 'attendance', tab: 'leave' },
   attendance_reminder: { view: 'attendance', tab: 'timesheet' },
-  stock_request_new: { view: 'stock-requests' },
+  stock_request_new: { view: 'stock-requests', tab: 'pending-fulfillment' },
+  stock_request_fulfilled: { view: 'stock-requests' },
+  stock_request_partial: { view: 'stock-requests' },
+  stock_request_cancelled: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' },
   stock_recalibration: { view: 'analytics' },
-  fulfillment_reminder: { view: 'stock-requests' },
+  fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' },
   data_entry_reminder: { view: 'inventory' },
+  rider_called: { view: 'riders' },
+  rider_ready: { view: 'riders' },
+  rider_on_the_way: { view: 'riders' },
+  rider_arrived: { view: 'riders' },
+  rider_picked_up: { view: 'riders' },
+  rider_delivered: { view: 'riders' },
+  rider_cancelled: { view: 'riders' },
+  rider_running_late: { view: 'riders' },
+  rider_fare_proposed: { view: 'riders' },
+  rider_fare_decided: { view: 'riders' },
+  rider_receipt: { view: 'riders' },
 };
 
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {
@@ -37,7 +63,7 @@ export function getNavigationTarget(data: any): NotificationNavigationTarget | n
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {
-    return { view: 'stock-requests', highlightRequestId: data.relatedId };
+    return { view: 'stock-requests', tab: 'pending-fulfillment', highlightRequestId: data.relatedId };
   }
 
   const mapped = NOTIFICATION_VIEW_MAP[data.type];

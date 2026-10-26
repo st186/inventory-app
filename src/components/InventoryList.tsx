@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
-import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES } from '../utils/inventoryData';
+import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, BUILT_IN_ITEM_BENGALI } from '../utils/inventoryData';
 import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle, Banknote, Smartphone, Coins } from 'lucide-react';
 import * as api from '../utils/api';
 
@@ -65,7 +65,7 @@ function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }
       <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
         {icon}
       </div>
-      <h3 className="text-foreground">{title}</h3>
+      <h3 className="text-foreground font-bold tracking-tight">{title}</h3>
     </div>
   );
 }
@@ -172,6 +172,7 @@ export function InventoryList({
                     <div className="space-y-2">
                       {items.map((item) => {
                         const meta = getItemMeta(item.itemName, item.category);
+                        const bengali = meta?.itemNameBengali || BUILT_IN_ITEM_BENGALI[item.itemName];
                         const isDuplicate = duplicateIds.has(item.id);
                         return (
                           <div
@@ -190,7 +191,7 @@ export function InventoryList({
                               <div className="flex items-center gap-2">
                                 <p className="text-sm text-foreground truncate">
                                   {item.itemName}
-                                  {meta?.itemNameBengali ? ` (${meta.itemNameBengali})` : ''}
+                                  {bengali ? ` (${bengali})` : ''}
                                 </p>
                                 {isDuplicate && (
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-200 text-amber-800 text-[10px] rounded-full flex-shrink-0">
@@ -214,7 +215,7 @@ export function InventoryList({
                             <div className="flex items-center gap-2 flex-shrink-0">
                               <span className="text-sm text-primary">₹{item.totalCost.toLocaleString()}</span>
                               {isManager && (
-                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="flex gap-1">
                                   <button
                                     onClick={() => onEditInventory(item)}
                                     className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
@@ -288,7 +289,7 @@ export function InventoryList({
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-sm text-primary">₹{item.amount.toLocaleString()}</span>
                     {isManager && (
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1">
                         <button
                           onClick={() => onEditOverhead(item)}
                           className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
@@ -352,7 +353,7 @@ export function InventoryList({
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-sm text-primary">₹{item.amount.toLocaleString()}</span>
                     {isManager && (
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1">
                         <button
                           onClick={() => onEditFixedCost(item)}
                           className="p-1.5 hover:bg-secondary rounded-lg text-primary transition-colors"
@@ -381,7 +382,7 @@ export function InventoryList({
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-card rounded-2xl max-w-md w-full p-6">
-            <h3 className="text-foreground mb-3">Delete this entry?</h3>
+            <h3 className="text-foreground font-bold mb-3">Delete this entry?</h3>
             <p className="text-muted-foreground mb-6 text-sm">
               This {deleteConfirm.type === 'inventory' ? 'inventory item' : deleteConfirm.type === 'overhead' ? 'overhead cost' : 'fixed cost'} will be removed. This can't be undone.
             </p>

@@ -24,26 +24,27 @@ export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
       'production_incharge': 'Production Incharge',
       'store_ops': 'Store Operations',
       'production_ops': 'Production Operations',
+      'rider': 'Rider',
     };
     
     return designationMap[designation] || designation;
   };
   
   return (
-    <div className="mb-4 last:mb-0 border border-gray-200 rounded-lg bg-white overflow-hidden">
+    <div className="mb-4 last:mb-0 border border-gray-200 rounded-2xl bg-white overflow-hidden shadow-sm">
       {/* Manager Header */}
-      <div className="bg-gradient-to-r from-green-50 to-green-100 p-3 sm:p-4">
+      <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 p-3 sm:p-4">
         <div className="flex items-center gap-2 sm:gap-3">
-          <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
-          <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
+          <ChevronRight className="w-5 h-5 text-white/70 flex-shrink-0" />
+          <div className="w-10 h-10 bg-white/20 border border-white/30 rounded-full flex items-center justify-center text-white flex-shrink-0">
             <UserCog className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <h4 className="text-gray-900 truncate">{manager.name}</h4>
-            <span className="inline-block mt-1 px-2 py-1 bg-green-600 text-white text-xs rounded max-w-full truncate align-top">
+            <h4 className="text-white font-bold truncate">{manager.name}</h4>
+            <span className="inline-block mt-1 px-2 py-1 bg-white/20 border border-white/30 text-white text-xs rounded max-w-full truncate align-top">
               {formatDesignation(manager.designation)}
             </span>
-            <div className="text-sm text-gray-600 truncate mt-1">{manager.employeeId} • {manager.email}</div>
+            <div className="text-sm text-emerald-50 truncate mt-1">{manager.employeeId} • {manager.email}</div>
           </div>
         </div>
       </div>
@@ -66,7 +67,7 @@ export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
               <p className="text-xs text-gray-500 mb-2">Direct Reports:</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {manager.employees.map((employee) => (
-                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-rose-50 rounded-lg border border-rose-100">
+                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-rose-50 rounded-xl border border-rose-100">
                     <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
                     <div className="w-8 h-8 bg-rose-600 rounded-full flex items-center justify-center text-white text-sm flex-shrink-0">
                       <User className="w-4 h-4" />

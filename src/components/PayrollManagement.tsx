@@ -4,6 +4,13 @@ import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
 import { PaymentHistoryModal } from './PaymentHistoryModal';
+import { generatePayslip } from '../utils/payslip';
+import { employeeBelongsToStore } from '../utils/entityAccess';
+
+interface SalaryComponent {
+  label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
+  amount: number; // fixed monthly amount for this component
+}
 
 interface Employee {
   id: string;
@@ -12,8 +19,16 @@ interface Employee {
   phone: string;
   type: 'contract' | 'fulltime';
   role?: string;
+  // Was only ever accessed via `(emp as any).storeId` before - declaring it properly here
+  // so employeeBelongsToStore (entityAccess.ts) can be called without a cast.
+  storeId?: string | null;
+  inchargeId?: string;
   dailyRate?: number;
   createdAt: string;
+  // Fixed monthly salary breakdown - drives the payslip's itemized breakdown instead of a
+  // single lump "Basic Salary" line. The variable component isn't included here since it's
+  // entered fresh per payout (see Payout.variablePay), not fixed month to month.
+  salaryStructure?: SalaryComponent[];
 }
 
 interface Payout {
@@ -24,6 +39,10 @@ interface Payout {
   date: string;
   storeId?: string; // Optional for backward compatibility with existing data
   createdAt: string;
+  forMonth?: string; // Format "YYYY-MM" - which month this payout covers, for late/backlogged salaries
+  transactionId?: string; // Bank/UPI reference for this digital payment, kept as a paper trail
+  variablePay?: number; // This month's variable/incentive pay, shown as its own payslip line
+  variablePayLabel?: string; // defaults to "Variable Pay" if omitted
 }
 
 interface OverheadItem {
@@ -45,261 +64,25 @@ interface PayrollManagementProps {
   userName?: string;
   selectedStoreId?: string | null;
   isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | null;
+  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
 }
-
-// Helper function to generate payslip PDF
-const generatePayslip = (
-  employeeName: string,
-  employeeId: string,
-  month: string,
-  year: string,
-  payouts: Payout[],
-  employeeType: string,
-  personalExpenses: number = 0
-) => {
-  const regularPayouts = payouts.reduce((sum, p) => sum + p.amount, 0);
-  // personalExpenses are salary-advance cash already given to the employee — deduct from this month's net pay
-  const totalAmount = regularPayouts - personalExpenses;
-  const grossSalary = totalAmount;
-  
-  // Create a simple HTML content for the payslip
-  const payslipContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Payslip - ${month} ${year}</title>
-      <style>
-        body {
-          font-family: 'Arial', sans-serif;
-          margin: 0;
-          padding: 20px;
-          color: #333;
-        }
-        .payslip-container {
-          max-width: 800px;
-          margin: 0 auto;
-          border: 2px solid #ea580c;
-          padding: 30px;
-          background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
-        }
-        .header {
-          text-align: center;
-          border-bottom: 3px solid #ea580c;
-          padding-bottom: 20px;
-          margin-bottom: 30px;
-        }
-        .company-name {
-          font-size: 32px;
-          font-weight: bold;
-          color: #ea580c;
-          margin-bottom: 5px;
-        }
-        .company-tagline {
-          font-size: 14px;
-          color: #666;
-          font-style: italic;
-        }
-        .payslip-title {
-          font-size: 24px;
-          color: #ea580c;
-          margin: 20px 0 10px 0;
-          font-weight: bold;
-        }
-        .payslip-period {
-          font-size: 16px;
-          color: #666;
-          margin-bottom: 20px;
-        }
-        .info-section {
-          display: table;
-          width: 100%;
-          margin-bottom: 30px;
-        }
-        .info-row {
-          display: table-row;
-        }
-        .info-label {
-          display: table-cell;
-          padding: 10px 0;
-          font-weight: bold;
-          color: #ea580c;
-          width: 40%;
-        }
-        .info-value {
-          display: table-cell;
-          padding: 10px 0;
-          color: #333;
-        }
-        .payment-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 20px 0;
-          background: white;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .payment-table th {
-          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
-          color: white;
-          padding: 12px;
-          text-align: left;
-          font-weight: bold;
-        }
-        .payment-table td {
-          padding: 12px;
-          border-bottom: 1px solid #e5e7eb;
-        }
-        .payment-table tr:last-child td {
-          border-bottom: none;
-        }
-        .payment-table tr:nth-child(even) {
-          background: #fff7ed;
-        }
-        .total-section {
-          background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
-          color: white;
-          padding: 20px;
-          margin-top: 30px;
-          border-radius: 8px;
-          text-align: center;
-        }
-        .total-label {
-          font-size: 18px;
-          margin-bottom: 10px;
-        }
-        .total-amount {
-          font-size: 36px;
-          font-weight: bold;
-        }
-        .footer {
-          margin-top: 40px;
-          padding-top: 20px;
-          border-top: 2px solid #ea580c;
-          text-align: center;
-          font-size: 12px;
-          color: #666;
-        }
-        .signature-section {
-          margin-top: 60px;
-          display: flex;
-          justify-content: space-between;
-        }
-        .signature-box {
-          text-align: center;
-          width: 45%;
-        }
-        .signature-line {
-          border-top: 2px solid #ea580c;
-          margin-top: 50px;
-          padding-top: 10px;
-          font-weight: bold;
-          color: #ea580c;
-        }
-        @media print {
-          body {
-            padding: 0;
-          }
-          .payslip-container {
-            border: none;
-            box-shadow: none;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="payslip-container">
-        <div class="header">
-          <div class="company-name">BHANDAR-IMS</div>
-          <div class="company-tagline">Food Business Inventory Management System</div>
-          <div class="payslip-title">SALARY SLIP</div>
-          <div class="payslip-period">For the Month of ${month} ${year}</div>
-        </div>
-        
-        <div class="info-section">
-          <div class="info-row">
-            <div class="info-label">Employee Name:</div>
-            <div class="info-value">${employeeName}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Employee ID:</div>
-            <div class="info-value">${employeeId}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Employee Type:</div>
-            <div class="info-value">${employeeType === 'fulltime' ? 'Permanent' : 'Contract'}</div>
-          </div>
-          <div class="info-row">
-            <div class="info-label">Payment Date:</div>
-            <div class="info-value">${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-          </div>
-        </div>
-
-        <table class="payment-table">
-          <thead>
-            <tr>
-              <th>Payment Date</th>
-              <th>Description</th>
-              <th style="text-align: right;">Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${payouts.map(payout => `
-              <tr>
-                <td>${new Date(payout.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                <td>Regular Payout</td>
-                <td style="text-align: right;">₹${payout.amount.toLocaleString('en-IN')}</td>
-              </tr>
-            `).join('')}
-            ${personalExpenses > 0 ? `
-              <tr>
-                <td>Various</td>
-                <td>Salary Advance Deduction</td>
-                <td style="text-align: right;">-₹${personalExpenses.toLocaleString('en-IN')}</td>
-              </tr>
-            ` : ''}
-          </tbody>
-        </table>
-
-        <div class="total-section">
-          <div class="total-label">Net Salary for ${month} ${year}</div>
-          <div class="total-amount">₹${totalAmount.toLocaleString('en-IN')}</div>
-        </div>
-
-        <div class="signature-section">
-          <div class="signature-box">
-            <div class="signature-line">Employee Signature</div>
-          </div>
-          <div class="signature-box">
-            <div class="signature-line">Authorized Signatory</div>
-          </div>
-        </div>
-
-        <div class="footer">
-          <p>This is a computer-generated payslip and does not require a signature.</p>
-          <p>© ${year} Bhandar-IMS. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  // Create a new window with the payslip content
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.write(payslipContent);
-    printWindow.document.close();
-    
-    // Wait for content to load then trigger print dialog
-    printWindow.onload = () => {
-      printWindow.print();
-    };
-  }
-};
 
 export function PayrollManagement({ userRole, selectedDate, userEmployeeId, userName, selectedStoreId, isIncharge = false, inchargeDesignation = null }: PayrollManagementProps) {
   const [activeTab, setActiveTab] = useState<'contract' | 'permanent' | 'my-payouts' | 'advances'>('contract');
   const [employees, setEmployees] = useState<Employee[]>([]);
+  // Archived (released) employees - fetched separately so their historical payouts can
+  // still be displayed correctly (name, role, etc.) after they leave. Never merged into
+  // `employees` itself - every employee-selection flow (who to pay, who to edit) must stay
+  // active-only; this is purely a lookup table for rendering past payout rows.
+  const [archivedEmployees, setArchivedEmployees] = useState<Employee[]>([]);
+  const employeesForDisplay = useMemo(() => [...employees, ...archivedEmployees], [employees, archivedEmployees]);
+  // For employeeBelongsToStore below - a production incharge/ops employee's own `storeId`
+  // field actually holds their production house's id, not a real store id (see
+  // entityAccess.ts). Without resolving that, Akash Dey (production_ops, storeId = his
+  // production house's id) silently vanished from Bunny Momos 1's Payroll view and its
+  // payout history the moment a specific store was selected - "no payment showing up"
+  // even though the payout record itself was always there.
+  const [stores, setStores] = useState<api.Store[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [salaryAdvances, setSalaryAdvances] = useState<any[]>([]);
   const [overheads, setOverheads] = useState<OverheadItem[]>([]);
@@ -377,7 +160,27 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [payoutData, setPayoutData] = useState({
     employeeIds: [] as string[],
     amount: '',
-    date: selectedDate
+    date: selectedDate,
+    periodType: 'month' as 'days' | 'month',
+    days: '',
+    // Only used when the employee has no dailyRate configured on their record (true
+    // for every current contract worker) - lets the rate be entered at payout time
+    // instead of silently defaulting to 0.
+    ratePerDay: '',
+    // Which month this payout covers - defaults to the payment date's own month, but
+    // can be set earlier for backlogged salaries (e.g. paid on the 5th of next month
+    // for the prior month's work). Format "YYYY-MM".
+    forMonth: selectedDate.slice(0, 7),
+    // Bank/UPI reference for this digital payment - kept on the payout record and shown
+    // on the payslip as proof of transfer.
+    transactionId: '',
+    // This month's variable/incentive pay - entered fresh each payout since it isn't the
+    // same every month, unlike the employee's fixed salaryStructure components.
+    variablePay: '',
+    // Which balance the money actually left. Only 'paytm' payouts are subtracted from a
+    // store's Online Cash (Paytm) reconciliation - 'bank' and 'cash' are real expenses
+    // but settled elsewhere, so they must not drain the Paytm figure.
+    paidFrom: 'paytm' as 'paytm' | 'bank' | 'cash',
   });
 
   // Edit payout modal state
@@ -388,58 +191,76 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [showAccountSetup, setShowAccountSetup] = useState(false);
 
   
-  // Filter employees and payouts by store and incharge permissions
-  const filteredEmployees = useMemo(() => {
-    let filtered = employees;
-    
-    // Apply store filter (include null/undefined storeIds for backward compatibility)
-    if (selectedStoreId) {
-      filtered = filtered.filter(emp => 
-        (emp as any).storeId === selectedStoreId || 
-        (emp as any).storeId === null || 
-        (emp as any).storeId === undefined
-      );
-    }
-    
-    // Apply incharge permissions
+  // Same store-match + incharge-permission predicate used for both lists below - pulled
+  // out once so the roster (active-only) and the payout-matching list (active + archived)
+  // can never drift apart on what counts as "in scope" the way they used to.
+  const matchesStoreAndIncharge = (emp: Employee) => {
+    // Also matches this store's linked production house - see entityAccess.ts's
+    // employeeBelongsToStore for why a production incharge/ops employee needs that extra
+    // check, not just an exact/null storeId match.
+    if (selectedStoreId && !employeeBelongsToStore(emp, selectedStoreId, stores)) return false;
+
     if (isIncharge && userEmployeeId) {
-      filtered = filtered.filter(emp => {
-        // For contract employees, incharge can see ALL contract employees
-        if (emp.type === 'contract') {
-          return true;
-        }
-        
-        // For permanent employees, incharge can only see employees under them
-        if (emp.type === 'fulltime') {
-          return (emp as any).inchargeId === userEmployeeId;
-        }
-        
-        return false;
-      });
+      // For contract employees, incharge can see ALL contract employees
+      if (emp.type === 'contract') return true;
+      // For permanent employees, incharge can only see employees under them
+      if (emp.type === 'fulltime') return (emp as any).inchargeId === userEmployeeId;
+      return false;
     }
-    
-    return filtered;
-  }, [employees, selectedStoreId, isIncharge, userEmployeeId]);
+
+    return true;
+  };
+
+  // Filter employees and payouts by store and incharge permissions - active employees
+  // only, for the editable Contract/Permanent roster cards.
+  const filteredEmployees = useMemo(
+    () => employees.filter(matchesStoreAndIncharge),
+    [employees, selectedStoreId, stores, isIncharge, userEmployeeId]
+  );
+
+  // Same scope, but active + archived - for deciding which PAYOUTS belong to this
+  // store/incharge view. An employee who has since been archived still has real payout
+  // history that belongs here; filteredEmployees (roster-only) must never gate that,
+  // which is exactly the bug that made Akash Dey's payouts disappear once he was archived.
+  const employeesInScopeForPayouts = useMemo(
+    () => employeesForDisplay.filter(matchesStoreAndIncharge),
+    [employeesForDisplay, selectedStoreId, stores, isIncharge, userEmployeeId]
+  );
 
   const filteredPayoutsByStore = useMemo(() => {
     if (!selectedStoreId) return payouts;
-    const storeEmployeeIds = filteredEmployees.map(emp => emp.id);
+    // employeesInScopeForPayouts (active + archived), not filteredEmployees (active-only)
+    // - see its own comment above for why.
+    const storeEmployeeIds = employeesInScopeForPayouts.map(emp => emp.id);
     return payouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
-  }, [payouts, filteredEmployees, selectedStoreId]);
+  }, [payouts, employeesInScopeForPayouts, selectedStoreId]);
 
-  // Filter payouts based on selected date range (must come AFTER filteredPayoutsByStore)
+  // Filter payouts based on selected date range (must come AFTER filteredPayoutsByStore).
+  // A payout's forMonth (when set) is which month it's actually FOR, not when it was
+  // paid - a backlogged salary paid in June for May (forMonth "2026-05") should count
+  // toward May's period, not June's, or it never shows up under the month it belongs to.
+  const matchesPeriodByForMonthOrDate = (p: Payout, start: string, end: string) => {
+    if (p.forMonth) {
+      const [y, m] = p.forMonth.split('-').map(Number);
+      const forMonthStart = `${p.forMonth}-01`;
+      const forMonthEnd = new Date(y, m, 0).toISOString().split('T')[0]; // last day of that month
+      return forMonthStart <= end && forMonthEnd >= start; // range overlap
+    }
+    return p.date >= start && p.date <= end;
+  };
+
   const filteredPayouts = useMemo(() => {
     let dateFiltered;
     if (viewMode === 'current') {
       // Show only current month payouts
-      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= currentMonth.start && p.date <= currentMonth.end);
+      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, currentMonth.start, currentMonth.end));
     } else if (viewMode === 'last') {
       // Show only last month payouts
-      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= lastMonth.start && p.date <= lastMonth.end);
+      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, lastMonth.start, lastMonth.end));
     } else {
       // Show custom date range
       if (!customStartDate || !customEndDate) return [];
-      dateFiltered = filteredPayoutsByStore.filter(p => p.date >= customStartDate && p.date <= customEndDate);
+      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, customStartDate, customEndDate));
     }
     return dateFiltered;
   }, [filteredPayoutsByStore, viewMode, currentMonth, lastMonth, customStartDate, customEndDate]);
@@ -451,19 +272,24 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const loadData = async () => {
     setLoading(true);
     try {
-      console.log('Loading employees, payouts, salary advances, and overheads from server...');
-      const [employeesData, payoutsData, advancesData, overheadsData] = await Promise.all([
+      console.log('Loading employees, payouts, salary advances, overheads, and stores from server...');
+      const [employeesData, archivedData, payoutsData, advancesData, overheadsData, storesData] = await Promise.all([
         api.getEmployees(),
+        api.getArchivedEmployees(),
         api.getPayouts(),
         api.getSalaryAdvances(),
-        api.getOverheads()
+        api.getOverheads(),
+        api.getStores()
       ]);
       console.log('Loaded employees:', employeesData);
+      console.log('Loaded archived employees:', archivedData);
       console.log('Loaded payouts:', payoutsData);
       console.log('Loaded salary advances:', advancesData);
       console.log('Loaded overheads:', overheadsData);
       setEmployees((employeesData as any) || []);
+      setArchivedEmployees((archivedData as any) || []);
       setPayouts((payoutsData as any) || []);
+      setStores(storesData || []);
       setSalaryAdvances(advancesData || []);
       setOverheads(overheadsData || []);
     } catch (error) {
@@ -609,16 +435,30 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   };
 
   const handleAddPayout = async () => {
-    if (payoutData.employeeIds.length === 0 || !payoutData.amount) {
-      alert('Please select employees and enter amount');
+    const payingByDays = activeTab === 'contract' && payoutData.periodType === 'days';
+    if (payoutData.employeeIds.length === 0 || (payingByDays ? !payoutData.days : (!payoutData.amount && !payoutData.variablePay))) {
+      alert(payingByDays ? 'Please select employees and enter number of days' : 'Please select employees and enter an amount (or just a Variable Pay amount)');
       return;
+    }
+    if (payingByDays) {
+      const missingRate = payoutData.employeeIds.some(empId => {
+        const employee = employees.find(e => e.id === empId);
+        return !(employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0);
+      });
+      if (missingRate) {
+        alert('Please enter a rate per day - the selected employee(s) have no daily rate on file');
+        return;
+      }
     }
 
     if (submitting) return; // Prevent double submission
 
     try {
       setSubmitting(true);
-      const grossAmount = parseFloat(payoutData.amount);
+      // If Amount is left blank, fall back to the Variable Pay figure - lets a
+      // pure incentive/variable payout be entered without typing the number twice.
+      const grossAmount = parseFloat(payoutData.amount) || parseFloat(payoutData.variablePay) || 0;
+      const days = parseFloat(payoutData.days) || 0;
       // Track advance updates to apply after payouts save successfully
       const advanceUpdates: { advanceId: string; deductions: any[]; remainingAmount: number }[] = [];
 
@@ -626,10 +466,13 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         const employee = employees.find(e => e.id === empId);
         const payoutId = crypto.randomUUID();
         const pending = getPendingAdvanceDeduction(empId, payoutData.date);
-        let netAmount = grossAmount;
+        // Paying "by days" uses each employee's own daily rate; "by month" applies the
+        // typed amount as-is (a flat sum, same as before this period-type option existed).
+        const empGrossAmount = payingByDays ? days * (employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0) : grossAmount;
+        let netAmount = empGrossAmount;
 
         if (pending) {
-          netAmount = grossAmount - pending.deduction.amount;
+          netAmount = empGrossAmount - pending.deduction.amount;
           const updatedDeductions = pending.advance.deductions.map((d: any) =>
             d.month === pending.deduction.month
               ? { ...d, deducted: true, deductedDate: new Date().toISOString(), payoutId }
@@ -649,7 +492,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           amount: netAmount,
           date: payoutData.date,
           storeId: selectedStoreId || undefined, // Add storeId for proper filtering
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          forMonth: payoutData.forMonth || payoutData.date.slice(0, 7),
+          transactionId: payoutData.transactionId || undefined,
+          variablePay: payoutData.variablePay ? parseFloat(payoutData.variablePay) : undefined,
+          paidFrom: payoutData.paidFrom,
         };
       });
 
@@ -671,7 +518,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
       setPayouts([...payouts, ...newPayouts]);
       setShowPayoutModal(false);
-      setPayoutData({ employeeIds: [], amount: '', date: selectedDate });
+      setPayoutData({ employeeIds: [], amount: '', date: selectedDate, periodType: 'month', days: '', ratePerDay: '', forMonth: selectedDate.slice(0, 7), transactionId: '', variablePay: '', paidFrom: 'paytm' });
       alert(
         advanceUpdates.length > 0
           ? `Payout added successfully! Salary advance deduction applied for ${advanceUpdates.length} employee(s).`
@@ -709,14 +556,19 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
 
     try {
-      await api.deleteEmployee(id);
+      const result = await api.deleteEmployee(id);
       setEmployees(employees.filter(e => e.id !== id));
-      // Also delete associated payouts
-      setPayouts(payouts.filter(p => p.employeeId !== id));
-      alert('Employee deleted successfully!');
+      // This only ever archives the employee server-side (see DELETE
+      // /unified-employees/:employeeId) - their payout history is kept, never deleted.
+      // Move them into archivedEmployees locally so past payout rows still resolve a name
+      // instead of silently removing those payouts from view, which this used to do.
+      if (result?.archived) {
+        setArchivedEmployees([...archivedEmployees, result.archived]);
+      }
+      alert('Employee archived - their past payout records are kept.');
     } catch (error) {
       console.error('Error deleting employee:', error);
-      alert('Failed to delete employee');
+      alert('Failed to archive employee');
     }
   };
 
@@ -726,7 +578,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     try {
       await api.updatePayout(editingPayout.id, {
         amount: editingPayout.amount,
-        date: editingPayout.date
+        date: editingPayout.date,
+        forMonth: editingPayout.forMonth || editingPayout.date.slice(0, 7)
       });
       setPayouts(payouts.map(p => p.id === editingPayout.id ? editingPayout : p));
       setShowEditPayout(false);
@@ -799,8 +652,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   const calculateContractStats = () => {
     const contractEmployees = filteredEmployees.filter(e => e.type === 'contract');
+    // employeesInScopeForPayouts (active + archived) for the payout match, same reason as
+    // everywhere else in this file - an archived employee's past payout still counts
+    // toward this total, even though contractEmployees itself stays active-only.
     const contractPayouts = filteredPayouts.filter(p => {
-      const emp = filteredEmployees.find(e => e.id === p.employeeId);
+      const emp = employeesInScopeForPayouts.find(e => e.id === p.employeeId);
       return emp?.type === 'contract';
     });
 
@@ -822,8 +678,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
   const calculatePermanentStats = () => {
     const permanentEmployees = filteredEmployees.filter(e => e.type === 'fulltime');
+    // See calculateContractStats above - employeesInScopeForPayouts for the payout match.
     const permanentPayouts = filteredPayouts.filter(p => {
-      const emp = filteredEmployees.find(e => e.id === p.employeeId);
+      const emp = employeesInScopeForPayouts.find(e => e.id === p.employeeId);
       return emp?.type === 'fulltime';
     });
 
@@ -899,13 +756,18 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl text-gray-900 mb-2">Payroll Management</h1>
-          <p className="text-gray-600">Manage and track employee payments</p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 flex-shrink-0">
+            <DollarSign className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Payroll Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">Manage and track employee payments</p>
+          </div>
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow-sm mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mb-6">
           <div className="border-b border-gray-200">
             <div className="flex gap-8 px-6">
               {/* My Payouts tab - for managers to see their own payroll */}
@@ -984,7 +846,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             </div>
             
             {/* Date Range Filter */}
-            <div className="bg-gradient-to-br from-[#E8D5F2] to-[#D4B5F0] rounded-lg p-3 sm:p-4">
+            <div className="bg-gradient-to-br from-violet-100 to-indigo-100 rounded-xl p-3 sm:p-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-orange-700 flex-shrink-0" />
@@ -1053,8 +915,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           {/* Contract Employees Tab */}
           {activeTab === 'contract' && (() => {
             const contractEmployees = employees.filter(e => e.type === 'contract');
+            // employeesForDisplay (active + archived) so an archived contract employee's
+            // past payouts still match this filter instead of silently disappearing once
+            // they're no longer an active employee - the payout records themselves were
+            // never deleted, only this active-only lookup was hiding them.
             const contractPayouts = filteredPayouts.filter(p => {
-              const emp = employees.find(e => e.id === p.employeeId);
+              const emp = employeesForDisplay.find(e => e.id === p.employeeId);
               return emp?.type === 'contract';
             });
 
@@ -1071,7 +937,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div className="mb-8">
                   <div className="flex justify-between items-center mb-6">
                     <div>
-                      <h2 className="text-xl text-gray-900 mb-1">Contract Employees</h2>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">Contract Employees</h2>
                       <p className="text-sm text-gray-600">Daily rate workers</p>
                     </div>
                     <div className="text-right">
@@ -1167,7 +1033,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div>
                   <div className="flex justify-between items-center mb-6">
                     <div>
-                      <h2 className="text-xl text-gray-900 mb-1">Recent Payouts</h2>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">Recent Payouts</h2>
                       <p className="text-sm text-gray-600">Individual payout records for {viewMode === 'current' ? currentMonth.monthName : 'selected period'}</p>
                     </div>
                     <div className="text-right">
@@ -1200,7 +1066,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           {contractPayouts
                             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                             .map((payout, index) => {
-                              const employee = employees.find(e => e.id === payout.employeeId);
+                              const employee = employeesForDisplay.find(e => e.id === payout.employeeId);
                               return (
                                 <tr key={payout.id} className="border-b border-gray-100 hover:bg-gray-50">
                                   <td className="py-4 px-4">
@@ -1302,28 +1168,32 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
               const year = date.getFullYear().toString();
               const monthNumber = date.getMonth() + 1;
               
-              // Check if payslip is available (after 4th of next month)
-              const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 5);
-              const isAvailable = now >= nextMonth;
-              
-              // Get payouts for this month
+              // Get payouts for this month - forMonth (when set) is which month a payout
+              // is actually FOR, not when it was paid, so a backlogged salary paid late
+              // lands on its real month's payslip instead of inflating the paid-in month.
+              const monthKeyForPayouts = `${date.getFullYear()}-${String(monthNumber).padStart(2, '0')}`;
               const monthPayouts = allMyPayouts.filter(p => {
+                if (p.forMonth) return p.forMonth === monthKeyForPayouts;
                 const payoutDate = new Date(p.date);
-                return payoutDate.getMonth() + 1 === monthNumber && 
+                return payoutDate.getMonth() + 1 === monthNumber &&
                        payoutDate.getFullYear() === date.getFullYear();
               });
-              
+
+              // Available as soon as a payout for this month is actually logged - no
+              // arbitrary date-based waiting period.
+              const isAvailable = monthPayouts.length > 0;
+
               // Get personal expenses mapped to this month (YYYY-MM format)
               // Note: overhead.employeeId stores the employee ID string (e.g., "BM004"), not the internal database ID
               const monthStr = `${date.getFullYear()}-${String(monthNumber).padStart(2, '0')}`;
               const monthPersonalExpenses = overheads
-                .filter(o => 
-                  o.category === 'personal_expense' && 
+                .filter(o =>
+                  o.category === 'personal_expense' &&
                   o.employeeId === userEmployeeId &&
                   o.expenseMonth === monthStr
                 )
                 .reduce((sum, o) => sum + o.amount, 0);
-              
+
               // Net Amount = Payouts minus salary-advance-linked deductions already given as cash
               const total = monthPayouts.reduce((sum, p) => sum + p.amount, 0) - monthPersonalExpenses;
               
@@ -1349,7 +1219,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div className="mb-6">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
                     <div>
-                      <h2 className="text-xl text-gray-900 mb-1">My Payout History</h2>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">My Payout History</h2>
                       <p className="text-sm text-gray-600">
                         View your salary records and download monthly payslips
                       </p>
@@ -1527,7 +1397,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div className="mb-8">
                   <div className="flex items-center gap-2 mb-4">
                     <FileText className="w-5 h-5 text-orange-600" />
-                    <h3 className="text-lg text-gray-900">Monthly Payslips</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Monthly Payslips</h3>
                   </div>
                   <p className="text-sm text-gray-600 mb-4">
                     Payslips are available for download after the 4th of each month
@@ -1560,7 +1430,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                                 slip.year,
                                 slip.payouts,
                                 employeeType,
-                                slip.personalExpenses || 0
+                                slip.personalExpenses || 0,
+                                currentEmployee?.salaryStructure
                               )}
                               className="flex items-center justify-center gap-2 px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm flex-shrink-0"
                               title="Download Payslip"
@@ -1587,7 +1458,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
                 {/* Payouts Table */}
                 <div className="mb-4">
-                  <h3 className="text-lg text-gray-900 mb-3">Payment Details</h3>
+                  <h3 className="text-lg font-bold text-gray-900 mb-3">Payment Details</h3>
                 </div>
                 {myPayouts.length === 0 ? (
                   <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
@@ -1637,8 +1508,10 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           {/* Permanent Employees Tab */}
           {activeTab === 'permanent' && (() => {
             const permanentEmployees = employees.filter(e => e.type === 'fulltime');
+            // See the Contract tab's identical comment above - employeesForDisplay so an
+            // archived permanent employee's past payouts still show here.
             const permanentPayouts = filteredPayouts.filter(p => {
-              const emp = employees.find(e => e.id === p.employeeId);
+              const emp = employeesForDisplay.find(e => e.id === p.employeeId);
               return emp?.type === 'fulltime';
             });
 
@@ -1650,7 +1523,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div className="mb-8">
                   <div className="flex justify-between items-center mb-6">
                     <div>
-                      <h2 className="text-xl text-gray-900 mb-1">Permanent Employees</h2>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">Permanent Employees</h2>
                       <p className="text-sm text-gray-600">Full-time employees - Monthly/periodic payouts</p>
                     </div>
                     <div className="text-right">
@@ -1798,7 +1671,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <div>
                   <div className="flex justify-between items-center mb-6">
                     <div>
-                      <h2 className="text-xl text-gray-900 mb-1">Payout History</h2>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">Payout History</h2>
                       <p className="text-sm text-gray-600">
                         Salary payments for {viewMode === 'current' ? currentMonth.monthName : viewMode === 'last' ? lastMonth.monthName : 'selected period'}
                       </p>
@@ -1833,7 +1706,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                           {permanentPayouts
                             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                             .map((payout, index) => {
-                              const employee = employees.find(e => e.id === payout.employeeId);
+                              const employee = employeesForDisplay.find(e => e.id === payout.employeeId);
                               return (
                                 <tr key={payout.id} className="border-b border-gray-100 hover:bg-gray-50">
                                   <td className="py-4 px-4">
@@ -1911,7 +1784,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
             return (
               <div className="p-6">
                 <div className="mb-6">
-                  <h2 className="text-xl text-gray-900 mb-1">Salary Advance Requests</h2>
+                  <h2 className="text-xl font-bold text-gray-900 mb-1">Salary Advance Requests</h2>
                   <p className="text-sm text-gray-600">
                     Review and manage employee salary advance requests
                   </p>
@@ -1919,31 +1792,31 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-2xl shadow-lg shadow-yellow-500/20 p-4 text-white">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-yellow-700 mb-1">Pending Requests</p>
-                        <p className="text-2xl font-semibold text-yellow-900">{pendingAdvances.length}</p>
+                        <p className="text-xs uppercase tracking-wide text-yellow-100 mb-1">Pending Requests</p>
+                        <p className="text-2xl font-semibold">{pendingAdvances.length}</p>
                       </div>
-                      <Clock className="w-10 h-10 text-yellow-400" />
+                      <Clock className="w-10 h-10 text-yellow-100" />
                     </div>
                   </div>
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl shadow-lg shadow-emerald-500/20 p-4 text-white">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-green-700 mb-1">Approved</p>
-                        <p className="text-2xl font-semibold text-green-900">{approvedAdvances.length}</p>
+                        <p className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Approved</p>
+                        <p className="text-2xl font-semibold">{approvedAdvances.length}</p>
                       </div>
-                      <CheckCircle className="w-10 h-10 text-green-400" />
+                      <CheckCircle className="w-10 h-10 text-emerald-100" />
                     </div>
                   </div>
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl shadow-lg shadow-red-500/20 p-4 text-white">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-red-700 mb-1">Rejected</p>
-                        <p className="text-2xl font-semibold text-red-900">{rejectedAdvances.length}</p>
+                        <p className="text-xs uppercase tracking-wide text-red-100 mb-1">Rejected</p>
+                        <p className="text-2xl font-semibold">{rejectedAdvances.length}</p>
                       </div>
-                      <XCircle className="w-10 h-10 text-red-400" />
+                      <XCircle className="w-10 h-10 text-red-100" />
                     </div>
                   </div>
                 </div>
@@ -2203,7 +2076,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl text-gray-900">Apply for Salary Advance</h2>
+              <h2 className="text-xl font-bold text-gray-900">Apply for Salary Advance</h2>
               <button
                 onClick={() => setShowAdvanceModal(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -2273,7 +2146,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl text-gray-900">Edit Employee</h2>
+              <h2 className="text-xl font-bold text-gray-900">Edit Employee</h2>
               <button
                 onClick={() => setShowEditEmployee(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -2328,6 +2201,69 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                   />
                 </div>
               )}
+              {editingEmployee.type === 'fulltime' && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm text-gray-700">Salary Structure (Optional)</label>
+                    <button
+                      type="button"
+                      onClick={() => setEditingEmployee({
+                        ...editingEmployee,
+                        salaryStructure: [...(editingEmployee.salaryStructure || []), { label: '', amount: 0 }],
+                      })}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      + Add Component
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {(editingEmployee.salaryStructure || []).map((comp, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={comp.label}
+                          onChange={(e) => {
+                            const updated = [...(editingEmployee.salaryStructure || [])];
+                            updated[idx] = { ...updated[idx], label: e.target.value };
+                            setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                          }}
+                          placeholder="e.g. Basic, HRA, Conveyance"
+                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+                        />
+                        <input
+                          type="number"
+                          value={comp.amount || ''}
+                          onChange={(e) => {
+                            const updated = [...(editingEmployee.salaryStructure || [])];
+                            updated[idx] = { ...updated[idx], amount: parseFloat(e.target.value) || 0 };
+                            setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                          }}
+                          placeholder="Amount"
+                          className="w-28 px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = (editingEmployee.salaryStructure || []).filter((_, i) => i !== idx);
+                            setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                          }}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {(editingEmployee.salaryStructure || []).length > 0 && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Fixed total: ₹{(editingEmployee.salaryStructure || []).reduce((sum, c) => sum + (c.amount || 0), 0).toLocaleString()}/month
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    💡 These fixed components appear on the payslip every month. A variable/incentive amount is entered separately at payout time.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="p-6 border-t border-gray-200 flex gap-3">
               <button
@@ -2352,7 +2288,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl text-gray-900">Add Payout</h2>
+              <h2 className="text-xl font-bold text-gray-900">Add Payout</h2>
               <button
                 onClick={() => setShowPayoutModal(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -2383,37 +2319,162 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 </div>
                 <p className="text-xs text-gray-500 mt-1">{payoutData.employeeIds.length} employee(s) selected</p>
               </div>
-              <div>
-                <label className="block text-sm text-gray-700 mb-2">Amount (₹) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={payoutData.amount}
-                  onChange={(e) => setPayoutData({ ...payoutData, amount: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="Enter amount"
-                />
-              </div>
+              {activeTab === 'contract' && (
+                <div>
+                  <label className="block text-sm text-gray-700 mb-2">Pay For *</label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPayoutData({ ...payoutData, periodType: 'days' })}
+                      className={`flex-1 px-4 py-2 rounded-lg border text-sm transition-colors ${payoutData.periodType === 'days' ? 'bg-green-600 text-white border-green-600' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    >
+                      Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayoutData({ ...payoutData, periodType: 'month' })}
+                      className={`flex-1 px-4 py-2 rounded-lg border text-sm transition-colors ${payoutData.periodType === 'month' ? 'bg-green-600 text-white border-green-600' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    >
+                      Month
+                    </button>
+                  </div>
+                </div>
+              )}
+              {activeTab === 'contract' && payoutData.periodType === 'days' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">Number of Days *</label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={payoutData.days}
+                      onChange={(e) => setPayoutData({ ...payoutData, days: e.target.value })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      placeholder="Enter number of days"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">Rate per Day (₹) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={payoutData.ratePerDay}
+                      onChange={(e) => setPayoutData({ ...payoutData, ratePerDay: e.target.value })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      placeholder="Enter rate per day"
+                    />
+                  </div>
+                  {payoutData.days && payoutData.employeeIds.length > 0 && (
+                    <div className="col-span-2 mt-1 space-y-1">
+                      {payoutData.employeeIds.map((empId) => {
+                        const employee = employees.find((e) => e.id === empId);
+                        const rate = employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0;
+                        const amount = (parseFloat(payoutData.days) || 0) * rate;
+                        return (
+                          <p key={empId} className="text-xs text-gray-500">
+                            {employee?.name}: {payoutData.days} day(s) × ₹{rate}/day = <span className="font-medium text-gray-700">₹{amount.toLocaleString()}</span>
+                            {!rate && <span className="text-amber-600"> (enter a rate per day above)</span>}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm text-gray-700 mb-2">Amount (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={payoutData.amount}
+                    onChange={(e) => setPayoutData({ ...payoutData, amount: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                    placeholder="Total salary paid"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    💡 Leave blank if you're only paying the Variable Pay amount below - it'll be used as the payout amount.
+                  </p>
+                </div>
+              )}
               <DatePicker
                 label="Date *"
                 value={payoutData.date}
-                onChange={(date) => setPayoutData({ ...payoutData, date })}
+                onChange={(date) => setPayoutData({ ...payoutData, date, forMonth: date.slice(0, 7) })}
                 className="w-full"
               />
-              {payoutData.amount && payoutData.employeeIds.length > 0 && (() => {
-                const grossAmount = parseFloat(payoutData.amount) || 0;
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Salary For Month *</label>
+                <input
+                  type="month"
+                  value={payoutData.forMonth}
+                  onChange={(e) => setPayoutData({ ...payoutData, forMonth: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Defaults to the payment date's month - change this if paying late (e.g. paid on the 5th for last month's salary)
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Transaction ID</label>
+                <input
+                  type="text"
+                  value={payoutData.transactionId}
+                  onChange={(e) => setPayoutData({ ...payoutData, transactionId: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g. UTR / UPI reference number"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Bank/UPI reference for this transfer - kept on record and shown on the payslip
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Paid from</label>
+                <select
+                  value={payoutData.paidFrom}
+                  onChange={(e) => setPayoutData({ ...payoutData, paidFrom: e.target.value as 'paytm' | 'bank' | 'cash' })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white"
+                >
+                  <option value="paytm">Paytm / UPI balance</option>
+                  <option value="bank">Bank transfer</option>
+                  <option value="cash">Cash</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Only "Paytm / UPI balance" payouts are deducted from a store's Online Cash (Paytm) reconciliation. Bank / cash are still real expenses, just settled elsewhere.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Variable Pay (₹)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={payoutData.variablePay}
+                  onChange={(e) => setPayoutData({ ...payoutData, variablePay: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  placeholder="Optional - this month's incentive/performance pay"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Shown as its own line on the payslip, alongside the employee's fixed salary components
+                </p>
+              </div>
+              {payoutData.employeeIds.length > 0 && (() => {
+                const payingByDays = activeTab === 'contract' && payoutData.periodType === 'days';
+                const days = parseFloat(payoutData.days) || 0;
                 const rows = payoutData.employeeIds
                   .map((empId) => {
                     const employee = employees.find((e) => e.id === empId);
+                    const grossAmount = payingByDays ? days * (employee?.dailyRate || parseFloat(payoutData.ratePerDay) || 0) : (parseFloat(payoutData.amount) || parseFloat(payoutData.variablePay) || 0);
                     const pending = getPendingAdvanceDeduction(empId, payoutData.date);
-                    return { employee, pending };
+                    return { employee, pending, grossAmount };
                   })
                   .filter((r) => r.pending);
                 if (rows.length === 0) return null;
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
                     <p className="text-sm font-medium text-amber-900">Salary advance deductions will apply:</p>
-                    {rows.map(({ employee, pending }) => (
+                    {rows.map(({ employee, pending, grossAmount }) => (
                       <p key={employee?.id} className="text-xs text-amber-800">
                         {employee?.name}: ₹{grossAmount.toLocaleString()} − ₹{pending!.deduction.amount.toLocaleString()} advance = <span className="font-semibold">₹{(grossAmount - pending!.deduction.amount).toLocaleString()} net</span>
                       </p>
@@ -2446,7 +2507,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl text-gray-900">Edit Payout</h2>
+              <h2 className="text-xl font-bold text-gray-900">Edit Payout</h2>
               <button
                 onClick={() => setShowEditPayout(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -2479,6 +2540,19 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 onChange={(date) => setEditingPayout({ ...editingPayout, date })}
                 className="w-full"
               />
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Salary For Month *</label>
+                <input
+                  type="month"
+                  value={editingPayout.forMonth || editingPayout.date.slice(0, 7)}
+                  onChange={(e) => setEditingPayout({ ...editingPayout, forMonth: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Which month this salary belongs to - change this if it was paid late
+                </p>
+              </div>
             </div>
             <div className="p-6 border-t border-gray-200 flex gap-3">
               <button

@@ -1,25 +1,43 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
+import { DatePicker } from './DatePicker';
 import { MonthlyCommissionEntry } from './MonthlyCommissionEntry';
 import { OnlineCashRecalibration } from './OnlineCashRecalibration';
+import { LoanManagementSection } from './LoanManagementSection';
 import { OnlineSalesTab } from './OnlineSalesTab';
-import { ApplyLoanModal } from './ApplyLoanModal';
-import { RepayLoanModal } from './RepayLoanModal';
-import { DollarSign, TrendingUp, Wallet, Users, ShoppingBag, CheckCircle, Smartphone, ArrowDownCircle, AlertTriangle, CheckSquare, X, Plus, Loader2, Calendar, CreditCard, ArrowRightLeft } from 'lucide-react';
+import { CashTopupHistory } from './CashTopupHistory';
+import { DollarSign, Wallet, ShoppingBag, CheckCircle, Smartphone, AlertTriangle, CheckSquare, X, Loader2, Calendar, CreditCard, ArrowRightLeft, IndianRupee, PlusCircle, Clock, RefreshCw, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import * as api from '../utils/api';
-import { getTodayIST, formatDateIST } from '../utils/timezone';
+import { addDays, getTodayIST, formatDateIST, formatDateTimeIST } from '../utils/timezone';
+import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
+import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
+import { PaytmLedger } from './PaytmLedger';
+import { toast } from 'sonner';
 
 type Props = {
  context: InventoryContextType;
  selectedStoreId?: string | null;
 };
 
+const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
+ store_inventory: 'Store Inventory',
+ production_inventory: 'Production House Inventory',
+ other: 'Other',
+};
+
+// Matches the backend's PRODUCTION_CASH_GO_LIVE_DATE (index.ts) exactly - from this date
+// onward, production house spend has its own cash ledger (ProductionManagement.tsx's
+// "Cash in Hand" tab) instead of being folded into the store's own expected-cash figure.
+// Dates before it keep the old blended calculation untouched - historical data was never
+// captured split, so it isn't retroactively re-split.
+const PRODUCTION_CASH_GO_LIVE_DATE = '2026-08-21';
+
 export function SalesManagement({ context, selectedStoreId }: Props) {
  const [selectedDate, setSelectedDate] = useState<string>(
  getTodayIST()
  );
- 
+
  // State for online payout data
  const [onlinePayoutData, setOnlinePayoutData] = useState<api.OnlinePayoutEntry[]>([]);
  const [isLoadingPayouts, setIsLoadingPayouts] = useState(false);
@@ -46,13 +64,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  previousCashInHand: '',
  usedOnlineMoney: '',
  actualCashInHand: '',
- actualPaytmBalance: ''
+ actualPaytmBalance: '',
+ cashOverShortReason: '' as '' | NonNullable<SalesData['cashOverShortReason']>,
+ cashOverShortNote: ''
  });
-
- // Single combined online sales figure (Swiggy + Zomato). Payout/commission reconciliation
- // is a separate, operations-manager-only responsibility - see OnlineSalesTab.
- const [onlineSalesInput, setOnlineSalesInput] = useState('');
- const [isSavingOnlineSales, setIsSavingOnlineSales] = useState(false);
 
  const [isEditing, setIsEditing] = useState(false);
  const [editingId, setEditingId] = useState<string | null>(null);
@@ -73,9 +88,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Loan Management State
  const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
  const [isLoadingLoans, setIsLoadingLoans] = useState(false);
- const [showApplyLoanModal, setShowApplyLoanModal] = useState(false);
- const [showRepayLoanModal, setShowRepayLoanModal] = useState(false);
- const [selectedLoanForRepayment, setSelectedLoanForRepayment] = useState<api.OnlineLoan | null>(null);
+
+ // Cash Top-up Request State - store incharge asking the cluster head for more physical
+ // cash when the offline till is running low (see plan: "give all managers the liberty").
+ const [topupRequests, setTopupRequests] = useState<api.CashTopupRequest[]>([]);
+ const [showTopupModal, setShowTopupModal] = useState(false);
+ // Defaults to whatever date the page happens to be on, but is independently editable in
+ // the modal - confirmed real mistake: a topup requested a day (or more) after the date it
+ // should count toward (a late vendor settlement, forgetting to switch the page's own
+ // DateSelector first) used to silently apply to whatever date the page was showing.
+ const [topupDate, setTopupDate] = useState(selectedDate);
+ const [topupAmount, setTopupAmount] = useState('');
+ const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
+ const [isSyncingPos, setIsSyncingPos] = useState(false);
+ const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>('entry');
  
  const isClusterHead = context.user?.role === 'cluster_head';
  const isManager = context.user?.role === 'manager';
@@ -83,27 +109,50 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const isProductionIncharge = context.user?.designation === 'production_incharge';
  const isOperationsManager = isManager && !isStoreIncharge && !isProductionIncharge; // Operations manager (not store/production incharge)
  const isShopManager = isStoreIncharge || isProductionIncharge; // Store or production incharge
- const canEditSales = isManager && isStoreIncharge; // Only the store incharge can enter/edit sales
- const canReconcileCash = isOperationsManager; // Only the operations manager counts/reconciles actual cash & Paytm
+ // Aniket (operations incharge) and Vijay (production incharge) between them handle almost
+ // every production-side top-up request, but the reason field defaulted to "Store
+ // Inventory" regardless of who was asking - an easy one-click mistake for the exact people
+ // requesting production top-ups most often (confirmed against a real mis-tagged ₹3,806
+ // request). Defaults to "Production Inventory" for that pair of roles now; still
+ // changeable in the dropdown for the rarer genuine store top-up either of them needs.
+ // Store incharges keep the original "Store Inventory" default.
+ const defaultTopupReason: api.CashTopupReason = (isProductionIncharge || isOperationsManager) ? 'production_inventory' : 'store_inventory';
+ const [topupReason, setTopupReason] = useState<api.CashTopupReason>(defaultTopupReason);
+ const canEditSales = isManager && isStoreIncharge; // Store incharge validates the day's sales (POS-reported once live) against the cash they counted
+ const canReconcileCash = isStoreIncharge; // Store incharge owns cash reconciliation as part of the same validation workflow
  const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
  
  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
  // This allows cluster heads to view data for any selected store
  const effectiveStoreId = selectedStoreId || context.user?.storeId;
- 
- // Contract worker payout state
- const [contractWorkers, setContractWorkers] = useState<any[]>([]);
- const [contractPayouts, setContractPayouts] = useState<Array<{employeeId: string, amount: string}>>([]);
- const [loadingEmployees, setLoadingEmployees] = useState(false);
- 
+
+ // The production house that supplies this store - its expenses now count against this
+ // store's cash-in-hand too (reversing an earlier decision that kept them P&L-only),
+ // since the store's till/Paytm is what actually funds production house purchases in practice.
+ const effectiveProductionHouseId = context.stores?.find(s => s.id === effectiveStoreId)?.productionHouseId || null;
+
+ // Local draft of the Cash Count / Actual Cash in Hand fields - cash reconciliation
+ // takes a while (counting a till), and switching to another app or tab used to wipe
+ // out whatever had been typed so far since it only ever lived in component state.
+ // Persisted to localStorage instead, keyed per store+date, so it survives navigating
+ // away and back. Cleared once the entry actually saves successfully.
+ const draftKey = effectiveStoreId ? `sales-draft:${effectiveStoreId}:${selectedDate}` : null;
+ const loadDraft = (): (Partial<Record<'paytmAmount' | 'cashAmount' | 'actualCashInHand' | 'cashOverShortNote', string>> & { cashOverShortReason?: '' | NonNullable<SalesData['cashOverShortReason']> }) | null => {
+ if (!draftKey) return null;
+ try {
+ const raw = localStorage.getItem(draftKey);
+ return raw ? JSON.parse(raw) : null;
+ } catch {
+ return null;
+ }
+ };
+ const clearDraft = () => {
+ if (draftKey) localStorage.removeItem(draftKey);
+ };
+
  // Employee payouts data (for all employees - used in online cash calculation)
  const [employeePayouts, setEmployeePayouts] = useState<any[]>([]);
 
- // Load contract workers
- useEffect(() => {
- loadContractWorkers();
- }, []);
- 
  // Load employee payouts (for online cash calculation)
  useEffect(() => {
  loadEmployeePayouts();
@@ -127,11 +176,36 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  
  const loadOnlinePayoutData = async () => {
  if (!context.user?.accessToken) return;
- 
+
  setIsLoadingPayouts(true);
  try {
- const payouts = await api.getOnlinePayoutData(context.user.accessToken);
- setOnlinePayoutData(payouts);
+ // Legacy daily-typed-in payouts (kept for historical months) plus the new
+ // document-upload aggregator settlements, merged into the same shape so every
+ // existing calculatePaytmBalance/paytmDailyBreakdown call site downstream keeps
+ // working unchanged. Multiple settlements can land on the same date (e.g. a
+ // Zomato and a Swiggy payout both settling that day), so settlements are summed
+ // per date first.
+ const [payouts, settlements] = await Promise.all([
+ api.getOnlinePayoutData(context.user.accessToken),
+ api.getAggregatorSettlements(context.user.accessToken),
+ ]);
+ const byDateAndStore = new Map<string, { date: string; storeId?: string; swiggyPayout: number; zomatoPayout: number }>();
+ for (const s of settlements) {
+ const key = `${s.storeId || ''}|${s.settlementDate}`;
+ const existing = byDateAndStore.get(key) || { date: s.settlementDate, storeId: s.storeId, swiggyPayout: 0, zomatoPayout: 0 };
+ if (s.aggregator === 'swiggy') existing.swiggyPayout += s.netPayout;
+ else existing.zomatoPayout += s.netPayout;
+ byDateAndStore.set(key, existing);
+ }
+ const settlementDerived: api.OnlinePayoutEntry[] = Array.from(byDateAndStore.values()).map((v, i) => ({
+ id: `SETTLEMENT-DERIVED-${i}`,
+ date: v.date,
+ storeId: v.storeId,
+ swiggyPayout: v.swiggyPayout,
+ zomatoPayout: v.zomatoPayout,
+ createdAt: '',
+ }));
+ setOnlinePayoutData([...payouts, ...settlementDerived]);
  } catch (error) {
  console.error('Error loading online payout data:', error);
  } finally {
@@ -222,78 +296,94 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  };
 
- const loadContractWorkers = async () => {
- setLoadingEmployees(true);
+ const loadTopupRequests = async () => {
+ if (!context.user?.accessToken) return;
  try {
- const employees = await api.getEmployees();
- const contractOnly = employees.filter(emp => emp.type === 'contract');
- setContractWorkers(contractOnly);
+ const requests = await api.fetchCashTopupRequests(context.user.accessToken);
+ setTopupRequests(requests);
  } catch (error) {
- console.error('Error loading contract workers:', error);
- } finally {
- setLoadingEmployees(false);
+ console.error('Error loading cash top-up requests:', error);
  }
  };
 
- // Load existing payouts for the selected date
  useEffect(() => {
- loadPayoutsForDate();
- }, [selectedDate, contractWorkers]); // Add contractWorkers as dependency
+ loadTopupRequests();
+ // Also re-fetch on every manual "Refresh data" press - this list is fetched
+ // independently of context (unlike Cash in Hand, which reads context.salesData and so
+ // already picked up fresh data on refresh), so without watching this it silently stayed
+ // stale - still showing yesterday's status - until the user's own approve/reject/submit
+ // action on it, or a full page reload.
+ }, [context.user?.accessToken, context.dataRefreshedAt]);
 
- const loadPayoutsForDate = async () => {
- if (contractWorkers.length === 0) return; // Wait for workers to load first
- 
- try {
- const allPayouts = await api.getPayouts();
- const payoutsForDate = allPayouts.filter(p => p.date === selectedDate);
- 
- // Filter to only include contract workers (not full-time employees)
- const contractWorkerIds = contractWorkers.map(w => w.id);
- const contractPayoutsOnly = payoutsForDate.filter(p => 
- contractWorkerIds.includes(p.employeeId)
+ const myPendingTopups = topupRequests.filter(
+ (r) => r.status === 'pending' && (!effectiveStoreId || r.storeId === effectiveStoreId)
  );
- 
- // Group by employeeId to avoid duplicates - take the most recent one
- const payoutMap = new Map<string, typeof contractPayoutsOnly[0]>();
- contractPayoutsOnly.forEach(payout => {
- const existing = payoutMap.get(payout.employeeId);
- if (!existing || new Date(payout.createdAt || 0) > new Date(existing.createdAt || 0)) {
- payoutMap.set(payout.employeeId, payout);
+
+ const handleSyncPosNow = async () => {
+ if (!context.user?.accessToken) return;
+ setIsSyncingPos(true);
+ try {
+ const isViewingPastDate = selectedDate < getTodayIST();
+ // Cluster head viewing a past, already-closed date: re-pull that day's real totals
+ // instead of triggering "today"'s sync.
+ const result = (isClusterHead && isViewingPastDate)
+ ? await api.backfillPosSync(context.user.accessToken, selectedDate)
+ : await api.triggerPosSync(context.user.accessToken);
+ if (result?.skipped) {
+ alert(result.message || "Skipped - store hasn't opened yet");
+ } else if (result?.success) {
+ await context.refreshData();
+ alert(isViewingPastDate ? `Re-synced ${selectedDate}` : 'POS sync complete');
+ } else {
+ alert(result?.error || 'POS sync ran but reported an error - check the results');
  }
- });
- 
- // Convert to format for form
- const formattedPayouts = Array.from(payoutMap.values()).map(p => ({
- employeeId: p.employeeId,
- amount: p.amount.toString()
- }));
- 
- setContractPayouts(formattedPayouts);
- } catch (error) {
- console.error('Error loading payouts for date:', error);
+ } catch (error: any) {
+ alert(error?.message || 'Failed to trigger POS sync');
+ } finally {
+ setIsSyncingPos(false);
  }
  };
 
- const handleAddContractWorker = () => {
- setContractPayouts([...contractPayouts, { employeeId: '', amount: '' }]);
+ const handleRequestTopup = async () => {
+ const amount = parseFloat(topupAmount);
+ if (!amount || amount <= 0) {
+ alert('Please enter a valid amount');
+ return;
+ }
+ if (!context.user?.accessToken) return;
+
+ setIsSubmittingTopup(true);
+ try {
+ await api.requestCashTopup(context.user.accessToken, topupDate, amount, topupReason);
+ alert('Cash top-up request sent to the cluster head');
+ setShowTopupModal(false);
+ setTopupAmount('');
+ setTopupReason(defaultTopupReason);
+ loadTopupRequests();
+ } catch (error: any) {
+ alert(error?.message || 'Failed to send cash top-up request');
+ } finally {
+ setIsSubmittingTopup(false);
+ }
  };
 
- const handleRemoveContractWorker = (index: number) => {
- setContractPayouts(contractPayouts.filter((_, i) => i !== index));
- };
+ // Contract worker payouts are now paid entirely from the Payroll page,
+ // not entered here - this stays 0 so the existing offline-cash formula below
+ // (contract payouts never come from offline cash) is unaffected.
+ const totalContractPayout = 0;
 
- const handleContractPayoutChange = (index: number, field: 'employeeId' | 'amount', value: string) => {
- const updated = [...contractPayouts];
- updated[index][field] = value;
- setContractPayouts(updated);
- };
-
- // Calculate total contract worker payout
- const totalContractPayout = useMemo(() => {
- return contractPayouts.reduce((sum, payout) => {
- return sum + (parseFloat(payout.amount) || 0);
- }, 0);
- }, [contractPayouts]);
+ // Real employee payouts (from the Payroll page) made ON the selected date that
+ // actually came out of the Paytm balance - only these get deducted from the Paytm
+ // reconciliation. A payout marked "paid from" bank or cash is a real expense but
+ // doesn't touch this figure. Undefined paidFrom = a legacy record, assumed Paytm.
+ const todaysEmployeePayoutsReal = useMemo(() => {
+ const storeFiltered = effectiveStoreId
+ ? employeePayouts.filter(p => !p.storeId || p.storeId === effectiveStoreId)
+ : employeePayouts;
+ return storeFiltered
+ .filter(p => p.date === selectedDate && (p.paidFrom == null || p.paidFrom === 'paytm'))
+ .reduce((sum, p) => sum + (p.amount || 0), 0);
+ }, [employeePayouts, effectiveStoreId, selectedDate]);
 
  // Get sales data for selected date (filtered by selected store, not user's store)
  const salesForDate = useMemo(() => {
@@ -351,117 +441,117 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return date.getDay() === 5; // Friday is day 5
  }, [selectedDate]);
 
+ const previousDateStr = useMemo(() => addDays(selectedDate, -1), [selectedDate]);
+
  // Get previous date's sales to carry forward balances
  const previousDateSales = useMemo(() => {
- const prevDate = new Date(selectedDate);
- prevDate.setDate(prevDate.getDate() - 1);
- const prevDateStr = prevDate.toISOString().split('T')[0];
- return context.salesData.find(s => s.date === prevDateStr);
- }, [context.salesData, selectedDate]);
+ const storeFilteredSales = effectiveStoreId
+ ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+ : context.salesData;
+ return storeFilteredSales.find(s => s.date === previousDateStr);
+ }, [context.salesData, previousDateStr, effectiveStoreId]);
+
+ const latestPriorCashSales = useMemo(() => {
+ const storeFilteredSales = effectiveStoreId
+ ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+ : context.salesData;
+ return [...storeFilteredSales]
+ .filter(s => s.date < selectedDate && s.actualCashInHand !== undefined && s.actualCashInHand !== null)
+ .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+ }, [context.salesData, selectedDate, effectiveStoreId]);
+
+ const latestPriorPaytmSalesForDisplay = useMemo(() => {
+ const storeFilteredSales = effectiveStoreId
+ ? context.salesData.filter(s => s.storeId === effectiveStoreId)
+ : context.salesData;
+ return [...storeFilteredSales]
+ .filter(s => s.date < selectedDate && s.actualPaytmBalance !== undefined && s.actualPaytmBalance !== null)
+ .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+ }, [context.salesData, selectedDate, effectiveStoreId]);
 
  // Calculate total expenses for the day
  const totalExpenses = useMemo(() => {
+ // Production house spend used to count against the store's own cash too, since the
+ // store's till/Paytm is what actually funds it in practice - but that meant a store
+ // incharge's physical count got flagged as "discrepancy" for money they never touched,
+ // caused entirely by the production house's own spending. From PRODUCTION_CASH_GO_LIVE_DATE
+ // onward, production has its OWN cash ledger (see ProductionManagement.tsx's "Cash in
+ // Hand" tab, backed by production-cash: records) - so the store's own expected-cash
+ // calculation goes back to being strictly the store's own spend, full stop. Dates before
+ // go-live keep the old blended behavior exactly as-is (historical data was never captured
+ // split, so it isn't retroactively re-split here).
+ const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
+
  const inventoryCost = context.inventory
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.totalCost, 0);
- 
+
  // Include ALL overhead costs (both cash and online/paytm) for the current store
  const allOverheadCosts = context.overheads
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.amount, 0);
- 
+
  // Include ALL fixed costs (both cash and online/paytm) for the current store
  const allFixedCosts = context.fixedCosts
  .filter(item => {
  const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
  .reduce((sum, item) => sum + item.amount, 0);
- 
+
  return inventoryCost + allOverheadCosts + allFixedCosts;
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId]);
+ }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
- // Calculate fixed costs paid via cash (to deduct from Expected Cash in Hand)
- const fixedCostsCash = useMemo(() => {
- return context.fixedCosts
- .filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => {
- if (item.paymentMethod === 'cash') {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- }, [context.fixedCosts, selectedDate, effectiveStoreId]);
+ // Same totalExpenses figure, but split by who actually spent it - the store's own
+ // purchases vs. production house spend that's charged against this store's cash. Feeds
+ // the compact expense breakdown popover instead of one lumped "all expenses" number.
+ // production stays 0 from PRODUCTION_CASH_GO_LIVE_DATE onward, matching totalExpenses
+ // above no longer including it - see that useMemo's comment for why.
+ const expenseBreakdownByEntity = useMemo(() => {
+ const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
+ const isProdHouseSpend = (item: { entityType?: string; productionHouseId?: string }) =>
+ includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
+ const belongsToday = (item: { date: string; storeId?: string }) =>
+ item.date === selectedDate && (effectiveStoreId ? (item.storeId === effectiveStoreId || isProdHouseSpend(item)) : true);
 
- // Calculate fixed costs paid via online/Paytm (to deduct from Online Cash in Hand)
- const fixedCostsOnline = useMemo(() => {
- return context.fixedCosts
- .filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => {
- if (item.paymentMethod === 'online') {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.onlineAmount) {
- return sum + item.onlineAmount;
- }
- return sum;
- }, 0);
- }, [context.fixedCosts, selectedDate, effectiveStoreId]);
+ const split = (list: any[], amountKey: 'totalCost' | 'amount') => {
+ let store = 0;
+ let production = 0;
+ list.forEach((item) => {
+ if (!belongsToday(item)) return;
+ const amt = item[amountKey] || 0;
+ if (isProdHouseSpend(item)) production += amt; else store += amt;
+ });
+ return { store, production };
+ };
 
- // Calculate overhead costs paid via cash (to deduct from Expected Cash in Hand)
- const overheadCostsCash = useMemo(() => {
- return context.overheads
- .filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- // Default to cash if no payment method specified (backward compatibility)
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- }, [context.overheads, selectedDate, effectiveStoreId]);
+ const inventory = split(context.inventory, 'totalCost');
+ const overhead = split(context.overheads, 'amount');
+ const fixed = split(context.fixedCosts, 'amount');
 
- // Calculate overhead costs paid via online/Paytm (to deduct from Online Cash in Hand)
- const overheadCostsOnline = useMemo(() => {
- return context.overheads
- .filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => {
- if (item.paymentMethod === 'online') {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.onlineAmount) {
- return sum + item.onlineAmount;
- }
- return sum;
- }, 0);
- }, [context.overheads, selectedDate, effectiveStoreId]);
+ return {
+ rows: [
+ { label: 'Inventory', ...inventory },
+ { label: 'Overhead', ...overhead },
+ { label: 'Fixed costs', ...fixed },
+ ],
+ storeTotal: inventory.store + overhead.store + fixed.store,
+ productionTotal: inventory.production + overhead.production + fixed.production,
+ };
+ }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
+
 
  // Calculate expected closing cash balance
  const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number, contractPayouts: number) => {
@@ -486,270 +576,64 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return actual - expectedCashInHand;
  }, [formData.actualCashInHand, expectedCashInHand]);
 
- const needsApproval = Math.abs(cashDiscrepancy) > 500; // Changed from 200 to 500
+ const needsApproval = Math.abs(cashDiscrepancy) > 200;
 
  // Calculate cumulative Paytm/Online balance from all days up to selected date
+ // IMPORTANT: this deliberately still anchors on the previous day's *saved*
+ // actualPaytmBalance rather than recomputing everything from scratch since account
+ // inception. A from-scratch recompute was tried and reverted - this store's historical
+ // data has real unexplained resets (an entire flat-zero month, a balance dropping to 0
+ // between two days with no matching loan/withdrawal record) with no recalibration ever
+ // logged to anchor against, so summing every transaction back to day one produced a
+ // wildly wrong (large negative) number instead of the real balance. Trusting the last
+ // saved snapshot avoids that - it only goes stale when a fact predating it changes
+ // (like a settlement uploaded after the fact), which the aggregator-payout term below
+ // now accounts for going forward. If the historical snapshot chain itself needs
+ // correcting, that's a job for the "Online Cash Recalibration" feature (a fresh,
+ // physically-verified anchor point), not a blind formula rewrite.
  const calculatePaytmBalance = useMemo(() => {
- // Check if there's a previous day's sales data with actualPaytmBalance
- const previousDate = new Date(selectedDate);
- previousDate.setDate(previousDate.getDate() - 1);
- const previousDateStr = previousDate.toISOString().split('T')[0];
- 
- const previousDaySales = effectiveStoreId 
- ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
- : context.salesData.find(s => s.date === previousDateStr);
- 
- // If there's NO previous day data at all AND we're not on a recalibration date,
- // check if there's a recalibration for the exact previous day
- if (!previousDaySales) {
- // Check if there's a recalibration specifically for the previous day
- const previousDayRecalibration = context.onlineCashRecalibrations.find(
- r => r.date === previousDateStr && r.storeId === effectiveStoreId
- );
- 
- // If no previous day data and no recalibration for previous day, return 0
- // This prevents carrying forward old balances when there's a data gap
- if (!previousDayRecalibration) {
- console.log('⚠️ No previous day data found. Starting from 0. Fill in previous day or create recalibration.');
- return 0;
- }
- }
- 
- // If previous day has actualPaytmBalance, use it as starting point (like offline cash)
- if (previousDaySales && previousDaySales.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
- // Start from previous day's actual balance
- const startingBalance = previousDaySales.actualPaytmBalance;
- 
- // Add today's Paytm received
- const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
- 
- // Add today's Online Payouts (Swiggy + Zomato) - Get actual payout data
- const storeFilteredPayouts = effectiveStoreId 
- ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
- : onlinePayoutData;
- const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
- const todaysOnlinePayouts = todaysPayoutData 
- ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
- : 0;
- 
- // Subtract today's used online money
- const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
- 
- // Subtract today's employee payouts (contract workers)
- const todaysEmployeePayouts = totalContractPayout;
- 
- const finalBalance = startingBalance + todaysPaytm + todaysOnlinePayouts - todaysUsedOnlineMoney - todaysEmployeePayouts;
- 
- console.log('📊 ONLINE CASH BALANCE (from previous day actual):', {
- effectiveStoreId,
+ // Single source of truth - see src/utils/paytmBalance.ts. SalesView's owner-facing
+ // "Online Cash (Paytm)" card calls the exact same function, so the two screens can't
+ // drift apart the way they used to (they disagreed by ₹27,000 on 31 Aug).
+ return computeExpectedPaytmBalance({
+ salesData: context.salesData,
+ overheads: context.overheads,
+ aggregatorSettlements: context.aggregatorSettlements || [],
+ onlinePayoutData,
+ onlineLoans,
+ employeePayouts,
+ topupRequests,
+ onlineCashRecalibrations: context.onlineCashRecalibrations || [],
  selectedDate,
- previousDate: previousDateStr,
- startingBalance,
- todaysPaytm,
- todaysOnlinePayouts,
- todaysUsedOnlineMoney,
- todaysEmployeePayouts,
- finalBalance
- });
- 
- return finalBalance;
- }
- 
- // Otherwise, calculate from recalibration (existing logic)
- // Check if there's a recalibration for the current month
- const selectedMonth = selectedDate.slice(0, 7); // "YYYY-MM"
- const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
- 
- // Filter data by store
- const storeFilteredSales = effectiveStoreId 
- ? context.salesData.filter(s => s.storeId === effectiveStoreId)
- : context.salesData;
- const storeFilteredInventory = effectiveStoreId 
- ? context.inventory.filter(i => i.storeId === effectiveStoreId)
- : context.inventory;
- const storeFilteredOverhead = effectiveStoreId 
- ? context.overheads.filter(o => o.storeId === effectiveStoreId)
- : context.overheads;
- const storeFilteredFixed = effectiveStoreId 
- ? context.fixedCosts.filter(f => f.storeId === effectiveStoreId)
- : context.fixedCosts;
- 
- // If there's a recalibration for this month, use it as the starting balance
- // and only calculate transactions AFTER the recalibration date
- const startDate = hasRecalibrationThisMonth ? lastOnlineRecalibration.date : '2000-01-01';
- const startingBalance = hasRecalibrationThisMonth ? lastOnlineRecalibration.actualBalance : 0;
- 
- console.log('📊 ONLINE CASH BALANCE CALCULATION:', {
  effectiveStoreId,
- selectedDate,
- selectedMonth,
- hasRecalibration: hasRecalibrationThisMonth,
- recalibrationDate: hasRecalibrationThisMonth ? lastOnlineRecalibration.date : 'none',
- startingBalance,
- startDate,
- totalSalesRecords: context.salesData.length,
- filteredSalesRecords: storeFilteredSales.length,
- totalInventoryRecords: context.inventory.length,
- filteredInventoryRecords: storeFilteredInventory.length
- });
- 
- // Get all historical Paytm received FROM recalibration date onwards and BEFORE today (not including today)
- const paytmTransactions = storeFilteredSales.filter(s => s.date >= startDate && s.date < selectedDate);
- const historicalPaytmReceived = paytmTransactions.reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
- // Add today's form value
- const todaysPaytm = parseFloat(formData.paytmAmount) || 0;
- const allPaytmReceived = historicalPaytmReceived + todaysPaytm;
- 
- console.log('💰 Paytm transactions included:', {
- count: paytmTransactions.length,
- historicalTransactions: paytmTransactions.map(s => ({ date: s.date, amount: s.paytmAmount })),
- historicalTotal: historicalPaytmReceived,
- todaysPaytm,
- totalIncludingToday: allPaytmReceived
- });
- 
- // Get all Online Payouts (Swiggy + Zomato) FROM recalibration date onwards and BEFORE today (not including today)
- // This is what actually gets deposited into Online Cash in Hand (Paytm)
- const storeFilteredPayouts = effectiveStoreId 
- ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
- : onlinePayoutData;
- 
- const historicalOnlinePayoutTransactions = storeFilteredPayouts.filter(p => p.date >= startDate && p.date < selectedDate);
- const historicalOnlinePayouts = historicalOnlinePayoutTransactions.reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
- 
- // Add today's actual payout data (not sales)
- const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
- const todaysOnlinePayouts = todaysPayoutData 
- ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
- : 0;
- const allOnlinePayouts = historicalOnlinePayouts + todaysOnlinePayouts;
- 
- console.log('💰 Online payout transactions included:', {
- count: historicalOnlinePayoutTransactions.length,
- historicalTransactions: historicalOnlinePayoutTransactions.map(p => ({ 
- date: p.date, 
- swiggy: p.swiggyPayout, 
- zomato: p.zomatoPayout 
- })),
- historicalTotal: historicalOnlinePayouts,
- todaysOnlinePayouts,
- totalIncludingToday: allOnlinePayouts
- });
- 
- // Recalculate all used online money from actual data FROM recalibration date onwards and BEFORE today (not including today)
- const allInventoryOnline = storeFilteredInventory
- .filter(i => i.date >= startDate && i.date < selectedDate)
- .reduce((sum, i) => {
- if (i.paymentMethod === 'online') return sum + i.totalCost;
- if (i.paymentMethod === 'both' && i.onlineAmount) return sum + i.onlineAmount;
- return sum;
- }, 0);
- 
- const allOverheadOnline = storeFilteredOverhead
- .filter(o => o.date >= startDate && o.date < selectedDate && !isCommissionEntry(o))
- .reduce((sum, o) => {
- if (o.paymentMethod === 'online') return sum + o.amount;
- if (o.paymentMethod === 'both' && o.onlineAmount) return sum + o.onlineAmount;
- return sum;
- }, 0);
- 
- const allFixedOnline = storeFilteredFixed
- .filter(f => f.date >= startDate && f.date < selectedDate)
- .reduce((sum, f) => {
- if (f.paymentMethod === 'online') return sum + f.amount;
- if (f.paymentMethod === 'both' && f.onlineAmount) return sum + f.onlineAmount;
- return sum;
- }, 0);
- 
- // Calculate commission separately (FROM recalibration date onwards and BEFORE today, not including today)
- const allCommission = storeFilteredOverhead
- .filter(o => isCommissionEntry(o) && o.date >= startDate && o.date < selectedDate)
- .reduce((sum, o) => {
- const paymentMethod = o.paymentMethod || 'online';
- if (paymentMethod === 'online') return sum + (o.amount || 0);
- if (paymentMethod === 'both') return sum + (o.onlineAmount || 0);
- return sum;
- }, 0);
- 
- const historicalUsedOnlineMoney = allInventoryOnline + allOverheadOnline + allFixedOnline;
- // Add today's form value
- const todaysUsedOnlineMoney = parseFloat(formData.usedOnlineMoney) || 0;
- const allUsedOnlineMoney = historicalUsedOnlineMoney + todaysUsedOnlineMoney;
- 
- // Calculate loans FROM recalibration date onwards and BEFORE today (not including today)
- const storeFilteredLoans = effectiveStoreId 
- ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
- : onlineLoans;
- 
- // Loans received (adds to balance) - FROM recalibration date onwards and BEFORE today (not including today)
- const loansReceived = storeFilteredLoans
- .filter(l => l.loanDate >= startDate && l.loanDate < selectedDate)
- .reduce((sum, l) => sum + l.loanAmount, 0);
- 
- // Loan repayments (reduces balance) - FROM recalibration date onwards and BEFORE today (not including today)
- // For loans that were taken AND fully/partially repaid in the period
- const loanRepayments = storeFilteredLoans
- .filter(l => {
- // Only include repayments made in the date range
- // If loan was taken before startDate, include all its repayments in range
- // If loan was taken in range, include repayments after loan date
- const loanStarted = l.loanDate < startDate ? startDate : l.loanDate;
- return l.repaidAmount > 0 && l.loanDate < selectedDate;
- })
- .reduce((sum, l) => {
- // If the loan was taken in this period, we need to calculate repayments carefully
- // For now, we include the full repaid amount if the loan was started before or in this period
- if (l.loanDate >= startDate && l.loanDate < selectedDate) {
- // Loan started in this period - include all repayments
- return sum + l.repaidAmount;
- } else if (l.loanDate < startDate) {
- // Loan started before this period - include full repaid amount
- // (This is a simplification - ideally we'd track each repayment date)
- return sum + l.repaidAmount;
- }
- return sum;
- }, 0);
- 
- // Calculate balance: Starting Balance + Paytm Received + Online Payouts + Loans Received - Used - Commission - Loan Repayments - Employee Payouts
- 
- // Get all employee payouts FROM recalibration date onwards and BEFORE today (not including today)
- const storeFilteredEmployeePayouts = effectiveStoreId 
- ? employeePayouts.filter(p => !p.storeId || p.storeId === effectiveStoreId) // Include payouts without storeId for backward compatibility
- : employeePayouts;
- 
- const historicalEmployeePayouts = storeFilteredEmployeePayouts
- .filter(p => p.date >= startDate && p.date < selectedDate)
- .reduce((sum, p) => sum + (p.amount || 0), 0);
- 
- // Add today's employee payouts (contract workers entered in form)
- const todaysEmployeePayouts = totalContractPayout;
- const allEmployeePayouts = historicalEmployeePayouts + todaysEmployeePayouts;
- 
- const finalBalance = startingBalance + allPaytmReceived + allOnlinePayouts + loansReceived - allUsedOnlineMoney - allCommission - loanRepayments - allEmployeePayouts;
- 
- console.log('📊 Balance breakdown:', {
- startingBalance,
- allPaytmReceived,
- allOnlinePayouts,
- loansReceived,
- allUsedOnlineMoney,
- allCommission,
- loanRepayments,
- allEmployeePayouts,
- finalBalance
- });
- 
- return finalBalance;
- }, [context.salesData, context.inventory, context.overheads, context.fixedCosts, onlinePayoutData, onlineLoans, employeePayouts, totalContractPayout, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.offlineSales, formData.usedOnlineMoney]);
+ todaysPaytmReceived: parseFloat(formData.paytmAmount) || 0,
+ todaysUsedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
+ lastOnlineRecalibration,
+ }).balance;
+ }, [context.salesData, context.overheads, context.aggregatorSettlements, context.onlineCashRecalibrations, onlinePayoutData, onlineLoans, employeePayouts, topupRequests, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.usedOnlineMoney]);
 
- // Calculate Paytm discrepancy (similar to cash discrepancy)
+ // Paytm balance only ever moves through tracked mechanisms (cash top-ups drawn from
+ // it, salary/rent payouts drawn from it) - unlike physical cash, there's no way for it
+ // to go missing or be miscounted, so it's auto-synced from the computed balance instead
+ // of asking the store incharge to manually "count" and enter it (which used to also
+ // produce a meaningless discrepancy warning whenever they typed a slightly different
+ // number than what was already fully determined by logged transactions).
+ useEffect(() => {
+ const computed = calculatePaytmBalance.toFixed(2);
+ if (formData.actualPaytmBalance !== computed) {
+ setFormData((prev) => ({ ...prev, actualPaytmBalance: computed }));
+ }
+ }, [calculatePaytmBalance]);
+
+ // Always 0 now that actualPaytmBalance is auto-synced above - kept as a real
+ // computation (not hardcoded) so nothing downstream needs special-casing.
  const paytmDiscrepancy = useMemo(() => {
  const actual = parseFloat(formData.actualPaytmBalance) || 0;
  if (actual === 0) return 0;
  return actual - calculatePaytmBalance;
  }, [formData.actualPaytmBalance, calculatePaytmBalance]);
- 
- const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 500;
+
+ const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 200;
 
  // Calculate today's actual online payout (Swiggy + Zomato)
  const todaysActualOnlinePayout = useMemo(() => {
@@ -845,41 +729,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const salesForDay = storeFilteredSales.find(s => s.date === date);
  const paytmReceived = salesForDay?.paytmAmount ?? 0;
  
- // Use the "Amount Used from Paytm" field from sales form if it exists
- // Otherwise calculate from actual inventory/overhead/fixed cost entries
- const usedOnlineMoneyFromForm = salesForDay?.usedOnlineMoney ?? 0;
- 
- // Calculate all costs paid via online/Paytm for this day
- const fixedCostsForDay = storeFilteredFixed
- .filter(item => item.date === date)
- .reduce((sum, item) => {
- // Handle legacy entries where paymentMethod might be undefined
- const paymentMethod = item.paymentMethod;
- if (paymentMethod === 'online') return sum + item.amount;
- if (paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
- return sum;
- }, 0);
- 
- const overheadCostsForDay = storeFilteredOverhead
- .filter(item => item.date === date && !isCommissionEntry(item)) // Exclude commission from regular overheads
- .reduce((sum, item) => {
- // Handle legacy entries where paymentMethod might be undefined
- const paymentMethod = item.paymentMethod || 
- (item.description?.includes('Commission') ? 'online' : undefined);
- if (paymentMethod === 'online') return sum + item.amount;
- if (paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
- return sum;
- }, 0);
- 
- // Calculate inventory costs paid via online/Paytm
- const inventoryForDay = storeFilteredInventory
- .filter(item => item.date === date)
- .reduce((sum, item) => {
- if (item.paymentMethod === 'online') return sum + item.totalCost;
- if (item.paymentMethod === 'both' && item.onlineAmount) return sum + item.onlineAmount;
- return sum;
- }, 0);
- 
+ // "Used online money" is driven entirely by approved cash top-ups (stored directly
+ // on the sales record), not by inventory/overhead/fixed-cost payment method flags,
+ // which are now just a placeholder with no effect on any balance.
+ const usedOnlineMoney = salesForDay?.usedOnlineMoney ?? 0;
+
  // Check if there's a commission entry for this date (from overheads)
  // Sum all commissions for this date (in case there are multiple entries)
  // Commission is PAID via Paytm to aggregators (Swiggy/Zomato)
@@ -897,13 +751,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return sum;
  }, 0);
  
- // TOTAL used online money:
- // If the sales form has a usedOnlineMoney value, use that (user manually entered it)
- // Otherwise calculate from inventory + overheads + fixed costs (EXCLUDING commission)
- // Commission is shown separately in its own column, so don't include it here
- const calculatedUsedOnlineMoney = inventoryForDay + overheadCostsForDay + fixedCostsForDay;
- const usedOnlineMoney = usedOnlineMoneyFromForm > 0 ? usedOnlineMoneyFromForm : calculatedUsedOnlineMoney;
- 
  // Get online payouts for the day (what Swiggy/Zomato actually pay us)
  const storeFilteredPayouts = effectiveStoreId
  ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
@@ -920,7 +767,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  : employeePayouts;
  
  const employeePayoutsForDay = storeFilteredEmployeePayouts
- .filter(p => p.date === date)
+ .filter(p => p.date === date && (p.paidFrom == null || p.paidFrom === 'paytm'))
  .reduce((sum, p) => sum + (p.amount || 0), 0);
  
  // Get loans taken on this day (adds money to Paytm)
@@ -948,9 +795,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  employeePayouts: employeePayoutsForDay, // Add employee payouts to breakdown
  loansTaken: loansForDay, // Add loans taken
  loanRepayments: repaymentForDay, // Add loan repayments
- inventoryCosts: inventoryForDay,
- fixedCosts: fixedCostsForDay,
- overheadCosts: overheadCostsForDay,
  netChange,
  runningBalance: 0 // Will be calculated in second pass
  };
@@ -1020,153 +864,52 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  return dailyData;
  }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, onlinePayoutData, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
 
- // Calculate total inventory purchases paid via online for the selected date
- const inventoryOnlineTotal = useMemo(() => {
- const total = context.inventory
- .filter(item => item.date === selectedDate)
- .reduce((sum, item) => {
- if (item.paymentMethod === 'online') {
- return sum + item.totalCost;
- } else if (item.paymentMethod === 'both' && item.onlineAmount) {
- return sum + item.onlineAmount;
- }
- return sum;
- }, 0);
- console.log(`💰 Inventory Online Total for ${selectedDate}:`, total, 'items:', context.inventory.filter(item => item.date === selectedDate).map(i => ({name: i.itemName, payment: i.paymentMethod, total: i.totalCost})));
- return total;
- }, [context.inventory, selectedDate]);
-
- // Calculate total overhead costs paid via online for the selected date
- const overheadOnlineTotal = useMemo(() => {
- // Get all overheads for the selected date
- const dailyOverheads = context.overheads.filter(item => item.date === selectedDate);
- 
- // Also check for monthly commission entries (they're stored on last day of month but apply to whole month)
- const selectedMonth = selectedDate.substring(0, 7); // e.g., "2026-01"
- 
- // Debug logging
- const serviceCharges = context.overheads.filter(item => 
- item.category === 'service_charge' && item.date?.startsWith(selectedMonth)
- );
- console.log(`🔍 [OH] Month: ${selectedMonth}, Service charges:`, serviceCharges.length, serviceCharges.map(s => ({desc: s.description, amt: s.amount, payment: s.paymentMethod})));
- 
- // Find ALL commission entries for this month (there might be duplicates from migration)
- const monthlyCommissions = context.overheads.filter(item =>
- ((item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) ||
- item.category === 'commission') && // Legacy format
- item.date?.startsWith(selectedMonth)
- );
- 
- console.log(`🔍 [OH] Commission entries found:`, monthlyCommissions.length, monthlyCommissions.map(c => ({category: c.category, desc: c.description, amt: c.amount, payment: c.paymentMethod})));
- 
- // Calculate total from daily overheads (EXCLUDING commission entries - they're handled separately)
- let total = dailyOverheads.reduce((sum, item) => {
- // SKIP commission entries - they should be handled separately as monthly prorated amounts
- const isCommission = item.category === 'commission' || 
- (item.category === 'service_charge' && item.description?.includes('Aggregator Commission'));
- 
- if (isCommission) {
- console.log(`⏭️ [OH] Skipping commission in daily loop:`, {category: item.category, desc: item.description, amount: item.amount});
- return sum; // Skip this item
- }
- 
- // Handle legacy entries where paymentMethod might be undefined
- const paymentMethod = item.paymentMethod || undefined;
- 
- if (paymentMethod === 'online') {
- return sum + item.amount;
- } else if (paymentMethod === 'both' && item.onlineAmount) {
- return sum + item.onlineAmount;
- }
- return sum;
- }, 0);
- 
- // Add FULL monthly commission ONLY on the last day of the month
- // Note: We skip commission entries in the dailyOverheads loop above, so we handle them here
- if (monthlyCommissions.length > 0) {
- const dateObj = new Date(selectedDate);
- const year = dateObj.getFullYear();
- const month = dateObj.getMonth();
- const daysInMonth = new Date(year, month + 1, 0).getDate();
- const dayOfMonth = dateObj.getDate();
- 
- // Check if this is the LAST day of the month
- const isLastDayOfMonth = dayOfMonth === daysInMonth;
- 
- if (isLastDayOfMonth) {
- // Sum up all commission amounts (handling duplicates if they exist)
- const totalMonthlyCommission = monthlyCommissions.reduce((sum, commission) => {
- const paymentMethod = commission.paymentMethod || 'online';
- if (paymentMethod === 'online') {
- return sum + commission.amount;
- } else if (paymentMethod === 'both' && commission.onlineAmount) {
- return sum + commission.onlineAmount;
- }
- return sum;
- }, 0);
- 
- console.log(`💰 [OH] Adding FULL monthly commission (last day of month): ₹${totalMonthlyCommission.toFixed(2)} (entries: ${monthlyCommissions.length})`);
- total += totalMonthlyCommission;
- } else {
- console.log(`⏭️ [OH] Skipping commission (not last day): Day ${dayOfMonth}/${daysInMonth}`);
- }
- }
- 
- console.log(`💰 Overhead Online Total for ${selectedDate}:`, total, 'items:', dailyOverheads.map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})), 'commissions:', monthlyCommissions.map(c => ({amount: c.amount, payment: c.paymentMethod, category: c.category})));
- return total;
- }, [context.overheads, selectedDate]);
-
- // Calculate total fixed costs paid via online for the selected date
- const fixedCostOnlineTotal = useMemo(() => {
- const total = context.fixedCosts
- .filter(item => item.date === selectedDate)
- .reduce((sum, item) => {
- if (item.paymentMethod === 'online') {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.onlineAmount) {
- return sum + item.onlineAmount;
- }
- return sum;
- }, 0);
- console.log(`💰 Fixed Cost Online Total for ${selectedDate}:`, total, 'items:', context.fixedCosts.filter(item => item.date === selectedDate).map(i => ({category: i.category, payment: i.paymentMethod, total: i.amount})));
- return total;
- }, [context.fixedCosts, selectedDate]);
-
- // Calculate total online expenses (inventory + overhead + fixed costs + contract payouts)
- // Contract payouts are paid directly from Paytm and must be included in "Amount Used from Paytm"
- const totalOnlineExpenses = useMemo(() => {
- const total = inventoryOnlineTotal + overheadOnlineTotal + fixedCostOnlineTotal + totalContractPayout;
- console.log(`💳 TOTAL Online Expenses for ${selectedDate}:`, {
- inventory: inventoryOnlineTotal,
- overhead: overheadOnlineTotal,
- fixedCost: fixedCostOnlineTotal,
- contractPayouts: totalContractPayout,
- note: 'Contract payouts ARE included in Amount Used from Paytm',
- total: total
- });
- return total;
- }, [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, totalContractPayout, selectedDate]);
-
- // Daily online expenses breakdown object (for expense breakdown display)
- const dailyOnlineExpenses = useMemo(() => ({
- inventory: inventoryOnlineTotal,
- overhead: overheadOnlineTotal,
- fixedCost: fixedCostOnlineTotal,
- total: totalOnlineExpenses
- }), [inventoryOnlineTotal, overheadOnlineTotal, fixedCostOnlineTotal, totalOnlineExpenses]);
+ // Note: inventory/overhead/fixed-cost "payment method" (cash/online) splits no longer
+ // drive any calculation here - "Used Online Money" is now sourced entirely from
+ // approved cash top-ups (see calculatePaytmBalance and the usedOnlineMoney field).
 
  // Load existing data when date changes
  useEffect(() => {
  if (salesForDate) {
+ // A record can exist for this date without ever having gotten a
+ // previousCashInHand (e.g. the nightly POS auto-sync creates it with just
+ // offline/online totals, before the store incharge does their own count) - in
+ // that case previousCashInHand sits at null/undefined and used to silently
+ // default to 0 instead of carrying yesterday's real closing balance forward.
+ // Only trust that blank field as "really zero" once the day has actually been
+ // reconciled (actualCashInHand set) - before that, recompute it live the same
+ // way a brand-new entry below does, so today's card is never a stale zero.
+ const isReconciled = salesForDate.actualCashInHand !== undefined && salesForDate.actualCashInHand !== null;
+ const hasStoredPrevCash = salesForDate.previousCashInHand !== undefined && salesForDate.previousCashInHand !== null;
+ let prevCashForExisting = salesForDate.previousCashInHand ?? 0;
+ if (!isReconciled && !hasStoredPrevCash) {
+ if (previousDateSales) {
+ prevCashForExisting = previousDateSales.actualCashInHand ?? 0;
+ } else if (latestPriorCashSales) {
+ prevCashForExisting = latestPriorCashSales.actualCashInHand ?? 0;
+ }
+ }
+ // From PRODUCTION_CASH_GO_LIVE_DATE onward, the store's leftover cash is assumed fully
+ // handed over each night (it becomes production's opening balance instead - see
+ // ProductionManagement.tsx's Cash in Hand tab) - so the store's own carry-forward chain
+ // stops here and every day starts fresh at 0, overriding whatever the logic above found.
+ if (selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE) {
+ prevCashForExisting = 0;
+ }
+
  setFormData({
  offlineSales: (salesForDate.offlineSales ?? 0).toString(),
  paytmAmount: (salesForDate.paytmAmount ?? 0).toString(),
  cashAmount: (salesForDate.cashAmount ?? 0).toString(),
  employeeSalary: (salesForDate.employeeSalary ?? 0).toString(),
- previousCashInHand: (salesForDate.previousCashInHand ?? 0).toString(),
- usedOnlineMoney: totalOnlineExpenses.toString(), // Always use calculated value (includes contract payouts)
+ previousCashInHand: prevCashForExisting.toString(),
+ // Driven entirely by approved cash top-ups now, not manually entered or
+ // auto-calculated from inventory/overhead/fixed-cost payment method splits.
+ usedOnlineMoney: (salesForDate.usedOnlineMoney ?? 0).toString(),
  actualCashInHand: (salesForDate.actualCashInHand ?? 0).toString(),
- actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString()
+ actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString(),
+ cashOverShortReason: salesForDate.cashOverShortReason ?? '',
+ cashOverShortNote: salesForDate.cashOverShortNote ?? ''
  });
  setIsEditing(true);
  setEditingId(salesForDate.id);
@@ -1174,32 +917,97 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Auto-fill previous cash balance from yesterday
  let prevCash = 0;
 
+ if (selectedDate < PRODUCTION_CASH_GO_LIVE_DATE) {
  if (previousDateSales) {
  // Use the actual cash in hand from previous day (which includes any offset)
  prevCash = previousDateSales.actualCashInHand ?? 0;
+ } else if (latestPriorCashSales) {
+ // If yesterday has not been reconciled yet, keep carrying the last known close
+ // instead of resetting the next day to zero.
+ prevCash = latestPriorCashSales.actualCashInHand ?? 0;
  }
- 
+ }
+ // Else (on/after go-live): stays 0 - see the comment on the "existing record" branch
+ // above for why the store's carry-forward chain stops at PRODUCTION_CASH_GO_LIVE_DATE.
+
  setFormData({
  offlineSales: '',
  paytmAmount: '',
  cashAmount: '',
  employeeSalary: '0',
  previousCashInHand: prevCash.toString(),
- usedOnlineMoney: totalOnlineExpenses.toString(), // Auto-populate from inventory + overhead + fixed costs
+ usedOnlineMoney: '0', // No cash top-up approved yet for this date
  actualCashInHand: '',
- actualPaytmBalance: ''
+ actualPaytmBalance: '',
+ cashOverShortReason: '',
+ cashOverShortNote: ''
  });
  setIsEditing(false);
  setEditingId(null);
  }
- }, [selectedDate, salesForDate, previousDateSales, totalOnlineExpenses]);
+
+ // A saved draft for this exact store+date means there's still-unsaved typing to
+ // restore - overlay it on top of whatever was just loaded above (existing record or
+ // blank), since it's always more recent than either.
+ const draft = loadDraft();
+ if (draft) {
+ setFormData((prev) => ({
+ ...prev,
+ ...(draft.paytmAmount !== undefined ? { paytmAmount: draft.paytmAmount } : {}),
+ ...(draft.cashAmount !== undefined ? { cashAmount: draft.cashAmount } : {}),
+ ...(draft.actualCashInHand !== undefined ? { actualCashInHand: draft.actualCashInHand } : {}),
+ ...(draft.cashOverShortReason !== undefined ? { cashOverShortReason: draft.cashOverShortReason } : {}),
+ ...(draft.cashOverShortNote !== undefined ? { cashOverShortNote: draft.cashOverShortNote } : {}),
+ }));
+ }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [selectedDate, salesForDate, previousDateSales, latestPriorCashSales]);
+
+ // Explicit "save my progress" action for the Cash Count fields - counting a till takes
+ // a while, and this doesn't submit the form or trigger any discrepancy/approval checks,
+ // it just protects what's been typed so far from getting wiped out by a navigation away.
+ const handleSaveDraft = () => {
+ if (!draftKey) return;
+ try {
+ localStorage.setItem(draftKey, JSON.stringify({
+ paytmAmount: formData.paytmAmount,
+ cashAmount: formData.cashAmount,
+ actualCashInHand: formData.actualCashInHand,
+ cashOverShortReason: formData.cashOverShortReason,
+ cashOverShortNote: formData.cashOverShortNote,
+ }));
+ toast.success('Progress saved - safe to switch apps, it\'ll be here when you\'re back.');
+ } catch (err) {
+ console.error('Failed to save draft:', err);
+ toast.error('Could not save progress');
+ }
+ };
 
  const handleSubmit = async (e: React.FormEvent) => {
  e.preventDefault();
+
+ // Cash+Paytm vs Net Offline Sales gap - the store incharge must say why before this
+ // can be saved, so it never just silently disappears into (or inflates) Sales.
+ if (paymentMismatch && !formData.cashOverShortReason) {
+ toast.error(`Please pick a reason for the ₹${Math.abs(offlinePaymentDiscrepancy).toFixed(2)} cash/Paytm ${offlinePaymentDiscrepancy > 0 ? 'shortage' : 'excess'} before saving.`);
+ return;
+ }
+
+ // A significant cash/Paytm discrepancy needs cluster head approval either way - stop
+ // here and make the store incharge explicitly acknowledge it rather than letting the
+ // warning banner sit there unread while they hit Save.
+ if (needsApproval || needsPaytmApproval) {
+ const parts: string[] = [];
+ if (needsApproval) parts.push(`cash ${cashDiscrepancy > 0 ? 'excess' : 'shortage'} of ₹${Math.abs(cashDiscrepancy).toFixed(2)}`);
+ if (needsPaytmApproval) parts.push(`Paytm ${paytmDiscrepancy > 0 ? 'excess' : 'shortage'} of ₹${Math.abs(paytmDiscrepancy).toFixed(2)}`);
+ const proceed = confirm(`There's a ${parts.join(' and ')}. This will need cluster head approval before it's final. Submit anyway?`);
+ if (!proceed) return;
+ }
+
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('🔵 SAVE BUTTON CLICKED - Starting validation checks');
  console.log('═══════════════════════════════════════════════════════════════');
- 
+
  console.log('📊 Form Data:', formData);
  console.log('💰 Financial Values:', {
  offlineSales: parseFloat(formData.offlineSales) || 0,
@@ -1326,7 +1134,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Operations manager entries need approval from cluster head if there's high discrepancy
  // Cluster head can directly approve their own entries
  const needsManagerApproval = isOperationsManager;
- 
+ // BUG FIX: approvedBy/approvalStatus below used to be gated on needsManagerApproval
+ // alone, so a store incharge (not an operations manager) with a genuinely high cash or
+ // Paytm discrepancy still got auto-approved as themselves in the same save -
+ // approvalRequired came out true (that field was computed correctly) while approvedBy
+ // was simultaneously set to the submitter, so the record self-contradicted and never
+ // showed up in any "Pending Approvals" list for a cluster head to actually see it.
+ // Any of the three conditions that can require a cluster head's sign-off must block
+ // auto-approval, not just the role-based one.
+ const needsAnyApproval = needsManagerApproval || needsApproval || needsPaytmApproval;
+
  // Don't block saving if discrepancy is high - allow requesting approval
  const salesData: Omit<SalesData, 'id'> = {
  date: selectedDate,
@@ -1342,16 +1159,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  cashOffset: offset,
  actualPaytmBalance: actualPaytm,
  paytmOffset: paytmOffset,
+ // No longer a form field (Total Offline Sales is now read-only, POS-derived) - preserve
+ // whatever the last sync wrote rather than parsing a field that no longer exists here.
+ posOnlineSales: salesForDate?.posOnlineSales ?? 0,
+ posOfflineSales: salesForDate?.posOfflineSales ?? 0,
  // CRITICAL: Preserve the original salesDiscrepancy if it exists (locked at first settlement), otherwise set to current offset
  // This ensures that once a discrepancy is locked (either at initial settlement or after approval), it NEVER changes
  salesDiscrepancy: salesForDate?.salesDiscrepancy !== undefined 
  ? salesForDate.salesDiscrepancy 
  : offset,
  approvalRequired: needsApproval || needsPaytmApproval,
- approvalStatus: needsManagerApproval ? 'pending' : 'approved', // Auto-approve for operations manager
+ approvalStatus: needsAnyApproval ? 'pending' : 'approved', // Auto-approve only when nothing requires a cluster head's sign-off
  createdBy: context.user?.employeeId || context.user?.email || 'unknown',
- approvedBy: !needsManagerApproval ? (context.user?.employeeId || context.user?.email || 'self') : salesForDate?.approvedBy || null,
- approvedAt: !needsManagerApproval ? new Date().toISOString() : salesForDate?.approvedAt || null,
+ approvedBy: !needsAnyApproval ? (context.user?.employeeId || context.user?.email || 'self') : salesForDate?.approvedBy || null,
+ approvedAt: !needsAnyApproval ? new Date().toISOString() : salesForDate?.approvedAt || null,
  approvalRequested: salesForDate?.approvalRequested || false,
  approvalRequestedAt: salesForDate?.approvalRequestedAt || null,
  requestedCashInHand: salesForDate?.requestedCashInHand || null,
@@ -1359,7 +1180,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  rejectedBy: salesForDate?.rejectedBy || null,
  rejectedAt: salesForDate?.rejectedAt || null,
  rejectionReason: salesForDate?.rejectionReason || null,
- storeId: selectedStoreId || context.user?.storeId || undefined
+ storeId: selectedStoreId || context.user?.storeId || undefined,
+ // Cash Over/Short - only booked when there's an actual Cash+Paytm vs Net Offline
+ // Sales gap; cleared when the day reconciles cleanly (e.g. after re-entering amounts).
+ cashOverShortAmount: paymentMismatch ? offlinePaymentDiscrepancy : 0,
+ cashOverShortReason: paymentMismatch && formData.cashOverShortReason ? formData.cashOverShortReason : null,
+ cashOverShortNote: paymentMismatch && formData.cashOverShortNote ? formData.cashOverShortNote : null,
  };
  
  console.log('📤 Saving sales data:', salesData);
@@ -1387,88 +1213,15 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }
  
  console.log('─────────────────────────────────────────────────────────────');
- console.log('🔄 Step 2: Syncing contract worker payouts...');
- console.log('👷 Contract payouts count:', contractPayouts.length);
- console.log('👷 Contract payouts:', contractPayouts);
- 
- // Sync contract worker payouts to payroll system
- if (contractPayouts.length > 0) {
- console.log('⏱️ Fetching all payouts to check for duplicates...');
- // First, get all payouts for this date to find and delete old ones
- const allPayouts = await api.getPayouts();
- console.log('📦 Total payouts in system:', allPayouts.length);
- 
- const contractWorkerIds = contractWorkers.map(w => w.id);
- console.log('👤 Contract worker IDs:', contractWorkerIds);
- 
- const existingPayoutsForDate = allPayouts.filter(p => 
- p.date === selectedDate && contractWorkerIds.includes(p.employeeId)
- );
- 
- console.log('🗑️ Existing payouts for this date:', existingPayoutsForDate.length, existingPayoutsForDate);
- 
- // Delete existing contract worker payouts for this date to avoid duplicates
- console.log('⏱️ Deleting old payouts...');
- for (const payout of existingPayoutsForDate) {
- console.log('🗑️ Deleting payout:', payout.id, payout);
- await api.deletePayout(payout.id);
- console.log('✅ Deleted old payout:', payout.id);
- }
- 
- // Now save the new payouts
- console.log('⏱️ Preparing new payouts to save...');
- const payoutsToSave = contractPayouts
- .filter(p => p.employeeId && p.amount) // Only save valid payouts
- .map(payout => {
- const worker = contractWorkers.find(w => w.id === payout.employeeId);
- return {
- employeeId: payout.employeeId,
- employeeName: worker?.name || '',
- amount: parseFloat(payout.amount),
- date: selectedDate,
- storeId: effectiveStoreId || undefined, // Add storeId for proper filtering in online cash calculation
- createdAt: new Date().toISOString()
- };
- });
- 
- console.log('💾 Payouts to save:', payoutsToSave.length, payoutsToSave);
- 
- if (payoutsToSave.length > 0) {
- console.log('⏱��� Saving payouts to API...');
- await api.addPayouts(payoutsToSave);
- console.log('✅ Contract worker payouts synced to payroll:', payoutsToSave);
- } else {
- console.log('⏭️ No valid payouts to save');
- }
- } else {
- console.log('⏭️ No contract payouts entered, checking for old ones to delete...');
- // If no payouts entered, delete any existing ones for this date
- const allPayouts = await api.getPayouts();
- console.log('📦 Total payouts in system:', allPayouts.length);
- 
- const contractWorkerIds = contractWorkers.map(w => w.id);
- const existingPayoutsForDate = allPayouts.filter(p => 
- p.date === selectedDate && contractWorkerIds.includes(p.employeeId)
- );
- 
- console.log('🗑️ Existing payouts for this date to delete:', existingPayoutsForDate.length);
- 
- for (const payout of existingPayoutsForDate) {
- console.log('🗑️ Deleting payout:', payout.id);
- await api.deletePayout(payout.id);
- console.log('✅ Deleted payout (no workers entered):', payout.id);
- }
- }
- 
- console.log('─────────────────────────────────────────────────────────────');
- console.log('🔄 Step 3: Reloading employee payouts...');
+ console.log('🔄 Step 2: Reloading employee payouts...');
  await loadEmployeePayouts();
  console.log('✅ Employee payouts reloaded');
- 
+
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('🎉 ALL SAVES COMPLETED SUCCESSFULLY!');
  console.log('═══════════════════════════════════════════════════════════════');
- alert('Sales data and contract worker payouts saved successfully!');
+ clearDraft();
+ alert('Sales data saved successfully!');
  } catch (error) {
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('❌ ERROR DURING SAVE PROCESS');
@@ -1575,87 +1328,196 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  };
 
  // Calculate online sales total from actual online sales data
- const onlineSalesEntryForDate = useMemo(() => {
+ const rawOnlineSalesEntryForDate = useMemo(() => {
  const filtered = effectiveStoreId
  ? onlineSalesData.filter(s => s.storeId === effectiveStoreId)
  : onlineSalesData;
  return filtered.find(s => s.date === selectedDate);
  }, [onlineSalesData, selectedDate, effectiveStoreId]);
 
- const onlineSalesTotal = useMemo(() => {
- if (!onlineSalesEntryForDate) return 0;
- return (onlineSalesEntryForDate.swiggySales || 0) + (onlineSalesEntryForDate.zomatoSales || 0);
- }, [onlineSalesEntryForDate]);
+ const categorySalesChannelRevenue = useMemo(() => {
+ const storeIds = effectiveStoreId && effectiveStoreId !== 'all' ? [effectiveStoreId] : null;
+ return getChannelRevenueFromCategorySales(context.categorySalesData, selectedDate, storeIds);
+ }, [context.categorySalesData, selectedDate, effectiveStoreId]);
 
- // Keep the simple online sales input in sync with the loaded record for the selected date
- useEffect(() => {
- setOnlineSalesInput(onlineSalesEntryForDate ? onlineSalesTotal.toString() : '');
- }, [selectedDate, onlineSalesEntryForDate, onlineSalesTotal]);
-
- const saveOnlineSales = async () => {
- if (!context.user?.accessToken) return;
- const amount = parseFloat(onlineSalesInput) || 0;
-
- setIsSavingOnlineSales(true);
- try {
- const entry: api.OnlineSalesEntry = {
- id: onlineSalesEntryForDate?.id || `ONLINE-SALES-${Date.now()}`,
+ const onlineSalesEntryForDate = useMemo(() => {
+ const primaryOnlineTotal = rawOnlineSalesEntryForDate
+ ? (rawOnlineSalesEntryForDate.swiggySales || 0) + (rawOnlineSalesEntryForDate.zomatoSales || 0)
+ : 0;
+ const fallbackOnlineTotal = categorySalesChannelRevenue.zomato + categorySalesChannelRevenue.swiggy;
+ if (primaryOnlineTotal > 0 || fallbackOnlineTotal <= 0) return rawOnlineSalesEntryForDate;
+ return {
+ ...(rawOnlineSalesEntryForDate || {}),
+ id: rawOnlineSalesEntryForDate?.id || `category-channel-${selectedDate}-${effectiveStoreId || 'all'}`,
  date: selectedDate,
- swiggySales: amount,
- zomatoSales: 0,
  storeId: effectiveStoreId || undefined,
- createdAt: onlineSalesEntryForDate?.createdAt || new Date().toISOString()
- };
- await api.saveOnlineSalesData(context.user.accessToken, entry);
- await loadOnlineSalesData();
- } catch (error) {
- console.error('Error saving online sales:', error);
- alert('Failed to save online sales. Please try again.');
- } finally {
- setIsSavingOnlineSales(false);
- }
- };
+ swiggySales: categorySalesChannelRevenue.swiggy,
+ zomatoSales: categorySalesChannelRevenue.zomato,
+ createdAt: rawOnlineSalesEntryForDate?.createdAt || '',
+ } as api.OnlineSalesEntry;
+ }, [rawOnlineSalesEntryForDate, categorySalesChannelRevenue, selectedDate, effectiveStoreId]);
 
- const offlineSalesTotal = parseFloat(formData.offlineSales) || 0;
+ const onlineSalesTotal = useMemo(() => {
+ const primaryOnlineTotal = onlineSalesEntryForDate
+ ? (onlineSalesEntryForDate.swiggySales || 0) + (onlineSalesEntryForDate.zomatoSales || 0)
+ : 0;
+ return primaryOnlineTotal || categorySalesChannelRevenue.zomato + categorySalesChannelRevenue.swiggy;
+ }, [onlineSalesEntryForDate, categorySalesChannelRevenue]);
+
+ // "Total Offline Sales" is read-only - it's the real figure Ciferon synced overnight
+ // (formData.offlineSales is populated from salesForDate.offlineSales, written by Step A of
+ // the nightly pos-sync). Cash and Paytm below are the store incharge's own physical count
+ // of how that total was actually received - the discrepancy compares the two.
+ const offlineSalesTotal = parseFloat(formData.offlineSales) || categorySalesChannelRevenue.offline || 0;
  const paytm = parseFloat(formData.paytmAmount) || 0;
  const cash = parseFloat(formData.cashAmount) || 0;
  const offlinePaymentTotal = paytm + cash;
- const paymentMismatch = Math.abs(offlineSalesTotal - offlinePaymentTotal) > 0.01;
+ // Signed: positive means the counted cash+paytm is SHORT of the real offline total,
+ // negative means it's OVER (matches "can be positive or negative" from the requested behavior).
+ const offlinePaymentDiscrepancy = offlineSalesTotal - offlinePaymentTotal;
+ const paymentMismatch = Math.abs(offlinePaymentDiscrepancy) > 0.01;
+
+ // Total POS-reported sales (online + offline, both now read-only/synced figures) must
+ // match the total cash the store incharge actually counted at end of day. Online/offline
+ // split can differ - only the combined total is enforced.
+ const posTotal = offlineSalesTotal + onlineSalesTotal;
+ const actualCountedTotal = (parseFloat(formData.actualCashInHand) || 0) + (parseFloat(formData.actualPaytmBalance) || 0);
+ const hasPosData = posTotal > 0;
+ const posTotalMismatch = hasPosData && Math.abs(posTotal - actualCountedTotal) > 0.01;
+
+ const previousPaytmOpening = useMemo(() => {
+ const previousDaySales = effectiveStoreId
+ ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
+ : context.salesData.find(s => s.date === previousDateStr);
+
+ if (previousDaySales?.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
+ return { amount: previousDaySales.actualPaytmBalance, label: previousDaySales.date };
+ }
+ if (latestPriorPaytmSalesForDisplay?.actualPaytmBalance !== undefined && latestPriorPaytmSalesForDisplay.actualPaytmBalance !== null) {
+ return { amount: latestPriorPaytmSalesForDisplay.actualPaytmBalance, label: latestPriorPaytmSalesForDisplay.date };
+ }
+
+ const latestRecalibration = context.onlineCashRecalibrations
+ .filter(r => (!effectiveStoreId || r.storeId === effectiveStoreId) && r.date < selectedDate)
+ .sort((a, b) => b.date.localeCompare(a.date))[0];
+ if (latestRecalibration) {
+ return { amount: latestRecalibration.actualBalance || 0, label: latestRecalibration.date };
+ }
+
+ return { amount: 0, label: previousDateStr };
+ }, [context.salesData, context.onlineCashRecalibrations, effectiveStoreId, previousDateStr, selectedDate, latestPriorPaytmSalesForDisplay]);
+
+ const todaysOnlineLoansReceived = useMemo(() => {
+ const storeFilteredLoans = effectiveStoreId
+ ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
+ : onlineLoans;
+ return storeFilteredLoans
+ .filter(l => l.loanDate === selectedDate && (l.status === 'active' || l.status === 'repaid'))
+ .reduce((sum, l) => sum + l.loanAmount, 0);
+ }, [onlineLoans, effectiveStoreId, selectedDate]);
+
+ const todaysLoanRepayments = useMemo(() => {
+ const storeFilteredLoans = effectiveStoreId
+ ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
+ : onlineLoans;
+ return storeFilteredLoans
+ .filter(l => l.status === 'repaid' && l.repaymentDate === selectedDate)
+ .reduce((sum, l) => sum + l.repaidAmount, 0);
+ }, [onlineLoans, effectiveStoreId, selectedDate]);
+
+ const todaysOnlineCommission = useMemo(() => {
+ const storeFilteredOverheads = effectiveStoreId
+ ? context.overheads.filter(o => o.storeId === effectiveStoreId)
+ : context.overheads;
+ return storeFilteredOverheads
+ .filter(o => isCommissionEntry(o) && o.date === selectedDate)
+ .reduce((sum, o) => {
+ const paymentMethod = o.paymentMethod || 'online';
+ if (paymentMethod === 'online') return sum + (o.amount || 0);
+ if (paymentMethod === 'both') return sum + (o.onlineAmount || 0);
+ return sum;
+ }, 0);
+ }, [context.overheads, effectiveStoreId, selectedDate]);
+
+ const cashTopupsUsedToday = parseFloat(formData.usedOnlineMoney) || 0;
+ const actualCashCount = parseFloat(formData.actualCashInHand) || 0;
+ const actualPaytmBalance = parseFloat(formData.actualPaytmBalance) || calculatePaytmBalance;
 
  return (
  <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/30 to-rose-50/30">
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
- {/* Date Selector */}
- <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
- 
- {/* Online Sales - simple combined total (Swiggy + Zomato), logged by the store incharge.
- Payout/commission reconciliation is handled separately by the operations manager below. */}
- {canEditSales && (
- <div className="mb-6 mt-4 bg-white/70 p-4 rounded-2xl border border-orange-200/50">
- <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
- <Smartphone className="w-4 h-4 text-orange-600" />
- Online Sales (₹) - Swiggy + Zomato
- </label>
- <div className="flex gap-2">
- <input
- type="number"
- step="0.01"
- value={onlineSalesInput}
- onChange={(e) => setOnlineSalesInput(e.target.value)}
- placeholder="0.00"
- className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent"
- />
- <button
- type="button"
- onClick={saveOnlineSales}
- disabled={isSavingOnlineSales}
- className="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl font-semibold text-sm hover:from-orange-700 hover:to-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
- >
- {isSavingOnlineSales ? 'Saving...' : 'Save'}
- </button>
+ {/* Page header */}
+ <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+ <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+ <DollarSign className="w-6 h-6 text-white" />
  </div>
+ <div>
+ <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Sales Management</h1>
+ <p className="text-sm sm:text-base text-gray-500">Log daily sales, reconcile cash/Paytm, and manage payouts</p>
+ </div>
+ </div>
+
+ {/* Sync Now - store incharge lives on this page, not SalesView.tsx, so the sync
+ button needs to be here too (not just on the read-only view others land on). */}
+ {canEditSales && (
+ <div className="flex justify-end mb-3">
+ {(() => {
+ // Stores open at 3 PM IST - keep in sync with server-side STORE_OPENING_HOUR_IST.
+ // Computed via Intl so it's correct regardless of the browser's own timezone.
+ const istHourNow = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit' }), 10);
+ const isViewingPastDate = selectedDate < getTodayIST();
+ // Backfilling a past, already-closed date is always allowed regardless of time of
+ // day - only "today"'s sync needs to wait for the store to actually open.
+ const syncDisabledForTiming = !isViewingPastDate && istHourNow < 15;
+ return (
+ <button
+ onClick={handleSyncPosNow}
+ disabled={isSyncingPos || syncDisabledForTiming}
+ className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+ title={syncDisabledForTiming ? "Stores open at 3 PM IST - sync isn't available before then" : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
+ >
+ <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
+ {isSyncingPos ? 'Syncing...' : syncDisabledForTiming ? 'Opens at 3 PM' : 'Sync POS Now'}
+ </button>
+ );
+ })()}
  </div>
  )}
+
+ <div className="flex items-center gap-1.5 mb-4 bg-white/70 p-1 rounded-full w-fit border border-orange-200/50">
+ <button
+ onClick={() => setActiveTab('entry')}
+ className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'entry' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+ >
+ Sales Entry
+ </button>
+ <button
+ onClick={() => setActiveTab('payout')}
+ className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'payout' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+ >
+ Aggregator Payout
+ </button>
+ <button
+ onClick={() => setActiveTab('loans')}
+ className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'loans' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
+ >
+ Loans
+ </button>
+ </div>
+
+ {activeTab === 'payout' && (
+ <OnlineSalesTab
+ context={context}
+ selectedStoreId={effectiveStoreId}
+ selectedDate={selectedDate}
+ onDateChange={setSelectedDate}
+ />
+ )}
+
+ {activeTab === 'entry' && (
+ <>
+ {/* Date Selector */}
+ <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
  {/* Friday Weekly Reporting Reminder */}
  {isFriday && context.isManager && (
@@ -1734,7 +1596,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
  <div className="flex items-center gap-2 mb-4">
  <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
- <h2 className="text-gray-900">Pending Approvals</h2>
+ <h2 className="text-gray-900 font-bold">Pending Approvals</h2>
  </div>
  
  <div className="space-y-3">
@@ -1792,53 +1654,77 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  )}
 
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-6">
- {/* Sales Entry Form - shown second on mobile for the operations manager, since the
- summary cards (with the online sales figure they actually need) matter more to them
- than the mostly-disabled sales-entry fields above it. */}
- <div className={`space-y-4 ${canReconcileCash && !canEditSales ? 'order-2 lg:order-1' : 'order-1'}`}>
+ {/* Single-column stack, matching SalesView.tsx's structure (the read-only view
+ everyone else on this date sees) - previously a two-column layout with a "Summary
+ Cards" column that re-displayed the same Expected Cash / Actual Cash / Paytm Balance
+ figures shown in Cash Reconciliation and Paytm Reconciliation below in 5 separate
+ cards (Total Sales, Payment Breakdown, Cash Status, Online Cash in Hand, Total Cash),
+ plus a second repeat further down (Offline/Online Cash Status). Consolidated so the
+ store incharge's editable screen doesn't just look inconsistent with everyone else's
+ view of the same data, but actually has the same information architecture. */}
+ <div className="space-y-4 mt-6">
  <div className="flex items-center gap-2 mb-2">
- <div className="p-2 bg-green-500/10 rounded-lg">
- <DollarSign className="w-5 h-5 text-green-600" />
+ <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-md shadow-green-500/20 flex-shrink-0">
+ <DollarSign className="w-5 h-5 text-white" />
  </div>
- <h2 className="text-base font-semibold text-gray-800">Sales Entry</h2>
+ <h2 className="text-base font-bold text-gray-900 tracking-tight">Sales Entry</h2>
+ </div>
+
+ {/* Today's Sales - total up top with the Online/Offline split right beneath it,
+ since both figures are read-only and need no action - just a glance. */}
+ <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 shadow-sm">
+ <p className="text-xs text-green-100 uppercase tracking-wide">Today's Sales</p>
+ <p className="text-white text-2xl font-semibold mt-1">₹{(offlineSalesTotal + onlineSalesTotal).toFixed(2)}</p>
+ <div className="grid grid-cols-2 gap-3 mt-3">
+ <div className="bg-white/15 rounded-xl px-3 py-2">
+ <p className="text-[11px] text-green-100 uppercase tracking-wide">Online</p>
+ <p className="text-white text-sm font-semibold">₹{onlineSalesTotal.toFixed(2)}</p>
+ </div>
+ <div className="bg-white/15 rounded-xl px-3 py-2">
+ <p className="text-[11px] text-green-100 uppercase tracking-wide">Offline</p>
+ <p className="text-white text-sm font-semibold">₹{offlineSalesTotal.toFixed(2)}</p>
+ </div>
+ </div>
+ <details className="mt-3">
+ <summary className="text-xs text-green-100 cursor-pointer hover:underline">▸ View Zomato / Swiggy split</summary>
+ <div className="mt-2 text-xs text-white/90 bg-white/10 rounded-lg p-2 space-y-1">
+ <div className="flex justify-between"><span>Zomato</span><span>₹{(onlineSalesEntryForDate?.zomatoSales || 0).toFixed(2)}</span></div>
+ <div className="flex justify-between"><span>Swiggy</span><span>₹{(onlineSalesEntryForDate?.swiggySales || 0).toFixed(2)}</span></div>
+ </div>
+ </details>
  </div>
 
  <form onSubmit={handleSubmit} className="space-y-4">
- {/* Offline Sales Section */}
- <div className="bg-gradient-to-br from-blue-50/80 to-blue-100/50 rounded-2xl p-5 border border-blue-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-blue-500/10 rounded-lg">
- <ShoppingBag className="w-5 h-5 text-blue-600" />
+ {/* Cash Count - the one thing the store incharge actually has to type each day.
+ Offline Sales stays visible here (read-only) since it's what Paytm+Cash is checked against. */}
+ <div className="bg-gradient-to-br from-amber-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
+ <div className="flex items-center justify-between mb-4">
+ <div className="flex items-center gap-2">
+ <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-md shadow-orange-500/20 flex-shrink-0">
+ <CreditCard className="w-5 h-5 text-white" />
  </div>
- <h3 className="text-sm font-semibold text-gray-700">Offline Sales</h3>
+ <h3 className="text-sm font-bold text-gray-900 tracking-tight">Cash Count</h3>
  </div>
- 
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">Total Offline Sales (₹)</label>
- <input
- type="number"
- step="0.01"
- value={formData.offlineSales}
- onChange={(e) => setFormData({ ...formData, offlineSales: e.target.value })}
- className="w-full px-4 py-3 border border-blue-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
- required
- disabled={!canEditSales}
- placeholder="Enter total offline sales"
- />
- </div>
+ {offlineSalesTotal > 0 && (
+ paymentMismatch ? (
+ <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-100/80 px-2.5 py-1 rounded-full">
+ <AlertTriangle className="w-3 h-3" /> {offlinePaymentDiscrepancy > 0 ? 'short' : 'over'} ₹{Math.abs(offlinePaymentDiscrepancy).toFixed(2)}
+ </span>
+ ) : (
+ <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100/80 px-2.5 py-1 rounded-full">
+ <CheckCircle className="w-3 h-3" /> matched
+ </span>
+ )
+ )}
  </div>
 
- {/* Payment Mode Distribution */}
- <div className="bg-gradient-to-br from-amber-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-orange-500/10 rounded-lg">
- <CreditCard className="w-5 h-5 text-orange-600" />
- </div>
- <h3 className="text-sm font-semibold text-gray-700">Payment Mode Distribution</h3>
- </div>
- 
- <div className="grid grid-cols-2 gap-3 mb-3">
+ {/* Bengali+English instructions - what he actually needs to do here, in his own
+ mixed language rather than English-only jargon. */}
+ <p className="text-xs text-gray-700 bg-white/70 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+ 👉 দোকান বন্ধ করার আগে ক্যাশ বক্স আর Paytm-এ যা <b>সত্যিই</b> আছে, সেটা গুনে এখানে লিখুন — আন্দাজে না, একদম আসল সংখ্যা। এটা POS-এর sales-এর সাথে মিলিয়ে check হবে।
+ </p>
+
+ <div className="grid grid-cols-2 gap-3 mb-1">
  <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
  <label className="block text-xs font-medium text-gray-600 mb-2">Paytm (₹)</label>
  <input
@@ -1852,7 +1738,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  placeholder="Enter Paytm amount"
  />
  </div>
- 
+
  <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
  <label className="block text-xs font-medium text-gray-600 mb-2">Cash (₹)</label>
  <input
@@ -1868,180 +1754,253 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  </div>
 
+ <details className="mt-2">
+ <summary className="text-xs text-orange-700 cursor-pointer hover:underline">▸ View offline sales total</summary>
+ <div className="mt-2 bg-white/70 rounded-lg p-2.5 text-xs text-gray-600 flex justify-between">
+ <span>Total Offline Sales (auto-synced from POS)</span>
+ <span className="font-semibold text-gray-800">₹{offlineSalesTotal.toFixed(2)}</span>
+ </div>
+ </details>
+
+ {/* Cash+Paytm doesn't match Net Offline Sales - this is real business money that went
+ missing or came in extra (missed KOT, wrong change, a tip, a counting slip), not just
+ a data-entry gap. Book it with a reason instead of letting it silently vanish into -
+ or inflate - Sales; it rolls up separately as its own "Cash Over/Short" line. */}
  {paymentMismatch && (
- <div className="bg-red-100/80 border border-red-300/50 text-red-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
- <AlertTriangle className="w-3.5 h-3.5" />
- Payment mode total (₹{offlinePaymentTotal.toFixed(2)}) doesn't match offline sales (₹{offlineSalesTotal.toFixed(2)})
+ <div className="mt-3 bg-red-50/80 border border-red-200 rounded-xl p-3">
+ <p className="text-xs font-semibold text-red-800 mb-1 flex items-center gap-1">
+ <AlertTriangle className="w-3.5 h-3.5" /> Why the {offlinePaymentDiscrepancy > 0 ? 'shortage' : 'excess'} of ₹{Math.abs(offlinePaymentDiscrepancy).toFixed(2)}?
+ </p>
+ <p className="text-[11px] text-red-700 mb-2 leading-relaxed">
+ এই টাকাটা কোথায় গেল/এল বলুন — এটা Sales-এ যোগ হবে না, আলাদা "Cash Over/Short" হিসেবে রাখা হবে যাতে আমরা ট্র্যাক করতে পারি।
+ </p>
+ <div className="flex flex-wrap gap-1.5 mb-2">
+ {([
+ { key: 'missed_kot', label: 'Missed KOT' },
+ { key: 'wrong_change', label: 'Wrong change' },
+ { key: 'tip', label: 'Tip' },
+ { key: 'counting_mistake', label: 'Counting mistake' },
+ { key: 'other', label: 'Other' },
+ ] as const).map((r) => (
+ <button
+ key={r.key}
+ type="button"
+ disabled={!canEditSales}
+ onClick={() => setFormData({ ...formData, cashOverShortReason: r.key })}
+ className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+ formData.cashOverShortReason === r.key
+ ? 'bg-red-600 text-white'
+ : 'bg-white text-red-700 border border-red-300 hover:bg-red-100'
+ }`}
+ >
+ {r.label}
+ </button>
+ ))}
+ </div>
+ <textarea
+ value={formData.cashOverShortNote}
+ onChange={(e) => setFormData({ ...formData, cashOverShortNote: e.target.value })}
+ disabled={!canEditSales}
+ placeholder="Optional note - কী হয়েছিল একটু লিখুন (optional)"
+ rows={2}
+ className="w-full text-xs px-2.5 py-2 border border-red-200 rounded-lg bg-white/90 focus:outline-none focus:ring-1 focus:ring-red-400"
+ />
  </div>
  )}
 
- {!paymentMismatch && offlineSalesTotal > 0 && (
- <div className="bg-green-100/80 border border-green-300/50 text-green-700 px-3 py-2 rounded-xl text-xs flex items-center gap-2">
- <CheckCircle className="w-3.5 h-3.5" />
- <span className="text-xs">✓ Payment modes match total sales</span>
- </div>
+ {/* Cash reconciliation takes a while (physically counting a till) - save progress
+ here so switching apps or tabs mid-count doesn't wipe it out. Doesn't submit the
+ form, just protects what's typed so far until Update/Save Sales Data below. */}
+ {canEditSales && (
+ <button
+ type="button"
+ onClick={handleSaveDraft}
+ className="mt-3 w-full px-3 py-2 bg-white/80 border border-orange-300 text-orange-700 rounded-xl text-xs font-semibold hover:bg-white transition-colors flex items-center justify-center gap-1.5"
+ >
+ 💾 Save Progress
+ </button>
  )}
  </div>
 
- {/* Contract Worker Payout Section */}
- <div className="bg-gradient-to-br from-orange-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
+ {/* Cash Reconciliation Section - shown right after Payment Mode Distribution */}
+ <div className="bg-gradient-to-br from-teal-50/80 to-teal-100/50 rounded-2xl p-5 border border-teal-200/50 shadow-sm hover:shadow-md transition-all">
  <div className="flex items-center justify-between mb-4">
  <div className="flex items-center gap-2">
- <div className="p-2 bg-orange-500/10 rounded-lg">
- <Users className="w-5 h-5 text-orange-600" />
+ <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-md shadow-teal-500/20 flex-shrink-0">
+ <Wallet className="w-5 h-5 text-white" />
  </div>
- <h3 className="text-sm font-semibold text-gray-700">Contract Worker Payouts</h3>
+ <h3 className="text-sm font-bold text-gray-900 tracking-tight">Cash Reconciliation</h3>
  </div>
- {context.isManager && (
- <button
- type="button"
- onClick={handleAddContractWorker}
- className="flex items-center gap-1 px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-xs font-medium shadow-sm"
- >
- <Plus className="w-3.5 h-3.5" />
- Add Worker
- </button>
- )}
- </div>
- 
- <div className="bg-blue-50/70 border border-blue-200/50 rounded-xl p-3 mb-3 text-xs text-blue-800">
- <p className="flex items-center gap-2">
- <Smartphone className="w-3.5 h-3.5" />
- <span>💡 Employee payouts are deducted from <strong>Online Cash in Hand (Paytm)</strong>, not from Expected Cash.</span>
- </p>
- </div>
- 
- {loadingEmployees ? (
- <p className="text-sm text-gray-500">Loading workers...</p>
- ) : contractWorkers.length === 0 ? (
- <div className="bg-yellow-50/70 border border-yellow-200/50 rounded-xl p-3 text-xs text-gray-700">
- <p>No contract workers found. Please add contract workers in the Payroll tab first.</p>
- </div>
- ) : (
- <div className="space-y-2.5">
- {contractPayouts.length === 0 ? (
- <div className="bg-white/70 border border-gray-200/50 rounded-xl p-3 text-xs text-gray-600">
- No payouts entered for today. Click "Add Worker" to record a payout.
- </div>
- ) : (
- contractPayouts.map((payout, index) => {
- const worker = contractWorkers.find(w => w.id === payout.employeeId);
- return (
- <div key={index} className="bg-white/70 border border-orange-200/50 rounded-xl p-3 space-y-2">
- <div className="flex items-start gap-2">
- <div className="flex-1 space-y-2">
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-1">Select Worker</label>
- <select
- value={payout.employeeId}
- onChange={(e) => handleContractPayoutChange(index, 'employeeId', e.target.value)}
- className="w-full px-3 py-2 border border-orange-200 bg-white rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
- disabled={!context.isManager}
- required
- >
- <option value="">Choose a worker...</option>
- {contractWorkers.map(worker => (
- <option key={worker.id} value={worker.id}>
- {worker.name} ({worker.employeeId})
- </option>
- ))}
- </select>
- </div>
- 
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-1">Amount Paid (₹)</label>
- <input
- type="number"
- step="0.01"
- value={payout.amount}
- onChange={(e) => handleContractPayoutChange(index, 'amount', e.target.value)}
- className="w-full px-3 py-2 border border-orange-200 bg-white rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
- placeholder={worker?.dailyRate ? `Suggested: ₹${worker.dailyRate}` : 'Enter amount'}
- disabled={!context.isManager}
- required
- />
- {worker?.dailyRate && (
- <p className="text-xs text-gray-500 mt-1">
- Daily rate: ₹{worker.dailyRate}
- </p>
- )}
- </div>
- </div>
- 
- {context.isManager && (
- <button
- type="button"
- onClick={() => handleRemoveContractWorker(index)}
- className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors mt-5"
- >
- <X className="w-4 h-4" />
- </button>
- )}
- </div>
- </div>
- );
- })
- )}
- 
- {contractPayouts.length > 0 && (
- <div className="bg-orange-600 text-white rounded-xl p-3 flex justify-between items-center shadow-sm">
- <span className="text-xs font-medium">Total Contract Payouts:</span>
- <span className="text-lg font-bold">₹{totalContractPayout.toFixed(2)}</span>
- </div>
- )}
- </div>
- )}
- 
- <p className="text-xs text-gray-500 mt-3 bg-orange-50/70 p-2 rounded-xl border border-orange-200/50">
- 💡 <strong>Note:</strong> Payouts entered here will automatically sync with the Payroll page. For permanent employees, use the Payroll tab.
- </p>
- 
- {totalContractPayout > 0 && (
- <p className="text-xs text-orange-700 mt-2 bg-orange-100/70 p-2 rounded-xl border border-orange-300/50 flex items-center gap-1">
- 💰 <strong>Cash Impact:</strong> ₹{totalContractPayout.toFixed(2)} will be deducted from Online Cash in Hand (Paytm).
- </p>
- )}
- </div>
-
- {/* Used Online Money Section */}
- <div className="bg-gradient-to-br from-cyan-50/80 to-cyan-100/50 rounded-2xl p-5 border border-cyan-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-cyan-500/10 rounded-lg">
- <ArrowDownCircle className="w-5 h-5 text-cyan-600" />
- </div>
- <h3 className="text-sm font-semibold text-gray-700">Used Online Money</h3>
- </div>
- 
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">
- Amount Used from Paytm (₹)
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
- {totalOnlineExpenses > 0 && (
- <span className="ml-2 text-xs bg-blue-100/70 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200/50">
- Auto: ₹{inventoryOnlineTotal.toFixed(2)}(Inv) + ₹{overheadOnlineTotal.toFixed(2)}(OH) + ₹{fixedCostOnlineTotal.toFixed(2)}(FC) + ₹{totalContractPayout.toFixed(2)}(CP)
+ <div className="flex items-center gap-2 flex-wrap justify-end">
+ {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && (
+ <span className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ${cashDiscrepancy > 0 ? 'text-green-700 bg-green-100/80' : 'text-red-700 bg-red-100/80'}`}>
+ <AlertTriangle className="w-3 h-3" /> {cashDiscrepancy > 0 ? 'excess' : 'short'} ₹{Math.abs(cashDiscrepancy).toFixed(2)}
  </span>
  )}
+ {expectedCashInHand > 0 && (
+ <button
+ type="button"
+ onClick={() => setShowCashConversion(true)}
+ className="flex items-center gap-1 px-2.5 py-1 bg-teal-600/10 hover:bg-teal-600/20 rounded-lg text-xs font-semibold transition-colors text-teal-700"
+ title="Convert Offline Cash to Online Cash (Paytm)"
+ >
+ <ArrowRightLeft className="w-3 h-3" />
+ Convert to Online
+ </button>
+ )}
+ </div>
+ </div>
+ 
+ <div className="space-y-4">
+ <div>
+ <label className="block text-xs font-medium text-gray-500 mb-2">Expected Cash</label>
+ <div className="bg-white/70 rounded-xl p-4 border border-teal-200/50">
+ <p className="text-4xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
+ <p className="text-xs text-gray-600 mt-2">
+ Previous day's cash ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + cash top-up ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + today's cash collection ₹{(parseFloat(formData.cashAmount) || 0).toFixed(2)} − expenses ₹{totalExpenses.toFixed(2)} = expected ₹{expectedCashInHand.toFixed(2)}
+ </p>
+ <details className="mt-2">
+ <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
+ ▸ View expense breakdown (store vs production house)
+ </summary>
+ <div className="mt-2 text-xs bg-white rounded border border-teal-200 overflow-hidden">
+ <div className="grid grid-cols-3 gap-2 px-2.5 py-1.5 bg-teal-50 text-teal-700 font-semibold">
+ <span>Category</span>
+ <span className="text-right">Store</span>
+ <span className="text-right">Prod. House</span>
+ </div>
+ {expenseBreakdownByEntity.rows.map((row) => (
+ <div key={row.label} className="grid grid-cols-3 gap-2 px-2.5 py-1.5 text-gray-700 border-t border-teal-100">
+ <span>{row.label}</span>
+ <span className="text-right tabular-nums">₹{row.store.toFixed(2)}</span>
+ <span className="text-right tabular-nums">₹{row.production.toFixed(2)}</span>
+ </div>
+ ))}
+ <div className="grid grid-cols-3 gap-2 px-2.5 py-1.5 font-semibold text-teal-800 border-t border-teal-200 bg-teal-50/60">
+ <span>Total</span>
+ <span className="text-right tabular-nums">₹{expenseBreakdownByEntity.storeTotal.toFixed(2)}</span>
+ <span className="text-right tabular-nums">₹{expenseBreakdownByEntity.productionTotal.toFixed(2)}</span>
+ </div>
+ </div>
+ </details>
+ </div>
+ </div>
+
+ <div>
+ <label className="block text-xs font-medium text-gray-600 mb-2">
+ Actual Cash in Hand (₹) <span className="text-red-500">*</span>
+ {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
  </label>
  <input
  type="number"
  step="0.01"
- value={formData.usedOnlineMoney}
- onChange={(e) => setFormData({ ...formData, usedOnlineMoney: e.target.value })}
- className="w-full px-4 py-3 border border-cyan-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-cyan-400 focus:border-transparent transition-all"
+ value={formData.actualCashInHand}
+ onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
+ className="w-full px-4 py-3 border border-teal-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all"
  required
  disabled={!canReconcileCash}
+ placeholder="Count and enter actual physical cash"
  />
+ <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
+ <p className="text-xs text-gray-700 bg-white/70 rounded-lg px-3 py-2 mt-2 leading-relaxed">
+ 👉 উপরে "Expected Cash"-এ যা দেখাচ্ছে, সেটার সাথে হাতে থাকা cash মিলিয়ে দেখুন। মিললেও, না মিললেও — যা <b>সত্যিই</b> হাতে আছে (physically count করে) সেই সংখ্যাটাই এখানে লিখুন, বেশি হোক বা কম।
+ </p>
+ </div>
+
+ {/* Cash discrepancy note - the pill up top already flags it; this just adds the
+ one detail that matters (whether approval will be required). */}
+ {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && Math.abs(cashDiscrepancy) > 200 && (
+ <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+ ⚠️ High discrepancy - you can save, but cluster head approval will be required.
+ </p>
+ )}
  </div>
  </div>
+
+ {/* Payment-mismatch and high-discrepancy warnings live as inline pills on the
+ Cash Count / Cash Reconciliation / Paytm Reconciliation cards above, plus a confirm
+ prompt on submit for anything that needs approval - no need to repeat them here.
+ Placed right after Actual Cash in Hand / Paytm Reconciliation since that's the last
+ manual entry in the normal flow - everything below (opening balance on day 1/month
+ 1, read-only status summaries) either doesn't apply most days or needs no action. */}
+ {(canEditSales || canReconcileCash) && (
+ <div className="space-y-3">
+ <button
+ type="submit"
+ disabled={isSubmitting}
+ className="w-full px-6 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
+ >
+ {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
+ {isSubmitting ? 'Saving...' : isEditing ? 'Update Sales Data' : 'Save Sales Data'}
+ </button>
+
+ {/* Request Approval Button - Only show when editing with high discrepancy */}
+ {isEditing && editingId && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+ <button
+ type="button"
+ onClick={handleRequestApproval}
+ className="w-full px-6 py-3.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-semibold text-sm"
+ >
+ <AlertTriangle className="w-5 h-5" />
+ Request Approval from Cluster Head
+ </button>
+ )}
+
+ {/* Show if approval is pending */}
+ {isEditing && salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
+ <div className="w-full px-6 py-3 bg-orange-100/80 border border-orange-300/50 text-orange-800 rounded-xl text-center text-sm font-medium shadow-sm">
+ ⏳ Approval request sent - Waiting for cluster head response
+ </div>
+ )}
+ </div>
+ )}
+
+ {/* Paytm balance - auto-tracked, no action needed from the store incharge. Kept
+     small and below the save button on purpose: it is informational, not something
+     they count or reconcile. "Breakdown" opens the full day's math. */}
+ <div className="mt-4 flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
+ <div className="flex items-center gap-2.5 min-w-0">
+ <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500 flex-shrink-0">
+ <Smartphone className="w-4 h-4" />
+ </div>
+ <div className="min-w-0">
+ <p className="text-xs font-semibold text-gray-700">Paytm balance <span className="font-normal text-gray-400">&middot; auto-tracked</span></p>
+ <p className="text-[11px] text-gray-400 truncate">Moves only through logged top-ups &amp; payouts &mdash; no count needed</p>
+ </div>
+ </div>
+ <div className="flex items-center gap-2 flex-shrink-0">
+ <span className="text-base font-bold text-gray-900 tabular-nums">&#8377;{calculatePaytmBalance.toFixed(2)}</span>
+ <button
+ type="button"
+ onClick={() => setShowPaytmBreakdown(true)}
+ className="text-[11px] font-semibold text-orange-600 hover:text-orange-700 hover:underline whitespace-nowrap"
+ >
+ Breakdown
+ </button>
+ </div>
+ </div>
+
+ <PaytmLedger input={{
+ salesData: context.salesData,
+ overheads: context.overheads,
+ aggregatorSettlements: context.aggregatorSettlements || [],
+ onlinePayoutData,
+ onlineLoans,
+ employeePayouts,
+ topupRequests,
+ onlineCashRecalibrations: context.onlineCashRecalibrations || [],
+ effectiveStoreId: effectiveStoreId ?? null,
+ }} />
+
 
  {/* Previous Cash Balance - Only show on day 1 or 1st of month */}
  {(isFirstDay || isFirstOfMonth) && (
  <div className="bg-gradient-to-br from-amber-50/80 to-amber-100/50 rounded-2xl p-5 border border-amber-200/50 shadow-sm hover:shadow-md transition-all">
  <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-amber-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-amber-600" />
+ <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-md shadow-amber-500/20 flex-shrink-0">
+ <Wallet className="w-5 h-5 text-white" />
  </div>
- <h3 className="text-sm font-semibold text-gray-700">{isFirstDay ? 'Opening Cash Balance (Day 1)' : 'Cash Left from Previous Month'}</h3>
+ <h3 className="text-sm font-bold text-gray-900 tracking-tight">{isFirstDay ? 'Opening Cash Balance (Day 1)' : 'Cash Left from Previous Month'}</h3>
  </div>
  <div>
  <label className="block text-xs font-medium text-gray-600 mb-2">Cash Left (₹)</label>
@@ -2062,331 +2021,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  </div>
  )}
-
- {/* Display auto-calculated cash left for other days */}
- {!isFirstDay && !isFirstOfMonth && (
- <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
- {/* Offline Cash Left */}
- <div className="bg-gradient-to-br from-gray-50/80 to-gray-100/50 rounded-2xl p-5 border border-gray-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-3">
- <div className="p-2 bg-gray-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-gray-600" />
- </div>
- <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Offline Cash Left from Previous Day</h3>
- </div>
- <div className="bg-white/70 rounded-xl p-4 border border-gray-200/50">
- <p className="text-3xl font-bold text-gray-900">₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)}</p>
- <p className="text-xs text-gray-500 mt-2 flex items-start gap-1">
- <span className="text-yellow-500">💡</span>
- <span>Auto-calculated from previous day's offline cash left after deducting expenses (not including employee payouts).</span>
- </p>
- </div>
- </div>
-
- {/* Online Cash (Paytm) Left */}
- <div className="bg-gradient-to-br from-orange-50/80 to-rose-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-3">
- <div className="p-2 bg-orange-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-orange-600" />
- </div>
- <h3 className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Online Cash (Paytm) Left from Previous Day</h3>
- </div>
- <div className="bg-white/70 rounded-xl p-4 border border-orange-200/50">
- <p className="text-3xl font-bold text-gray-900">₹{(() => {
- const previousDate = new Date(selectedDate);
- previousDate.setDate(previousDate.getDate() - 1);
- const previousDateStr = previousDate.toISOString().split('T')[0];
- 
- const previousDaySales = effectiveStoreId 
- ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
- : context.salesData.find(s => s.date === previousDateStr);
- 
- if (previousDaySales && previousDaySales.actualPaytmBalance !== undefined && previousDaySales.actualPaytmBalance !== null) {
- return previousDaySales.actualPaytmBalance.toFixed(2);
- }
- 
- // If no previous day data, check if there's a recalibration for the previous day
- if (!previousDaySales) {
- const previousDayRecalibration = context.onlineCashRecalibrations.find(
- r => r.date === previousDateStr && r.storeId === effectiveStoreId
- );
- 
- // If no data and no recalibration for previous day, return 0
- if (!previousDayRecalibration) {
- return '0.00';
- }
- }
- 
- const latestRecalibration = context.onlineCashRecalibrations
- .filter(r => r.storeId === effectiveStoreId && r.date < selectedDate)
- .sort((a, b) => b.date.localeCompare(a.date))[0];
- 
- if (!latestRecalibration) return '0.00';
- 
- const startDate = latestRecalibration.date;
- 
- const relevantSales = context.salesData.filter(s => 
- (effectiveStoreId ? s.storeId === effectiveStoreId : true) &&
- s.date > startDate && s.date < selectedDate
- );
- 
- const totalPaytm = relevantSales.reduce((sum, s) => sum + (s.paytmAmount || 0), 0);
- const totalOnline = relevantSales.reduce((sum, s) => sum + (s.onlineSales || 0), 0);
- const totalUsedOnline = relevantSales.reduce((sum, s) => sum + (s.usedOnlineMoney || 0), 0);
- const totalEmployeePayouts = relevantSales.reduce((sum, s) => sum + ((s as any).contractPayouts?.reduce((pSum: number, p: any) => pSum + p.amount, 0) || 0), 0);
-
- return (latestRecalibration.actualBalance + totalPaytm + totalOnline - totalUsedOnline - totalEmployeePayouts).toFixed(2);
- })()}</p>
- <p className="text-xs text-gray-500 mt-2 flex items-start gap-1">
- <span className="text-yellow-500">💡</span>
- <span>Auto-calculated from previous day's Paytm balance after accounting for online sales, expenses, and payouts.</span>
- </p>
- </div>
- </div>
- </div>
- )}
-
- {/* Cash Reconciliation Section */}
- <div className="bg-gradient-to-br from-teal-50/80 to-teal-100/50 rounded-2xl p-5 border border-teal-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-teal-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-teal-600" />
- </div>
- <h3 className="text-xs font-semibold text-teal-700 uppercase tracking-wide">Cash Status</h3>
- </div>
- 
- <div className="space-y-4">
- <div>
- <label className="block text-xs font-medium text-gray-500 mb-2">Expected Cash</label>
- <div className="bg-white/70 rounded-xl p-4 border border-teal-200/50">
- <p className="text-4xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
- <details className="mt-2">
- <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
- ▸ View expense breakdown (all expenses incl. commission)
- </summary>
- <div className="mt-2 text-xs text-gray-600 bg-white p-2 rounded border border-teal-200">
- <p className="font-semibold text-teal-700 mb-1">Inventory Cost:</p>
- <p className="ml-2">₹{(() => {
- // Only count CASH inventory items, not ALL inventory
- const cashInventory = context.inventory.filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- }).reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- return sum + item.totalCost;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- return (cashInventory + dailyOnlineExpenses.inventory).toFixed(2);
- })()} (cash: ₹{(() => {
- const cashInventory = context.inventory.filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- }).reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- return sum + item.totalCost;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- return cashInventory.toFixed(2);
- })()}, online: ₹{dailyOnlineExpenses.inventory.toFixed(2)})</p>
- 
- <p className="font-semibold text-teal-700 mt-2 mb-1">Overhead Cost:</p>
- <p className="ml-2">₹{(() => {
- // Only count CASH overheads, not ALL overheads
- const cashOverheads = context.overheads.filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- }).reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- return (cashOverheads + dailyOnlineExpenses.overhead).toFixed(2);
- })()} (cash: ₹{(() => {
- const cashOverheads = context.overheads.filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- }).reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- return cashOverheads.toFixed(2);
- })()}, online: ₹{dailyOnlineExpenses.overhead.toFixed(2)})</p>
- 
- <p className="font-semibold text-teal-700 mt-2 mb-1">Fixed Costs:</p>
- <p className="ml-2">₹{(() => {
- // Only count CASH fixed costs, not ALL fixed costs
- const cashFixed = context.fixedCosts.filter(item => {
- const dateMatch = item.date === selectedDate;
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- }).reduce((sum, item) => {
- if (item.paymentMethod === 'cash' || !item.paymentMethod) {
- return sum + item.amount;
- } else if (item.paymentMethod === 'both' && item.cashAmount) {
- return sum + item.cashAmount;
- }
- return sum;
- }, 0);
- return (cashFixed + dailyOnlineExpenses.fixedCost).toFixed(2);
- })()} (cash + online)</p>
- 
- <p className="font-semibold text-teal-700 mt-2 mb-1">Total Expenses:</p>
- <p className="ml-2 font-medium">₹{totalExpenses.toFixed(2)}</p>
- </div>
- </details>
- </div>
- </div>
-
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">
- Actual Cash in Hand (₹) <span className="text-red-500">*</span>
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
- </label>
- <input
- type="number"
- step="0.01"
- value={formData.actualCashInHand}
- onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
- className="w-full px-4 py-3 border border-teal-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all"
- required
- disabled={!canReconcileCash}
- placeholder="Count and enter actual physical cash"
- />
- <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
- </div>
-
- {/* Cash discrepancy display */}
- {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && (
- <div className={`p-3 rounded-lg border-2 ${
- cashDiscrepancy > 0 
- ? 'bg-green-50 border-green-300' 
- : 'bg-red-50 border-red-300'
- }`}>
- <p className={`font-semibold ${
- cashDiscrepancy > 0 ? 'text-green-700' : 'text-red-700'
- }`}>
- {cashDiscrepancy > 0 ? 'Cash Excess' : 'Cash Shortage'}: ₹{Math.abs(cashDiscrepancy).toFixed(2)}
- </p>
- <p className="text-xs text-gray-600 mt-1">
- {Math.abs(cashDiscrepancy) > 500 
- ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
- : 'Discrepancy will be noted in records'}
- </p>
- </div>
- )}
-
- {/* Online Cash (Paytm) Reconciliation */}
- <div className="col-span-2 mt-4">
- <div className="bg-gradient-to-br from-orange-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-orange-500/10 rounded-lg">
- <Smartphone className="w-5 h-5 text-orange-600" />
- </div>
- <h3 className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Online Cash (Paytm) Reconciliation</h3>
- </div>
- 
- <div className="space-y-4">
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">Expected Paytm Balance (₹)</label>
- <div className="bg-white/70 rounded-xl p-4 border border-orange-200/50">
- <p className="text-3xl font-bold text-gray-900">₹{calculatePaytmBalance.toFixed(2)}</p>
- <p className="text-xs text-gray-600 mt-2">
- Previous Paytm: ₹{(() => {
- const previousDate = new Date(selectedDate);
- previousDate.setDate(previousDate.getDate() - 1);
- const previousDateStr = previousDate.toISOString().split('T')[0];
- const previousDaySales = effectiveStoreId 
- ? context.salesData.find(s => s.date === previousDateStr && s.storeId === effectiveStoreId)
- : context.salesData.find(s => s.date === previousDateStr);
- return (previousDaySales?.actualPaytmBalance || 0).toFixed(2);
- })()} + 
- Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)} + 
- Online Payouts: ₹{todaysActualOnlinePayout.toFixed(2)} - 
- Used for Expenses: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} - 
- Employee Payouts: ₹{totalContractPayout.toFixed(2)}
- </p>
- <details className="mt-2">
- <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
- ▸ View Paytm usage breakdown
- </summary>
- <div className="mt-2 text-xs text-gray-600 bg-white p-2 rounded border border-orange-200">
- <p className="font-semibold text-orange-700 mb-1">Paytm Used for Expenses (from sales form):</p>
- <p className="ml-2">Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)}</p>
- 
- <p className="font-semibold text-orange-700 mt-2 mb-1">Employee Payouts (all from Paytm):</p>
- <p className="ml-2">Contract Workers: ₹{totalContractPayout.toFixed(2)}</p>
- 
- <p className="font-semibold text-orange-700 mt-2 mb-1">Total Paytm Deductions:</p>
- <p className="ml-2 font-medium">₹{((parseFloat(formData.usedOnlineMoney) || 0) + totalContractPayout).toFixed(2)}</p>
- 
- <p className="font-semibold text-orange-700 mt-2 mb-1">Paytm Additions:</p>
- <p className="ml-2">Paytm Received: ₹{(parseFloat(formData.paytmAmount) || 0).toFixed(2)}</p>
- <p className="ml-2">Online Payouts (Swiggy+Zomato): ₹{todaysActualOnlinePayout.toFixed(2)}</p>
- <p className="ml-2 font-medium">Total Additions: ₹{((parseFloat(formData.paytmAmount) || 0) + todaysActualOnlinePayout).toFixed(2)}</p>
- </div>
- </details>
- </div>
- </div>
-
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">
- Actual Paytm Balance (₹) <span className="text-red-500">*</span>
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by operations manager</span>}
- </label>
- <input
- type="number"
- step="0.01"
- value={formData.actualPaytmBalance}
- onChange={(e) => setFormData({ ...formData, actualPaytmBalance: e.target.value })}
- className="w-full px-4 py-3 border border-orange-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
- required
- disabled={!canReconcileCash}
- placeholder="Check and enter actual paytm balance"
- />
- <p className="text-xs text-gray-500 mt-1">📱 Check your Paytm wallet balance</p>
- </div>
-
- {/* Paytm discrepancy display */}
- {paytmDiscrepancy !== 0 && parseFloat(formData.actualPaytmBalance) > 0 && (
- <div className={`p-3 rounded-lg border-2 ${
- paytmDiscrepancy > 0 
- ? 'bg-green-50 border-green-300' 
- : 'bg-red-50 border-red-300'
- }`}>
- <p className={`font-semibold ${
- paytmDiscrepancy > 0 ? 'text-green-700' : 'text-red-700'
- }`}>
- {paytmDiscrepancy > 0 ? 'Paytm Excess' : 'Paytm Shortage'}: ₹{Math.abs(paytmDiscrepancy).toFixed(2)}
- </p>
- <p className="text-xs text-gray-600 mt-1">
- {Math.abs(paytmDiscrepancy) > 500 
- ? '⚠️ High discrepancy - you can save but cluster head approval will be required' 
- : 'Discrepancy will be noted in records'}
- </p>
- </div>
- )}
- </div>
- </div>
- </div>
- </div>
- </div>
 
  {/* Approval status display */}
  {isEditing && salesForDate && (
@@ -2428,450 +2062,136 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  )}
 
- {(canEditSales || canReconcileCash) && (
- <div className="space-y-3">
- {paymentMismatch && canEditSales && (
- <div className="bg-yellow-100/80 border border-yellow-400/50 text-yellow-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
- <AlertTriangle className="w-5 h-5 flex-shrink-0" />
- <div>
- <div className="font-semibold">Payment Mismatch Warning</div>
- <div className="text-xs mt-1">
- Payment total (₹{offlinePaymentTotal.toFixed(2)}) does not match offline sales (₹{offlineSalesTotal.toFixed(2)})
- </div>
- <div className="text-xs mt-1 font-medium">
- You can still save, but please verify the amounts.
- </div>
- </div>
- </div>
- )}
- 
- {/* Warning for high discrepancies that need approval */}
- {(needsApproval || needsPaytmApproval) && !isEditing && (
- <div className="bg-orange-100/80 border border-orange-400/50 text-orange-800 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 shadow-sm">
- <AlertTriangle className="w-5 h-5 flex-shrink-0" />
- <div>
- <div className="font-semibold">High Discrepancy - Approval Required</div>
- <div className="text-xs mt-1">
- {needsApproval && needsPaytmApproval 
- ? `Cash discrepancy of ₹${Math.abs(cashDiscrepancy).toFixed(2)} and Paytm discrepancy of ₹${Math.abs(paytmDiscrepancy).toFixed(2)} exceed ₹500`
- : needsApproval 
- ? `Cash discrepancy of ₹${Math.abs(cashDiscrepancy).toFixed(2)} exceeds ₹500`
- : `Paytm discrepancy of ₹${Math.abs(paytmDiscrepancy).toFixed(2)} exceeds ₹500`
- }
- </div>
- <div className="text-xs mt-1 font-medium">
- You can save, but cluster head approval will be required.
- </div>
- </div>
- </div>
- )}
- 
- <button
- type="submit"
- disabled={isSubmitting}
- className="w-full px-6 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
- >
- {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
- {isSubmitting ? 'Saving...' : isEditing ? 'Update Sales Data' : 'Save Sales Data'}
- </button>
- 
- {/* Request Approval Button - Only show when editing with high discrepancy */}
- {isEditing && editingId && (needsApproval || needsPaytmApproval) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
- <button
- type="button"
- onClick={handleRequestApproval}
- className="w-full px-6 py-3.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-semibold text-sm"
- >
- <AlertTriangle className="w-5 h-5" />
- Request Approval from Cluster Head
- </button>
- )}
- 
- {/* Show if approval is pending */}
- {isEditing && salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
- <div className="w-full px-6 py-3 bg-orange-100/80 border border-orange-300/50 text-orange-800 rounded-xl text-center text-sm font-medium shadow-sm">
- ⏳ Approval request sent - Waiting for cluster head response
- </div>
- )}
- </div>
- )}
+ {/* Save/Update button moved up to right after Cash Reconciliation + Paytm
+ Reconciliation, since everything below that point is read-only summary/status -
+ no reason to make someone scroll past it to find the button that finishes the form. */}
  </form>
  </div>
 
- {/* Summary Cards */}
- <div className={`space-y-4 ${canReconcileCash && !canEditSales ? 'order-1 lg:order-2' : 'order-2'}`}>
- <div className="bg-gradient-to-br from-green-50/80 to-green-100/50 rounded-2xl p-5 border border-green-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-1.5 bg-green-500/10 rounded-lg">
- <DollarSign className="w-5 h-5 text-green-600" />
- </div>
- <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Total Sales</p>
- </div>
- <p className="text-4xl font-bold text-gray-900">₹{(offlineSalesTotal + onlineSalesTotal).toLocaleString()}</p>
- <div className="mt-4 pt-3 border-t border-green-200/50 space-y-2 text-sm">
- <div className="flex justify-between items-center">
- <span className="text-gray-600">Offline Sales:</span>
- <span className="font-semibold text-gray-900">₹{offlineSalesTotal.toLocaleString()}</span>
- </div>
- <div className="flex justify-between items-center">
- <span className="text-gray-600">Online Sales:</span>
- <span className="font-semibold text-gray-900">₹{onlineSalesTotal.toLocaleString()}</span>
- </div>
- </div>
- </div>
-
- <div className="bg-gradient-to-br from-blue-50/80 to-blue-100/50 rounded-2xl p-5 border border-blue-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-1.5 bg-blue-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-blue-600" />
- </div>
- <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Payment Breakdown</p>
- </div>
- <div className="space-y-3 mt-4">
- <div className="flex justify-between items-center">
- <span className="text-sm text-gray-600">Cash Received:</span>
- <span className="text-2xl font-bold text-gray-900">₹{cash.toLocaleString()}</span>
- </div>
- <div className="flex justify-between items-center">
- <span className="text-sm text-gray-600">Paytm Received:</span>
- <span className="text-2xl font-bold text-gray-900">₹{paytm.toLocaleString()}</span>
- </div>
- <div className="flex justify-between items-center pt-3 border-t border-blue-200/50">
- <span className="text-sm text-gray-600">Online Sales:</span>
- <span className="text-xl font-bold text-gray-900">₹{onlineSalesTotal.toLocaleString()}</span>
- </div>
- </div>
- </div>
-
- {/* Expected vs Actual Cash */}
- {!isFirstDay && (
- <div className="bg-gradient-to-br from-violet-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center justify-between mb-2">
- <div className="flex items-center gap-2">
- <div className="p-1.5 bg-orange-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-orange-600" />
- </div>
- <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Cash Status</p>
- </div>
- {expectedCashInHand > 0 && (
- <button
- onClick={() => setShowCashConversion(true)}
- className="flex items-center gap-1 px-2.5 py-1 bg-orange-600/10 hover:bg-orange-600/20 rounded-lg text-xs font-semibold transition-colors text-orange-700"
- title="Convert Offline Cash to Online Cash (Paytm)"
- >
- <ArrowRightLeft className="w-3 h-3" />
- Convert to Online
- </button>
- )}
- </div>
- <div className="space-y-3">
- <div>
- <p className="text-xs text-gray-600 mb-1">Expected Cash</p>
- <p className="text-3xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
- <p className="text-xs text-gray-600 mt-1">
- Previous Cash: ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + 
- Amount Used from Paytm: ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + 
- Cash Received: ₹{cash.toFixed(2)} - 
- Expenses: ₹{totalExpenses.toFixed(2)} - 
- Contract Payouts: ₹{totalContractPayout.toFixed(2)}
- </p>
- </div>
- {formData.actualCashInHand && (
- <>
- <div className="pt-3 border-t border-orange-200/50">
- <p className="text-xs text-gray-600 mb-1">Actual Cash</p>
- <p className="text-3xl font-bold text-gray-900">₹{(parseFloat(formData.actualCashInHand) || 0).toFixed(2)}</p>
- </div>
- {Math.abs(cashDiscrepancy) > 0 && (
- <div className="pt-3 border-t border-orange-200/50">
- <p className="text-xs text-gray-600 mb-1">Difference</p>
- <p className={`text-2xl font-bold ${cashDiscrepancy > 0 ? 'text-green-600' : 'text-red-600'}`}>
- {cashDiscrepancy > 0 ? '+' : ''}₹{cashDiscrepancy.toFixed(2)}
- </p>
- </div>
- )}
- </>
- )}
- </div>
- </div>
- )}
-
- {/* Online Cash in Hand (Paytm) */}
- <div className="bg-gradient-to-br from-orange-50/80 to-violet-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-1.5 bg-orange-500/10 rounded-lg">
- <Smartphone className="w-5 h-5 text-orange-600" />
- </div>
- <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Online Cash in Hand (Paytm)</p>
- </div>
- <p className="text-4xl font-bold text-gray-900 mb-4">₹{calculatePaytmBalance.toLocaleString()}</p>
- <div className="space-y-2 text-sm bg-gray-800/10 rounded-lg p-3">
- <div className="flex justify-between text-green-700">
- <span>+ Paytm In:</span>
- <span>₹{(() => {
- // Find the latest recalibration on or before the selected date
- const latestRecalibration = context.onlineCashRecalibrations
- .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
- .sort((a, b) => b.date.localeCompare(a.date))[0];
- 
- const startDate = latestRecalibration?.date || '0000-00-00';
- 
- // Get all sales AFTER recalibration and BEFORE today
- const historicalPaytm = (effectiveStoreId 
- ? context.salesData.filter(s => s.storeId === effectiveStoreId && s.date > startDate && s.date < selectedDate)
- : context.salesData.filter(s => s.date > startDate && s.date < selectedDate)
- ).reduce((sum, s) => sum + (s.paytmAmount ?? 0), 0);
- // Always use today's form value for the selected date
- const todaysPaytm = paytm;
- return (historicalPaytm + todaysPaytm).toLocaleString();
- })()}</span>
- </div>
- <div className="flex justify-between text-emerald-700">
- <span>+ Online Payouts:</span>
- <span>₹{(() => {
- // Find the latest recalibration on or before the selected date
- const latestRecalibration = context.onlineCashRecalibrations
- .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
- .sort((a, b) => b.date.localeCompare(a.date))[0];
- 
- const startDate = latestRecalibration?.date || '0000-00-00';
- 
- // Get all sales AFTER recalibration and BEFORE today
- const historicalOnline = (effectiveStoreId 
- ? context.salesData.filter(s => s.storeId === effectiveStoreId && s.date > startDate && s.date < selectedDate)
- : context.salesData.filter(s => s.date > startDate && s.date < selectedDate)
- ).reduce((sum, s) => sum + (s.onlineSales ?? 0), 0);
- // Always use today's form value for the selected date
- const todaysOnline = onlineSalesTotal;
- return (historicalOnline + todaysOnline).toLocaleString();
- })()}</span>
- </div>
- <div className="flex justify-between text-red-700">
- <span>- Used for Expenses:</span>
- <span>₹{(() => {
- // Find the latest recalibration on or before the selected date
- const latestRecalibration = context.onlineCashRecalibrations
- .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
- .sort((a, b) => b.date.localeCompare(a.date))[0];
- 
- const startDate = latestRecalibration?.date || '0000-00-00';
- 
- // Filter breakdown to only include entries after recalibration
- return paytmDailyBreakdown
- .filter(day => day.date > startDate)
- .reduce((sum, day) => sum + day.usedOnlineMoney, 0)
- .toLocaleString();
- })()}</span>
- </div>
- <div className="flex justify-between text-orange-700">
- <span>- Employee Payouts:</span>
- <span>₹{(() => {
- // Find the latest recalibration on or before the selected date
- const latestRecalibration = context.onlineCashRecalibrations
- .filter(r => r.storeId === effectiveStoreId && r.date <= selectedDate)
- .sort((a, b) => b.date.localeCompare(a.date))[0];
- 
- const startDate = latestRecalibration?.date || '0000-00-00';
- 
- // Filter breakdown to only include entries after recalibration
- return paytmDailyBreakdown
- .filter(day => day.date > startDate)
- .reduce((sum, day) => sum + (day.employeePayouts || 0), 0)
- .toLocaleString();
- })()}</span>
- </div>
- <div className="flex justify-between text-gray-700 pt-2 border-t border-gray-700/20">
- <span>Used Today:</span>
- <span>₹{(parseFloat(formData.usedOnlineMoney) || 0).toLocaleString()}</span>
- </div>
- {totalContractPayout > 0 && (
- <div className="flex justify-between text-gray-700">
- <span>Employee Payouts Today:</span>
- <span>₹{totalContractPayout.toLocaleString()}</span>
- </div>
- )}
- {fixedCostsOnline > 0 && (
- <div className="flex justify-between text-gray-700">
- <span>Fixed Costs Today (Online):</span>
- <span>₹{fixedCostsOnline.toLocaleString()}</span>
- </div>
- )}
- {overheadCostsOnline > 0 && (
- <div className="flex justify-between text-gray-700">
- <span>Overhead Costs Today (Online):</span>
- <span>₹{overheadCostsOnline.toLocaleString()}</span>
- </div>
- )}
- </div>
- 
- <div className="mt-4">
- <button
- onClick={() => setShowPaytmBreakdown(true)}
- className="w-full px-4 py-2 bg-white/20 hover:bg-white/30 text-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
- >
- <TrendingUp className="w-4 h-4" />
- Daily Breakdown
- </button>
- </div>
- </div>
-
- {/* Total Cash (Offline + Paytm) */}
- <div className="bg-gradient-to-br from-yellow-50/80 to-orange-100/50 rounded-2xl p-5 border border-yellow-300/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-1.5 bg-yellow-500/10 rounded-lg">
- <Wallet className="w-5 h-5 text-yellow-700" />
- </div>
- <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Total Cash (Offline + Paytm)</p>
- </div>
- <p className="text-4xl font-bold text-gray-900 mb-4">
- ₹{(expectedCashInHand + calculatePaytmBalance).toLocaleString()}
- </p>
- <div className="space-y-2 text-sm bg-white/70 rounded-xl p-3 border border-yellow-200/50">
- <div className="flex justify-between items-center">
- <span className="font-medium text-gray-600">Expected Cash (Offline):</span>
- <span className="text-xl font-semibold text-gray-900">₹{expectedCashInHand.toLocaleString()}</span>
- </div>
- <div className="flex justify-between items-center pt-2 border-t border-yellow-200/50">
- <span className="font-medium text-gray-600">Online Cash (Paytm):</span>
- <span className="text-xl font-semibold text-gray-900">₹{calculatePaytmBalance.toLocaleString()}</span>
- </div>
- </div>
- </div>
- </div>
- </div>
-
- {/* Loan Management Section */}
+ {/* Cash Top-up Request - store incharge can ask the cluster head for more physical
+ cash when the offline till is running low. Shown before Loan Management per request. */}
  <div className="mt-6">
  <div className="bg-white rounded-2xl border border-gray-100 p-5">
  <div className="flex items-center justify-between gap-3 mb-5">
  <div className="flex items-center gap-3 min-w-0">
- <div className="w-9 h-9 rounded-lg bg-orange-50 flex items-center justify-center text-orange-600 flex-shrink-0">
- <DollarSign className="w-4 h-4" />
+ <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 flex-shrink-0">
+ <IndianRupee className="w-4 h-4" />
  </div>
  <div className="min-w-0">
- <h2 className="text-sm font-semibold text-gray-900">Loan management</h2>
- <p className="text-xs text-gray-500">Track loans taken and repayments made</p>
+ <h2 className="text-sm font-semibold text-gray-900">Cash top-up</h2>
+ <p className="text-xs text-gray-500">Ask the cluster head for more physical cash</p>
  </div>
  </div>
- <button
- onClick={() => setShowApplyLoanModal(true)}
- className="flex-shrink-0 px-3.5 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
- >
- <Plus className="w-3.5 h-3.5" />
- Apply loan
- </button>
- </div>
-
- {/* Active Loans Summary */}
- {(() => {
- const activeLoans = onlineLoans.filter(l => l.status === 'active');
- const totalActiveLoans = activeLoans.reduce((sum, l) => sum + l.loanAmount, 0);
- const totalRepaid = activeLoans.reduce((sum, l) => sum + l.repaidAmount, 0);
- const totalRemaining = activeLoans.reduce((sum, l) => sum + (l.loanAmount - l.repaidAmount), 0);
-
- return activeLoans.length > 0 && (
- <div className="grid grid-cols-3 gap-2 mb-5">
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Active loans</p>
- <p className="text-base font-semibold text-gray-900 mt-0.5">₹{totalActiveLoans.toLocaleString()}</p>
- </div>
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Repaid</p>
- <p className="text-base font-semibold text-green-700 mt-0.5">₹{totalRepaid.toLocaleString()}</p>
- </div>
- <div className="bg-gray-50 rounded-xl p-3">
- <p className="text-[11px] text-gray-500">Remaining</p>
- <p className="text-base font-semibold text-red-600 mt-0.5">₹{totalRemaining.toLocaleString()}</p>
- </div>
- </div>
- );
- })()}
-
- {/* Loans List */}
- {isLoadingLoans ? (
- <div className="flex items-center justify-center py-8 text-gray-400">
- <Loader2 className="w-5 h-5 animate-spin" />
- <span className="ml-2 text-sm">Loading loans...</span>
- </div>
- ) : onlineLoans.length === 0 ? (
- <div className="text-center py-8">
- <DollarSign className="w-8 h-8 text-gray-300 mx-auto mb-2" />
- <p className="text-sm text-gray-500">No loans recorded yet</p>
- <p className="text-xs text-gray-400 mt-0.5">Tap "Apply loan" to add one</p>
- </div>
- ) : (
- <div className="space-y-2">
- {onlineLoans.map(loan => {
- const remaining = loan.loanAmount - loan.repaidAmount;
- const progress = (loan.repaidAmount / loan.loanAmount) * 100;
-
- return (
- <div
- key={loan.id}
- className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5"
- >
- <div className="flex items-start justify-between gap-3 mb-2.5">
- <div className="min-w-0">
- <div className="flex items-center gap-2 mb-1">
- <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
- loan.status === 'active'
- ? 'bg-blue-100 text-blue-700'
- : 'bg-green-100 text-green-700'
- }`}>
- {loan.status === 'active' ? 'Active' : 'Repaid'}
- </span>
- <span className="text-xs text-gray-500">
- {new Date(loan.loanDate).toLocaleDateString('en-IN')}
- </span>
- </div>
- <p className="text-xs text-gray-500 truncate">{loan.notes || 'No notes'}</p>
- </div>
- <p className="text-base font-semibold text-gray-900 flex-shrink-0">₹{loan.loanAmount.toLocaleString()}</p>
- </div>
-
- {/* Progress Bar */}
- <div className="mb-2.5">
- <div className="flex justify-between text-[11px] text-gray-500 mb-1">
- <span>Repaid ₹{loan.repaidAmount.toLocaleString()}</span>
- <span>Remaining ₹{remaining.toLocaleString()}</span>
- </div>
- <div className="w-full bg-gray-200 rounded-full h-1.5">
- <div
- className={`h-1.5 rounded-full transition-all ${
- loan.status === 'repaid' ? 'bg-green-500' : 'bg-blue-500'
- }`}
- style={{ width: `${progress}%` }}
- />
- </div>
- </div>
-
- {/* Repay Button */}
- {loan.status === 'active' && (
  <button
  onClick={() => {
- setSelectedLoanForRepayment(loan);
- setShowRepayLoanModal(true);
+ setTopupDate(selectedDate);
+ setShowTopupModal(true);
  }}
- className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium"
+ className="flex-shrink-0 px-3.5 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
  >
- <CreditCard className="w-3.5 h-3.5" />
- Repay loan
+ <PlusCircle className="w-3.5 h-3.5" />
+ Request Top-up
  </button>
+ </div>
+ {myPendingTopups.length === 0 ? (
+ <p className="text-sm text-gray-500">No pending top-up requests.</p>
+ ) : (
+ <div className="space-y-2">
+ {myPendingTopups.map((r) => (
+ <div key={r.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center justify-between">
+ <div>
+ <div className="flex items-center gap-2">
+ <p className="text-sm text-gray-900">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
+   <span className="text-[10px] font-mono text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
+ </div>
+ <p className="text-xs text-gray-500">{TOPUP_REASON_LABELS[r.reason]}</p>
+ <p className="text-xs text-gray-400 mt-0.5">Requested {formatDateTimeIST(r.requestDate, false)}</p>
+ </div>
+ <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">
+ <Clock className="w-3.5 h-3.5" /> Pending
+ </span>
+ </div>
+ ))}
+ </div>
  )}
 
- {loan.status === 'repaid' && loan.repaymentDate && (
- <div className="flex items-center justify-center gap-1 text-xs text-green-700">
- <CheckCircle className="w-3.5 h-3.5" />
- Fully repaid on {new Date(loan.repaymentDate).toLocaleDateString('en-IN')}
+ {/* Global top-up ledger - every requester sees the full history across all
+ stores/production house, same as what a cluster head sees, not just their own. */}
+ <CashTopupHistory requests={topupRequests} />
+ </div>
+ </div>
+
+ {/* Cash Top-up Request Modal */}
+ {showTopupModal && (
+ <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+ <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-gray-200">
+ <h3 className="text-gray-900 mb-4 font-semibold">Request Cash Top-up</h3>
+ <label className="block text-xs font-medium text-gray-600 mb-1">Date this top-up is for</label>
+ <DatePicker
+ value={topupDate}
+ onChange={setTopupDate}
+ max={getTodayIST()}
+ className="w-full mb-3"
+ />
+ <p className="text-xs text-gray-500 mb-3">
+ Defaults to the date you're viewing - change this if the top-up is for an earlier day (e.g. a late vendor settlement).
+ </p>
+ <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹)</label>
+ <input
+ type="number"
+ step="0.01"
+ value={topupAmount}
+ onChange={(e) => setTopupAmount(e.target.value)}
+ className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3"
+ placeholder="Enter amount needed"
+ autoFocus
+ />
+ <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+ <select
+ value={topupReason}
+ onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
+ className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4"
+ >
+ <option value="store_inventory">Store Inventory</option>
+ <option value="production_inventory">Production House Inventory</option>
+ <option value="other">Other</option>
+ </select>
+ <div className="flex gap-2">
+ <button
+ onClick={() => setShowTopupModal(false)}
+ className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+ >
+ Cancel
+ </button>
+ <button
+ onClick={handleRequestTopup}
+ disabled={isSubmittingTopup}
+ className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition-colors disabled:opacity-50"
+ >
+ {isSubmittingTopup ? 'Sending...' : 'Send Request'}
+ </button>
+ </div>
+ </div>
  </div>
  )}
- </div>
- );
- })}
+ </>
+ )}
+
+ {/* Loan Management Section */}
+ {activeTab === 'loans' && (
+ <div>
+ <LoanManagementSection
+ context={context}
+ effectiveStoreId={effectiveStoreId}
+ selectedDate={selectedDate}
+ loans={onlineLoans}
+ isLoading={isLoadingLoans}
+ onReload={loadOnlineLoans}
+ canApply={isOperationsManager || isClusterHead}
+ canApprove={isClusterHead}
+ />
  </div>
  )}
- </div>
- </div>
 
  {/* Paytm Daily Breakdown Modal */}
  {showPaytmBreakdown && (
@@ -3008,7 +2328,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
  <div className="flex items-center gap-2 mb-4">
  <CheckSquare className="w-6 h-6 text-green-600" />
- <h2 className="text-gray-900">Sales Pending Approval</h2>
+ <h2 className="text-gray-900 font-bold">Sales Pending Approval</h2>
  </div>
  
  <div className="space-y-3">
@@ -3073,53 +2393,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
  <div className="flex items-center gap-2 mb-4">
  <CheckSquare className="w-6 h-6 text-green-600" />
- <h2 className="text-gray-900">Sales Pending Approval</h2>
+ <h2 className="text-gray-900 font-bold">Sales Pending Approval</h2>
  </div>
  <p className="text-gray-600">No pending sales at the moment.</p>
  </div>
  )}
  </div>
- )}
-
- {/* Aggregator payout reconciliation - operations manager only */}
- {canReconcileCash && (
- <div className="mt-6">
- <OnlineSalesTab
- context={context}
- selectedStoreId={selectedStoreId}
- selectedDate={selectedDate}
- onDateChange={setSelectedDate}
- />
- </div>
- )}
-
- {/* Apply Loan Modal */}
- {showApplyLoanModal && (
- <ApplyLoanModal
- context={context}
- selectedStoreId={effectiveStoreId}
- selectedDate={selectedDate}
- onClose={() => setShowApplyLoanModal(false)}
- onSaveSuccess={async () => {
- await loadOnlineLoans();
- }}
- />
- )}
-
- {/* Repay Loan Modal */}
- {showRepayLoanModal && selectedLoanForRepayment && (
- <RepayLoanModal
- context={context}
- loan={selectedLoanForRepayment}
- selectedDate={selectedDate}
- onClose={() => {
- setShowRepayLoanModal(false);
- setSelectedLoanForRepayment(null);
- }}
- onSaveSuccess={async () => {
- await loadOnlineLoans();
- }}
- />
  )}
 
  {/* Cash Conversion Modal */}
@@ -3272,27 +2551,32 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <span className="text-gray-600">Actual Cash:</span>
  <span className="font-semibold">₹{parseFloat(formData.actualCashInHand) || 0}</span>
  </div>
- <div className="flex justify-between border-t pt-2">
- <span className="text-gray-600">Cash Discrepancy:</span>
- <span className={`font-bold ${cashDiscrepancy === 0 ? 'text-green-600' : cashDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'}`}>
- ₹{cashDiscrepancy.toFixed(2)}
- </span>
- </div>
- <div className="flex justify-between border-t pt-2 mt-2">
- <span className="text-gray-600">Expected Paytm:</span>
- <span className="font-semibold">₹{calculatePaytmBalance.toFixed(2)}</span>
- </div>
- <div className="flex justify-between">
- <span className="text-gray-600">Actual Paytm:</span>
- <span className="font-semibold">₹{parseFloat(formData.actualPaytmBalance) || 0}</span>
- </div>
- <div className="flex justify-between border-t pt-2">
- <span className="text-gray-600">Paytm Discrepancy:</span>
- <span className={`font-bold ${paytmDiscrepancy === 0 ? 'text-green-600' : paytmDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'}`}>
- ₹{paytmDiscrepancy.toFixed(2)}
- </span>
  </div>
  </div>
+
+ {/* Cash Discrepancy - the one number the store incharge actually needs to act on,
+ so it gets its own large, unmissable card instead of sitting as just another row
+ in the list above. Paytm is deliberately not shown here at all (see the removed
+ Expected/Actual Paytm rows above) - Paytm is auto-tracked and not something he
+ counts or is responsible for; showing it here only invited confusion about which
+ number he's actually confirming. */}
+ <div className={`rounded-2xl p-5 border-2 text-center ${
+ cashDiscrepancy === 0
+ ? 'bg-green-50 border-green-400'
+ : Math.abs(cashDiscrepancy) > 200
+ ? 'bg-red-50 border-red-500 animate-pulse'
+ : 'bg-amber-50 border-amber-400'
+ }`}>
+ <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${
+ cashDiscrepancy === 0 ? 'text-green-700' : Math.abs(cashDiscrepancy) > 200 ? 'text-red-700' : 'text-amber-700'
+ }`}>
+ {cashDiscrepancy === 0 ? '✅ Cash Matched' : cashDiscrepancy > 0 ? '⚠️ Cash Discrepancy — Excess' : '⚠️ Cash Discrepancy — Short'}
+ </p>
+ <p className={`text-4xl font-extrabold tabular-nums ${
+ cashDiscrepancy === 0 ? 'text-green-600' : cashDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'
+ }`}>
+ {cashDiscrepancy === 0 ? '₹0' : `${cashDiscrepancy > 0 ? '+' : '−'}₹${Math.abs(cashDiscrepancy).toFixed(2)}`}
+ </p>
  </div>
 
  {(calculatePaytmBalance < 0 || (expectedCashInHand + calculatePaytmBalance) < 0) && (

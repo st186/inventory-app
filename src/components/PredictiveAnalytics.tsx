@@ -161,19 +161,19 @@ export function PredictiveAnalytics({ context, stores }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center">
-          <Target className="h-5 w-5 text-white" />
+      <div className="flex items-center gap-3 sm:gap-4">
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0">
+          <Target className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h2 className="text-2xl">Predictive Analytics</h2>
-          <p className="text-muted-foreground">AI-powered forecasting and recommendations</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Predictive Analytics</h1>
+          <p className="text-sm sm:text-base text-gray-500">AI-powered forecasting and recommendations</p>
         </div>
       </div>
 
       {/* 7-Day Forecast */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4 flex items-center gap-2">
+      <Card className="p-6 rounded-2xl">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
           <Calendar className="h-5 w-5 text-orange-600" />
           7-Day Demand Forecast
         </h3>
@@ -205,8 +205,8 @@ export function PredictiveAnalytics({ context, stores }: Props) {
       </Card>
 
       {/* Stock-out Risk Analysis */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4 flex items-center gap-2">
+      <Card className="p-6 rounded-2xl">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-orange-600" />
           Stock-out Risk by Store
         </h3>
@@ -251,8 +251,8 @@ export function PredictiveAnalytics({ context, stores }: Props) {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Demand Forecast Chart */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">Weekly Demand Forecast</h3>
+        <Card className="p-6 rounded-2xl">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Weekly Demand Forecast</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={predictions.forecast}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -267,8 +267,8 @@ export function PredictiveAnalytics({ context, stores }: Props) {
         </Card>
 
         {/* Monthly Trend */}
-        <Card className="p-6">
-          <h3 className="text-lg mb-4">6-Month Sales Trend</h3>
+        <Card className="p-6 rounded-2xl">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">6-Month Sales Trend</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={predictions.monthlyTrend}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -283,8 +283,8 @@ export function PredictiveAnalytics({ context, stores }: Props) {
       </div>
 
       {/* Optimal Production Schedule */}
-      <Card className="p-6">
-        <h3 className="text-lg mb-4 flex items-center gap-2">
+      <Card className="p-6 rounded-2xl">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-blue-600" />
           Optimal Production Schedule
         </h3>

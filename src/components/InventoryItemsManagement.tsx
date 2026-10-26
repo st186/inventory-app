@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { InventoryContextType } from '../App';
-import { Plus, Trash2, Edit2, Package, Check, X, AlertCircle, Factory, Store as StoreIcon } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Check, X, AlertCircle, Factory, Store as StoreIcon, ArrowLeft } from 'lucide-react';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 type Props = {
   context: InventoryContextType;
+  onBack?: () => void;
 };
 
 export interface InventoryItem {
@@ -22,7 +23,7 @@ export interface InventoryItem {
   isActive: boolean;
 }
 
-export function InventoryItemsManagement({ context }: Props) {
+export function InventoryItemsManagement({ context, onBack }: Props) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -230,12 +231,28 @@ export function InventoryItemsManagement({ context }: Props) {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl text-gray-900 mb-2">Inventory Items Master</h1>
-          <p className="text-gray-600">
-            Manage all inventory items for stores and production houses
-          </p>
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 mb-3"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+          )}
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+              <Package className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Items Master</h1>
+              <p className="text-sm sm:text-base text-gray-500">
+                Manage all inventory items for stores and production houses
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex gap-3">
           {items.length === 0 && (
@@ -280,8 +297,8 @@ export function InventoryItemsManagement({ context }: Props) {
 
       {/* Add/Edit Form */}
       {showAddForm && (
-        <Card className="p-6 border-2 border-orange-200">
-          <h2 className="text-xl mb-4">
+        <Card className="p-6 rounded-2xl border-2 border-orange-200">
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">
             {editingId ? 'Edit Item' : 'Add New Item'}
           </h2>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -397,7 +414,7 @@ export function InventoryItemsManagement({ context }: Props) {
       )}
 
       {/* Filters */}
-      <Card className="p-4">
+      <Card className="p-4 rounded-2xl">
         <div className="flex flex-wrap gap-4">
           <div>
             <label className="block text-sm mb-2 text-gray-700">Filter by Category</label>
@@ -436,9 +453,9 @@ export function InventoryItemsManagement({ context }: Props) {
           <p className="mt-4 text-gray-600">Loading items...</p>
         </div>
       ) : filteredItems.length === 0 ? (
-        <Card className="p-12 text-center">
+        <Card className="p-12 rounded-2xl text-center">
           <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl text-gray-600 mb-2">No items found</h3>
+          <h3 className="text-xl font-bold text-gray-900 mb-2">No items found</h3>
           <p className="text-gray-500 mb-4">Get started by adding your first inventory item</p>
           {items.length === 0 && (
             <button
@@ -452,7 +469,7 @@ export function InventoryItemsManagement({ context }: Props) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredItems.map(item => (
-            <Card key={item.id} className="p-4 hover:shadow-lg transition-shadow">
+            <Card key={item.id} className="p-4 rounded-2xl hover:shadow-lg transition-shadow">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
                   {getEntityTypeIcon(item.linkedEntityType)}
@@ -504,26 +521,24 @@ export function InventoryItemsManagement({ context }: Props) {
       )}
 
       {/* Summary */}
-      <Card className="p-6 bg-gradient-to-r from-orange-50 to-rose-50">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-          <div>
-            <div className="text-2xl text-orange-600">{items.filter(i => i.isActive).length}</div>
-            <div className="text-sm text-gray-600">Total Items</div>
-          </div>
-          <div>
-            <div className="text-2xl text-blue-600">{items.filter(i => i.linkedEntityType === 'global').length}</div>
-            <div className="text-sm text-gray-600">Global Items</div>
-          </div>
-          <div>
-            <div className="text-2xl text-green-600">{items.filter(i => i.linkedEntityType === 'store').length}</div>
-            <div className="text-sm text-gray-600">Store Specific</div>
-          </div>
-          <div>
-            <div className="text-2xl text-orange-600">{items.filter(i => i.linkedEntityType === 'production_house').length}</div>
-            <div className="text-sm text-gray-600">Production House</div>
-          </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-4 shadow-lg shadow-orange-500/20 text-white text-center">
+          <div className="text-2xl font-semibold">{items.filter(i => i.isActive).length}</div>
+          <div className="text-xs uppercase tracking-wide text-orange-100 mt-1">Total Items</div>
         </div>
-      </Card>
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-4 shadow-lg shadow-blue-500/20 text-white text-center">
+          <div className="text-2xl font-semibold">{items.filter(i => i.linkedEntityType === 'global').length}</div>
+          <div className="text-xs uppercase tracking-wide text-blue-100 mt-1">Global Items</div>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-4 shadow-lg shadow-emerald-500/20 text-white text-center">
+          <div className="text-2xl font-semibold">{items.filter(i => i.linkedEntityType === 'store').length}</div>
+          <div className="text-xs uppercase tracking-wide text-emerald-100 mt-1">Store Specific</div>
+        </div>
+        <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-2xl p-4 shadow-lg shadow-amber-500/20 text-white text-center">
+          <div className="text-2xl font-semibold">{items.filter(i => i.linkedEntityType === 'production_house').length}</div>
+          <div className="text-xs uppercase tracking-wide text-amber-100 mt-1">Production House</div>
+        </div>
+      </div>
     </div>
   );
 }

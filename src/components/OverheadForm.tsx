@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
-import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup } from '../utils/inventoryData';
+import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES } from '../utils/inventoryData';
 import { X, Loader2 } from 'lucide-react';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
@@ -13,6 +13,11 @@ type Props = {
   onClose: () => void;
   employees: Employee[];
   existingOverheads?: OverheadItem[];
+  // Which tab this form was opened from - the store's day-to-day category list is a
+  // small curated subset, while production keeps the full existing list.
+  entityScope: 'store' | 'production';
+  // Cluster head only - unlocks categories in RESTRICTED_OVERHEAD_CATEGORIES (fuel).
+  canUseRestrictedCategories?: boolean;
 };
 
 const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
@@ -21,23 +26,34 @@ const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
   payroll_linked: 'Fixed & Payroll-Linked',
 };
 
-// Selectable categories, grouped for the <optgroup> UI. 'miscellaneous' and 'commission'
-// are intentionally excluded — they remain valid on historical data but are no longer
-// offered when creating/editing an entry. 'personal_expense' is also excluded: it's a
-// salary advance/loan, not an operating cost — use the Salary Advance flow in Payroll instead.
-const selectableCategoriesByGroup: Record<OverheadCategoryGroup, { value: string; label: string }[]> = { operating: [], meals: [], payroll_linked: [] };
-for (const [value, meta] of Object.entries(OVERHEAD_CATEGORY_META)) {
-  if (value === 'miscellaneous' || value === 'personal_expense') continue;
-  selectableCategoriesByGroup[meta.group].push({ value, label: meta.label });
+// Selectable categories, grouped for the <optgroup> UI, scoped to store vs production.
+// 'personal_expense' is always excluded: it's a salary advance/loan, not an operating
+// cost — use the Salary Advance flow in Payroll instead. For production, 'miscellaneous'
+// stays excluded (kept only for historical data display); the store list re-includes it.
+function buildSelectableCategoriesByGroup(entityScope: 'store' | 'production', canUseRestricted: boolean): Record<OverheadCategoryGroup, { value: string; label: string }[]> {
+  const result: Record<OverheadCategoryGroup, { value: string; label: string }[]> = { operating: [], meals: [], payroll_linked: [] };
+  for (const [value, meta] of Object.entries(OVERHEAD_CATEGORY_META)) {
+    if (value === 'personal_expense') continue;
+    if (!canUseRestricted && RESTRICTED_OVERHEAD_CATEGORIES.includes(value)) continue;
+    if (entityScope === 'store') {
+      if (!STORE_OVERHEAD_CATEGORY_KEYS.includes(value)) continue;
+    } else if (value === 'miscellaneous') {
+      continue;
+    }
+    result[meta.group].push({ value, label: meta.label });
+  }
+  return result;
 }
 
 function isMealCategory(category: string): boolean {
   return (MEAL_CATEGORIES as string[]).includes(category);
 }
 
-export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [] }: Props) {
+export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [], entityScope, canUseRestrictedCategories = false }: Props) {
+  const selectableCategoriesByGroup = buildSelectableCategoriesByGroup(entityScope, canUseRestrictedCategories);
+  const defaultCategory = (Object.values(selectableCategoriesByGroup).flat()[0]?.value || 'miscellaneous') as OverheadItem['category'];
   const [formData, setFormData] = useState({
-    category: editingItem ? editingItem.category : 'fuel' as OverheadItem['category'],
+    category: editingItem ? editingItem.category : defaultCategory,
     description: editingItem ? editingItem.description : '',
     amount: editingItem ? editingItem.amount.toString() : '',
     employeeId: editingItem?.employeeId || '',

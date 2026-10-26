@@ -81,15 +81,20 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">
-            {role === 'manager' ? 'My Team' : 'Manager Overview'}
-          </h1>
-          <p className="text-gray-600">
-            {role === 'manager' 
-              ? 'View all employees under your management' 
-              : 'View all managers and their team performance'}
-          </p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0">
+            <Users className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+              {role === 'manager' ? 'My Team' : 'Manager Overview'}
+            </h1>
+            <p className="text-sm sm:text-base text-gray-500">
+              {role === 'manager'
+                ? 'View all employees under your management'
+                : 'View all managers and their team performance'}
+            </p>
+          </div>
         </div>
 
         {/* Summary Cards */}
@@ -134,23 +139,23 @@ export function EmployeeHierarchy({ managerId, role }: EmployeeHierarchyProps) {
         </div>
 
         {/* Employee/Manager List */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-orange-100 to-amber-100 border-b border-gray-200">
-            <h3 className="text-lg text-gray-900">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-violet-100 to-indigo-100 border-b border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900">
               {role === 'manager' ? 'Employee List' : 'Manager List'}
             </h3>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
             {(role === 'manager' ? employees : managers).map((person) => (
-              <div key={person.employeeId} className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
+              <div key={person.employeeId} className="border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
                 {/* Avatar */}
                 <div className="flex items-center gap-4 mb-4">
-                  <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-rose-400 rounded-full flex items-center justify-center text-white text-xl">
+                  <div className="w-16 h-16 bg-gradient-to-br from-violet-400 to-indigo-400 rounded-full flex items-center justify-center text-white text-xl">
                     {person.name.charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <h4 className="text-lg text-gray-900">{person.name}</h4>
+                    <h4 className="text-lg font-bold text-gray-900">{person.name}</h4>
                     <p className="text-sm text-gray-600">{person.employeeId}</p>
                   </div>
                 </div>

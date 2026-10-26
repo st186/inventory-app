@@ -4,6 +4,8 @@ import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
+import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
+import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 
 // ============================================
 // IST TIMEZONE UTILITIES (GMT+5:30)
@@ -25,6 +27,120 @@ function getTodayIST(): string {
 function getDayOfMonthIST(timestamp?: string): number {
   const date = timestamp ? timestamp : getNowIST();
   return parseInt(date.substring(8, 10), 10);
+}
+
+function getHourIST(timestamp?: string): number {
+  const date = timestamp ? timestamp : getNowIST();
+  return parseInt(date.substring(11, 13), 10);
+}
+
+function formatDateISTFromDate(date: Date): string {
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().substring(0, 10);
+}
+
+// Pure calendar-date-string arithmetic (no local-timezone-dependent Date object math) -
+// safe to use regardless of what timezone this function happens to run in.
+function addDaysToDateString(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().substring(0, 10);
+}
+
+// "09:00" -> "9:00 AM". Timesheet start/endTime are plain "HH:MM" strings (no timezone
+// component to worry about), so this is pure string/number formatting.
+function formatTime12h(time24?: string): string {
+  if (!time24 || !/^\d{1,2}:\d{2}$/.test(time24)) return time24 || '';
+  const [h, m] = time24.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m.toString().padStart(2, '0')} ${period}`;
+}
+
+// One-line summary used in timesheet notifications: "9:00 AM - 6:00 PM (9.00 hrs)".
+function formatTimesheetSummary(timesheet: any): string {
+  const range = timesheet.startTime && timesheet.endTime
+    ? `${formatTime12h(timesheet.startTime)} - ${formatTime12h(timesheet.endTime)}`
+    : null;
+  const hours = typeof timesheet.totalHours === 'number' ? `${timesheet.totalHours.toFixed(2)} hrs` : null;
+  if (range && hours) return `${range} (${hours})`;
+  return range || hours || '';
+}
+
+function normalizeCiferonTransactionDate(rawValue: any): string | null {
+  if (!rawValue) return null;
+  const raw = String(rawValue).trim();
+  if (!raw) return null;
+
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (iso) {
+    const hasExplicitTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
+    if (!hasExplicitTimezone) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  }
+
+  const numeric = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  if (numeric) {
+    const first = parseInt(numeric[1], 10);
+    const second = parseInt(numeric[2], 10);
+    const day = first > 12 ? first : (second > 12 ? second : first);
+    const month = first > 12 ? second : (second > 12 ? first : second);
+    return `${numeric[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return formatDateISTFromDate(parsed);
+
+  return null;
+}
+
+function getCiferonOrderDate(order: any): string | null {
+  return normalizeCiferonTransactionDate(
+    order?.TransactionTime ||
+    order?.BillDate ||
+    order?.OrderDate ||
+    order?.CreatedDate ||
+    order?.InvoiceDate ||
+    order?.Date
+  );
+}
+
+// Same raw-field fallback chain as getCiferonOrderDate, but keeps the hour instead of
+// discarding it - powers the "orders by hour" chart. Returns null (rather than guessing)
+// whenever the raw value turns out to be date-only, since fabricating a time would be
+// worse than just leaving that order out of the hourly breakdown.
+function getCiferonOrderHourIST(order: any): number | null {
+  // EntryDate is OrderReport/Sale's real per-order timestamp field (confirmed against a
+  // live sample response, e.g. "2026-07-28T16:40:15" - see
+  // CIFERON_POS_API_DOCUMENTATION.md). The other names are SaleDetails' field names, kept
+  // as a fallback in case this ever gets reused against that endpoint's orders instead.
+  const rawValue = order?.EntryDate || order?.TransactionTime || order?.BillDate || order?.OrderDate || order?.CreatedDate || order?.InvoiceDate || order?.Date;
+  if (!rawValue) return null;
+  const raw = String(rawValue).trim();
+  if (!raw) return null;
+
+  // Pure "YYYY-MM-DD" or "DD/MM/YYYY"-style date with nothing after it - no time to extract.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/.test(raw)) return null;
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const hasExplicitTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  if (!hasExplicitTimezone) {
+    // No timezone marker - same assumption normalizeCiferonTransactionDate makes for the
+    // date-only case: treat the digits as already being IST wall-clock time, read the hour
+    // straight off the string instead of running it through IST_OFFSET_MS (which would
+    // shift a value that was never UTC in the first place).
+    const timeMatch = raw.match(/(\d{1,2}):(\d{2})/);
+    return timeMatch ? parseInt(timeMatch[1], 10) : null;
+  }
+
+  // Has an explicit timezone (e.g. trailing Z) - convert properly to IST.
+  return new Date(parsed.getTime() + IST_OFFSET_MS).getUTCHours();
+}
+
+function getExistingSalesAmountTotal(sale: any): number {
+  return (sale?.offlineSales || 0) + (sale?.cashAmount || 0) + (sale?.paytmAmount || 0) + (sale?.onlineSales || 0) + (sale?.posOnlineSales || 0);
 }
 
 function formatDateTimeIST(timestamp: string): string {
@@ -82,6 +198,9 @@ async function getAllByPrefix(prefix: string): Promise<any[]> {
       .from('kv_store_c2dd9b9d')
       .select('key, value')
       .like('key', prefix + '%')
+      // Without a stable order, page boundaries can shift between requests and rows get
+      // returned twice or skipped entirely once a prefix passes 1000 rows.
+      .order('key', { ascending: true })
       .range(from, from + pageSize - 1);
     
     if (error) {
@@ -198,21 +317,23 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
     
     return { user };
   } catch (error: any) {
-    // Check if it's a connection error that we should retry
-    const isConnectionError = error?.message?.includes('connection reset') || 
-                              error?.message?.includes('connection error') ||
-                              error?.message?.includes('ECONNRESET');
-    
-    if (isConnectionError && retryCount < maxRetries) {
+    // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
+    // is returned as a normal { error } value above (line ~179), not thrown. So anything
+    // landing here is an infra/network hiccup talking to Supabase Auth itself (timeout,
+    // connection reset, transient unavailability), not proof the user's session is bad.
+    // Retry generously, and if retries are exhausted, return 503 (not 401) so the
+    // frontend's retry-on-5xx logic kicks in instead of force-logging the user out -
+    // treating "we couldn't verify" as "verification failed" was logging people out
+    // on ordinary network blips.
+    if (retryCount < maxRetries) {
       const delay = retryDelay(retryCount);
-      console.log(`⚠️ Connection error in verifyUser, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
+      console.log(`⚠️ Transient error in verifyUser (${error?.message || error}), retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return verifyUser(authHeader, retryCount + 1);
     }
-    
-    // If we've exhausted retries or it's a different error, log and return unauthorized
+
     console.error('❌ Error in verifyUser after retries:', error);
-    return { error: 'Unauthorized', status: 401 };
+    return { error: 'Service temporarily unavailable, please retry', status: 503 };
   }
 }
 
@@ -529,17 +650,43 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `inventory:${userId}:${itemId}`;
-    
+
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
     const userName = authResult.user.user_metadata?.name;
     const userEmail = authResult.user.email;
     const employeeId = authResult.user.user_metadata?.employeeId; // Employee ID like BM001
-    
+
+    // Production incharges have their production house ID stored in storeId (see
+    // /production-houses/:id/assign-head above); everyone else's storeId is a real store.
+    const isProductionIncharge = designation === 'production_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    // Everyone can choose entity via the client payload. Flexible roles (operations
+    // manager, cluster head, etc.) trust it outright. Store/production incharge are
+    // normally pinned to their own location, but the Quick Add flow explicitly lets them
+    // log an expense for the OTHER entity too (e.g. a store incharge picking up the
+    // production house's chicken order while out - the matcher itself already suggests
+    // "usually bought at Production House" regardless of who's submitting). Honor that
+    // explicit choice using the id the client sent for it, since their own profile only
+    // carries an id for their own side.
+    const requestedEntityType: 'store' | 'production_house' | null =
+      item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
+    const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
+    const entityType = requestedEntityType || naturalEntityType;
+    const resolvedProductionHouseId = entityType === 'production_house'
+      ? (entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
+      : null;
+    const resolvedStoreId = entityType === 'store'
+      ? (entityType === naturalEntityType ? (storeId || null) : (item.storeId || null))
+      : null;
+
     const inventoryItem = {
       ...item,
       id: itemId,
       userId,
-      storeId: storeId || null,
+      storeId: resolvedStoreId,
+      entityType,
+      productionHouseId: resolvedProductionHouseId,
       createdBy: employeeId || userId, // Use employeeId if available, fallback to userId
       createdByName: userName,
       createdByEmail: userEmail
@@ -705,19 +852,40 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     }
 
     const item = await c.req.json();
+    if (item?.category === 'fuel' && role !== 'cluster_head') {
+      return c.json({ error: 'Fuel cost entries need cluster head permission. Use Electric Bike Charging for the e-bike.' }, 403);
+    }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
-    
+
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
     console.log(`🏪 StoreId: ${storeId || 'null'}`);
-    
+
+    const isProductionIncharge = designation === 'production_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    // See the matching comment in the /inventory POST route above - store/production
+    // incharge can explicitly log against the other entity via the client payload.
+    const requestedEntityType: 'store' | 'production_house' | null =
+      item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
+    const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
+    const entityType = requestedEntityType || naturalEntityType;
+    const resolvedProductionHouseId = entityType === 'production_house'
+      ? (entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
+      : null;
+    const resolvedStoreId = entityType === 'store'
+      ? (entityType === naturalEntityType ? (storeId || null) : (item.storeId || null))
+      : null;
+
     const overheadItem = {
       ...item,
       id: itemId,
       userId,
-      storeId: storeId || null
+      storeId: resolvedStoreId,
+      entityType,
+      productionHouseId: resolvedProductionHouseId
     };
 
     console.log('💾 Saving expense/overhead item to KV store:', key);
@@ -751,6 +919,9 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     const key = `overhead:${userId}:${itemId}`;
     const updates = await c.req.json();
+    if (updates?.category === 'fuel' && role !== 'cluster_head') {
+      return c.json({ error: 'Fuel cost entries need cluster head permission.' }, 403);
+    }
     
     const overheadItem = {
       ...updates,
@@ -842,6 +1013,7 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
     const storeId = authResult.user.user_metadata?.storeId;
+    const designation = authResult.user.user_metadata?.designation;
 
     if (role !== 'manager') {
       return c.json({ error: 'Only managers can add fixed costs' }, 403);
@@ -850,12 +1022,29 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     const body = await c.req.json();
     const id = crypto.randomUUID();
     const key = `fixedcost:${userId}:${id}`;
-    
+
+    const isProductionIncharge = designation === 'production_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    // See the matching comment in the /inventory POST route above - store/production
+    // incharge can explicitly log against the other entity via the client payload.
+    const requestedEntityType: 'store' | 'production_house' | null =
+      body.entityType === 'production_house' || body.entityType === 'store' ? body.entityType : null;
+    const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
+    const entityType = requestedEntityType || naturalEntityType;
+    const resolvedProductionHouseId = entityType === 'production_house'
+      ? (entityType === naturalEntityType ? (storeId || null) : (body.productionHouseId || null))
+      : null;
+    const resolvedStoreId = entityType === 'store'
+      ? (entityType === naturalEntityType ? (storeId || null) : (body.storeId || null))
+      : null;
+
     const fixedCostItem = {
       ...body,
       id,
       userId,
-      storeId: storeId || null
+      storeId: resolvedStoreId,
+      entityType,
+      productionHouseId: resolvedProductionHouseId
     };
 
     await kvWithRetry.set(key, fixedCostItem);
@@ -1002,7 +1191,8 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       }, 403);
     }
 
-    // Only store incharges add sales data (operations managers get a read-only view)
+    // Store incharge logs/validates the day's sales (POS-reported once live) against
+    // the cash they counted - operations manager gets a read-only monitoring view.
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
 
@@ -1037,20 +1227,42 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       approvalRequired: true,
       createdBy: employeeId || userId, // Use employeeId if available, fallback to userId
       createdByName: userName,
-      createdByEmail: userEmail
+      createdByEmail: userEmail,
+      // Same reasoning as PUT /sales/:id above: usedOnlineMoney only ever moves via the
+      // cash-topup-approval route or the "Convert to Online" route, never a general sales
+      // save - and by the time either of those has ever touched this date, a record already
+      // exists for the approval route to find (it creates one itself otherwise), so this
+      // POST path only ever legitimately runs for a date with nothing credited yet.
+      usedOnlineMoney: 0
     };
 
     await kvWithRetry.set(key, salesItem);
     console.log('✅ Sales data saved successfully:', itemId);
-    
-    // Notify cluster heads about sales data entry
+
+    // CONFIRMED ROOT CAUSE (found 2026-08-30, the 3rd incident from this same underlying
+    // gap): this route saves whatever actualPaytmBalance the CLIENT computed, with nothing
+    // server-side re-deriving it afterward - every other Paytm-affecting write (settlement
+    // upload/delete, top-up approval, recalibration save) already triggers this cascade, but
+    // a manual sales entry save never did. If the store incharge's local data was even
+    // slightly stale (a topup approved seconds earlier they haven't refreshed to see, a
+    // settlement uploaded moments before), their save would silently persist a wrong number
+    // that nothing would catch until some unrelated later trigger happened to sweep through
+    // this date. Running it here makes the server's own cascade the final word on every
+    // save, regardless of what the client's snapshot looked like at compute time.
+    if (storeId && salesItem.date) {
+      await cascadeRecomputePaytmBalances(storeId, salesItem.date);
+      await cascadeProductionCashForStoreSale(storeId, salesItem.date);
+    }
+
+    // Notify cluster heads and this store's operations manager(s) about the sales entry
     const clusterHeads = await getAllClusterHeads();
+    const opsManagers = await getOperationsManagers(storeId);
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
+
+    for (const recipient of [...clusterHeads, ...opsManagers]) {
+      if (recipient.authUserId) {
         await notifyUser(
-          clusterHead.authUserId,
+          recipient.authUserId,
           'sales_logged',
           'Sales Data Logged',
           `${managerName} logged sales data for ${item.date}`,
@@ -1059,7 +1271,7 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
         );
       }
     }
-    
+
     return c.json({ success: true, item: salesItem });
   } catch (error) {
     console.log('EXCEPTION in add sales:', error);
@@ -1078,14 +1290,13 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
 
-    // Store incharges log the day's sales; operations managers reconcile cash/Paytm against it.
-    // Each can only touch their own half of the record - enforced below, not just in the UI.
+    // Store incharge owns sales entry, POS validation, and cash reconciliation as a
+    // single workflow now - enforced here, not just in the UI.
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
-    const isOperationsManager = isManager && designation !== 'store_incharge' && designation !== 'production_incharge';
 
-    if (!isStoreIncharge && !isOperationsManager) {
-      return c.json({ error: 'Only store incharges or operations managers can update sales data' }, 403);
+    if (!isManager || !isStoreIncharge) {
+      return c.json({ error: 'Only store incharges can update sales data' }, 403);
     }
 
     const itemId = c.req.param('id');
@@ -1102,56 +1313,65 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     // Use the key from the existing sale
     const key = `sales:${existingSale.userId}:${itemId}`;
 
-    let salesItem;
-    if (isStoreIncharge) {
-      // Store incharge can edit sales-entry fields, but cash/Paytm reconciliation
-      // (entered by the operations manager) is preserved as-is.
-      salesItem = {
-        ...updates,
-        usedOnlineMoney: existingSale.usedOnlineMoney,
-        actualCashInHand: existingSale.actualCashInHand,
-        actualPaytmBalance: existingSale.actualPaytmBalance,
-        cashOffset: existingSale.cashOffset,
-        paytmOffset: existingSale.paytmOffset,
-        salesDiscrepancy: existingSale.salesDiscrepancy,
-        approvalRequired: existingSale.approvalRequired,
-        approvalStatus: existingSale.approvalStatus,
-        approvedBy: existingSale.approvedBy,
-        approvedAt: existingSale.approvedAt,
-        approvalRequested: existingSale.approvalRequested,
-        approvalRequestedAt: existingSale.approvalRequestedAt,
-        requestedCashInHand: existingSale.requestedCashInHand,
-        requestedOffset: existingSale.requestedOffset,
-        rejectedBy: existingSale.rejectedBy,
-        rejectedAt: existingSale.rejectedAt,
-        rejectionReason: existingSale.rejectionReason,
-        id: itemId,
-        userId: existingSale.userId
-      };
-    } else {
-      // Operations manager can only touch cash/Paytm reconciliation fields -
-      // the sales figures the store incharge logged are preserved untouched.
-      salesItem = {
-        ...existingSale,
-        usedOnlineMoney: updates.usedOnlineMoney,
-        actualCashInHand: updates.actualCashInHand,
-        actualPaytmBalance: updates.actualPaytmBalance,
-        cashOffset: updates.cashOffset,
-        paytmOffset: updates.paytmOffset,
-        salesDiscrepancy: updates.salesDiscrepancy,
-        approvalRequired: updates.approvalRequired,
-        approvalStatus: updates.approvalStatus,
-        approvedBy: updates.approvedBy,
-        approvedAt: updates.approvedAt,
-        approvalRequested: updates.approvalRequested,
-        approvalRequestedAt: updates.approvalRequestedAt,
-        id: itemId,
-        userId: existingSale.userId
-      };
-    }
+    const salesItem = {
+      ...existingSale,
+      ...updates,
+      id: itemId,
+      userId: existingSale.userId,
+      // CONFIRMED ROOT CAUSE (found 2026-10-16, real case: a ₹540 approved store_inventory
+      // cash top-up for Rohan/Bunny Momos 1 on 2026-10-12 showed as ₹0 in the Store Cash in
+      // Hand breakdown): usedOnlineMoney is a running ledger only ever meant to move via the
+      // cash-topup-approval route (above) and the "Convert to Online" route (below) - never
+      // via this general sales-data save. The store incharge's form loads it once when the
+      // page opens and echoes that same value back on every save; if a top-up gets approved
+      // (or a conversion happens) *after* the page loaded but *before* the store incharge
+      // clicks Save - entirely plausible, since a save often happens late at night after the
+      // till is counted - this stale echo silently overwrote the just-approved credit with
+      // the old number. Always keep the server's own value; a client-submitted usedOnlineMoney
+      // is never trusted here, exactly like actualPaytmBalance is server-derived rather than
+      // client-trusted for the same reason.
+      usedOnlineMoney: existingSale.usedOnlineMoney || 0
+    };
 
     await kvWithRetry.set(key, salesItem);
     console.log('✅ Sales data updated successfully:', key);
+
+    // CONFIRMED ROOT CAUSE (found 2026-08-30): this is the actually-common save path (pos-
+    // sync creates the day's placeholder, the store incharge edits/confirms it here) and it
+    // saved whatever actualPaytmBalance the CLIENT computed with nothing server-side ever
+    // re-deriving it - the one gap in an otherwise-complete web of cascade triggers
+    // (settlement upload/delete, top-up approval, recalibration save all already call this).
+    // A topup approved between page-load and save, or any other Paytm-affecting event the
+    // incharge's local snapshot hadn't refreshed to see yet, would silently persist a wrong
+    // number that stayed wrong until some unrelated later trigger happened to sweep through
+    // this date - exactly what happened on 2026-08-29. Running it here makes the server's
+    // own cascade the final word on every save, regardless of the client's snapshot.
+    if (salesItem.storeId && salesItem.date) {
+      await cascadeRecomputePaytmBalances(salesItem.storeId, salesItem.date);
+      await cascadeProductionCashForStoreSale(salesItem.storeId, salesItem.date);
+    }
+
+    // Notify this store's operations manager(s) that the store incharge logged/confirmed
+    // today's sales - the common path now that pos-sync creates the day's record first and
+    // the store incharge edits/confirms it via this route, not the POST route above.
+    try {
+      const opsManagers = await getOperationsManagers(salesItem.storeId);
+      const managerName = authResult.user.user_metadata?.name || authResult.user.email;
+      for (const opsManager of opsManagers) {
+        if (opsManager.authUserId) {
+          await notifyUser(
+            opsManager.authUserId,
+            'sales_logged',
+            'Sales Data Logged',
+            `${managerName} logged sales data for ${salesItem.date}`,
+            itemId,
+            salesItem.date
+          );
+        }
+      }
+    } catch (notifyError) {
+      console.error('Error notifying operations manager of sales update:', notifyError);
+    }
 
     return c.json({ success: true, item: salesItem });
   } catch (error) {
@@ -1451,6 +1671,476 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
   }
 });
 
+// ===== CASH TOP-UP REQUESTS =====
+// Ops Manager -> Cluster Head: when the offline till is running low (after that day's
+// store inventory spend), the ops manager asks for more physical cash. On approval, the
+// amount is credited to Offline Cash in Hand and debited from Online Cash in Hand by
+// bumping that day's sales record's usedOnlineMoney - the same lever the cash math in
+// SalesManagement.tsx already uses (see expectedCashInHand / calculatePaytmBalance there).
+// Kept as its own flow, separate from the cash-discrepancy escalation above.
+
+// Get all cash top-up requests
+app.get('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const requests = await getAllByPrefixWithRetry('cash-topup:');
+    return c.json({ requests: requests || [] });
+  } catch (error: any) {
+    console.log('Error fetching cash top-up requests:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ requests: [], warning: 'Database temporarily unavailable' });
+    }
+    return c.json({ error: 'Failed to fetch cash top-up requests' }, 500);
+  }
+});
+
+// Create a cash top-up request (operations manager only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isStoreIncharge = designation === 'store_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+
+    if (!isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
+      return c.json({ error: 'Only store incharges, operations managers, and production incharges can request a cash top-up' }, 403);
+    }
+
+    const { date, requestedAmount, reason, targetStoreId } = await c.req.json();
+    const REASON_OPTIONS = ['store_inventory', 'production_inventory', 'other'];
+    if (!date || !requestedAmount || requestedAmount <= 0 || !REASON_OPTIONS.includes(reason)) {
+      return c.json({ error: 'Invalid cash top-up request data' }, 400);
+    }
+
+    // Store incharge/ops manager credit their own store's cash - UNLESS reason is
+    // 'production_inventory', in which case the money is destined for the production
+    // house's own cash ledger (see /production-cash above), not the store's. A production
+    // incharge has no cash-in-hand ledger of their own for anything OTHER than production
+    // spend - they must pick which store's till gets credited for non-production reasons.
+    let storeId: string;
+    let requestedByEntityType: 'store' | 'production_house';
+    let requestedByEntityName: string;
+    // Resolved below whenever reason === 'production_inventory' (from either branch) -
+    // this is what /production-cash's cashTopupCredited sum matches against once approved.
+    let resolvedProductionHouseId: string | undefined;
+
+    if (isProductionIncharge) {
+      if (!targetStoreId) {
+        return c.json({ error: 'Production incharges must select which store to credit' }, 400);
+      }
+      // Prefer the explicit assignedProductionHouseIds mapping on the employee record
+      // (the real fix - unambiguous, supports more than one production house) over the
+      // legacy guess below. Only fall back to guessing from user_metadata.storeId for
+      // employees not yet migrated to the new field.
+      const employeeId = authResult.user.user_metadata?.employeeId;
+      const employeeRecord = employeeId ? await kv.get(`unified-employee:${employeeId}`) : null;
+      const assignedProductionHouseIds: string[] = employeeRecord?.assignedProductionHouseIds || [];
+
+      // A production incharge's user_metadata.storeId doesn't reliably hold the
+      // production house's own UUID - in practice it's often set to the STORE- id of
+      // the store their production house supplies (matching how ProductionRequests.tsx
+      // resolves this same ambiguity). Try it directly as a production house UUID first;
+      // if that record doesn't exist, resolve it via that store's own productionHouseId.
+      const rawProductionHouseRef = authResult.user.user_metadata?.storeId;
+      const allStores = await kv.getByPrefix('store:');
+      let productionHouseId: string | undefined = assignedProductionHouseIds[0] || rawProductionHouseRef;
+      const directProductionHouse = productionHouseId ? await kv.get(`production_house_${productionHouseId}`) : null;
+      if (!directProductionHouse && rawProductionHouseRef && assignedProductionHouseIds.length === 0) {
+        const linkedStore = allStores.find((s: any) => s.id === rawProductionHouseRef);
+        productionHouseId = linkedStore?.productionHouseId || rawProductionHouseRef;
+      }
+      const targetStore = allStores.find((s: any) => s.id === targetStoreId);
+      if (!targetStore || targetStore.productionHouseId !== productionHouseId) {
+        return c.json({ error: 'Selected store is not supplied by your production house' }, 400);
+      }
+      storeId = targetStoreId;
+      const productionHouse = directProductionHouse || await kv.get(`production_house_${productionHouseId}`);
+      requestedByEntityType = 'production_house';
+      requestedByEntityName = productionHouse?.name || 'Production House';
+      resolvedProductionHouseId = productionHouseId;
+    } else {
+      storeId = authResult.user.user_metadata?.storeId;
+      if (!storeId) {
+        return c.json({ error: 'No store assigned to this account' }, 400);
+      }
+      const allStores = await kv.getByPrefix('store:');
+      const store = allStores.find((s: any) => s.id === storeId);
+      requestedByEntityType = 'store';
+      requestedByEntityName = store?.name || 'Store';
+
+      // A store incharge/ops manager topping up FOR the production house (they're
+      // fronting the cash from their own store's till, per the real handover flow) - the
+      // approved amount should credit the production ledger, not usedOnlineMoney on this
+      // store's own sales: record.
+      if (reason === 'production_inventory') {
+        if (!store?.productionHouseId) {
+          return c.json({ error: 'This store has no linked production house to credit' }, 400);
+        }
+        resolvedProductionHouseId = store.productionHouseId;
+      }
+    }
+
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const key = `cash-topup:${id}`;
+    const requestedBy = authResult.user.user_metadata?.employeeId || authResult.user.id;
+    const requestedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
+    const topupRequest = {
+      id,
+      storeId,
+      // Set only when this top-up is destined for the production ledger (§4 of the cash
+      // split plan) - undefined for ordinary store_inventory/other requests, which still
+      // credit the store exactly as before.
+      ...(resolvedProductionHouseId ? { productionHouseId: resolvedProductionHouseId } : {}),
+      date,
+      requestedAmount,
+      reason,
+      requestedByEntityType,
+      requestedByEntityName,
+      status: 'pending',
+      requestedBy,
+      requestedByName,
+      requestedByUserId: authResult.user.id,
+      requestDate: getNowIST(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null
+    };
+
+    await kvWithRetry.set(key, topupRequest);
+
+    // Notify all cluster heads
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'cash_topup_request',
+          'Cash Top-up Requested',
+          `${requestedByName} (${requestedByEntityName}) requested ₹${requestedAmount.toFixed(2)} cash top-up for ${date} - reason: ${reason.replace('_', ' ')}`,
+          id,
+          date
+        );
+      }
+    }
+
+    return c.json({ success: true, request: topupRequest });
+  } catch (error) {
+    console.log('Error creating cash top-up request:', error);
+    return c.json({ error: 'Failed to create cash top-up request' }, 500);
+  }
+});
+
+// Scooter EMI (purchased Oct 2026) - ₹5,543 auto-debits from the bank on the 5th of every
+// month, but the store's own till doesn't see that money move on its own. Rather than
+// relying on someone remembering to raise a cash top-up every single month, this creates
+// the request automatically on the 1st (a few days ahead of the actual debit), in Aniket
+// Prasad's name, exactly like a normal manually-raised request - it still needs a cluster
+// head's approval, this only saves someone having to remember to ask every month.
+// Hardcoded to this one specific EMI; if the amount changes or the loan is paid off, update
+// (or remove) this block and its cron (see the scooter-emi-cash-topup migration).
+const SCOOTER_EMI_AMOUNT = 5543;
+const SCOOTER_EMI_STORE_ID = 'STORE-1766938921191-9LCH05'; // Bunny Momos 1
+const SCOOTER_EMI_REQUESTER_EMPLOYEE_ID = 'BM004'; // Aniket Prasad
+
+app.post('/make-server-c2dd9b9d/cron/scooter-emi-cash-topup', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const today = getTodayIST();
+
+    // Guard against double-creation if the cron ever fires twice in one day (pg_cron
+    // retries, a manual re-trigger while debugging, etc.) - never raise two requests for
+    // the same month.
+    const existing = await getAllByPrefixWithRetry('cash-topup:');
+    const alreadyRaisedThisMonth = existing.some((t: any) =>
+      t.storeId === SCOOTER_EMI_STORE_ID &&
+      t.requestedAmount === SCOOTER_EMI_AMOUNT &&
+      t.reason === 'store_inventory' &&
+      typeof t.date === 'string' && t.date.slice(0, 7) === today.slice(0, 7)
+    );
+    if (alreadyRaisedThisMonth) {
+      return c.json({ success: true, skipped: 'already raised this month' });
+    }
+
+    const requester = await kv.get(`unified-employee:${SCOOTER_EMI_REQUESTER_EMPLOYEE_ID}`);
+    const allStores = await kv.getByPrefix('store:');
+    const store = allStores.find((s: any) => s.id === SCOOTER_EMI_STORE_ID);
+
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const key = `cash-topup:${id}`;
+    const topupRequest = {
+      id,
+      storeId: SCOOTER_EMI_STORE_ID,
+      date: today,
+      requestedAmount: SCOOTER_EMI_AMOUNT,
+      reason: 'store_inventory',
+      requestedByEntityType: 'store',
+      requestedByEntityName: store?.name || 'Store',
+      status: 'pending',
+      requestedBy: SCOOTER_EMI_REQUESTER_EMPLOYEE_ID,
+      requestedByName: requester?.name || 'Aniket Prasad',
+      requestedByUserId: requester?.authUserId || '',
+      requestDate: getNowIST(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null,
+      // Not read by any existing screen - purely so this record is self-explanatory to
+      // anyone looking at the raw data later, same as every other auto-generated record
+      // this session has left a trail for.
+      autoGeneratedNote: 'Auto-raised monthly for the scooter EMI (debits from the bank on the 5th) - see SCOOTER_EMI_AMOUNT in index.ts.'
+    };
+
+    await kvWithRetry.set(key, topupRequest);
+
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'cash_topup_request',
+          'Cash Top-up Requested (Scooter EMI)',
+          `${topupRequest.requestedByName} (${topupRequest.requestedByEntityName}) - auto-raised ₹${SCOOTER_EMI_AMOUNT.toFixed(2)} cash top-up for the scooter EMI, due ${today}`,
+          id,
+          today
+        );
+      }
+    }
+
+    console.log(`Scooter EMI cash top-up auto-raised: ${id}`);
+    return c.json({ success: true, id });
+  } catch (error: any) {
+    console.log('Error auto-raising scooter EMI cash top-up:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
+    return c.json({ error: 'Failed to auto-raise scooter EMI cash top-up' }, 500);
+  }
+});
+
+// Approve a cash top-up request (cluster head only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/approve', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can approve cash top-up requests' }, 403);
+    }
+
+    const requestId = c.req.param('id');
+    const key = `cash-topup:${requestId}`;
+    const existingRequest = await kv.get(key);
+
+    if (!existingRequest) {
+      return c.json({ error: 'Cash top-up request not found' }, 404);
+    }
+    if (existingRequest.status !== 'pending') {
+      return c.json({ error: 'This request has already been resolved' }, 400);
+    }
+
+    if (existingRequest.reason === 'production_inventory' && existingRequest.productionHouseId) {
+      // Destined for the production cash ledger (§4 of the cash split plan), not the
+      // store's usedOnlineMoney. Nothing needs to be written to production-cash directly
+      // here - GET /production-cash and the cascade both already sum approved
+      // production_inventory topups live from cash-topup: records for the matching
+      // date/productionHouseId (see computeProductionCashExpected), so simply marking
+      // this request 'approved' below is enough for it to count. The cascade call just
+      // refreshes an already-saved day's derived fields if one exists yet - a no-op if
+      // nobody has opened the Cash tab for that house/date at all.
+      await cascadeRecomputeProductionCash(existingRequest.productionHouseId, existingRequest.date);
+    } else {
+      // Find that day's sales record for the store and bump usedOnlineMoney - this is the
+      // exact lever expectedCashInHand/calculatePaytmBalance already use to move money
+      // between the offline and online pools (see SalesManagement.tsx).
+      //
+      // A top-up requested in the morning (before the store incharge's end-of-day sales
+      // entry exists) used to fail here with a 404 - there was nothing to credit it
+      // against yet, so an approved top-up wouldn't actually show up anywhere until the
+      // day's sales were logged hours later. Fixed by upserting a stub sales record (same
+      // find-or-create pattern runPosSync's Step A already uses) instead of requiring one
+      // to pre-exist - the store incharge's real end-of-day submission later finds this
+      // same record (by storeId+date) via salesForDate and edits it in place, so the
+      // top-up's usedOnlineMoney contribution is preserved, not overwritten or duplicated.
+      const allSales = await kv.getByPrefix('sales:');
+      const salesRecord = allSales.find((s: any) => s.storeId === existingRequest.storeId && s.date === existingRequest.date);
+
+      if (salesRecord) {
+        const salesKey = `sales:${salesRecord.userId}:${salesRecord.id}`;
+        await kv.set(salesKey, {
+          ...salesRecord,
+          usedOnlineMoney: (salesRecord.usedOnlineMoney || 0) + existingRequest.requestedAmount
+        });
+      } else {
+        // Placeholder below, then fall through to the cascade call after this if/else -
+        // both branches need actualPaytmBalance recomputed from this date forward now that
+        // usedOnlineMoney just changed on it.
+        const storeIncharge = await getStoreIncharge(existingRequest.storeId);
+        const ownerUserId = storeIncharge?.authUserId || existingRequest.requestedByUserId;
+        // Deterministic id (same one runPosSync's new-record branch uses) instead of a random
+        // one: two top-ups for the same store/date approved at nearly the same moment (found
+        // 700ms apart on 2026-10-17) both ran the find above, both saw no record, and each
+        // created its own stub - the day then existed twice and every total on the Sales
+        // overview doubled. With one shared key a concurrent second create lands on the
+        // first's record instead of becoming a sibling.
+        const itemId = `pos-sync-${existingRequest.storeId}-${existingRequest.date}`;
+        // This stub is meant to be found-and-edited-in-place by the real end-of-day
+        // submission (pos-sync or the store incharge's manual save) later, exactly like a
+        // pos-sync placeholder - give it the SAME shape/defaults a pos-sync-created record
+        // gets (see the nightly sync's "new record" branch) instead of just the 5 fields it
+        // strictly needs. Previously this only set id/userId/storeId/date/usedOnlineMoney
+        // plus createdBy: 'cash-topup-approval' - a literal internal action name that then
+        // displayed raw as "Logged by: cash-topup-approval" to anyone viewing the aggregate
+        // Sales overview, and left approvalStatus/actualCashInHand/cashOffset/etc. undefined
+        // forever if the nightly sync's update branch (which only overwrites POS-derived
+        // fields) found this stub already existing - so a day with genuine sales data could
+        // still show "Pending approval" / "Not yet reconciled" indefinitely. createdBy is
+        // 'pos-sync' now so this stub is indistinguishable from - and gets properly filled in
+        // by - the normal placeholder-creation path everyone else already relies on.
+        await kv.set(`sales:${ownerUserId}:${itemId}`, {
+          id: itemId,
+          userId: ownerUserId,
+          storeId: existingRequest.storeId,
+          date: existingRequest.date,
+          offlineSales: 0,
+          onlineSales: 0,
+          onlineSalesCommission: 0,
+          employeeSalary: 0,
+          usedOnlineMoney: existingRequest.requestedAmount,
+          approvalStatus: 'pending',
+          actualCashInHand: 0,
+          cashOffset: 0,
+          approvalRequired: false,
+          approvedBy: null,
+          approvedAt: null,
+          approvalRequested: false,
+          approvalRequestedAt: null,
+          requestedCashInHand: null,
+          requestedOffset: null,
+          rejectedBy: null,
+          rejectedAt: null,
+          rejectionReason: null,
+          actualPaytmBalance: 0,
+          paytmOffset: 0,
+          createdBy: 'pos-sync',
+          createdByName: 'Ciferon POS Auto-Sync',
+        });
+      }
+    }
+
+    const approvedRequest = {
+      ...existingRequest,
+      status: 'approved',
+      approvedBy: authResult.user.email,
+      approvedAt: getNowIST()
+    };
+    await kv.set(key, approvedRequest);
+
+    // Refresh actualPaytmBalance from this date forward now that Paytm just moved -
+    // every other Paytm-affecting write (recalibration save/edit/delete, settlement
+    // upload) already triggers this; approving a top-up was the one gap, which meant the
+    // stored balance only became fresh by accident whenever something else later happened
+    // to sweep through this date. Must run AFTER the kv.set above so approvedAt is already
+    // on the record - the cascade's late-top-up check needs it to decide whether this
+    // specific top-up landed before or after that day's recalibration, if any.
+    // Confirmed with the business owner: a production-reason top-up drains this SAME
+    // Paytm/bank balance exactly like a store-reason one does - only the destination till
+    // differs - so both reasons must refresh the cascade, not just 'store_inventory'.
+    await cascadeRecomputePaytmBalances(existingRequest.storeId, existingRequest.date);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existingRequest.requestedByUserId) {
+      await notifyUser(
+        existingRequest.requestedByUserId,
+        'cash_topup_approved',
+        'Cash Top-up Approved ✓',
+        `${clusterHeadName} approved your ₹${existingRequest.requestedAmount.toFixed(2)} cash top-up for ${existingRequest.date}`,
+        requestId,
+        existingRequest.date
+      );
+    }
+
+    return c.json({ success: true, request: approvedRequest });
+  } catch (error) {
+    console.log('Error approving cash top-up request:', error);
+    return c.json({ error: 'Failed to approve cash top-up request' }, 500);
+  }
+});
+
+// Reject a cash top-up request (cluster head only)
+app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/reject', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    if (role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can reject cash top-up requests' }, 403);
+    }
+
+    const requestId = c.req.param('id');
+    const { reason } = await c.req.json();
+    const key = `cash-topup:${requestId}`;
+    const existingRequest = await kv.get(key);
+
+    if (!existingRequest) {
+      return c.json({ error: 'Cash top-up request not found' }, 404);
+    }
+    if (existingRequest.status !== 'pending') {
+      return c.json({ error: 'This request has already been resolved' }, 400);
+    }
+
+    const rejectedRequest = {
+      ...existingRequest,
+      status: 'rejected',
+      rejectedBy: authResult.user.email,
+      rejectedAt: getNowIST(),
+      rejectionReason: reason || ''
+    };
+    await kv.set(key, rejectedRequest);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existingRequest.requestedByUserId) {
+      await notifyUser(
+        existingRequest.requestedByUserId,
+        'cash_topup_rejected',
+        'Cash Top-up Rejected ✗',
+        `${clusterHeadName} rejected your ₹${existingRequest.requestedAmount.toFixed(2)} cash top-up request for ${existingRequest.date}${reason ? `. Reason: ${reason}` : ''}`,
+        requestId,
+        existingRequest.date
+      );
+    }
+
+    return c.json({ success: true, request: rejectedRequest });
+  } catch (error) {
+    console.log('Error rejecting cash top-up request:', error);
+    return c.json({ error: 'Failed to reject cash top-up request' }, 500);
+  }
+});
+
 // ===== PRODUCTION DATA ENDPOINTS =====
 
 // Get all production data
@@ -1472,6 +2162,50 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
   }
 });
 
+// Credits a production record's finished-piece quantities into ProductionHouse.inventory.
+// Moved server-side (previously only done client-side, in ProductionManagement.tsx's
+// handleApprove) so it happens exactly once no matter which of the three approval paths
+// fired: this route, the inline pending-approvals "Approve" button (which calls this same
+// route), or the 24h auto-approve-stale cron below - confirmed bug this session, both of
+// the latter two skipped crediting entirely since only the client-side path did it.
+async function creditProductionHouseInventory(productionData: any): Promise<void> {
+  try {
+    let productionHouseId = productionData.productionHouseId;
+    let productionHouse = productionHouseId ? await kv.get(`production_house_${productionHouseId}`) : null;
+
+    if (!productionHouse) {
+      // Fallback for older records saved before productionHouseId was reliably set -
+      // match by the submitting production head instead.
+      const allHouses = await kv.getByPrefix('production_house_');
+      productionHouse = (allHouses || []).find((h: any) => h.productionHeadId === productionData.createdBy) || null;
+      if (productionHouse) productionHouseId = productionHouse.id;
+    }
+    if (!productionHouse || !productionHouseId) {
+      console.log('creditProductionHouseInventory: no matching production house found for', productionData.id, '- skipping credit');
+      return;
+    }
+
+    const newInventory = { ...(productionHouse.inventory || {}) };
+    for (const momoType of PRODUCTION_MOMO_TYPES) {
+      const finalQty = productionData[momoType.key]?.final || 0;
+      if (finalQty > 0) {
+        newInventory[momoType.inventoryKey] = (newInventory[momoType.inventoryKey] || 0) + finalQty;
+      }
+    }
+
+    await kv.set(`production_house_${productionHouseId}`, {
+      ...productionHouse,
+      inventory: newInventory,
+      updatedAt: getNowIST(),
+    });
+    console.log(`Credited production house ${productionHouseId} inventory from production ${productionData.id}:`, newInventory);
+  } catch (error) {
+    console.log('Error crediting production house inventory:', error);
+    // Non-fatal - the approval itself already succeeded; worst case inventory needs a
+    // manual fix, same tradeoff every other non-fatal side effect in this file accepts.
+  }
+}
+
 // Add production data
 app.post('/make-server-c2dd9b9d/production', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -1484,22 +2218,27 @@ app.post('/make-server-c2dd9b9d/production', async (c) => {
     const newItem = {
       ...data,
       id: crypto.randomUUID(),
-      userId: authResult.user.id
+      userId: authResult.user.id,
+      // Submission timestamp - used by the 24h auto-approve cron (see
+      // /production/auto-approve-stale below) to tell how long this has been pending.
+      createdAt: getNowIST()
     };
 
     const key = `production:${authResult.user.id}:${newItem.id}`;
     await kv.set(key, newItem);
     console.log('Production data saved successfully:', newItem.id);
 
-    // Notify ONLY operations managers about production submission (Cluster Heads can only view, not approve)
+    // Notify cluster heads and operations managers about production submission - both
+    // can approve production data (see the /approve route below), so both should know
+    // there's something awaiting their review.
     const operationsManagers = await getOperationsManagers(newItem.storeId);
-    console.log('Found operations managers to notify:', operationsManagers.length, 'for storeId:', newItem.storeId);
-    
+    const clusterHeads = await getAllClusterHeads();
+    console.log('Found approvers to notify:', operationsManagers.length, 'operations managers,', clusterHeads.length, 'cluster heads, for storeId:', newItem.storeId);
+
     const productionHeadName = authResult.user.user_metadata?.name || data.createdBy || authResult.user.email;
-    
-    // Only Operations Managers can approve production data
-    const approvers = operationsManagers;
-    
+
+    const approvers = [...operationsManagers, ...clusterHeads];
+
     console.log('Total approvers to notify:', approvers.length);
     
     for (const approver of approvers) {
@@ -1592,7 +2331,8 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
 
     await kv.set(key, approvedItem);
     console.log('Production data approved:', itemId);
-    
+    await creditProductionHouseInventory(approvedItem);
+
     // Notify the production head who submitted the data
     if (existingProduction.userId) {
       console.log('Creating approval notification for production head:', existingProduction.userId);
@@ -1613,6 +2353,63 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
   } catch (error) {
     console.log('Error approving production data:', error);
     return c.json({ error: 'Failed to approve production data' }, 500);
+  }
+});
+
+// Auto-approves production data that's been sitting in 'pending' for more than 24
+// hours without a cluster head / operations manager acting on it, so a forgotten
+// approval never blocks stock calculations indefinitely. Cron-only (see the
+// production-auto-approve-stale pg_cron migration) - not reachable by regular users.
+app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const allProduction = await kv.getByPrefix('production:');
+    const stalePending = allProduction.filter((p: any) => {
+      if (p.approvalStatus !== 'pending') return false;
+      // Records submitted before createdAt existed have no reliable submission
+      // timestamp - skip them here rather than guess; they're handled by the
+      // one-time manual backlog approval instead.
+      if (!p.createdAt) return false;
+      const submitted = new Date(p.createdAt).getTime();
+      return !isNaN(submitted) && submitted <= cutoff;
+    });
+
+    let approvedCount = 0;
+    for (const item of stalePending) {
+      const key = `production:${item.userId}:${item.id}`;
+      const approvedItem = {
+        ...item,
+        approvalStatus: 'approved',
+        approvedBy: 'Auto-approved (no action within 24 hours)',
+        approvedAt: getNowIST()
+      };
+      await kv.set(key, approvedItem);
+      approvedCount++;
+      await creditProductionHouseInventory(approvedItem);
+
+      if (item.userId) {
+        await notifyUser(
+          item.userId,
+          'production_approved',
+          'Production Data Auto-Approved',
+          `Your production data for ${item.date} was automatically approved after 24 hours with no response.`,
+          item.id,
+          item.date
+        );
+      }
+    }
+
+    console.log(`Auto-approve-stale: approved ${approvedCount} of ${stalePending.length} stale pending production records`);
+    return c.json({ success: true, approvedCount });
+  } catch (error) {
+    console.log('Error auto-approving stale production data:', error);
+    return c.json({ error: 'Failed to auto-approve stale production data' }, 500);
   }
 });
 
@@ -1982,6 +2779,19 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
   return c.json({ status: 'ok' });
 });
 
+// Bump this string every time a new build (web or Android APK) actually ships - it's
+// compared against APP_VERSION (src/utils/appVersion.ts) baked into that build's bundle.
+// No KV storage involved on purpose: this file already gets redeployed as part of every
+// release in this project's workflow, so the constant here and the one in the frontend
+// bundle are updated together, in the same release, by construction.
+const LATEST_APP_VERSION = '1.15.2';
+
+// Public, no-login-required version check so a soft "update available" nudge can show even
+// if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
+app.get('/make-server-c2dd9b9d/app-version', (c) => {
+  return c.json({ latestVersion: LATEST_APP_VERSION });
+});
+
 // Debug endpoint to check user metadata
 app.get('/make-server-c2dd9b9d/debug/user', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -2300,7 +3110,19 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
   try {
     const archivedEmployees = await kv.getByPrefix('archived-employee:');
     console.log('Fetched archived employees:', archivedEmployees.length);
-    return c.json({ success: true, employees: archivedEmployees });
+    // Same normalization GET /employees already applies to active unified employees -
+    // without it, every archived employee's `type` reads as null (they only ever had
+    // `employmentType` set), so PayrollManagement.tsx's Contract/Permanent split silently
+    // excludes their entire payout history once they're archived, regardless of whether
+    // the store/archive-status filtering is otherwise correct. Confirmed real: Akash Dey's
+    // August payout existed the whole time but could never match either tab.
+    const normalized = archivedEmployees.map((emp: any) => ({
+      ...emp,
+      id: emp.id || emp.employeeId,
+      employeeId: emp.employeeId || emp.id,
+      type: emp.employmentType || emp.type
+    }));
+    return c.json({ success: true, employees: normalized });
   } catch (error) {
     console.log('Error fetching archived employees:', error);
     return c.json({ error: 'Failed to fetch archived employees' }, 500);
@@ -2356,7 +3178,34 @@ app.post('/make-server-c2dd9b9d/payouts', async (c) => {
     console.log('Saving payouts to KV store...');
     await kv.mset(keys, values);
     console.log('Payouts saved successfully');
-    
+
+    // Notify each employee their salary has been credited - a payout record being created
+    // here means the transfer has already happened (this isn't an approval queue), so this
+    // is a "money has moved" notice, not a pending-action one.
+    for (const payout of payouts) {
+      try {
+        const employee = await kv.get(`unified-employee:${payout.employeeId}`);
+        if (!employee?.authUserId) continue;
+
+        const monthLabel = payout.forMonth
+          ? new Date(`${payout.forMonth}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+          : payout.date;
+        const amountLabel = `₹${Number(payout.amount || 0).toLocaleString('en-IN')}`;
+        const txnLabel = payout.transactionId ? ` (Transaction ID: ${payout.transactionId})` : '';
+
+        await notifyUser(
+          employee.authUserId,
+          'salary_credited',
+          'Salary Credited 💰',
+          `Your salary of ${amountLabel} for ${monthLabel} has been credited to your bank account${txnLabel}.`,
+          payout.id,
+          payout.date
+        );
+      } catch (notifyError) {
+        console.log(`Failed to notify employee ${payout.employeeId} of payout:`, notifyError);
+      }
+    }
+
     return c.json({ success: true, payouts });
   } catch (error) {
     console.log('Error adding payouts:', error);
@@ -2447,7 +3296,6 @@ app.post('/make-server-c2dd9b9d/online-sales', async (c) => {
   try {
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
-
     if (role !== 'manager' || designation !== 'store_incharge') {
       return c.json({ error: 'Only store incharges can log online sales' }, 403);
     }
@@ -2546,6 +3394,1761 @@ app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
   } catch (error) {
     console.log('Error saving online payout:', error);
     return c.json({ error: 'Failed to save online payout' }, 500);
+  }
+});
+
+// ============================================
+// Aggregator Settlement Routes - replaces the online-payouts daily-entry mechanism
+// above with document-upload settlements. Each settlement's netPayout is credited to
+// Paytm on its own settlementDate purely by calculatePaytmBalance summing these records
+// for the relevant date range client-side (same pattern already used for onlineLoans) -
+// no server-side mutation of the sales: record is needed here.
+// ============================================
+
+app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const storeId = c.req.query('storeId');
+    let settlements = await kv.getByPrefix('aggregator-settlement:');
+    if (storeId) {
+      settlements = (settlements || []).filter((s: any) => s.storeId === storeId);
+    }
+    return c.json({ success: true, settlements: settlements || [] });
+  } catch (error) {
+    console.log('Error fetching aggregator settlements:', error);
+    return c.json({ error: 'Failed to fetch aggregator settlements' }, 500);
+  }
+});
+
+// Recomputes and re-saves actualPaytmBalance for every one of a store's sales records
+// from a given date through today, in chronological order - each day's corrected balance
+// becomes the anchor for the next. Runs automatically whenever a settlement is
+// saved/replaced, because the online-cash balance formula carries each day's counted
+// balance forward as the next day's starting point (see SalesManagement.tsx's
+// calculatePaytmBalance) - a settlement landing after a later day was already reconciled
+// used to leave that day, and every day after it, silently stuck on a stale number until
+// someone manually recomputed it by hand. This closes that gap at the source instead.
+// Mirrors the exact formula the frontend's own live display uses (previous balance +
+// today's Paytm + today's aggregator payout - contract payouts - cash topup).
+//
+// A logged Online Cash Recalibration (a human physically checking the real Paytm app
+// balance) is a VERIFIED checkpoint and always wins over whatever this formula would
+// otherwise compute for that exact date - every later day's chain anchors off it, not off
+// an unverified number that's been silently compounding since account inception.
+// Confirmed the hard way: this store's chain had never had a single verified checkpoint
+// (a separate bug prevented recalibration from ever saving at all - see
+// OnlineCashRecalibration.tsx), so a months-long formula-only chain drifted with nothing
+// to correct it against. Without this, a recalibration would keep being silently
+// overwritten by the very formula it exists to override the next time this cascade runs.
+// CONFIRMED FAILURE MODE (found 2026-08-26): every settlement-mutating route above already
+// calls this cascade, but a settlement removed via a direct database edit instead of those
+// routes (e.g. a one-off duplicate cleanup) skips it entirely - the affected day's
+// actualPaytmBalance stays stuck at whatever it was double/under-counted to, and every
+// later day inherits the error via previousPaytm chaining (SalesView.tsx) since nothing
+// ever re-triggers a recompute on its own. Found this way: 2026-08-24 was stuck ₹11,621.89
+// too high (one extra copy of that day's Zomato settlement) for two days before a store
+// incharge noticed the jump in "previous day's balance". Any direct DB correction to
+// aggregator-settlement/cash-topup/payout/recalibration records MUST be followed by calling
+// this function (or the existing diagnostic-route pattern used throughout this session) from
+// that record's date forward - never assume a manual data fix is complete on its own.
+async function cascadeRecomputePaytmBalances(storeId: string, fromDate: string): Promise<void> {
+  try {
+    const today = getTodayIST();
+    if (fromDate > today) return;
+
+    const [allSales, allSettlements, allPayouts, allRecalibrations, allTopups] = await Promise.all([
+      getAllByPrefixWithRetry('sales:'),
+      getAllByPrefixWithRetry('aggregator-settlement:'),
+      getAllByPrefixWithRetry('payout:'),
+      getAllByPrefixWithRetry('online-cash-recalibration:'),
+      getAllByPrefixWithRetry('cash-topup:'),
+    ]);
+
+    const storeSales = (allSales || []).filter((s: any) => s.storeId === storeId && s.date);
+    const storeSettlements = (allSettlements || []).filter((s: any) => s.storeId === storeId);
+    const storePayouts = (allPayouts || []).filter((p: any) => !p.storeId || p.storeId === storeId);
+    // Confirmed with the business owner: BOTH reasons draw from this same Paytm/bank
+    // balance - "store_inventory" hands the converted cash to the store's till,
+    // "production_inventory" hands it to the production house's till instead, but either
+    // way the money leaves Paytm the moment it's approved. Only "store_inventory" ever
+    // gets written into a sales record's usedOnlineMoney field (that field also drives the
+    // store's own cash-in-hand credit, which a production-bound topup must NOT get), so
+    // production-reason topups are tracked here as their own separate list and summed
+    // straight from cash-topup: records rather than through usedOnlineMoney at all.
+    const allApprovedTopups = (allTopups || []).filter((t: any) => t.storeId === storeId && t.status === 'approved');
+    const productionTopups = allApprovedTopups.filter((t: any) => t.reason === 'production_inventory');
+    // Keyed by date -> the whole record (not just the balance) - a same-day cash top-up
+    // approved AFTER this recalibration's own timestamp hasn't happened yet as far as the
+    // recalibration is concerned, and must still reduce the balance; one approved BEFORE it
+    // is already reflected in what the incharge physically counted and must not be
+    // subtracted a second time. Without this, a top-up logged earlier the same day as a
+    // reconciliation gets counted once inside the reconciled figure (correctly, since it
+    // already happened) and then AGAIN by the plain formula on any day computed from this
+    // recalibration - the exact "why didn't my reconciliation account for the top-up I
+    // already made" bug this was built to fix. Covers both reasons now - a late-approved
+    // production topup drains Paytm exactly the same as a late store one.
+    const recalibrationByDate = new Map<string, any>();
+    (allRecalibrations || [])
+      .filter((r: any) => r.storeId === storeId && r.date && typeof r.actualBalance === 'number')
+      .forEach((r: any) => recalibrationByDate.set(r.date, r));
+    const recalTimestamp = (r: any): string | null => r?.createdAt || r?.timestamp || null;
+    const lateTopupsFor = (date: string, recal: any): number => {
+      const ts = recalTimestamp(recal);
+      if (!ts) return 0; // no timestamp on this recalibration (shouldn't happen for new ones, but don't crash on old data) - treat as fully reconciled, no late top-ups split out
+      return allApprovedTopups
+        .filter((t: any) => t.date === date && t.approvedAt && t.approvedAt > ts)
+        .reduce((sum: number, t: any) => sum + (t.requestedAmount || 0), 0);
+    };
+    const productionTopupsOn = (date: string): number =>
+      productionTopups.filter((t: any) => t.date === date).reduce((sum: number, t: any) => sum + (t.requestedAmount || 0), 0);
+    // Effective balance AS OF END OF DAY for a recalibrated date. Confirmed with the
+    // business owner: a recalibration is a point-in-time count, not automatically "the
+    // day's final answer" - a count taken early (e.g. 4 AM, before the day's own Paytm
+    // receipts land) is really an OPENING-balance-style anchor, and that day's own
+    // paytmAmount/aggregator payout/contract payouts still need layering on top of it, same
+    // as any other day. Only cash top-ups get the individual before/after-the-count
+    // treatment (via lateTopupsFor), since they're the one thing with a real timestamp to
+    // compare against the recalibration's own; the day's other totals have no intra-day
+    // timestamp to split by, so they're always added in full - the safer default per the
+    // business owner, since a recalibration done late at night (rather than at day start)
+    // is the rarer case in practice.
+    // Settlements count strictly by settlementDate (the real bank-credit date per the
+    // aggregator's own UTR) vs. the recal date - NOT by when the settlement file was
+    // uploaded into the app. A settlement dated on/before the recal date is already
+    // inside the physical count, however late its file gets uploaded. A prior version
+    // credited settlements based on upload time instead, meant to catch aggregator
+    // money genuinely still in transit at count time - but that conflated "when the
+    // data was entered" with "when the money arrived" and double-counted settlements a
+    // store incharge simply hadn't uploaded yet even though the count already had them.
+    // Confirmed wrong with the business owner: a settlement dated before a
+    // recalibration is always already in the count.
+    const effectiveRecalBalance = (date: string, recal: any): number => {
+      const record = storeSales.find((s: any) => s.date === date);
+      const paytmAmount = record?.paytmAmount || 0;
+      const aggregatorPayout = storeSettlements
+        .filter((s: any) => s.settlementDate === date)
+        .reduce((sum: number, s: any) => sum + (s.netPayout || 0), 0);
+      const contractPayouts = storePayouts
+        .filter((p: any) => p.date === date)
+        .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+      return recal.actualBalance + paytmAmount + aggregatorPayout - contractPayouts - lateTopupsFor(date, recal);
+    };
+
+    // Anchor: whichever is chronologically most recent strictly before fromDate - a
+    // verified recalibration or the last actual balance on a sales record.
+    let anchor = 0;
+    let anchorDate: string | null = null;
+    const priorRecord = storeSales
+      .filter((s: any) => s.date < fromDate && s.actualPaytmBalance !== undefined && s.actualPaytmBalance !== null)
+      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+    if (priorRecord) {
+      anchor = priorRecord.actualPaytmBalance;
+      anchorDate = priorRecord.date;
+    }
+    for (const [date, recal] of recalibrationByDate.entries()) {
+      if (date < fromDate && (!anchorDate || date > anchorDate)) {
+        anchor = effectiveRecalBalance(date, recal);
+        anchorDate = date;
+      }
+    }
+
+    let cursor = fromDate;
+    let updated = 0;
+    while (cursor <= today) {
+      const recalRecord = recalibrationByDate.get(cursor);
+      const recalibratedBalance = recalRecord !== undefined ? effectiveRecalBalance(cursor, recalRecord) : undefined;
+      const record = storeSales.find((s: any) => s.date === cursor);
+      if (record) {
+        let newBalance: number;
+        if (recalibratedBalance !== undefined) {
+          newBalance = recalibratedBalance;
+        } else {
+          const paytmAmount = record.paytmAmount || 0;
+          const usedOnlineMoney = record.usedOnlineMoney || 0;
+          const aggregatorPayout = storeSettlements
+            .filter((s: any) => s.settlementDate === cursor)
+            .reduce((sum: number, s: any) => sum + (s.netPayout || 0), 0);
+          const contractPayouts = storePayouts
+            .filter((p: any) => p.date === cursor)
+            .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+          // Production-reason topups never touch usedOnlineMoney (see the comment on
+          // productionTopups above) but still drained Paytm on this date, so they're
+          // subtracted here as their own separate term rather than folded into it.
+          newBalance = anchor + paytmAmount + aggregatorPayout - contractPayouts - usedOnlineMoney - productionTopupsOn(cursor);
+        }
+        if (Math.abs((record.actualPaytmBalance ?? 0) - newBalance) > 0.005) {
+          await kv.set(`sales:${record.userId}:${record.id}`, { ...record, actualPaytmBalance: newBalance });
+          updated++;
+        }
+        anchor = newBalance;
+      } else if (recalibratedBalance !== undefined) {
+        // No sales record exists for this exact date (e.g. a recalibration logged on a day
+        // with no separate sales entry) - the recalibration still resets the anchor for
+        // every day after it, even though there's nothing here to write it into.
+        anchor = recalibratedBalance;
+      } else {
+        // No sales record AND no recalibration for this date - still can't lose a
+        // production topup approved that day just because there's nowhere to persist the
+        // result; a store-reason topup gets a placeholder sales record created for exactly
+        // this reason (see /cash-topup-requests/:id/approve), but production-reason ones
+        // don't, so the running anchor itself absorbs it directly instead.
+        anchor -= productionTopupsOn(cursor);
+      }
+      cursor = addDaysToDateString(cursor, 1);
+    }
+    console.log(`Cascade Paytm recompute for store ${storeId} from ${fromDate}: ${updated} record(s) updated`);
+  } catch (error) {
+    console.log('Error cascading Paytm balance recompute:', error);
+    // Non-fatal - the settlement itself already saved successfully; worst case, this
+    // falls back to the old behavior of a stale value needing a manual fix.
+  }
+}
+
+// Reusable admin trigger for cascadeRecomputePaytmBalances, per its own comment above
+// ("any direct DB correction... MUST be followed by calling this function... from that
+// record's date forward"). Every normal write path already calls it automatically; this
+// exists for the case this comment warns about - a direct database correction made outside
+// any of those paths (e.g. 2026-10-16: usedOnlineMoney hand-corrected on a past date after
+// fixing the bug that zeroed it out) - so the fix doesn't just sit on that one day while
+// every later day keeps chaining off the stale balance. Cron-secret protected like the
+// other admin/cron-only routes, since it writes data and isn't meant for regular users.
+app.post('/make-server-c2dd9b9d/admin/recompute-paytm-balance', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const { storeId, fromDate } = await c.req.json();
+    if (!storeId || !fromDate) {
+      return c.json({ error: 'storeId and fromDate are required' }, 400);
+    }
+    await cascadeRecomputePaytmBalances(storeId, fromDate);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log('Error in manual Paytm recompute trigger:', error);
+    return c.json({ error: 'Failed to recompute' }, 500);
+  }
+});
+
+// Same manual trigger for the production-cash ledger (cron-secret gated, like the Paytm one
+// above) - for repairing a stretch of days after a correction that the automatic cascades
+// didn't see.
+app.post('/make-server-c2dd9b9d/admin/recompute-production-cash', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  try {
+    const { productionHouseId, fromDate } = await c.req.json();
+    if (!productionHouseId || !fromDate) {
+      return c.json({ error: 'productionHouseId and fromDate are required' }, 400);
+    }
+    await cascadeRecomputeProductionCash(productionHouseId, fromDate);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log('Error in manual production cash recompute trigger:', error);
+    return c.json({ error: 'Failed to recompute' }, 500);
+  }
+});
+
+// Recomputes and re-saves the derived fields (openingBalance/cashTopupCredited/
+// productionExpenses/expectedClosingCashInHand) on every one of a production house's
+// production-cash records from a given date through today, in chronological order -
+// mirrors cascadeRecomputePaytmBalances above exactly, same reason: a correction to a
+// past day (a late-added production expense, a topup approved after the fact, a
+// corrected physical count) must ripple forward, or every day after it silently keeps
+// using a stale opening balance until someone notices and manually fixes it by hand -
+// the exact bug this session already found and fixed once for Paytm balances.
+//
+// Unlike the Paytm cascade, `actualCashInHand` here is a REAL independent physical count
+// (production's own till), not a fully-determined value - so this never overwrites
+// actualCashInHand itself, only the derived/expected fields around it. The anchor for
+// the next day is the day's actualCashInHand when one was actually counted, falling back
+// to that day's own expectedClosingCashInHand when nobody has counted yet (an idle/
+// unreconciled day passes its expected balance through unchanged, same as the store side
+// already does with previousCashInHand today).
+//
+// A day with no production-cash record at all (nobody opened the Cash tab that day) is
+// left alone rather than fabricated - its production expenses are still real and will be
+// picked up once someone actually reconciles that day, but until then the running
+// balance simply doesn't reflect them yet. This mirrors how a sales: record only exists
+// for a day someone actually interacted with it.
+// Shared by the cascade below and by GET /production-cash's live-compute path for a date
+// that has no saved record yet, so the two can never drift apart into disagreeing about
+// what "expected" means for the same day.
+// A production house's opening balance for `date` is NOT just its own carried-forward
+// leftover - it's that leftover PLUS the linked store's actual cash-in-hand from the
+// PRIOR day, physically handed over by the store incharge to production each morning
+// (confirmed via a real worked example: Aug 21's production opening = Aug 20's store
+// actualCashInHand (₹2,320) + production's own prior leftover (₹0, no history yet)).
+// Real money coming IN fresh each day, not part of production's own running balance - so
+// this is looked up per-day from the stores' own sales: records, never carried forward
+// like the production-side anchor is. Sums across every store currently linked to this
+// house (N:1 is allowed by the schema even though only one store uses it today).
+function getStoreHandoverForDate(allSales: any[], allStores: any[], productionHouseId: string, date: string): number {
+  const priorDate = addDaysToDateString(date, -1);
+  const linkedStoreIds = new Set((allStores || []).filter((s: any) => s.productionHouseId === productionHouseId).map((s: any) => s.id));
+  if (linkedStoreIds.size === 0) return 0;
+  return (allSales || [])
+    .filter((s: any) => linkedStoreIds.has(s.storeId) && s.date === priorDate)
+    .reduce((sum: number, s: any) => sum + (typeof s.actualCashInHand === 'number' ? s.actualCashInHand : 0), 0);
+}
+
+function computeProductionCashExpected(
+  allInventory: any[], allOverheads: any[], allFixedCosts: any[], allTopups: any[],
+  productionHouseId: string, date: string, openingBalance: number
+): { productionExpenses: number; cashTopupCredited: number; expectedClosingCashInHand: number } {
+  const isProdHouseSpend = (item: any) => item.entityType === 'production_house' && item.productionHouseId === productionHouseId;
+  // Only the CASH portion of a production expense reduces cash-in-hand - an online-paid
+  // expense never touched the physical till. Confirmed bug: this previously summed the
+  // full totalCost/amount regardless of paymentMethod (the store's own equivalent formula
+  // already gets this right - see totalExpenses in SalesManagement.tsx/SalesView.tsx).
+  // Hasn't visibly manifested yet since every production expense logged so far happens to
+  // be paymentMethod: 'cash', but would silently overstate expenses the day an online-paid
+  // one is logged.
+  const cashPortion = (item: any) => {
+    if (item.paymentMethod === 'both') return item.cashAmount || 0;
+    if (item.paymentMethod === 'online') return 0;
+    return item.totalCost ?? item.amount ?? 0; // default/'cash'
+  };
+  const productionExpenses =
+    (allInventory || []).filter((i: any) => i.date === date && isProdHouseSpend(i)).reduce((s: number, i: any) => s + cashPortion(i), 0) +
+    (allOverheads || []).filter((o: any) => o.date === date && isProdHouseSpend(o)).reduce((s: number, o: any) => s + cashPortion(o), 0) +
+    (allFixedCosts || []).filter((f: any) => f.date === date && isProdHouseSpend(f)).reduce((s: number, f: any) => s + cashPortion(f), 0);
+  const cashTopupCredited = (allTopups || [])
+    .filter((t: any) => t.status === 'approved' && t.reason === 'production_inventory' && t.productionHouseId === productionHouseId && t.date === date)
+    .reduce((s: number, t: any) => s + (t.requestedAmount || 0), 0);
+  return { productionExpenses, cashTopupCredited, expectedClosingCashInHand: openingBalance + cashTopupCredited - productionExpenses };
+}
+
+async function cascadeRecomputeProductionCash(productionHouseId: string, fromDate: string): Promise<void> {
+  try {
+    const today = getTodayIST();
+    if (fromDate > today) return;
+
+    // getAllByPrefixWithRetry, NOT plain kv.getByPrefix - confirmed bug: kv.getByPrefix
+    // silently truncates to Supabase/PostgREST's default 1000-row cap with no error, and
+    // inventory: alone already has 3000+ rows (overhead: is close behind at ~900). A raw
+    // kv.getByPrefix('inventory:') here returned an arbitrary ~1000-row slice that happened
+    // to mostly miss a specific production house's specific day, undercounting its expenses
+    // by thousands of rupees with no indication anything was wrong. GET /inventory and
+    // GET /overheads already learned this lesson (see their own "paginated query" comments)
+    // - this cascade just hadn't been updated to match.
+    const [allProductionCash, allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores] = await Promise.all([
+      getAllByPrefixWithRetry('production-cash:'),
+      getAllByPrefixWithRetry('inventory:'),
+      getAllByPrefixWithRetry('overhead:'),
+      getAllByPrefixWithRetry('fixedcost:'),
+      getAllByPrefixWithRetry('cash-topup:'),
+      getAllByPrefixWithRetry('sales:'),
+      kv.getByPrefix('store:'),
+    ]);
+
+    const houseRecords = (allProductionCash || []).filter((r: any) => r.productionHouseId === productionHouseId && r.date);
+
+    // Production's OWN carried-forward leftover only (not the store handover - that's
+    // looked up fresh per-day below via getStoreHandoverForDate, since it's new money
+    // coming in each day, not part of production's own running balance). Anchor: the most
+    // recent record strictly before fromDate - trust its actual count if one was entered,
+    // otherwise fall through to its own (already-recomputed) expected closing balance.
+    let ownCarryAnchor = 0;
+    const priorRecord = houseRecords
+      .filter((r: any) => r.date < fromDate)
+      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+    if (priorRecord) {
+      ownCarryAnchor = priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0;
+    }
+
+    let cursor = fromDate;
+    let updated = 0;
+    while (cursor <= today) {
+      const existing = houseRecords.find((r: any) => r.date === cursor);
+      if (existing) {
+        // manualOpeningOverride (only ever meaningful on the very first day this ledger
+        // exists for a house - see POST /production-cash's handling) takes priority over
+        // the computed opening for that specific date, so a cluster head's one-time "what's
+        // physically counted right now" seed isn't immediately overwritten by a cascade run
+        // from an earlier date.
+        const storeHandover = getStoreHandoverForDate(allSales, allStores, productionHouseId, cursor);
+        const openingBalance = typeof existing.manualOpeningOverride === 'number' ? existing.manualOpeningOverride : storeHandover + ownCarryAnchor;
+        const { productionExpenses, cashTopupCredited, expectedClosingCashInHand } = computeProductionCashExpected(
+          allInventory, allOverheads, allFixedCosts, allTopups, productionHouseId, cursor, openingBalance
+        );
+
+        const changed =
+          Math.abs((existing.openingBalance ?? 0) - openingBalance) > 0.005 ||
+          Math.abs((existing.cashTopupCredited ?? 0) - cashTopupCredited) > 0.005 ||
+          Math.abs((existing.productionExpenses ?? 0) - productionExpenses) > 0.005 ||
+          Math.abs((existing.expectedClosingCashInHand ?? 0) - expectedClosingCashInHand) > 0.005;
+
+        if (changed) {
+          const discrepancy = typeof existing.actualCashInHand === 'number' ? existing.actualCashInHand - expectedClosingCashInHand : existing.discrepancy ?? null;
+          await kv.set(`production-cash:${productionHouseId}:${cursor}`, {
+            ...existing, openingBalance, cashTopupCredited, productionExpenses, expectedClosingCashInHand, discrepancy,
+          });
+          updated++;
+        }
+
+        ownCarryAnchor = typeof existing.actualCashInHand === 'number' ? existing.actualCashInHand : expectedClosingCashInHand;
+      }
+      // No record for this date - nothing to recompute, and the anchor passes through
+      // unchanged to the next date (idle day, or a day nobody has reconciled yet).
+      cursor = addDaysToDateString(cursor, 1);
+    }
+    console.log(`Cascade production-cash recompute for house ${productionHouseId} from ${fromDate}: ${updated} record(s) updated`);
+  } catch (error) {
+    console.log('Error cascading production cash recompute:', error);
+    // Non-fatal - matches cascadeRecomputePaytmBalances' own convention.
+  }
+}
+
+// A store's actual cash-in-hand for a day is handed over to its linked production house the
+// next morning and becomes part of that day's production opening balance (see
+// getStoreHandoverForDate). So whenever a store's sales record is saved - its actual count may
+// have just changed - the production-cash records from the following day forward must be
+// recomputed too. Without this, the 18th's production opening stayed at the production's own
+// leftover (3,700) after the store's 17th count (6,850) was saved, instead of the 10,550 both
+// together actually hold. Non-fatal, like the other cascades.
+async function cascadeProductionCashForStoreSale(storeId: string, date: string): Promise<void> {
+  try {
+    if (!storeId || !date) return;
+    const stores = await kv.getByPrefix('store:');
+    const productionHouseId = (stores || []).find((s: any) => s.id === storeId)?.productionHouseId;
+    if (!productionHouseId) return;
+    await cascadeRecomputeProductionCash(productionHouseId, addDaysToDateString(date, 1));
+  } catch (error) {
+    console.log('Error cascading production cash after a store sales save:', error);
+  }
+}
+
+// ===== PRODUCTION CASH IN HAND =====
+// Store Cash in Hand (sales: records) and Production Cash in Hand (these records) used to
+// be one blended figure - a store incharge's physical count was checked against an
+// "expected cash" that silently subtracted the linked production house's own spending too,
+// even though the store incharge never touches that money. This is the production side's
+// own ledger, reconciled by whoever actually holds and spends that cash (a production
+// incharge, or an operations manager - see canReconcileProductionCash below), completely
+// separate from the store's own reconciliation.
+const PRODUCTION_CASH_GO_LIVE_DATE = '2026-08-21';
+
+// Get a production house's cash-in-hand entry for one date (live-computed if nothing has
+// been saved for that date yet, so the UI always has something to render), or a date range
+// (only actually-saved records, for a future trend view).
+app.get('/make-server-c2dd9b9d/production-cash', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const productionHouseId = c.req.query('productionHouseId');
+    const date = c.req.query('date');
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (!productionHouseId) {
+      return c.json({ error: 'productionHouseId is required' }, 400);
+    }
+
+    const allRecords = (await getAllByPrefixWithRetry('production-cash:')).filter((r: any) => r.productionHouseId === productionHouseId);
+
+    if (from && to) {
+      return c.json({ entries: allRecords.filter((r: any) => r.date >= from && r.date <= to) });
+    }
+
+    if (!date) {
+      return c.json({ error: 'date, or from+to, is required' }, 400);
+    }
+
+    const existing = allRecords.find((r: any) => r.date === date);
+    if (existing) {
+      return c.json({ entry: existing });
+    }
+
+    // Nothing saved for this date yet - live-compute what it WOULD be, same formula the
+    // cascade uses: production's own carried-forward leftover (anchored on the last
+    // actual/expected balance strictly before this date) PLUS the linked store's actual
+    // cash-in-hand handed over the prior day (see getStoreHandoverForDate above).
+    const priorRecord = allRecords
+      .filter((r: any) => r.date < date)
+      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+    const ownCarry = priorRecord ? (priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0) : 0;
+
+    // getAllByPrefixWithRetry, not plain kv.getByPrefix - see the cascade's own comment on
+    // this exact bug (Supabase/PostgREST's silent 1000-row cap).
+    const [allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores] = await Promise.all([
+      getAllByPrefixWithRetry('inventory:'), getAllByPrefixWithRetry('overhead:'), getAllByPrefixWithRetry('fixedcost:'), getAllByPrefixWithRetry('cash-topup:'),
+      getAllByPrefixWithRetry('sales:'), kv.getByPrefix('store:'),
+    ]);
+    const storeHandover = getStoreHandoverForDate(allSales, allStores, productionHouseId, date);
+    const openingBalance = storeHandover + ownCarry;
+    const { productionExpenses, cashTopupCredited, expectedClosingCashInHand } = computeProductionCashExpected(
+      allInventory, allOverheads, allFixedCosts, allTopups, productionHouseId, date, openingBalance
+    );
+
+    return c.json({
+      entry: null,
+      live: { productionHouseId, date, openingBalance, cashTopupCredited, productionExpenses, expectedClosingCashInHand },
+    });
+  } catch (error) {
+    console.log('Error fetching production cash entry:', error);
+    return c.json({ error: 'Failed to fetch production cash entry' }, 500);
+  }
+});
+
+// Save today's physical cash count for a production house. Mirrors the discrepancy-gating
+// fix already applied to sales: records this session - a high discrepancy must NEVER
+// auto-approve itself just because the submitter isn't in some specific role; approval is
+// gated purely on whether the discrepancy itself is large enough to need a cluster head's
+// sign-off, full stop.
+app.post('/make-server-c2dd9b9d/production-cash', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    const isClusterHead = role === 'cluster_head';
+    if (!isProductionIncharge && !isOperationsManager && !isClusterHead) {
+      return c.json({ error: 'Only production incharges, operations managers, or cluster heads can reconcile production cash' }, 403);
+    }
+
+    const { productionHouseId, date, actualCashInHand, manualOpeningOverride } = await c.req.json();
+    if (!productionHouseId || !date || typeof actualCashInHand !== 'number') {
+      return c.json({ error: 'productionHouseId, date, and actualCashInHand are required' }, 400);
+    }
+    if (date < PRODUCTION_CASH_GO_LIVE_DATE) {
+      return c.json({ error: `Production Cash in Hand tracking starts ${PRODUCTION_CASH_GO_LIVE_DATE} - earlier dates use the old combined store calculation` }, 400);
+    }
+
+    const allRecords = (await getAllByPrefixWithRetry('production-cash:')).filter((r: any) => r.productionHouseId === productionHouseId);
+    const existing = allRecords.find((r: any) => r.date === date);
+
+    // manualOpeningOverride is only ever meaningful on the very first day this ledger
+    // exists for a house (a cluster head's one-time "what's physically counted right now"
+    // seed) - accept it here but only apply it if there's genuinely no history yet, so a
+    // later resubmission of the same day can't accidentally reset the anchor. Otherwise the
+    // opening balance is production's own carried-forward leftover PLUS the linked store's
+    // actual cash-in-hand handed over the prior day (see getStoreHandoverForDate above) -
+    // this applies from day one, not just once history exists, since the store handover is
+    // a real number even on the very first day (confirmed via a real worked example).
+    const hasAnyPriorRecord = allRecords.some((r: any) => r.date < date);
+    const priorRecord = allRecords.filter((r: any) => r.date < date).sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+    const ownCarry = priorRecord ? (priorRecord.actualCashInHand ?? priorRecord.expectedClosingCashInHand ?? 0) : 0;
+
+    // getAllByPrefixWithRetry, not plain kv.getByPrefix - see the cascade's own comment on
+    // this exact bug (Supabase/PostgREST's silent 1000-row cap).
+    const [allInventory, allOverheads, allFixedCosts, allTopups, allSales, allStores] = await Promise.all([
+      getAllByPrefixWithRetry('inventory:'), getAllByPrefixWithRetry('overhead:'), getAllByPrefixWithRetry('fixedcost:'), getAllByPrefixWithRetry('cash-topup:'),
+      getAllByPrefixWithRetry('sales:'), kv.getByPrefix('store:'),
+    ]);
+    const storeHandover = getStoreHandoverForDate(allSales, allStores, productionHouseId, date);
+    const openingBalance = !hasAnyPriorRecord && typeof manualOpeningOverride === 'number'
+      ? manualOpeningOverride
+      : storeHandover + ownCarry;
+    const { productionExpenses, cashTopupCredited, expectedClosingCashInHand } = computeProductionCashExpected(
+      allInventory, allOverheads, allFixedCosts, allTopups, productionHouseId, date, openingBalance
+    );
+
+    const discrepancy = actualCashInHand - expectedClosingCashInHand;
+    const approvalRequired = Math.abs(discrepancy) > 200;
+    const submittedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const submittedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
+    const id = existing?.id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const record = {
+      id, productionHouseId, date,
+      openingBalance, cashTopupCredited, productionExpenses, expectedClosingCashInHand,
+      actualCashInHand, discrepancy,
+      approvalRequired,
+      approvalStatus: approvalRequired ? 'pending' : 'approved',
+      approvedBy: approvalRequired ? null : submittedBy,
+      approvedAt: approvalRequired ? null : getNowIST(),
+      approvalRequested: existing?.approvalRequested || false,
+      approvalRequestedAt: existing?.approvalRequestedAt || null,
+      requestedCashInHand: existing?.requestedCashInHand ?? null,
+      requestedOffset: existing?.requestedOffset ?? null,
+      rejectedBy: null, rejectedAt: null, rejectionReason: null,
+      ...(!hasAnyPriorRecord && typeof manualOpeningOverride === 'number' ? { manualOpeningOverride } : {}),
+      createdBy: existing?.createdBy || submittedBy,
+      createdByName: existing?.createdByName || submittedByName,
+      // The real Supabase auth user id, kept separate from createdBy (a display-friendly
+      // employeeId/email) specifically because notifyUser() needs the actual authUserId to
+      // resolve a push-notification recipient - mirrors sales:'s own userId field, which
+      // the sales approve/reject-discrepancy routes notify against, not its createdBy.
+      createdByUserId: existing?.createdByUserId || authResult.user.id,
+      createdAt: existing?.createdAt || getNowIST(),
+      updatedAt: getNowIST(),
+    };
+
+    await kv.set(`production-cash:${productionHouseId}:${date}`, record);
+    await cascadeRecomputeProductionCash(productionHouseId, date);
+
+    if (approvalRequired) {
+      const clusterHeads = await getAllClusterHeads();
+      for (const clusterHead of clusterHeads) {
+        if (clusterHead.authUserId) {
+          await notifyUser(
+            clusterHead.authUserId,
+            'production_cash_discrepancy',
+            'Production Cash Discrepancy',
+            `${submittedByName} logged a ₹${Math.abs(discrepancy).toFixed(2)} production cash discrepancy for ${date}`,
+            id,
+            date
+          );
+        }
+      }
+    }
+
+    return c.json({ success: true, entry: record });
+  } catch (error) {
+    console.log('Error saving production cash entry:', error);
+    return c.json({ error: 'Failed to save production cash entry' }, 500);
+  }
+});
+
+// ============ Stock Wastage (Store Momo Wastage, by piece) ============
+// Daily wastage entry for a store, in pieces, per momo type - all 7 canonical types
+// (MOMO_TYPES) including both Veg Kurkure and Chicken Kurkure. Requested 2026-08-30:
+// tracked from this feature's launch forward only, no historical backfill - there's no
+// reliable pre-existing wastage data to recover, same "clean cutover" rule used for the
+// production ledger/cash-split features earlier this session.
+app.get('/make-server-c2dd9b9d/stock-wastage', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const storeId = c.req.query('storeId');
+    const date = c.req.query('date');
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (!storeId) {
+      return c.json({ error: 'storeId is required' }, 400);
+    }
+
+    const allRecords = (await getAllByPrefixWithRetry('stock-wastage:')).filter((r: any) => r.storeId === storeId);
+
+    if (from && to) {
+      return c.json({ entries: allRecords.filter((r: any) => r.date >= from && r.date <= to) });
+    }
+    if (date) {
+      return c.json({ entry: allRecords.find((r: any) => r.date === date) || null });
+    }
+    return c.json({ entries: allRecords });
+  } catch (error) {
+    console.log('Error fetching stock wastage:', error);
+    return c.json({ error: 'Failed to fetch stock wastage' }, 500);
+  }
+});
+
+// Save/update a store's wastage entry for one date. Deterministic key
+// (stock-wastage:{storeId}:{date}) so a resubmission for the same day corrects the
+// existing record instead of creating a sibling duplicate - the same race-condition fix
+// applied to pos-sync's own record IDs earlier this session.
+app.post('/make-server-c2dd9b9d/stock-wastage', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isStoreIncharge = designation === 'store_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    const isClusterHead = role === 'cluster_head';
+    const isOperationsManager = role === 'manager' && !isStoreIncharge && !isProductionIncharge;
+    // Matches the frontend's canViewWorkflowSummary gate exactly - anyone who can see the
+    // Production Request Workflow numbers can also view/log stock wastage, not just the
+    // store's own incharge.
+    if (!isStoreIncharge && !isClusterHead && !isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only store incharges, production incharges, operations managers, or cluster heads can log stock wastage' }, 403);
+    }
+
+    const { storeId, date, wastage, notes } = await c.req.json();
+    if (!storeId || !date || !wastage || typeof wastage !== 'object') {
+      return c.json({ error: 'storeId, date, and wastage are required' }, 400);
+    }
+
+    const key = `stock-wastage:${storeId}:${date}`;
+    const existing = await kvWithRetry.get<any>(key);
+
+    // Clamp to non-negative whole pieces and drop zero entries - a wastage count can't be
+    // negative or fractional, and there's no need to persist "0 wasted" for every type.
+    const cleanWastage: Record<string, number> = {};
+    for (const [itemKey, value] of Object.entries(wastage)) {
+      const n = Math.max(0, Math.round(Number(value) || 0));
+      if (n > 0) cleanWastage[itemKey] = n;
+    }
+
+    const submittedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const submittedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
+    const record = {
+      id: existing?.id || key,
+      storeId,
+      date,
+      wastage: cleanWastage,
+      notes: typeof notes === 'string' ? notes : (existing?.notes || ''),
+      submittedBy,
+      submittedByName,
+      createdAt: existing?.createdAt || getNowIST(),
+      updatedAt: getNowIST(),
+    };
+
+    await kvWithRetry.set(key, record);
+    return c.json({ success: true, entry: record });
+  } catch (error) {
+    console.log('Error saving stock wastage:', error);
+    return c.json({ error: 'Failed to save stock wastage' }, 500);
+  }
+});
+
+// Request cluster-head approval for a high production-cash discrepancy - mirrors
+// POST /sales/:id/request-approval exactly.
+app.post('/make-server-c2dd9b9d/production-cash/:id/request-approval', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can request approval' }, 403);
+    }
+
+    const itemId = c.req.param('id');
+    const { requestedCashInHand, requestedOffset } = await c.req.json();
+
+    const allRecords = await kv.getByPrefix('production-cash:');
+    const existing = allRecords.find((r: any) => r.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production cash entry not found' }, 404);
+    }
+
+    const updatedItem = {
+      ...existing,
+      approvalRequested: true,
+      approvalRequestedAt: new Date().toISOString(),
+      requestedCashInHand, requestedOffset,
+      rejectedBy: null, rejectedAt: null, rejectionReason: null,
+    };
+    await kv.set(`production-cash:${existing.productionHouseId}:${existing.date}`, updatedItem);
+
+    const clusterHeads = await getAllClusterHeads();
+    const requesterName = authResult.user.user_metadata?.name || authResult.user.email;
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'production_cash_discrepancy_request',
+          'Production Cash Discrepancy Approval Needed',
+          `${requesterName} requests approval for a ₹${Math.abs(requestedOffset).toFixed(2)} production cash discrepancy on ${existing.date}`,
+          itemId,
+          existing.date
+        );
+      }
+    }
+
+    return c.json({ success: true, entry: updatedItem });
+  } catch (error) {
+    console.log('Error requesting production cash approval:', error);
+    return c.json({ error: 'Failed to request approval' }, 500);
+  }
+});
+
+// Approve/reject a production-cash discrepancy request (cluster head only) - mirrors
+// POST /sales/:id/approve-discrepancy and /reject-discrepancy exactly.
+app.post('/make-server-c2dd9b9d/production-cash/:id/approve-discrepancy', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can approve discrepancies' }, 403);
+    }
+
+    const itemId = c.req.param('id');
+    const allRecords = await kv.getByPrefix('production-cash:');
+    const existing = allRecords.find((r: any) => r.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production cash entry not found' }, 404);
+    }
+    if (!existing.approvalRequested) {
+      return c.json({ error: 'No approval request found' }, 400);
+    }
+
+    const approvedItem = {
+      ...existing,
+      actualCashInHand: existing.requestedCashInHand,
+      discrepancy: existing.requestedOffset,
+      approvalRequired: false,
+      approvalStatus: 'approved',
+      approvedBy: authResult.user.email,
+      approvedAt: getNowIST(),
+      approvalRequested: false,
+      requestedCashInHand: null, requestedOffset: null,
+    };
+    await kv.set(`production-cash:${existing.productionHouseId}:${existing.date}`, approvedItem);
+    await cascadeRecomputeProductionCash(existing.productionHouseId, existing.date);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    await notifyUser(
+      existing.createdByUserId,
+      'production_cash_discrepancy_approved',
+      'Production Cash Discrepancy Approved ✓',
+      `${clusterHeadName} approved your production cash discrepancy of ₹${Math.abs(existing.requestedOffset).toFixed(2)} for ${existing.date}`,
+      itemId,
+      existing.date
+    );
+
+    return c.json({ success: true, entry: approvedItem });
+  } catch (error) {
+    console.log('Error approving production cash discrepancy:', error);
+    return c.json({ error: 'Failed to approve discrepancy' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/production-cash/:id/reject-discrepancy', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can reject discrepancies' }, 403);
+    }
+
+    const itemId = c.req.param('id');
+    const { reason } = await c.req.json();
+    const allRecords = await kv.getByPrefix('production-cash:');
+    const existing = allRecords.find((r: any) => r.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production cash entry not found' }, 404);
+    }
+    if (!existing.approvalRequested) {
+      return c.json({ error: 'No approval request found' }, 400);
+    }
+
+    const rejectedItem = {
+      ...existing,
+      approvalRequested: false,
+      rejectedBy: authResult.user.email,
+      rejectedAt: new Date().toISOString(),
+      rejectionReason: reason,
+      requestedCashInHand: null, requestedOffset: null,
+    };
+    await kv.set(`production-cash:${existing.productionHouseId}:${existing.date}`, rejectedItem);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    await notifyUser(
+      existing.createdByUserId,
+      'production_cash_discrepancy_rejected',
+      'Production Cash Discrepancy Rejected ✗',
+      `${clusterHeadName} rejected your production cash discrepancy request for ${existing.date}. Reason: ${reason}.`,
+      itemId,
+      existing.date
+    );
+
+    return c.json({ success: true, entry: rejectedItem });
+  } catch (error) {
+    console.log('Error rejecting production cash discrepancy:', error);
+    return c.json({ error: 'Failed to reject discrepancy' }, 500);
+  }
+});
+
+// ===== PRODUCTION LEDGER (dough/stuffing/batter/coating carry-forward) =====
+// Store/Production Cash (above) solved the money side of the same problem: dough,
+// stuffing, batter and coating used to be write-only numbers entered fresh every day on a
+// `production:` record, with no shared pool and no leftover carried forward to tomorrow.
+// This is the raw-stock equivalent, same cascade-recompute-forward architecture as Paytm
+// balances and Production Cash, generalized across several named pools instead of one
+// number. `production:` itself (the finished-pieces/wastage/sauces record) is untouched -
+// this is a second, parallel record.
+const PRODUCTION_LEDGER_GO_LIVE_DATE = '2026-08-23';
+
+// One pool id per row of a production-ledger record: the two global pools ('dough',
+// 'batter', shared across every momo type in that group) plus one per-type pool per momo
+// type ('stuffing:chicken', 'coating:vegKurkure', ...), plus one OPTIONAL dedicated
+// global-field pool per momo type ('dough:cheeseCorn', 'batter:chickenKurkure', ...) for
+// the rare batch that doesn't draw from the shared pool at all (e.g. a momo type made with
+// its own separately-mixed dough). Almost always sits at 0 - only appears in the UI when
+// actually used (see the isFirstEverDay/EndOfDayCloseForm non-trivial-pool filter) - but is
+// tracked here unconditionally so carry-forward is never silently lost for a house that
+// does use one. Derived from the canonical MOMO_TYPES list (momoTypes.ts) so a new momo
+// type automatically gets its own pools with nothing else to update here.
+const ALL_POOL_IDS: string[] = [
+  ...GLOBAL_POOLS,
+  ...PRODUCTION_MOMO_TYPES.map((t) => `${t.perTypePoolField}:${t.inventoryKey}`),
+  ...PRODUCTION_MOMO_TYPES.map((t) => `${t.globalPoolField}:${t.inventoryKey}`),
+];
+
+function emptyPoolState() {
+  return { opening: 0, prepared: 0, closingActual: null as number | null, wastage: null as number | null, wastageOverride: null as number | null };
+}
+
+// Sums every production-ledger-item logged for a house/date into the 'prepared' figure
+// per pool. Two sentinel momoKeys ('GLOBAL_DOUGH'/'GLOBAL_BATTER') represent a direct log
+// of the shared pool itself, with no momo type attached - the normal way dough/batter is
+// now logged (once for the day, not re-entered on every batch). For a real momo-type item,
+// globalPoolQty means "dedicated dough/batter for JUST this type" (only present when the
+// "Unique dough for this?" toggle was used) and routes to that type's own pool instead of
+// the shared one; perTypePoolQty (stuffing/coating) always accumulates within its own type.
+function aggregatePreparedByPool(items: any[]): Record<string, number> {
+  const prepared: Record<string, number> = {};
+  for (const id of ALL_POOL_IDS) prepared[id] = 0;
+  for (const item of items || []) {
+    if (item.momoKey === 'GLOBAL_DOUGH') { prepared['dough'] += item.globalPoolQty || 0; continue; }
+    if (item.momoKey === 'GLOBAL_BATTER') { prepared['batter'] += item.globalPoolQty || 0; continue; }
+    const momoType = PRODUCTION_MOMO_TYPES.find((t) => t.key === item.momoKey);
+    if (!momoType) continue;
+    if (item.globalPoolQty) {
+      const uniqueGlobalPoolId = `${momoType.globalPoolField}:${momoType.inventoryKey}`;
+      prepared[uniqueGlobalPoolId] += item.globalPoolQty;
+    }
+    const perTypePoolId = `${momoType.perTypePoolField}:${momoType.inventoryKey}`;
+    prepared[perTypePoolId] += item.perTypePoolQty || 0;
+  }
+  return prepared;
+}
+
+// Opening balance per pool for `date`, anchored on the most recent PRIOR day's ledger
+// record for this house - same "trust the last real count, else pass the estimate
+// through" rule as every other cascade this session. A pool's anchor is its
+// closingActual when that prior day was actually closed, otherwise opening+prepared
+// (nothing consumed assumed - without a close there's no reported figure for what was
+// actually used that day). No prior record at all anchors at 0.
+function computeLedgerOpening(houseLedgerRecords: any[], date: string): Record<string, number> {
+  const priorRecord = houseLedgerRecords
+    .filter((r: any) => r.date < date)
+    .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
+  const opening: Record<string, number> = {};
+  for (const id of ALL_POOL_IDS) {
+    const priorPool = priorRecord?.pools?.[id];
+    opening[id] = priorPool
+      ? (typeof priorPool.closingActual === 'number' ? priorPool.closingActual : (priorPool.opening || 0) + (priorPool.prepared || 0))
+      : 0;
+  }
+  return opening;
+}
+
+async function cascadeRecomputeProductionLedger(productionHouseId: string, fromDate: string): Promise<void> {
+  try {
+    const today = getTodayIST();
+    if (fromDate > today) return;
+
+    const [allLedgerRecords, allItems] = await Promise.all([
+      kv.getByPrefix('production-ledger:'),
+      kv.getByPrefix('production-ledger-item:'),
+    ]);
+    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
+    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
+
+    let cursor = fromDate;
+    let updated = 0;
+    while (cursor <= today) {
+      const existing = houseRecords.find((r: any) => r.date === cursor);
+      if (existing) {
+        const opening = computeLedgerOpening(houseRecords, cursor);
+        const prepared = aggregatePreparedByPool(houseItems.filter((i: any) => i.date === cursor));
+
+        const newPools: Record<string, any> = {};
+        let changed = false;
+        for (const id of ALL_POOL_IDS) {
+          const prevPool = existing.pools?.[id] || emptyPoolState();
+          const closingActual = typeof prevPool.closingActual === 'number' ? prevPool.closingActual : null;
+          // A confirmed wastage override sticks through this recompute even if opening/
+          // prepared just changed (a backdated correction) - see the close-day route's own
+          // comment on why. Only falls back to the formula when nobody ever overrode it.
+          const wastageOverride = typeof prevPool.wastageOverride === 'number' ? prevPool.wastageOverride : null;
+          const wastage = typeof wastageOverride === 'number'
+            ? wastageOverride
+            : (typeof closingActual === 'number' ? (opening[id] + prepared[id] - closingActual) : null);
+          newPools[id] = { opening: opening[id], prepared: prepared[id], closingActual, wastage, wastageOverride };
+          if (
+            Math.abs((prevPool.opening || 0) - opening[id]) > 0.005 ||
+            Math.abs((prevPool.prepared || 0) - prepared[id]) > 0.005 ||
+            Math.abs((prevPool.wastage ?? 0) - (wastage ?? 0)) > 0.005
+          ) {
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          const updatedRecord = { ...existing, pools: newPools };
+          await kv.set(`production-ledger:${productionHouseId}:${cursor}`, updatedRecord);
+          // Keep the in-memory copy fresh so the NEXT iteration's computeLedgerOpening
+          // (which reads houseRecords) sees this day's just-recomputed pools, not stale
+          // ones - otherwise every day after the first change would anchor on stale data.
+          const idx = houseRecords.findIndex((r: any) => r.date === cursor);
+          if (idx >= 0) houseRecords[idx] = updatedRecord;
+          updated++;
+        }
+      }
+      // No record for this date - nothing to recompute, matches every other cascade this
+      // session (a day nobody interacted with isn't fabricated).
+      cursor = addDaysToDateString(cursor, 1);
+    }
+    console.log(`Cascade production-ledger recompute for house ${productionHouseId} from ${fromDate}: ${updated} record(s) updated`);
+  } catch (error) {
+    console.log('Error cascading production ledger recompute:', error);
+    // Non-fatal, same convention as every other cascade this session.
+  }
+}
+
+// ============ Weekly Production Goal ============
+// A cluster head/operations manager sets a per-momo-type piece target for one calendar
+// week (Monday-start); progress is computed live from the same `production:` records'
+// .final counts everything else already reads (see ProductionData type), summed from that
+// week's Monday through whichever date is being viewed - not a separate tracked number
+// that could drift out of sync with what production actually reported.
+app.get('/make-server-c2dd9b9d/production-weekly-goal', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const productionHouseId = c.req.query('productionHouseId');
+    const weekStart = c.req.query('weekStart'); // YYYY-MM-DD, must be a Monday
+    if (!productionHouseId || !weekStart) {
+      return c.json({ error: 'productionHouseId and weekStart are required' }, 400);
+    }
+    const goal = await kvWithRetry.get<any>(`production-weekly-goal:${productionHouseId}:${weekStart}`);
+    return c.json({ goal: goal || null });
+  } catch (error) {
+    console.log('Error fetching production weekly goal:', error);
+    return c.json({ error: 'Failed to fetch production weekly goal' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/production-weekly-goal', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isClusterHead = role === 'cluster_head';
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    if (!isClusterHead && !isOperationsManager) {
+      return c.json({ error: 'Only cluster heads or operations managers can set the weekly production goal' }, 403);
+    }
+
+    const { productionHouseId, weekStart, goals } = await c.req.json();
+    if (!productionHouseId || !weekStart || !goals || typeof goals !== 'object') {
+      return c.json({ error: 'productionHouseId, weekStart, and goals are required' }, 400);
+    }
+    // weekStart must actually be a Monday - a goal keyed to the wrong day would silently
+    // never match the week the frontend looks it up under.
+    const weekday = new Date(weekStart + 'T00:00:00Z').getUTCDay(); // 0=Sun..6=Sat
+    if (weekday !== 1) {
+      return c.json({ error: 'weekStart must be a Monday (YYYY-MM-DD)' }, 400);
+    }
+
+    const key = `production-weekly-goal:${productionHouseId}:${weekStart}`;
+    const existing = await kvWithRetry.get<any>(key);
+    const cleanGoals: Record<string, number> = {};
+    for (const t of PRODUCTION_MOMO_TYPES) {
+      const n = Math.max(0, Math.round(Number(goals[t.key]) || 0));
+      if (n > 0) cleanGoals[t.key] = n;
+    }
+
+    const submittedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const submittedByName = authResult.user.user_metadata?.name || authResult.user.email;
+    const record = {
+      id: existing?.id || key,
+      productionHouseId,
+      weekStart,
+      goals: cleanGoals,
+      setBy: submittedBy,
+      setByName: submittedByName,
+      createdAt: existing?.createdAt || getNowIST(),
+      updatedAt: getNowIST(),
+    };
+    await kvWithRetry.set(key, record);
+    return c.json({ success: true, goal: record });
+  } catch (error) {
+    console.log('Error saving production weekly goal:', error);
+    return c.json({ error: 'Failed to save production weekly goal' }, 500);
+  }
+});
+
+// Get a production house's ledger for one date (persisted record if it's been closed at
+// least once, else a live-computed preview - never persisted) or a date range (only
+// actually-saved records, for Analytics).
+app.get('/make-server-c2dd9b9d/production-ledger', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const productionHouseId = c.req.query('productionHouseId');
+    const date = c.req.query('date');
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (!productionHouseId) {
+      return c.json({ error: 'productionHouseId is required' }, 400);
+    }
+
+    const [allLedgerRecords, allItems] = await Promise.all([
+      kv.getByPrefix('production-ledger:'),
+      kv.getByPrefix('production-ledger-item:'),
+    ]);
+    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
+    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
+
+    if (from && to) {
+      return c.json({ entries: houseRecords.filter((r: any) => r.date >= from && r.date <= to) });
+    }
+
+    if (!date) {
+      return c.json({ error: 'date, or from+to, is required' }, 400);
+    }
+
+    const todaysItems = houseItems
+      .filter((i: any) => i.date === date)
+      .sort((a: any, b: any) => (a.loggedAt || '').localeCompare(b.loggedAt || ''));
+    const existing = houseRecords.find((r: any) => r.date === date);
+    // Whether this house has ever closed a day strictly before `date` - the frontend uses
+    // this to decide whether the one-time manual opening override is offered at all (it's
+    // only ever meaningful on the very first day, same rule the close endpoint enforces).
+    const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
+
+    if (existing) {
+      return c.json({ entry: existing, items: todaysItems, hasAnyPriorRecord });
+    }
+
+    // Nothing closed yet for this date - live-compute opening + prepared-so-far, same
+    // style as GET /production-cash's own live-preview branch. Never persisted.
+    const opening = computeLedgerOpening(houseRecords, date);
+    const prepared = aggregatePreparedByPool(todaysItems);
+    const pools: Record<string, any> = {};
+    for (const id of ALL_POOL_IDS) {
+      pools[id] = { opening: opening[id], prepared: prepared[id], closingActual: null, wastage: null };
+    }
+
+    return c.json({ entry: null, live: { productionHouseId, date, pools }, items: todaysItems, hasAnyPriorRecord });
+  } catch (error) {
+    console.log('Error fetching production ledger:', error);
+    return c.json({ error: 'Failed to fetch production ledger' }, 500);
+  }
+});
+
+// Log one prepared line item (a momo type + how much of its global/per-type pool was
+// prepared for it just now). Eager-persist per item, not batched into one big form
+// submit, so a shift's entries survive an early tab close - same pattern as the rest of
+// this app.
+app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can log production' }, 403);
+    }
+
+    const { productionHouseId, date, momoKey, globalPoolQty, perTypePoolQty } = await c.req.json();
+    if (!productionHouseId || !date || !momoKey) {
+      return c.json({ error: 'productionHouseId, date, and momoKey are required' }, 400);
+    }
+    if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
+      return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
+    }
+    const isSentinel = momoKey === 'GLOBAL_DOUGH' || momoKey === 'GLOBAL_BATTER';
+    const momoType = isSentinel ? null : PRODUCTION_MOMO_TYPES.find((t) => t.key === momoKey);
+    if (!isSentinel && !momoType) {
+      return c.json({ error: 'Unknown momo type' }, 400);
+    }
+
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const loggedByName = authResult.user.user_metadata?.name || authResult.user.email;
+    const item = {
+      id, productionHouseId, date, momoKey,
+      globalPoolQty: globalPoolQty || 0,
+      perTypePoolQty: perTypePoolQty || 0,
+      loggedBy, loggedByName, loggedByUserId: authResult.user.id,
+      loggedAt: getNowIST(),
+    };
+    await kv.set(`production-ledger-item:${productionHouseId}:${date}:${id}`, item);
+
+    // Only refreshes anything if this date has already been closed once (e.g. logging
+    // something forgotten after the fact) - a normal same-day entry has no record yet, so
+    // the cascade correctly no-ops and GET computes the live total on demand instead.
+    await cascadeRecomputeProductionLedger(productionHouseId, date);
+
+    return c.json({ success: true, item });
+  } catch (error) {
+    console.log('Error logging production ledger item:', error);
+    return c.json({ error: 'Failed to log production item' }, 500);
+  }
+});
+
+app.put('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can edit production items' }, 403);
+    }
+
+    const itemId = c.req.param('id');
+    const allItems = await kv.getByPrefix('production-ledger-item:');
+    const existing = allItems.find((i: any) => i.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production ledger item not found' }, 404);
+    }
+
+    const { globalPoolQty, perTypePoolQty } = await c.req.json();
+    const updated = {
+      ...existing,
+      globalPoolQty: typeof globalPoolQty === 'number' ? globalPoolQty : existing.globalPoolQty,
+      perTypePoolQty: typeof perTypePoolQty === 'number' ? perTypePoolQty : existing.perTypePoolQty,
+      updatedAt: getNowIST(),
+    };
+    await kv.set(`production-ledger-item:${existing.productionHouseId}:${existing.date}:${existing.id}`, updated);
+    // Backdated edits (or same-day, harmlessly) ripple forward - a past day's prepared
+    // total changing must not leave every later day's opening balance silently stale.
+    await cascadeRecomputeProductionLedger(existing.productionHouseId, existing.date);
+
+    return c.json({ success: true, item: updated });
+  } catch (error) {
+    console.log('Error updating production ledger item:', error);
+    return c.json({ error: 'Failed to update production item' }, 500);
+  }
+});
+
+app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can remove production items' }, 403);
+    }
+
+    const itemId = c.req.param('id');
+    const allItems = await kv.getByPrefix('production-ledger-item:');
+    const existing = allItems.find((i: any) => i.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production ledger item not found' }, 404);
+    }
+
+    await kv.del(`production-ledger-item:${existing.productionHouseId}:${existing.date}:${existing.id}`);
+    await cascadeRecomputeProductionLedger(existing.productionHouseId, existing.date);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting production ledger item:', error);
+    return c.json({ error: 'Failed to delete production item' }, 500);
+  }
+});
+
+// Closes a production day: writes the directly-reported closingActual per pool (counted/
+// weighed, not derived from a yield formula - confirmed requirement) and derives wastage
+// from it. Does NOT gate on production: approval status - tomorrow's opening balance must
+// be available regardless of whether yesterday's paperwork has been approved yet.
+app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can close a production day' }, 403);
+    }
+
+    const productionHouseId = c.req.param('houseId');
+    const date = c.req.param('date');
+    if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
+      return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
+    }
+    const { closingActuals, manualOpeningOverride, wastageOverrides } = await c.req.json();
+    if (!closingActuals || typeof closingActuals !== 'object') {
+      return c.json({ error: 'closingActuals (per pool) is required' }, 400);
+    }
+
+    const [allLedgerRecords, allItems] = await Promise.all([
+      kv.getByPrefix('production-ledger:'),
+      kv.getByPrefix('production-ledger-item:'),
+    ]);
+    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
+    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId && i.date === date);
+
+    const existing = houseRecords.find((r: any) => r.date === date);
+    const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
+    let opening = computeLedgerOpening(houseRecords, date);
+
+    // manualOpeningOverride is only ever meaningful on the very first day this ledger
+    // exists for a house (a one-time "what's physically on the shelf right now" seed) -
+    // same escape hatch as production-cash's own manualOpeningOverride.
+    if (!hasAnyPriorRecord && manualOpeningOverride && typeof manualOpeningOverride === 'object') {
+      opening = { ...opening, ...manualOpeningOverride };
+    }
+
+    const prepared = aggregatePreparedByPool(houseItems);
+    const submittedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const submittedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
+    const pools: Record<string, any> = {};
+    for (const id of ALL_POOL_IDS) {
+      const closingActual = typeof closingActuals[id] === 'number' ? closingActuals[id] : (existing?.pools?.[id]?.closingActual ?? null);
+      // Wastage is never assumed from the opening+prepared-closing gap alone - that's only
+      // ever offered to the incharge as a one-click suggestion (EndOfDayCloseForm), never
+      // applied silently. A confirmed override sticks even through a later backdated
+      // correction that changes opening/prepared (cascadeRecomputeProductionLedger respects
+      // it the same way) - the human's word on actual waste doesn't get quietly recomputed
+      // out from under them.
+      const wastageOverride = wastageOverrides && typeof wastageOverrides[id] === 'number'
+        ? wastageOverrides[id]
+        : (existing?.pools?.[id]?.wastageOverride ?? null);
+      const wastage = typeof wastageOverride === 'number'
+        ? wastageOverride
+        : (typeof closingActual === 'number' ? (opening[id] + prepared[id] - closingActual) : null);
+      pools[id] = { opening: opening[id], prepared: prepared[id], closingActual, wastage, wastageOverride };
+    }
+
+    const record = {
+      id: existing?.id || `${productionHouseId}-${date}`,
+      productionHouseId, date, pools,
+      closed: true,
+      closedBy: submittedBy, closedByName: submittedByName, closedByUserId: authResult.user.id,
+      closedAt: getNowIST(),
+      ...((!hasAnyPriorRecord && manualOpeningOverride) ? { manualOpeningOverride } : {}),
+      createdBy: existing?.createdBy || submittedBy,
+      createdByName: existing?.createdByName || submittedByName,
+      createdAt: existing?.createdAt || getNowIST(),
+      updatedAt: getNowIST(),
+    };
+    await kv.set(`production-ledger:${productionHouseId}:${date}`, record);
+    await cascadeRecomputeProductionLedger(productionHouseId, date);
+
+    return c.json({ success: true, entry: record });
+  } catch (error) {
+    console.log('Error closing production ledger day:', error);
+    return c.json({ error: 'Failed to close production day' }, 500);
+  }
+});
+
+// Free-text wastage notes - for something wasted that isn't one of the tracked
+// dough/stuffing/batter/coating pools above (a sauce, a chutney, a raw ingredient). Not fed
+// into the pool cascade at all - a lightweight, separately-listed log rather than trying to
+// force everything through the pool system, since most of what lands here (sauces, in L/ml)
+// isn't a "pool" this ledger tracks in the first place.
+app.get('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const productionHouseId = c.req.query('productionHouseId');
+    const date = c.req.query('date');
+    if (!productionHouseId || !date) {
+      return c.json({ error: 'productionHouseId and date are required' }, 400);
+    }
+    const allNotes = await kv.getByPrefix(`production-wastage-note:${productionHouseId}:${date}:`);
+    return c.json({ notes: (allNotes || []).sort((a: any, b: any) => (a.loggedAt || '').localeCompare(b.loggedAt || '')) });
+  } catch (error) {
+    console.log('Error fetching production wastage notes:', error);
+    return c.json({ error: 'Failed to fetch wastage notes' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isProductionIncharge = designation === 'production_incharge';
+    if (!isProductionIncharge && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers can log wastage' }, 403);
+    }
+    const { productionHouseId, date, description, quantity, unit } = await c.req.json();
+    if (!productionHouseId || !date || !description || typeof quantity !== 'number' || !unit) {
+      return c.json({ error: 'productionHouseId, date, description, quantity, and unit are required' }, 400);
+    }
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
+    const loggedByName = authResult.user.user_metadata?.name || authResult.user.email;
+    const note = { id, productionHouseId, date, description, quantity, unit, loggedBy, loggedByName, loggedAt: getNowIST() };
+    await kv.set(`production-wastage-note:${productionHouseId}:${date}:${id}`, note);
+    return c.json({ success: true, note });
+  } catch (error) {
+    console.log('Error logging production wastage note:', error);
+    return c.json({ error: 'Failed to log wastage note' }, 500);
+  }
+});
+
+app.delete('/make-server-c2dd9b9d/production-wastage-notes/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const itemId = c.req.param('id');
+    const allNotes = await kv.getByPrefix('production-wastage-note:');
+    const existing = (allNotes || []).find((n: any) => n.id === itemId);
+    if (!existing) return c.json({ error: 'Wastage note not found' }, 404);
+    await kv.del(`production-wastage-note:${existing.productionHouseId}:${existing.date}:${existing.id}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting production wastage note:', error);
+    return c.json({ error: 'Failed to delete wastage note' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (!isOperationsManager && role !== 'cluster_head') {
+    return c.json({ error: 'Only operations managers or cluster heads can upload settlements' }, 403);
+  }
+
+  try {
+    const body = await c.req.json();
+    const required = ['storeId', 'aggregator', 'settlementDate', 'grossSales', 'netPayout', 'orderCount'];
+    for (const field of required) {
+      if (body[field] === undefined || body[field] === null || body[field] === '') {
+        return c.json({ error: `Missing required field: ${field}` }, 400);
+      }
+    }
+
+    // Reject any re-upload for a store/aggregator/date that's already been saved - the
+    // frontend already checks this before offering the upload, but this is the last line
+    // of defense against double-crediting Paytm from a duplicate save (e.g. two people
+    // uploading the same file around the same time, or the same date uploaded twice days
+    // apart after a late-arriving settlement). If the caller explicitly asked to replace
+    // (e.g. re-uploading the same file after the parser gained a new field, like adSpend),
+    // delete the old record instead of rejecting.
+    //
+    // CONFIRMED GAP (found 2026-08-26): this used to also require an exact bankUTR match,
+    // which meant two uploads for the SAME date with a blank or differently-parsed UTR
+    // (a real possibility - the parser doesn't always capture one cleanly, and a corrected
+    // re-upload can easily land with a different value) silently passed as "not a
+    // duplicate" and created two settlement records for one date, double-crediting that
+    // day's Paytm balance with no error or warning. Checked this store's entire settlement
+    // history - no store/aggregator/date has ever legitimately needed two records - so the
+    // UTR is no longer part of what defines a duplicate; date alone is enough to require an
+    // explicit replace.
+    const existingSettlements = await kv.getByPrefix('aggregator-settlement:');
+    const duplicate = (existingSettlements || []).find((s: any) =>
+      s.storeId === body.storeId &&
+      s.aggregator === body.aggregator &&
+      s.settlementDate === body.settlementDate
+    );
+    if (duplicate) {
+      if (!body.replace) {
+        return c.json({ error: `A ${body.aggregator} settlement for ${body.settlementDate} has already been uploaded (UTR ${duplicate.bankUTR || 'n/a'} vs this upload's ${body.bankUTR || 'n/a'}) - confirm replace if this is a corrected re-upload` }, 409);
+      }
+      await kv.del(`aggregator-settlement:${duplicate.id}`);
+    }
+
+    const id = `AGG-SETTLE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const orderDates = Array.isArray(body.orders)
+      ? body.orders.map((order: any) => order?.orderDate).filter((date: any) => typeof date === 'string' && date)
+      : [];
+    const inferredPeriodStart = orderDates.length ? orderDates.reduce((min: string, date: string) => date < min ? date : min, orderDates[0]) : undefined;
+    const inferredPeriodEnd = orderDates.length ? orderDates.reduce((max: string, date: string) => date > max ? date : max, orderDates[0]) : undefined;
+    const settlement = {
+      id,
+      storeId: body.storeId,
+      storeName: body.storeName || '',
+      aggregator: body.aggregator,
+      settlementDate: body.settlementDate,
+      periodStart: body.periodStart || inferredPeriodStart,
+      periodEnd: body.periodEnd || inferredPeriodEnd,
+      bankUTR: body.bankUTR || '',
+      grossSales: body.grossSales,
+      netPayout: body.netPayout,
+      netCommission: body.netCommission ?? (body.grossSales - body.netPayout),
+      orderCount: body.orderCount,
+      orders: Array.isArray(body.orders) ? body.orders : [],
+      adSpend: typeof body.adSpend === 'number' ? body.adSpend : undefined,
+      // Zomato-only discount/subtotal breakdown from the settlement's own "Order Level"
+      // sheet - undefined on Swiggy settlements and on Zomato settlements uploaded before
+      // this was parsed. Left undefined (not defaulted to 0) so callers can tell "not
+      // captured for this settlement" apart from "genuinely zero discount".
+      itemSubtotal: typeof body.itemSubtotal === 'number' ? body.itemSubtotal : undefined,
+      promoDiscount: typeof body.promoDiscount === 'number' ? body.promoDiscount : undefined,
+      flatOffDiscount: typeof body.flatOffDiscount === 'number' ? body.flatOffDiscount : undefined,
+      totalDiscount: typeof body.totalDiscount === 'number' ? body.totalDiscount : undefined,
+      gstCollected: typeof body.gstCollected === 'number' ? body.gstCollected : undefined,
+      sourceFileName: body.sourceFileName || '',
+      uploadedBy: authResult.user.email,
+      uploadedAt: getNowIST(),
+    };
+
+    await kv.set(`aggregator-settlement:${id}`, settlement);
+
+    // Keep every affected day's stored Paytm balance in sync with this new settlement,
+    // not just today's - see cascadeRecomputePaytmBalances' own comment for why this
+    // matters. Runs after the response-critical save above; a failure here doesn't
+    // fail the upload itself (logged and swallowed inside the helper).
+    await cascadeRecomputePaytmBalances(settlement.storeId, settlement.settlementDate);
+
+    return c.json({ success: true, settlement });
+  } catch (error) {
+    console.log('Error saving aggregator settlement:', error);
+    return c.json({ error: 'Failed to save aggregator settlement' }, 500);
+  }
+});
+
+// Per-menu-item Offline/Online prices, keyed by Ciferon's real ProductId (the same ID that
+// appears on OrderItemWrapperList items in Step D) - lets Profitability figures use each
+// item's real price per channel instead of one manual price per momo category. Seeded from
+// the store's actual Ciferon POS export + Online Submenu export, editable afterwards since
+// menu prices change and some items needed manual correction (variant-priced items whose
+// base list price is 0).
+app.get('/make-server-c2dd9b9d/menu-item-prices', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  try {
+    const items = await kv.getByPrefix('menu-item-price:');
+    return c.json({ success: true, items: items || [] });
+  } catch (error) {
+    console.log('Error fetching menu item prices:', error);
+    return c.json({ error: 'Failed to fetch menu item prices' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/menu-item-prices', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (authResult.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can edit menu item prices' }, 403);
+  }
+  try {
+    const body = await c.req.json();
+    const { productId, productName, momoCategory, piecesPerUnit, offlinePrice, onlinePrice } = body || {};
+    if (!productId || !productName) {
+      return c.json({ error: 'Missing required field: productId or productName' }, 400);
+    }
+    const entry = {
+      productId,
+      productName,
+      momoCategory: momoCategory ?? null,
+      piecesPerUnit: piecesPerUnit ?? 6,
+      offlinePrice: offlinePrice ?? 0,
+      onlinePrice: onlinePrice ?? 0,
+      updatedBy: authResult.user.email,
+      updatedAt: getNowIST(),
+    };
+    await kv.set(`menu-item-price:${productId}`, entry);
+    return c.json({ success: true, item: entry });
+  } catch (error) {
+    console.log('Error saving menu item price:', error);
+    return c.json({ error: 'Failed to save menu item price' }, 500);
+  }
+});
+
+// Per-order item detail synced by Step D of runPosSync (Ciferon's OrderReport/Sale,
+// IsAllVisible=true) - the real momo content of every order plus its ExternalId, used to
+// join against an uploaded aggregator settlement's per-order payout.
+app.get('/make-server-c2dd9b9d/order-item-detail', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const storeId = c.req.query('storeId');
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+
+    let records = await kv.getByPrefix('order-item-detail:');
+    records = (records || []).filter((r: any) => {
+      if (storeId && r.storeId !== storeId) return false;
+      if (startDate && r.date < startDate) return false;
+      if (endDate && r.date > endDate) return false;
+      return true;
+    });
+    return c.json({ success: true, records });
+  } catch (error) {
+    console.log('Error fetching order item detail:', error);
+    return c.json({ error: 'Failed to fetch order item detail' }, 500);
+  }
+});
+
+// Aggregates real per-order POS data (order-item-detail, synced since ~July 1) into
+// packaging (box/tray) and beverage consumption for the Utilities stock status tab.
+// Box = TakeAway + HomeDelivery orders (Zomato/Swiggy are also HomeDelivery); Tray =
+// DineIn. Only counts items whose CategoryName isn't 'Addon' - a combo's auto-decomposed
+// sibling lines (its embedded burger/extra momos/soft drink) represent the SAME combo
+// purchase as its own line, not a separately-boxed item (confirmed against real order
+// data - a "Mania Combo" order shows 3-4 lines for what is physically one meal in one
+// box). Beverage consumption counts ALL matching lines regardless of Addon, since a
+// combo's embedded soft drink is still a real bottle handed to the customer.
+const BEVERAGE_KEYWORDS = ['coke', 'coca', 'campa', 'cola', 'soft drink', 'cold drink'];
+
+function normalizeBeverageName(name: string): string {
+  return name
+    .replace(/\(.*?\)/g, '')
+    .replace(/\d+\s*m?l/gi, '')
+    .replace(/-\s*[AO]\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+app.get('/make-server-c2dd9b9d/utilities-consumption', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const storeId = c.req.query('storeId');
+    const startDate = c.req.query('startDate') || '2026-07-19';
+    const endDate = c.req.query('endDate');
+
+    let records = await kv.getByPrefix('order-item-detail:');
+    records = (records || []).filter((r: any) => {
+      if (storeId && r.storeId !== storeId) return false;
+      if (r.date < startDate) return false;
+      if (endDate && r.date > endDate) return false;
+      return true;
+    });
+
+    let boxesUsed = 0;
+    let traysUsed = 0;
+    let unattributedOrders = 0;
+    const beverageConsumption: Record<string, number> = {};
+
+    for (const record of records) {
+      for (const order of (record.orders || [])) {
+        // Ciferon's SaleOrderType is missing for a large chunk of orders (confirmed
+        // against real data - notably every Zomato/Swiggy order, plus a smaller set of
+        // Cash/Paytm counter orders). A Zomato/Swiggy order is always a delivery - the
+        // aggregator has no dine-in concept - so paymentMode alone is enough to call it
+        // a box with confidence even without orderType. Cash/Paytm/PhonePe orders with
+        // no orderType genuinely could be either dine-in or takeaway; there's no signal
+        // to disambiguate those, so they correctly stay unattributed rather than guessed.
+        const isAggregatorDelivery = order.paymentMode === 'Zomato' || order.paymentMode === 'Swiggy';
+        const isBox = order.orderType === 'TakeAway' || order.orderType === 'HomeDelivery' || isAggregatorDelivery;
+        const isTray = order.orderType === 'DineIn';
+        if (!isBox && !isTray) unattributedOrders++;
+
+        for (const item of (order.rawItems || [])) {
+          const nameLower = (item.productName || '').toLowerCase();
+          const isBeverage = BEVERAGE_KEYWORDS.some((k) => nameLower.includes(k));
+
+          if (isBeverage) {
+            const canonical = normalizeBeverageName(item.productName || '');
+            beverageConsumption[canonical] = (beverageConsumption[canonical] || 0) + (item.quantity || 0);
+            continue;
+          }
+
+          if (item.categoryName === 'Addon') continue; // combo-decomposed sibling line, not its own box/tray
+
+          if (isBox) boxesUsed += item.quantity || 0;
+          else if (isTray) traysUsed += item.quantity || 0;
+        }
+      }
+    }
+
+    return c.json({
+      success: true,
+      startDate,
+      endDate: endDate || getTodayIST(),
+      daysWithData: records.length,
+      boxesUsed,
+      traysUsed,
+      unattributedOrders,
+      beverageConsumption,
+    });
+  } catch (error) {
+    console.log('Error computing utilities consumption:', error);
+    return c.json({ error: 'Failed to compute utilities consumption' }, 500);
+  }
+});
+
+app.delete('/make-server-c2dd9b9d/aggregator-settlements/:id', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (!isOperationsManager && role !== 'cluster_head') {
+    return c.json({ error: 'Only operations managers or cluster heads can delete a settlement' }, 403);
+  }
+
+  try {
+    const id = c.req.param('id');
+    const existing = await kv.get(`aggregator-settlement:${id}`);
+    await kv.del(`aggregator-settlement:${id}`);
+
+    // Same reasoning as the upload route - removing a settlement changes what every
+    // day from its date forward should have added up to, so those days' stored Paytm
+    // balances need recomputing too, not just left pointing at a payout that's gone.
+    if (existing?.storeId && existing?.settlementDate) {
+      await cascadeRecomputePaytmBalances(existing.storeId, existing.settlementDate);
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting aggregator settlement:', error);
+    return c.json({ error: 'Failed to delete aggregator settlement' }, 500);
   }
 });
 
@@ -2859,34 +5462,42 @@ app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
 
 // ===== Attendance & Leave Management =====
 
+// Leave policy reset: on Aug 1, 2026 all prior leave balances/usage were wiped and the
+// monthly credit increased from 3 to 4 days/month (still carried forward, resets yearly on Jan 1).
+const LEAVE_POLICY_RESET_DATE = '2026-08-01';
+const LEAVES_PER_MONTH = 4;
+
 // Helper function to calculate leave balance
 // usedLeaves can be a decimal (e.g., 1.5 for one full day + one half day)
 function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number {
-  const joining = new Date(joiningDate);
+  const policyReset = new Date(LEAVE_POLICY_RESET_DATE);
+  const actualJoining = new Date(joiningDate);
+  // Nobody accrues leave for time before the Aug 1, 2026 policy reset
+  const joining = actualJoining < policyReset ? policyReset : actualJoining;
   const now = new Date();
-  
+
   // Normalize dates to start of month for accurate comparison
   const joiningMonthStart = new Date(joining.getFullYear(), joining.getMonth(), 1);
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  
+
   // If joining date is in the future, no leaves yet
   if (joining > now) {
     return 0;
   }
-  
+
   // Calculate months in current year only (leaves reset on Jan 1st each year)
   const startYear = joiningMonthStart.getFullYear();
   const startMonth = joiningMonthStart.getMonth();
   const currentYear = currentMonthStart.getFullYear();
   const currentMonth = currentMonthStart.getMonth();
-  
+
   // Current year start date
   const currentYearStart = new Date(now.getFullYear(), 0, 1);
-  
+
   let monthsToCount = 0;
-  
+
   if (joining.getFullYear() === now.getFullYear()) {
-    // Joined this year - count from joining month to current month (within this year)
+    // Joined (or policy-reset) this year - count from that month to current month (within this year)
     monthsToCount = (currentMonth - startMonth) + 1;
   } else if (joining < currentYearStart) {
     // Joined in previous years - only count months from Jan 1 of current year to now
@@ -2895,10 +5506,10 @@ function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number 
     // This shouldn't happen but just in case
     monthsToCount = 1;
   }
-  
-  // Total credited leaves = 3 leaves per month (within current year, carries forward monthly, resets yearly)
-  const totalCredited = monthsToCount * 3;
-  
+
+  // Total credited leaves = 4 leaves per month (within current year, carries forward monthly, resets yearly)
+  const totalCredited = monthsToCount * LEAVES_PER_MONTH;
+
   // Available balance (can be negative if advance leaves are taken)
   // Negative balance will be carried forward and deducted from next month's allocation
   return totalCredited - usedLeaves;
@@ -3037,6 +5648,30 @@ app.get('/make-server-c2dd9b9d/attendance/managers/cluster/:clusterHeadId', asyn
 
 // ===== Timesheet Management =====
 
+// NOTE: must stay registered BEFORE '/timesheets/:employeeId' below - otherwise Hono matches
+// 'all' as an employeeId and returns an empty list (the Attendance Compliance section
+// showed every employee as missing every day because of exactly that).
+// Get every employee's timesheets - powers the Staff Attendance Compliance section on
+// the Store-Production SLA Analysis page (who hasn't submitted, and how long a pending
+// one has been waiting on manager approval). Mirrors GET /leaves/all.
+app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const allTimesheets = await getAllByPrefixWithRetry('timesheet:');
+    return c.json({ timesheets: allTimesheets });
+  } catch (error: any) {
+    console.log('Error fetching all timesheets:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ timesheets: [], warning: 'Database temporarily unavailable' });
+    }
+    return c.json({ error: 'Failed to fetch timesheets' }, 500);
+  }
+});
+
 // Get timesheets for an employee
 app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
   try {
@@ -3063,28 +5698,44 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
     };
     
     await kv.set(key, savedTimesheet);
-    
-    // Notify cluster heads about pending timesheet
+
+    // Route the approval notification to the employee's own manager (Rohan -> Aniket,
+    // Vijay -> Aniket, Saniya/Nabendu -> Rohan, Akash -> Vijay) - same pattern the leave
+    // flow already uses. Cluster heads are only a fallback for someone with no manager
+    // on file, not the default recipient - this route used to hardcode cluster heads
+    // unconditionally, which is why every timesheet approval was landing on the cluster
+    // head instead of the actual manager.
     if (timesheet.status === 'pending') {
-      const clusterHeads = await getAllClusterHeads();
-      const employees = await kv.getByPrefix('attendance-employee:');
-      const employee = employees.find((e: any) => e.id === timesheet.employeeId);
+      // attendance-employee: is an empty/legacy collection - real employee records
+      // (with the actual name and authUserId) live under unified-employee:.
+      const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
       const employeeName = employee?.name || timesheet.employeeId;
-      
-      for (const clusterHead of clusterHeads) {
-        if (clusterHead.authUserId) {
+
+      let recipients: any[] = [];
+      if (employee?.managerId) {
+        const manager = await kv.get(`unified-employee:${employee.managerId}`);
+        if (manager) recipients = [manager];
+      }
+      if (recipients.length === 0) {
+        recipients = await getAllClusterHeads();
+      }
+
+      const timeSummary = formatTimesheetSummary(savedTimesheet);
+      for (const recipient of recipients) {
+        if (recipient.authUserId) {
           await notifyUser(
-            clusterHead.authUserId,
+            recipient.authUserId,
             'timesheet_pending',
             'Timesheet Approval Needed',
-            `${employeeName} submitted timesheet for ${timesheet.date}`,
+            `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
             id,
-            timesheet.date
+            timesheet.date,
+            { recordType: 'timesheet', recordId: id }
           );
         }
       }
     }
-    
+
     return c.json({ success: true, id });
   } catch (error) {
     console.log('Error saving timesheet:', error);
@@ -3092,14 +5743,17 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
   }
 });
 
-// Save bulk timesheets
+// Save bulk timesheets - a multi-day submission from EmployeeTimesheet.tsx. Previously
+// sent no approval notification at all (only the single-day POST /timesheets route did,
+// and even that one went to the wrong recipient - see the note there); this sends one
+// summarizing notification per employee to their actual manager instead of one per day.
 app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
   try {
     const { timesheets } = await c.req.json();
-    
+
     const keys: string[] = [];
     const values: any[] = [];
-    
+
     for (const timesheet of timesheets) {
       const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
       const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
@@ -3110,9 +5764,50 @@ app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
         submittedAt: new Date().toISOString()
       });
     }
-    
+
     await kv.mset(keys, values);
-    
+
+    const pending = values.filter((t: any) => t.status === 'pending');
+    if (pending.length > 0) {
+      const byEmployee = new Map<string, any[]>();
+      for (const t of pending) {
+        if (!byEmployee.has(t.employeeId)) byEmployee.set(t.employeeId, []);
+        byEmployee.get(t.employeeId)!.push(t);
+      }
+
+      for (const [employeeId, entries] of byEmployee) {
+        const employee = await kv.get(`unified-employee:${employeeId}`);
+        const employeeName = employee?.name || employeeId;
+
+        let recipients: any[] = [];
+        if (employee?.managerId) {
+          const manager = await kv.get(`unified-employee:${employee.managerId}`);
+          if (manager) recipients = [manager];
+        }
+        if (recipients.length === 0) {
+          recipients = await getAllClusterHeads();
+        }
+
+        const sortedDates = entries.map((t: any) => t.date).sort();
+        const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
+        const firstId = entries[0].id;
+
+        for (const recipient of recipients) {
+          if (recipient.authUserId) {
+            await notifyUser(
+              recipient.authUserId,
+              'timesheet_pending',
+              'Timesheet Approval Needed',
+              `${employeeName} (${employeeId}) submitted timesheet: ${dateRangeLabel}`,
+              firstId,
+              sortedDates[0],
+              { recordType: 'timesheet', recordId: firstId }
+            );
+          }
+        }
+      }
+    }
+
     return c.json({ success: true, count: timesheets.length });
   } catch (error) {
     console.log('Error saving timesheets:', error);
@@ -3144,14 +5839,14 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/approve', async (c) => {
     await kv.set(key, approvedTimesheet);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === timesheet.employeeId);
+    const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
     if (employee?.authUserId) {
+      const timeSummary = formatTimesheetSummary(timesheet);
       await notifyUser(
         employee.authUserId,
         'timesheet_approved',
-        'Timesheet Approved ��',
-        `Your timesheet for ${timesheet.date} has been approved`,
+        'Timesheet Approved ✅',
+        `Your timesheet for ${timesheet.date} has been approved${timeSummary ? ` - ${timeSummary}` : ''}`,
         timesheetId,
         timesheet.date
       );
@@ -3189,14 +5884,14 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/reject', async (c) => {
     await kv.set(key, rejectedTimesheet);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === timesheet.employeeId);
+    const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
     if (employee?.authUserId) {
+      const timeSummary = formatTimesheetSummary(timesheet);
       await notifyUser(
         employee.authUserId,
         'timesheet_rejected',
         'Timesheet Rejected ✗',
-        `Your timesheet for ${timesheet.date} was rejected. Reason: ${reason}`,
+        `Your timesheet for ${timesheet.date}${timeSummary ? ` (${timeSummary})` : ''} was rejected. Reason: ${reason}`,
         timesheetId,
         timesheet.date
       );
@@ -3206,6 +5901,74 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/reject', async (c) => {
   } catch (error) {
     console.log('Error rejecting timesheet:', error);
     return c.json({ error: 'Failed to reject timesheet' }, 500);
+  }
+});
+
+// Auto-approves timesheets that have sat 'pending' for more than 5 days without the
+// employee's manager acting on it, so a forgotten approval doesn't block payroll/attendance
+// records indefinitely. Mirrors production's 24h auto-approve-stale cron (same file,
+// same non-fatal per-item try/catch shape) but with a 5-day cutoff, since a missed
+// timesheet approval is far less time-sensitive than a missed stock request. Cron-only
+// (see the timesheets-auto-approve-stale pg_cron migration) - not reachable by regular users.
+const TIMESHEET_AUTO_APPROVE_DAYS = 5;
+app.post('/make-server-c2dd9b9d/timesheets/auto-approve-stale', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const cutoff = Date.now() - TIMESHEET_AUTO_APPROVE_DAYS * 24 * 60 * 60 * 1000;
+    const allTimesheets = await getAllByPrefixWithRetry('timesheet:');
+    const stalePending = allTimesheets.filter((t: any) => {
+      if (t.status !== 'pending') return false;
+      // No submittedAt at all means it predates that field - skip rather than guess how
+      // long it's actually been waiting.
+      if (!t.submittedAt) return false;
+      const submitted = new Date(t.submittedAt).getTime();
+      return !isNaN(submitted) && submitted <= cutoff;
+    });
+
+    let approvedCount = 0;
+    for (const timesheet of stalePending) {
+      try {
+        const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
+        const approvedTimesheet = {
+          ...timesheet,
+          status: 'approved',
+          approvedBy: `Auto-approved (no action within ${TIMESHEET_AUTO_APPROVE_DAYS} days)`,
+          approvedAt: getNowIST(),
+        };
+        await kv.set(key, approvedTimesheet);
+        approvedCount++;
+
+        const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
+        if (employee?.authUserId) {
+          const timeSummary = formatTimesheetSummary(timesheet);
+          await notifyUser(
+            employee.authUserId,
+            'timesheet_approved',
+            'Timesheet Auto-Approved',
+            `Your timesheet for ${timesheet.date}${timeSummary ? ` (${timeSummary})` : ''} was automatically approved after ${TIMESHEET_AUTO_APPROVE_DAYS} days with no response from your manager.`,
+            timesheet.id,
+            timesheet.date
+          );
+        }
+      } catch (itemError) {
+        // Non-fatal per item - one bad record shouldn't stop the rest of the batch.
+        console.log('Error auto-approving timesheet', timesheet.id, itemError);
+      }
+    }
+
+    console.log(`Timesheet auto-approve-stale: approved ${approvedCount} of ${stalePending.length} stale pending timesheets`);
+    return c.json({ success: true, approvedCount });
+  } catch (error: any) {
+    console.log('Error auto-approving stale timesheets:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
+    return c.json({ error: 'Failed to auto-approve stale timesheets' }, 500);
   }
 });
 
@@ -3242,8 +6005,9 @@ app.get('/make-server-c2dd9b9d/leaves/:employeeId/balance', async (c) => {
     
     // Get all approved leaves
     const allLeaves = await kv.getByPrefix(`leave:${employeeId}:`);
-    const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved');
-    
+    // Only leaves from the Aug 1, 2026 policy reset onward count against the balance
+    const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved' && l.leaveDate >= LEAVE_POLICY_RESET_DATE);
+
     // Calculate total leave days used (full day = 1, half day = 0.5)
     // Old leaves without leaveType default to 'full' for backward compatibility
     const totalLeaveDaysUsed = approvedLeaves.reduce((total: number, leave: any) => {
@@ -3275,31 +6039,265 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
     
     await kv.set(key, savedLeave);
     
-    // Notify cluster heads about pending leave
+    // Route the approval notification: regular leave (and advance leave up to the
+    // escalation threshold) goes to the employee's own manager - matching who can
+    // actually act on it in the Approve Leaves screen (manager sees their own
+    // employees' leaves, cluster head sees their managers' leaves). Advance leave
+    // past the threshold is escalated straight to the cluster head instead.
     if (leave.status === 'pending') {
-      const clusterHeads = await getAllClusterHeads();
-      const employees = await kv.getByPrefix('attendance-employee:');
-      const employee = employees.find((e: any) => e.id === leave.employeeId);
-      const employeeName = employee?.name || leave.employeeId;
-      
-      for (const clusterHead of clusterHeads) {
-        if (clusterHead.authUserId) {
-          await notifyUser(
-            clusterHead.authUserId,
-            'leave_pending',
-            'Leave Approval Needed',
-            `${employeeName} applied for leave from ${leave.startDate} to ${leave.endDate}`,
-            id,
-            leave.startDate
-          );
+      // attendance-employee: is a legacy/unused collection - real employee records
+      // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
+      const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
+      const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
+      const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
+
+      const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
+      const message = escalateToClusterHead
+        ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
+        : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
+
+      let recipients: any[] = [];
+      if (escalateToClusterHead) {
+        recipients = await getAllClusterHeads();
+      } else if (applicant?.managerId) {
+        const manager = await kv.get(`unified-employee:${applicant.managerId}`);
+        if (manager) recipients = [manager];
+      }
+      // No manager on file - fall back to cluster heads so the request isn't stranded
+      if (recipients.length === 0) {
+        recipients = await getAllClusterHeads();
+      }
+
+      for (const recipient of recipients) {
+        if (recipient.authUserId) {
+          await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate, { recordType: 'leave', recordId: id });
         }
       }
     }
-    
+
     return c.json({ success: true, id });
   } catch (error) {
     console.log('Error applying leave:', error);
     return c.json({ error: 'Failed to apply leave' }, 500);
+  }
+});
+
+// Apply for a multi-day leave in one call - saves one leave: record per day (unchanged
+// from the single-day route, since balance/approval tracking is still per-day), but
+// sends ONE notification summarizing the whole date range instead of one per day. The
+// single-day POST /leaves route above still fires a notification per call, so a
+// multi-day application that loops it floods the approver with a notification per day.
+app.post('/make-server-c2dd9b9d/leaves/bulk', async (c) => {
+  try {
+    const { leaves } = await c.req.json();
+    if (!Array.isArray(leaves) || leaves.length === 0) {
+      return c.json({ error: 'No leave applications provided' }, 400);
+    }
+
+    const ids: string[] = [];
+    for (const leave of leaves) {
+      const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const key = `leave:${leave.employeeId}:${id}`;
+      const savedLeave = { ...leave, id, appliedAt: new Date().toISOString() };
+      await kv.set(key, savedLeave);
+      ids.push(id);
+    }
+
+    const first = leaves[0];
+    if (first.status === 'pending') {
+      const sortedDates = leaves.map((l: any) => l.leaveDate).sort();
+      const startDate = sortedDates[0];
+      const endDate = sortedDates[sortedDates.length - 1];
+      const dateRangeLabel = leaves.length > 1 ? `${startDate} to ${endDate} (${leaves.length} days)` : startDate;
+
+      // attendance-employee: is a legacy/unused collection - real employee records
+      // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
+      const applicant = await kv.get(`unified-employee:${first.employeeId}`);
+      const employeeLabel = applicant?.name ? `${applicant.name} (${first.employeeId})` : first.employeeId;
+      const escalateToClusterHead = first.isAdvanceLeave && first.approverRole === 'cluster_head';
+
+      const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
+      const message = escalateToClusterHead
+        ? `${employeeLabel} requested ${first.advanceDaysRequested || leaves.length} day(s) of advance leave: ${dateRangeLabel} - escalated for cluster head approval`
+        : `${employeeLabel} applied for leave: ${dateRangeLabel}`;
+
+      let recipients: any[] = [];
+      if (escalateToClusterHead) {
+        recipients = await getAllClusterHeads();
+      } else if (applicant?.managerId) {
+        const manager = await kv.get(`unified-employee:${applicant.managerId}`);
+        if (manager) recipients = [manager];
+      }
+      if (recipients.length === 0) {
+        recipients = await getAllClusterHeads();
+      }
+
+      for (const recipient of recipients) {
+        if (recipient.authUserId) {
+          // recordId is comma-joined so one Approve/Reject tap on the notification acts on
+          // every day in this multi-day application, not just the first - see POST
+          // /quick-action, which splits it back out.
+          await notifyUser(recipient.authUserId, 'leave_pending', title, message, ids[0], startDate, { recordType: 'leave', recordId: ids.join(',') });
+        }
+      }
+    }
+
+    return c.json({ success: true, ids });
+  } catch (error) {
+    console.log('Error applying bulk leave:', error);
+    return c.json({ error: 'Failed to apply leave' }, 500);
+  }
+});
+
+// Executes an Approve/Reject action tapped directly from the Android notification tray
+// (see QuickActionReceiver.java) - deliberately NOT gated by verifyUser/session, since a
+// background broadcast receiver has no access to the device's live login session. Instead
+// it's authorized by the single-use token minted in notifyUser/createQuickActionToken,
+// which only ever grants the one action on the one record it was created for.
+const QUICK_ACTION_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
+  try {
+    const { token } = await c.req.json();
+    if (!token) {
+      return c.json({ error: 'Missing token' }, 400);
+    }
+
+    const tokenKey = `quick_action_token:${token}`;
+    const tokenRecord = await kv.get(tokenKey);
+    if (!tokenRecord) {
+      return c.json({ error: 'This action has expired or was already used' }, 404);
+    }
+    if (tokenRecord.used) {
+      return c.json({ error: 'This action was already used' }, 409);
+    }
+    const age = Date.now() - new Date(tokenRecord.createdAt).getTime();
+    if (age > QUICK_ACTION_TOKEN_MAX_AGE_MS) {
+      return c.json({ error: 'This action has expired' }, 410);
+    }
+
+    // Mark used immediately (before performing the mutation) so a double-tap or retry
+    // can't double-apply the action - the small risk of "marked used but the mutation
+    // itself then failed" is an acceptable tradeoff for a fire-and-forget quick action.
+    await kv.set(tokenKey, { ...tokenRecord, used: true, usedAt: new Date().toISOString() });
+
+    const approverEmployeeId = await getEmployeeIdByAuthUserId(tokenRecord.approverUserId);
+    const approver = approverEmployeeId ? await kv.get(`unified-employee:${approverEmployeeId}`) : null;
+    const approverName = approver?.name || 'a manager';
+    const approve = tokenRecord.action === 'approve';
+
+    if (tokenRecord.recordType === 'leave') {
+      const leaveIds: string[] = String(tokenRecord.recordId).split(',');
+      const allLeaves = await kv.getByPrefix('leave:');
+      let employeeAuthUserId: string | null = null;
+      let sampleDate = '';
+
+      for (const leaveId of leaveIds) {
+        const leave = allLeaves.find((l: any) => l.id === leaveId);
+        if (!leave || leave.status !== 'pending') continue;
+
+        const key = `leave:${leave.employeeId}:${leaveId}`;
+        const updated = approve
+          ? { ...leave, status: 'approved', approvedBy: approverName, approvedAt: getNowIST() }
+          : { ...leave, status: 'rejected', rejectedBy: approverName, rejectedAt: getNowIST(), rejectionReason: 'Rejected via notification quick action' };
+        await kv.set(key, updated);
+        sampleDate = leave.leaveDate;
+
+        if (!employeeAuthUserId) {
+          const employee = await kv.get(`unified-employee:${leave.employeeId}`);
+          employeeAuthUserId = employee?.authUserId || null;
+        }
+      }
+
+      if (employeeAuthUserId) {
+        const dateLabel = leaveIds.length > 1 ? `starting ${sampleDate} (${leaveIds.length} day(s))` : sampleDate;
+        await notifyUser(
+          employeeAuthUserId,
+          approve ? 'leave_approved' : 'leave_rejected',
+          approve ? 'Leave Approved ✓' : 'Leave Rejected ✗',
+          `Your leave ${dateLabel} was ${approve ? 'approved' : 'rejected'} by ${approverName}`,
+          leaveIds[0],
+          sampleDate
+        );
+      }
+
+      return c.json({ success: true, title: approve ? 'Leave approved' : 'Leave rejected', message: `${leaveIds.length} day(s) updated` });
+    }
+
+    if (tokenRecord.recordType === 'timesheet') {
+      const allTimesheets = await kv.getByPrefix('timesheet:');
+      const timesheet = allTimesheets.find((t: any) => t.id === tokenRecord.recordId);
+      if (!timesheet) {
+        return c.json({ error: 'Timesheet not found' }, 404);
+      }
+      if (timesheet.status !== 'pending') {
+        return c.json({ success: true, title: 'Already resolved', message: 'This timesheet was already actioned' });
+      }
+
+      const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
+      const updated = approve
+        ? { ...timesheet, status: 'approved', approvedBy: approverName, approvedAt: getNowIST() }
+        : { ...timesheet, status: 'rejected', rejectedBy: approverName, rejectedAt: new Date().toISOString(), rejectionReason: 'Rejected via notification quick action' };
+      await kv.set(key, updated);
+
+      const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
+      if (employee?.authUserId) {
+        await notifyUser(
+          employee.authUserId,
+          approve ? 'timesheet_approved' : 'timesheet_rejected',
+          approve ? 'Timesheet Approved ✓' : 'Timesheet Rejected ✗',
+          `Your timesheet for ${timesheet.date} was ${approve ? 'approved' : 'rejected'} by ${approverName}`,
+          tokenRecord.recordId,
+          timesheet.date
+        );
+      }
+
+      return c.json({ success: true, title: approve ? 'Timesheet approved' : 'Timesheet rejected', message: timesheet.date });
+    }
+
+    if (tokenRecord.recordType === 'production_request') {
+      const request = await kv.get(`production_request_${tokenRecord.recordId}`);
+      if (!request) {
+        return c.json({ error: 'Production request not found' }, 404);
+      }
+      if (request.status !== 'shipped' && request.status !== 'partially-shipped') {
+        return c.json({ success: true, title: 'Already resolved', message: 'This request was already actioned' });
+      }
+
+      const now = getNowIST();
+      const finalStatus = request.status === 'partially-shipped' ? 'partially-delivered' : 'delivered';
+      const updated = {
+        ...request,
+        status: finalStatus,
+        deliveredAt: now,
+        deliveredBy: approverEmployeeId || 'quick-action',
+      };
+      await creditStoreInventoryForDelivery(updated, tokenRecord.recordId);
+      await kv.set(`production_request_${tokenRecord.recordId}`, updated);
+
+      // Let the same stakeholders who got the "shipped" notification know it landed.
+      const storeName = updated.storeName || 'Store';
+      const opsManagers = await getOperationsManagers(updated.storeId);
+      const clusterHeads = await getAllClusterHeads();
+      const stakeholders = [...opsManagers, ...clusterHeads].filter((u: any) => u.authUserId);
+      for (const stakeholder of stakeholders) {
+        await notifyUser(
+          stakeholder.authUserId,
+          `production_request_${finalStatus}`,
+          finalStatus === 'delivered' ? 'Production Delivered' : 'Production Partially Delivered',
+          `${storeName}'s production request was marked ${finalStatus === 'delivered' ? 'delivered' : 'partially delivered'} by ${approverName}`,
+          tokenRecord.recordId,
+          updated.requestDate
+        );
+      }
+
+      return c.json({ success: true, title: 'Marked delivered', message: updated.requestDate });
+    }
+
+    return c.json({ error: 'Unknown record type' }, 400);
+  } catch (error) {
+    console.log('Error executing quick action:', error);
+    return c.json({ error: 'Failed to execute action' }, 500);
   }
 });
 
@@ -3327,16 +6325,15 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/approve', async (c) => {
     await kv.set(key, approvedLeave);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === leave.employeeId);
+    const employee = await kv.get(`unified-employee:${leave.employeeId}`);
     if (employee?.authUserId) {
       await notifyUser(
         employee.authUserId,
         'leave_approved',
         'Leave Approved ✓',
-        `Your leave from ${leave.startDate} to ${leave.endDate} has been approved by ${managerName}`,
+        `Your leave on ${leave.leaveDate} has been approved by ${managerName}`,
         leaveId,
-        leave.startDate
+        leave.leaveDate
       );
     }
     
@@ -3372,16 +6369,15 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/reject', async (c) => {
     await kv.set(key, rejectedLeave);
     
     // Notify the employee
-    const employees = await kv.getByPrefix('attendance-employee:');
-    const employee = employees.find((e: any) => e.id === leave.employeeId);
+    const employee = await kv.get(`unified-employee:${leave.employeeId}`);
     if (employee?.authUserId) {
       await notifyUser(
         employee.authUserId,
         'leave_rejected',
         'Leave Rejected ✗',
-        `Your leave from ${leave.startDate} to ${leave.endDate} was rejected by ${managerName}. Reason: ${reason}`,
+        `Your leave on ${leave.leaveDate} was rejected by ${managerName}. Reason: ${reason}`,
         leaveId,
-        leave.startDate
+        leave.leaveDate
       );
     }
     
@@ -3389,6 +6385,35 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/reject', async (c) => {
   } catch (error) {
     console.log('Error rejecting leave:', error);
     return c.json({ error: 'Failed to reject leave' }, 500);
+  }
+});
+
+// Delete a leave application - only while it's still awaiting a decision. Once a manager
+// or cluster head has approved it, the leave balance/notifications already reflect it, so
+// deleting it out from under that record would leave things inconsistent; a rejected
+// leave is also left alone (it's already resolved and visible as history) - only 'pending'
+// can be removed, e.g. an employee who applied for the wrong date and wants to redo it.
+app.delete('/make-server-c2dd9b9d/leaves/:leaveId', async (c) => {
+  try {
+    const leaveId = c.req.param('leaveId');
+
+    const allLeaves = await kv.getByPrefix('leave:');
+    const leave = allLeaves.find((l: any) => l.id === leaveId);
+
+    if (!leave) {
+      return c.json({ error: 'Leave not found' }, 404);
+    }
+    if (leave.status !== 'pending') {
+      return c.json({ error: `Cannot delete a leave that has already been ${leave.status}` }, 400);
+    }
+
+    const key = `leave:${leave.employeeId}:${leaveId}`;
+    await kv.del(key);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting leave:', error);
+    return c.json({ error: 'Failed to delete leave' }, 500);
   }
 });
 
@@ -3922,7 +6947,11 @@ app.get('/make-server-c2dd9b9d/organizational-hierarchy', async (c) => {
       const subordinateManagers = allManagers.filter((m: any) => m.managerId === managerId);
       
       // Get direct employees (non-managers) under this manager
-      const directEmployees = allEmployees.filter((e: any) => e.managerId === managerId);
+      // Fall back to inchargeId for employees that have an incharge but no managerId
+      // (e.g. production staff assigned to their production incharge) - without this they
+      // appeared nowhere in the tree.
+      const directEmployees = allEmployees.filter((e: any) =>
+        e.managerId === managerId || (!e.managerId && e.inchargeId === managerId));
       
       // Recursively build subordinate manager hierarchies
       const managersWithHierarchy = subordinateManagers.map((subMgr: any) => {
@@ -3984,7 +7013,17 @@ app.get('/make-server-c2dd9b9d/organizational-hierarchy', async (c) => {
       unassigned: unassignedManagers.map((m: any) => m.employeeId)
     });
     
-    const unassignedEmployees = employees.filter((e: any) => !e.managerId && !e.inchargeId);
+    // "Unassigned" = not reachable from any manager in the tree above (not just "has no
+    // managerId") - an employee pointing at the cluster head directly or at someone who
+    // isn't a manager used to vanish from the page entirely.
+    const placedEmployeeIds = new Set<string>();
+    const collectPlaced = (node: any) => {
+      (node.employees || []).forEach((e: any) => placedEmployeeIds.add(e.employeeId));
+      (node.managers || []).forEach(collectPlaced);
+    };
+    hierarchy.forEach(collectPlaced);
+    unassignedManagers.forEach(collectPlaced);
+    const unassignedEmployees = employees.filter((e: any) => !placedEmployeeIds.has(e.employeeId));
     
     return c.json({ 
       hierarchy,
@@ -4347,6 +7386,49 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/store', async (c) => {
   }
 });
 
+// Explicit multi-store/multi-production-house access for an employee - replaces the
+// assumption baked into the old /store route above that one employee maps to exactly
+// one store. A production incharge's own storeId field actually holds a production
+// house id (a historical ambiguity that broke several screens this session, since
+// most code reads user.storeId assuming it's always a real store id); these arrays are
+// the explicit, unambiguous source of truth going forward.
+app.put('/make-server-c2dd9b9d/employee/:employeeId/assignments', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  if (role !== 'cluster_head' && role !== 'manager') {
+    return c.json({ error: 'Only cluster heads and operations managers can manage store/production house access' }, 403);
+  }
+
+  try {
+    const employeeId = c.req.param('employeeId');
+    const { assignedStoreIds, assignedProductionHouseIds } = await c.req.json();
+
+    if (!Array.isArray(assignedStoreIds) || !Array.isArray(assignedProductionHouseIds)) {
+      return c.json({ error: 'assignedStoreIds and assignedProductionHouseIds must be arrays' }, 400);
+    }
+
+    const employee = await kv.get(`unified-employee:${employeeId}`);
+    if (!employee) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+
+    employee.assignedStoreIds = assignedStoreIds;
+    employee.assignedProductionHouseIds = assignedProductionHouseIds;
+    await kv.set(`unified-employee:${employeeId}`, employee);
+
+    console.log(`Updated assignments for employee ${employeeId}: stores=${JSON.stringify(assignedStoreIds)}, productionHouses=${JSON.stringify(assignedProductionHouseIds)}`);
+
+    return c.json({ success: true, employee });
+  } catch (error) {
+    console.log('Error updating employee assignments:', error);
+    return c.json({ error: 'Failed to update employee assignments' }, 500);
+  }
+});
+
 // Update employee designation (Store Incharge / Production Incharge)
 app.put('/make-server-c2dd9b9d/employee/:employeeId/designation', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -4670,8 +7752,40 @@ app.delete('/make-server-c2dd9b9d/cluster-heads/by-email/:email', async (c) => {
 const VALID_INVENTORY_CATEGORIES = new Set([
   'fresh_produce', 'spices_seasonings', 'dairy', 'meat', 'packaging',
   'beverages', 'cleaning_sanitation', 'equipment_smallwares', 'staff_welfare_ppe', 'office_admin_supplies',
+  'puja_items',
   'staff_essentials', // legacy — still valid on historical data
 ]);
+
+// Cluster-head-created categories (see /custom-categories below) extend the fixed set
+// above at runtime - fetched fresh each time rather than cached, since a category added
+// moments ago needs to be usable immediately.
+async function getValidInventoryCategoryKeys(): Promise<Set<string>> {
+  const customCategories = await kv.getByPrefix('custom-category:');
+  const combined = new Set(VALID_INVENTORY_CATEGORIES);
+  for (const cat of customCategories) {
+    if (cat?.key) combined.add(cat.key);
+  }
+  return combined;
+}
+
+// Same idea for overhead/fixed-cost custom items (the smart quick-add's "remember this
+// item's classification" feature) - keep in sync with OVERHEAD_CATEGORY_META /
+// FIXED_COST_CATEGORIES in src/utils/inventoryData.ts.
+const VALID_OVERHEAD_CATEGORIES = new Set([
+  'fuel', 'ev_charging', 'travel', 'transportation', 'marketing', 'service_charge', 'repair', 'renovation',
+  'labour_charge', 'puja_expense', 'office_supplies', 'deep_cleaning', 'party',
+  'emergency_online', 'staff_emergency_services', 'utensils', 'cleaning_supplies',
+  'equipments', 'license', 'water_jar', 'vehicle_maintenance', 'donations_community',
+  'staff_welfare', 'breakfast', 'lunch', 'dinner', 'evening_snacks', 'personal_expense',
+  'miscellaneous',
+]);
+const VALID_FIXEDCOST_CATEGORIES = new Set(['electricity', 'rent', 'lpg_gas']);
+
+const isValidCategoryForType = (entryType: string | undefined, category: string): boolean => {
+  if (entryType === 'overhead') return VALID_OVERHEAD_CATEGORIES.has(category);
+  if (entryType === 'fixedcost') return VALID_FIXEDCOST_CATEGORIES.has(category);
+  return VALID_INVENTORY_CATEGORIES.has(category);
+};
 
 // Get all custom items
 app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
@@ -4698,6 +7812,8 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
       itemName: item.value.itemName,
       itemNameBengali: item.value.itemNameBengali,
       emoji: item.value.emoji,
+      entryType: item.value.entryType,
+      entityType: item.value.entityType,
       createdAt: item.value.createdAt
     }));
 
@@ -4708,15 +7824,29 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
   }
 });
 
-// Add custom item to a category
+// Add custom item to a category - cluster-head only (see the InventoryForm/QuickAddExpense
+// "+ Add Custom Item" gating on the frontend for why: store/operations incharges shouldn't
+// be able to expand the item catalog on their own, only pick from what's already there).
 app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can add new inventory items' }, 403);
+  }
+
   try {
-    const { category, itemName } = await c.req.json();
+    const { category, itemName, entryType, entityType } = await c.req.json();
 
     if (!category || !itemName) {
       return c.json({ error: 'Category and item name are required' }, 400);
     }
-    if (!VALID_INVENTORY_CATEGORIES.has(category)) {
+    const validCategories = entryType === 'overhead' || entryType === 'fixedcost'
+      ? null
+      : await getValidInventoryCategoryKeys();
+    const categoryIsValid = validCategories ? validCategories.has(category) : isValidCategoryForType(entryType, category);
+    if (!categoryIsValid) {
       return c.json({ error: `Unknown category "${category}"` }, 400);
     }
 
@@ -4725,38 +7855,42 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
-    
+
     const { data: existingItems } = await supabase
       .from('kv_store_c2dd9b9d')
       .select('key, value')
       .like('key', 'custom-item:%');
-    
-    const duplicate = (existingItems || []).find((item: any) => 
+
+    const duplicate = (existingItems || []).find((item: any) =>
       item.value.category === category && item.value.itemName === itemName
     );
-    
+
     if (duplicate) {
-      return c.json({ 
+      return c.json({
         customItem: {
           id: duplicate.key.replace('custom-item:', ''),
           category: duplicate.value.category,
           itemName: duplicate.value.itemName,
+          entryType: duplicate.value.entryType,
+          entityType: duplicate.value.entityType,
           createdAt: duplicate.value.createdAt
         }
       });
     }
-    
+
     // Create new custom item
     const id = `custom-item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const customItem = {
       category,
       itemName,
+      entryType: entryType || 'inventory',
+      entityType: entityType || undefined,
       createdAt: new Date().toISOString()
     };
-    
+
     await kv.set(`custom-item:${id}`, customItem);
-    
-    return c.json({ 
+
+    return c.json({
       customItem: {
         id,
         ...customItem
@@ -4779,8 +7913,14 @@ app.put('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
     if (!existing) {
       return c.json({ error: 'Custom item not found' }, 404);
     }
-    if (updates.category && !VALID_INVENTORY_CATEGORIES.has(updates.category)) {
-      return c.json({ error: `Unknown category "${updates.category}"` }, 400);
+    if (updates.category) {
+      const effectiveEntryType = updates.entryType || (existing as any).entryType;
+      const categoryIsValid = effectiveEntryType === 'overhead' || effectiveEntryType === 'fixedcost'
+        ? isValidCategoryForType(effectiveEntryType, updates.category)
+        : (await getValidInventoryCategoryKeys()).has(updates.category);
+      if (!categoryIsValid) {
+        return c.json({ error: `Unknown category "${updates.category}"` }, 400);
+      }
     }
 
     const updated = { ...existing, ...updates };
@@ -4802,6 +7942,104 @@ app.delete('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
   } catch (error) {
     console.log('Error deleting custom item:', error);
     return c.json({ error: 'Failed to delete custom item' }, 500);
+  }
+});
+
+// ===== Custom Inventory Categories (Cluster Head only) =====
+// Cluster-head-created categories, separate for store vs. production-house inventory (a
+// store's day-to-day purchases are a small curated subset - see STORE_CATEGORY_ITEMS in
+// inventoryData.ts - so a new category needs to say which side it's for). Merged with the
+// fixed INVENTORY_CATEGORIES list on the frontend and with VALID_INVENTORY_CATEGORIES here
+// (via getValidInventoryCategoryKeys) so items can actually be filed under them.
+
+app.get('/make-server-c2dd9b9d/custom-categories', async (c) => {
+  try {
+    const categories = await kv.getByPrefix('custom-category:');
+    return c.json({ categories: categories || [] });
+  } catch (error) {
+    console.log('Error fetching custom categories:', error);
+    return c.json({ categories: [] });
+  }
+});
+
+app.post('/make-server-c2dd9b9d/custom-categories', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can add new categories' }, 403);
+  }
+
+  try {
+    const { scope, label, emoji } = await c.req.json();
+    if (!scope || (scope !== 'store' && scope !== 'production')) {
+      return c.json({ error: 'scope must be "store" or "production"' }, 400);
+    }
+    if (!label || !label.trim()) {
+      return c.json({ error: 'Category label is required' }, 400);
+    }
+
+    // Derive a stable key from the label (lowercase, underscored) - matches the
+    // convention every built-in category key already follows.
+    const baseKey = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!baseKey) {
+      return c.json({ error: 'Could not derive a valid category key from that label' }, 400);
+    }
+
+    const existing = await kv.getByPrefix('custom-category:');
+    if ((existing || []).some((cat: any) => cat.key === baseKey) || VALID_INVENTORY_CATEGORIES.has(baseKey)) {
+      return c.json({ error: `A category with the key "${baseKey}" already exists` }, 409);
+    }
+
+    const category = {
+      key: baseKey,
+      scope,
+      label: label.trim(),
+      emoji: emoji || '📦',
+      createdBy: auth.user.user_metadata?.name || auth.user.email || 'cluster_head',
+      createdAt: new Date().toISOString(),
+    };
+    await kv.set(`custom-category:${baseKey}`, category);
+
+    return c.json({ category });
+  } catch (error) {
+    console.log('Error adding custom category:', error);
+    return c.json({ error: 'Failed to add custom category' }, 500);
+  }
+});
+
+app.delete('/make-server-c2dd9b9d/custom-categories/:key', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can remove categories' }, 403);
+  }
+
+  try {
+    const key = c.req.param('key');
+
+    // Deleting the category definition doesn't touch items already filed under it -
+    // same as the built-in 'staff_essentials' retirement earlier, historical records
+    // keep whatever category they were logged with. Only block the delete if items are
+    // still actively catalogued there, so a cluster head notices and reassigns them
+    // first rather than the category silently vanishing out from under live items.
+    const itemsUsingCategory = await kv.getByPrefix('custom-item:');
+    const stillInUse = (itemsUsingCategory || []).filter((item: any) => item.category === key);
+    if (stillInUse.length > 0) {
+      return c.json({
+        error: `${stillInUse.length} item(s) are still filed under this category - reassign or delete them first`,
+        itemNames: stillInUse.map((i: any) => i.itemName),
+      }, 409);
+    }
+
+    await kv.del(`custom-category:${key}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error deleting custom category:', error);
+    return c.json({ error: 'Failed to delete custom category' }, 500);
   }
 });
 
@@ -5014,7 +8252,7 @@ app.put('/make-server-c2dd9b9d/stores/:storeId', async (c) => {
     }
 
     const storeId = c.req.param('storeId');
-    const { name, location } = await c.req.json();
+    const { name, location, ciferonStoreId } = await c.req.json();
 
     const allStores = await kv.getByPrefix('store:');
     const store = allStores.find((s: any) => s.id === storeId);
@@ -5027,6 +8265,7 @@ app.put('/make-server-c2dd9b9d/stores/:storeId', async (c) => {
       ...store,
       name: name || store.name,
       location: location !== undefined ? location : store.location,
+      ciferonStoreId: ciferonStoreId !== undefined ? ciferonStoreId : store.ciferonStoreId,
       updatedAt: new Date().toISOString()
     };
 
@@ -5168,38 +8407,24 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
 
   try {
     const userId = authResult.user.id;
-    
-    // Optimize: Use direct database query with sorting and limit with retry logic
-    // This avoids loading all notifications into memory
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
-    
-    // Query with prefix pattern, order by key (which includes timestamp), and limit results
-    const { data, error } = await retryWithBackoff(
-      async () => {
-        const result = await supabase
-          .from('kv_store_c2dd9b9d')
-          .select('value')
-          .like('key', `notification:${userId}:%`)
-          .order('key', { ascending: false })
-          .limit(100); // Limit to most recent 100 notifications
-        
-        if (result.error) throw new Error(result.error.message);
-        return result;
-      },
-      'fetch notifications'
-    );
-    
-    const notifications = data?.map((d) => d.value) ?? [];
-    
-    // Sort by createdAt descending (newest first)
-    const sortedNotifications = notifications.sort((a: any, b: any) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-    
-    return c.json({ notifications: sortedNotifications });
+
+    // Most recent 100 by the real createdAt (the key's uuid suffix says nothing about age) and
+    // the full unread count, both computed in the database - this used to download a user's
+    // whole history (6,000+ rows for the cluster head) on every 30s poll.
+    const prefix = `notification:${userId}:`;
+    const [{ data: recent, error: listError }, { data: unread, error: countError }] = await Promise.all([
+      supabase
+        .from('kv_store_c2dd9b9d')
+        .select('value')
+        .like('key', prefix + '%')
+        .order('value->>createdAt', { ascending: false })
+        .limit(100),
+      supabase.rpc('notification_unread_count', { p_user: userId }),
+    ]);
+    if (listError) throw new Error(listError.message);
+    if (countError) throw new Error(countError.message);
+
+    return c.json({ notifications: (recent || []).map((r: any) => r.value), unreadCount: unread ?? 0 });
   } catch (error: any) {
     console.log('Error fetching notifications:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -5254,42 +8479,13 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
 
   try {
     const userId = authResult.user.id;
-    
-    // Optimize: Use direct database query with limit to avoid memory issues
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
-    
-    // Fetch only unread notifications (limit 100 for safety) with retry logic
-    const { data, error } = await retryWithBackoff(
-      async () => {
-        const result = await supabase
-          .from('kv_store_c2dd9b9d')
-          .select('key, value')
-          .like('key', `notification:${userId}:%`)
-          .limit(100);
-        
-        if (result.error) throw new Error(result.error.message);
-        return result;
-      },
-      'fetch notifications for read-all'
-    );
-    
-    // Filter unread notifications and prepare batch update
-    const unreadNotifications = (data || []).filter((d) => !d.value.read);
-    
-    if (unreadNotifications.length === 0) {
-      return c.json({ success: true, updated: 0 });
-    }
-    
-    // Batch update using mset (more efficient than individual sets) with retry logic
-    const keys = unreadNotifications.map(n => n.key);
-    const values = unreadNotifications.map(n => ({ ...n.value, read: true }));
-    
-    await kvWithRetry.mset(keys, values);
-    
-    return c.json({ success: true, updated: unreadNotifications.length });
+
+    // One UPDATE in the database (see migration 20261017000000_notification_rpcs.sql) -
+    // downloading the history and re-writing it row batches missed rows on large backlogs.
+    const { data: updated, error: rpcError } = await supabase.rpc('mark_all_notifications_read', { p_user: userId });
+    if (rpcError) throw new Error(rpcError.message);
+
+    return c.json({ success: true, updated: updated ?? 0 });
   } catch (error: any) {
     console.log('Error marking all notifications as read:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -5385,6 +8581,50 @@ async function createNotification(userId: string, type: string, title: string, m
   }
 }
 
+// Nightly cleanup across ALL users - deletes notifications that are already read and
+// older than 30 days. The per-user DELETE /notifications/cleanup route above existed
+// but was never actually invoked by anything (no cron, no button), so notifications
+// accumulated forever; once a user passed 100 total, GET /notifications and
+// PUT /notifications/read-all (both previously capped at an arbitrary 100-row slice)
+// stopped being able to show or clear the same set consistently. This keeps the total
+// bounded going forward. Never deletes anything still unread, no matter how old, so a
+// missed notification can't silently disappear before the user has seen it.
+// Cron-only (see 20260814000000_notifications_auto_cleanup_cron.sql) - not reachable by
+// regular users.
+app.post('/make-server-c2dd9b9d/notifications/auto-cleanup', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const allNotifications = await getAllByPrefixWithRetry('notification:');
+    const stale = allNotifications.filter((n: any) =>
+      n.read && n.createdAt && new Date(n.createdAt).getTime() < thirtyDaysAgoMs
+    );
+
+    if (stale.length === 0) {
+      return c.json({ success: true, deleted: 0 });
+    }
+
+    const keys = stale.map((n: any) => `notification:${n.userId}:${n.id}`);
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+      await kvWithRetry.mdel(keys.slice(i, i + CHUNK_SIZE));
+    }
+
+    return c.json({ success: true, deleted: stale.length });
+  } catch (error: any) {
+    console.log('Error in notification auto-cleanup:', error);
+    if (error?.message === 'DATABASE_UNAVAILABLE') {
+      return c.json({ error: 'Database temporarily unavailable' }, 503);
+    }
+    return c.json({ error: 'Failed to auto-cleanup notifications' }, 500);
+  }
+});
+
 // Push subscriptions are keyed by employeeId, but most notification call sites only
 // have the Supabase authUserId on hand. Reverse-lookup employeeId from authUserId so
 // existing call sites can gain push notifications without restructuring.
@@ -5399,20 +8639,72 @@ async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | n
   }
 }
 
+// A single-use, scoped credential embedded in a push notification so the Android
+// notification-tray Approve/Reject buttons (see QuickActionMessagingService.java) can
+// call back into the API without the device needing a live logged-in session - a
+// background BroadcastReceiver has no access to the user's Supabase auth session, so it
+// can't call the normal authenticated /approve or /reject routes. The token only ever
+// authorizes the exact action on the exact record it was minted for (see POST
+// /quick-action below) and is marked used immediately, so it can't be replayed.
+async function createQuickActionToken(action: 'approve' | 'reject' | 'deliver', recordType: 'leave' | 'timesheet' | 'production_request', recordId: string, approverUserId: string): Promise<string> {
+  const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  await kv.set(`quick_action_token:${token}`, {
+    action,
+    recordType,
+    recordId,
+    approverUserId,
+    used: false,
+    createdAt: new Date().toISOString(),
+  });
+  return token;
+}
+
 // Create both the in-app (bell) notification and a push notification for the same event.
 // Push failures (no subscription, VAPID not configured, etc.) are non-fatal and swallowed,
 // matching the existing non-critical error handling of createNotification.
-async function notifyUser(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
+// `quickAction`, when provided, mints a pair of Approve/Reject tokens for the push
+// payload so the Android app can show tappable action buttons on the notification itself.
+// For 'production_request', it's a single "Delivered" button instead (there's no reject
+// counterpart to shipping something that's already on its way).
+async function notifyUser(
+  userId: string,
+  type: string,
+  title: string,
+  message: string,
+  relatedId?: string,
+  relatedDate?: string,
+  quickAction?: { recordType: 'leave' | 'timesheet' | 'production_request'; recordId: string }
+) {
   const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
 
   try {
     const employeeId = await getEmployeeIdByAuthUserId(userId);
     if (employeeId) {
+      // notificationId carries the real per-notification unique id so the Android side
+      // can derive a unique tray notification ID from it (see
+      // QuickActionMessagingService.java) instead of from `tag`/`type`. `type` is shared
+      // by every notification of that kind (e.g. every "Inventory Data Logged" push has
+      // tag "inventory_logged"), so keying the Android notification ID off `tag` alone
+      // made each new push silently replace the previous unseen one in the tray instead
+      // of stacking - a recurring daily notification like this one would only ever show
+      // its single latest occurrence.
+      const data: Record<string, any> = {
+        type,
+        relatedId: relatedId || null,
+        relatedDate: relatedDate || null,
+        notificationId: notificationResult?.id || null,
+      };
+      if (quickAction?.recordType === 'production_request') {
+        data.deliverToken = await createQuickActionToken('deliver', 'production_request', quickAction.recordId, userId);
+      } else if (quickAction) {
+        data.approveToken = await createQuickActionToken('approve', quickAction.recordType, quickAction.recordId, userId);
+        data.rejectToken = await createQuickActionToken('reject', quickAction.recordType, quickAction.recordId, userId);
+      }
       await push.sendPushNotification(employeeId, {
         title,
         message,
         tag: type,
-        data: { type, relatedId: relatedId || null, relatedDate: relatedDate || null },
+        data,
       });
     }
   } catch (pushError) {
@@ -5437,11 +8729,16 @@ async function getOperationsManagers(storeId?: string) {
     u.designation !== 'production_incharge'
   );
   
-  // Filter by store if provided
+  // Filter by store if provided - exact match only. This used to also match any manager
+  // with NO storeId set at all (treating "unset" as "matches every store"), which was
+  // invisible with a single store but would leak a Store 1 manager's notifications into
+  // Store 2's events (and vice versa) the moment a second store exists. A manager who's
+  // genuinely meant to see every store should be given cluster-head-style access instead
+  // of relying on this fallback.
   if (storeId) {
-    return managers.filter((m: any) => !m.storeId || m.storeId === storeId);
+    return managers.filter((m: any) => m.storeId === storeId);
   }
-  
+
   return managers;
 }
 
@@ -5458,10 +8755,1277 @@ async function getStoreIncharge(storeId: string) {
 }
 
 // ============================================
+// RIDER TRIPS (logistics: production house -> store)
+// ============================================
+// A "rider" is a regular employee (role: 'employee') with designation 'rider'. One trip is one
+// run: production calls the rider in, the rider moves it through the stages below with a
+// button each, and everyone involved is notified at the relevant steps.
+//   called -> on_the_way -> arrived -> picked_up -> delivered   (or cancelled by dispatch)
+// Production must mark the order "ready for pickup" before the rider can mark it picked up.
+// Phase 1 is status-only; live GPS/map layers on top of these same trip records later.
+const RIDER_MAX_TRIPS_PER_DAY = 4;
+const RIDER_NEXT_STATUS: Record<string, string> = {
+  called: 'on_the_way',
+  on_the_way: 'arrived',
+  arrived: 'picked_up',
+  picked_up: 'delivered',
+};
+const RIDER_ACTIVE_STATUSES = ['called', 'on_the_way', 'arrived', 'picked_up'];
+
+async function getRiderActor(authUser: any) {
+  const meta = authUser?.user_metadata || {};
+  const employeeId: string | null = meta.employeeId || null;
+  const employee = employeeId ? await kv.get(`unified-employee:${employeeId}`) : null;
+  const role: string = meta.role || employee?.role || '';
+  const designation: string | null = meta.designation || employee?.designation || null;
+  return {
+    employeeId,
+    employee,
+    role,
+    designation,
+    name: meta.name || employee?.name || authUser?.email || 'Someone',
+    storeId: employee?.storeId || meta.storeId || null,
+    // Who may call riders / mark an order ready: cluster head, production incharge, or an
+    // operations manager (a manager who isn't tied to a single store).
+    canDispatch: role === 'cluster_head' || designation === 'production_incharge' || (role === 'manager' && designation !== 'store_incharge'),
+    isRider: designation === 'rider',
+  };
+}
+
+async function notifyEmployeeIds(employees: any[], type: string, title: string, message: string, trip: any) {
+  const seen = new Set<string>();
+  for (const emp of employees) {
+    if (!emp?.authUserId || seen.has(emp.authUserId)) continue;
+    seen.add(emp.authUserId);
+    try {
+      await notifyUser(emp.authUserId, type, title, message, trip.id, trip.date);
+      // Keep what Google said about this push, so a "no alert arrived" report can be traced to
+      // the server side (no token / rejected) or the phone side (accepted but nothing shown).
+      try {
+        const outcome = push.getLastFcmOutcome(emp.employeeId);
+        await kv.set(`rider-push-log:${trip.id}:${type}:${Date.now()}`, { tripId: trip.id, type, employeeId: emp.employeeId, outcome });
+      } catch (_) { /* diagnostics only */ }
+    } catch (error) {
+      console.log(`Rider notification (${type}) failed for ${emp.employeeId}:`, error);
+    }
+  }
+}
+
+// ---- Rider profile, availability and fares ----
+// rider-profile:{employeeId} = { name, aadhaar, defaultRate, availability, unavailableUntil }
+// availability = { mon: { enabled, from: 'HH:MM', to: 'HH:MM' }, ... } (India time). Riders count as
+// available inside their schedule unless they marked themselves unavailable.
+const RIDER_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const RIDER_DAY_LABELS: Record<string, string> = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+
+function riderIstNow() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + 5.5 * 3600 * 1000);
+  const endOfDayIst = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) - 5.5 * 3600 * 1000);
+  return {
+    now,
+    dayKey: RIDER_DAY_KEYS[ist.getUTCDay()],
+    minutes: ist.getUTCHours() * 60 + ist.getUTCMinutes(),
+    endOfDayIso: endOfDayIst.toISOString(),
+  };
+}
+
+const hhmmToMinutes = (t: string) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t || '');
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN;
+};
+
+function riderAvailability(profile: any): { available: boolean; reason: string | null } {
+  const { now, dayKey, minutes } = riderIstNow();
+  const until = profile?.unavailableUntil;
+  if (until === 'indefinite') return { available: false, reason: 'Marked unavailable' };
+  if (until && new Date(until).getTime() > now.getTime()) {
+    const t = new Date(until).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+    return { available: false, reason: `Marked unavailable until ${t}` };
+  }
+  const day = profile?.availability?.[dayKey];
+  if (day) {
+    if (!day.enabled) return { available: false, reason: `Off on ${RIDER_DAY_LABELS[dayKey]}s` };
+    const from = hhmmToMinutes(day.from);
+    const to = hhmmToMinutes(day.to);
+    if (!isNaN(from) && !isNaN(to) && (minutes < from || minutes >= to)) {
+      return { available: false, reason: `Outside working hours (${day.from} - ${day.to})` };
+    }
+  }
+  return { available: true, reason: null };
+}
+
+const maskAadhaar = (a: string | null | undefined) => (a && a.length >= 4 ? `XXXX XXXX ${a.slice(-4)}` : null);
+
+async function loadRiderProfile(employeeId: string) {
+  return (await kv.get(`rider-profile:${employeeId}`)) || null;
+}
+
+// A ride is an ordered list of STOPS; the rider works through it one leg (stop -> next stop) at a
+// time. Production -> store and store -> production have two stops, a round trip (store ->
+// production -> store) has three, and a custom ride (e.g. a stall at an event) has two stops where
+// either end can be a one-off location with its own coordinates.
+type RiderStop = { kind: 'production' | 'store' | 'custom'; id: string | null; name: string; latitude?: number | null; longitude?: number | null };
+
+// Rides created before multi-stop rides existed have no `stops` - derive them from the direction.
+function tripStops(trip: any): RiderStop[] {
+  if (Array.isArray(trip.stops) && trip.stops.length >= 2) return trip.stops;
+  const production: RiderStop = { kind: 'production', id: trip.productionHouseId || null, name: trip.productionHouseName || 'the production house' };
+  const store: RiderStop = { kind: 'store', id: trip.storeId || null, name: trip.storeName || 'the store' };
+  return trip.direction === 'to_production' ? [store, production] : [production, store];
+}
+const tripLegIndex = (trip: any) => Math.min(Math.max(0, trip.legIndex || 0), tripStops(trip).length - 2);
+const isFinalLeg = (trip: any) => tripLegIndex(trip) >= tripStops(trip).length - 2;
+
+// The two ends of the leg the rider is on right now.
+const rideEnds = (trip: any) => {
+  const stops = tripStops(trip);
+  const i = tripLegIndex(trip);
+  const pickup = stops[i];
+  const drop = stops[i + 1];
+  return { pickup, drop, pickupKind: pickup.kind, dropKind: drop.kind, pickupName: pickup.name, dropName: drop.name };
+};
+
+// Who to tell about a stop: production heads, that store's incharge, or - for a one-off custom
+// location - whoever created the ride.
+async function stopParty(stop: RiderStop, trip: any): Promise<any[]> {
+  if (stop.kind === 'production') return await getAllProductionHeads();
+  if (stop.kind === 'store') {
+    const incharge = stop.id ? await getStoreIncharge(stop.id) : null;
+    return incharge ? [incharge] : [];
+  }
+  const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+  return caller ? [caller] : [];
+}
+
+// Coordinates for a stop: a custom stop carries its own, production/store use their map pin.
+async function stopCoordinates(stop: RiderStop): Promise<{ latitude: number; longitude: number } | null> {
+  if (isValidLatLng(stop.latitude, stop.longitude)) return { latitude: stop.latitude as number, longitude: stop.longitude as number };
+  if (stop.kind === 'custom' || !stop.id) return null;
+  const place = await kv.get(`rider-place:${stop.kind}:${stop.id}`);
+  return place && isValidLatLng(place.latitude, place.longitude) ? { latitude: place.latitude, longitude: place.longitude } : null;
+}
+
+// ---- Linking a ride to the stock requests it carries ----
+// A ride can carry stock requests (trip.requestIds). The store confirms the delivery ONCE: either
+// "Confirm received" on the ride (which marks the carried requests delivered) or "Delivered" on the
+// Stock Requests screen (which confirms the ride). Both directions below.
+const REQUEST_DONE = ['delivered', 'partially-delivered'];
+
+// Marks one stock request delivered because the ride confirmed it. Only a request production has
+// actually shipped can be delivered (delivery credits the shipped quantities to the store's stock),
+// and a request that is already delivered is left alone so stock is never credited twice.
+async function deliverRequestFromRide(requestId: string, byName: string): Promise<'delivered' | 'already' | 'not_shipped' | 'missing'> {
+  const req = await kv.get(`production_request_${requestId}`);
+  if (!req) return 'missing';
+  if (REQUEST_DONE.includes(req.status)) return 'already';
+  if (req.status !== 'shipped' && req.status !== 'partially-shipped') return 'not_shipped';
+  const now = new Date().toISOString();
+  await creditStoreInventoryForDelivery(req, requestId);
+  await kv.set(`production_request_${requestId}`, { ...req, status: 'delivered', updatedAt: now, deliveredAt: now, deliveredBy: byName, deliveredViaRide: true });
+  return 'delivered';
+}
+
+// If every stock request on a delivered ride has already been marked delivered in Stock Requests,
+// the ride's receipt is confirmed automatically - the store should not have to confirm it twice.
+async function autoReceiptFromRequests(trip: any, byName?: string): Promise<any | null> {
+  const ids: string[] = Array.isArray(trip.requestIds) ? trip.requestIds : [];
+  if (trip.status !== 'delivered' || trip.receipt || ids.length === 0) return null;
+  const reqs = await Promise.all(ids.map((id) => kv.get(`production_request_${id}`)));
+  if (reqs.some((r) => !r || !REQUEST_DONE.includes(r.status))) return null;
+  const partial = reqs.some((r) => r.status === 'partially-delivered');
+  const stops = tripStops(trip);
+  const lastStop = stops[stops.length - 1];
+  const who = byName || reqs[reqs.length - 1]?.deliveredBy || 'the store';
+  const receipt = {
+    status: partial ? 'issue' : 'confirmed',
+    note: partial ? 'Marked partially delivered in Stock Requests - see the request for what was short' : 'Confirmed through Stock Requests',
+    byName: who,
+    at: new Date().toISOString(),
+    viaRequests: true,
+    requestsDelivered: ids.length,
+  };
+  const updated = { ...trip, receipt };
+  await kv.set(`rider-trip:${trip.id}`, updated);
+  const heads = await getAllProductionHeads();
+  const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+  await notifyEmployeeIds(
+    [...heads, caller],
+    'rider_receipt',
+    partial ? 'Delivery partly received' : 'Delivery received',
+    partial ? `${lastStop.name} marked the stock request partially delivered - check what was short.` : `${lastStop.name} confirmed the stock request from ${trip.riderName}'s ride was received.`,
+    updated
+  );
+  return updated;
+}
+
+// Called whenever a stock request is marked delivered: confirm any delivered ride that carried it.
+async function confirmRidesForRequest(requestId: string, byName?: string): Promise<void> {
+  try {
+    // Stock Requests records who delivered it as an employee id - show their name instead.
+    let name = byName;
+    if (byName) {
+      const emp = await kv.get(`unified-employee:${byName}`);
+      if (emp?.name) name = emp.name;
+    }
+    const trips = await getAllByPrefixWithRetry('rider-trip:');
+    for (const t of trips || []) {
+      if (t.status === 'delivered' && !t.receipt && Array.isArray(t.requestIds) && t.requestIds.includes(requestId)) {
+        await autoReceiptFromRequests(t, name);
+      }
+    }
+  } catch (error) {
+    console.log('Could not sync ride receipts for request', requestId, error);
+  }
+}
+
+// Guardrail: the rider may only mark Arrived / Picked up / Delivered while actually at that stop.
+// Checked against the phone's last reported position (and its stated accuracy), which must be
+// fresh. A stop with no map location yet can't be checked, so it is allowed but recorded as
+// unverified rather than blocking the ride.
+const RIDER_GEOFENCE_METRES = 200;
+const RIDER_LOCATION_MAX_AGE_MS = 3 * 60 * 1000;
+
+async function checkRiderAtStop(
+  trip: any,
+  stop: RiderStop,
+  action: string
+): Promise<{ ok: true; verified: boolean; meters: number | null } | { ok: false; error: string }> {
+  const coords = await stopCoordinates(stop);
+  if (!coords) return { ok: true, verified: false, meters: null };
+  const loc = await kv.get(`rider-location:${trip.id}`);
+  if (!loc || Date.now() - new Date(loc.updatedAt).getTime() > RIDER_LOCATION_MAX_AGE_MS) {
+    return { ok: false, error: "We can't see your location right now. Turn on location/GPS, wait a few seconds, then try again." };
+  }
+  const meters = haversineMetres(loc.latitude, loc.longitude, coords.latitude, coords.longitude);
+  const allowed = RIDER_GEOFENCE_METRES + Math.min(typeof loc.accuracy === 'number' ? loc.accuracy : 0, 100);
+  if (meters > allowed) {
+    const away = meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters / 10) * 10} m`;
+    return { ok: false, error: `You're about ${away} from ${stop.name}. Get to ${stop.name} before marking ${action}.` };
+  }
+  return { ok: true, verified: true, meters: Math.round(meters) };
+}
+
+// Is the actor store staff for a store this ride stops at, and may they watch the rider right now?
+// (Watching: once the order is on its way to their store, or while the rider is coming to pick up from it.)
+function storeStaffMayWatch(trip: any, actor: any): boolean {
+  if (!(actor.designation === 'store_incharge' || actor.designation === 'store_ops') || !actor.storeId) return false;
+  const { pickup, drop } = rideEnds(trip);
+  const pickupIsMine = pickup.kind === 'store' && pickup.id === actor.storeId;
+  const dropIsMine = drop.kind === 'store' && drop.id === actor.storeId;
+  return (pickupIsMine && RIDER_LOCATION_STATUSES.includes(trip.status)) || (dropIsMine && trip.status === 'picked_up');
+}
+
+// Riders available to be called (dispatch roles only), with live availability and default rate.
+app.get('/make-server-c2dd9b9d/rider/riders', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const all = await kv.getByPrefix('unified-employee:');
+    const riderEmployees = (all || []).filter((e: any) => e.designation === 'rider' && e.status !== 'inactive');
+    const riders = [];
+    for (const e of riderEmployees) {
+      const profile = await loadRiderProfile(e.employeeId);
+      const avail = riderAvailability(profile);
+      riders.push({
+        employeeId: e.employeeId,
+        name: profile?.name || e.name,
+        available: avail.available,
+        unavailableReason: avail.reason,
+        defaultRate: profile?.defaultRate ?? null,
+        aadhaarMasked: maskAadhaar(profile?.aadhaar),
+        aadhaarFull: actor.role === 'cluster_head' ? (profile?.aadhaar || null) : null,
+        hasProfile: !!profile,
+      });
+    }
+    // Available riders first, unavailable (shown red) last.
+    riders.sort((a, b) => Number(b.available) - Number(a.available) || a.name.localeCompare(b.name));
+    return c.json({ riders });
+  } catch (error) {
+    console.log('Error fetching riders:', error);
+    return c.json({ error: 'Failed to fetch riders' }, 500);
+  }
+});
+
+// Trips for a date (default today) plus any still-active trip from an earlier day, scoped by who
+// is asking: a rider sees only their own, store staff only rides that stop at their store,
+// dispatch roles see everything.
+app.get('/make-server-c2dd9b9d/rider/trips', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const date = c.req.query('date') || getTodayIST();
+    // Optional range (inclusive, YYYY-MM-DD) for the Past rides view; without it: one day + anything still active.
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    const isIso = (d?: string) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    const all = await getAllByPrefixWithRetry('rider-trip:');
+    let trips = (all || []).filter((t: any) =>
+      isIso(from) && isIso(to)
+        ? t.date >= (from as string) && t.date <= (to as string)
+        : t.date === date || RIDER_ACTIVE_STATUSES.includes(t.status)
+    );
+    if (actor.isRider) {
+      trips = trips.filter((t: any) => t.riderEmployeeId === actor.employeeId);
+    } else if (!actor.canDispatch) {
+      const isStoreStaff = actor.designation === 'store_incharge' || actor.designation === 'store_ops';
+      if (!isStoreStaff || !actor.storeId) return c.json({ trips: [] });
+      trips = trips.filter((t: any) => tripStops(t).some((st) => st.kind === 'store' && st.id === actor.storeId));
+    }
+    // Give older rides the same shape as new ones so the screens only deal with one format.
+    trips = trips.map((t: any) => ({ ...t, stops: tripStops(t), legIndex: tripLegIndex(t), tripType: t.tripType || (t.direction === 'to_production' ? 'to_production' : 'to_store') }));
+    trips.sort((a: any, b: any) => String(b.calledAt).localeCompare(String(a.calledAt)));
+    return c.json({ trips, maxTripsPerDay: RIDER_MAX_TRIPS_PER_DAY });
+  } catch (error) {
+    console.log('Error fetching rider trips:', error);
+    return c.json({ error: 'Failed to fetch trips' }, 500);
+  }
+});
+
+// Call a rider in (dispatch roles). tripType: 'to_store' (production house -> store, the default),
+// 'to_production' (store -> production house), 'round_trip' (store -> production -> store) or
+// 'custom' (any two places, including a one-off location such as an event stall).
+app.post('/make-server-c2dd9b9d/rider/trips', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Only the production incharge, an operations manager or the cluster head can call a rider' }, 403);
+
+    const body = await c.req.json();
+    const { riderEmployeeId, storeId, note, fare, force } = body;
+    const requestedRequestIds: string[] = Array.isArray(body.requestIds) ? body.requestIds.filter((x: any) => typeof x === 'string') : [];
+    const tripType: string = ['to_store', 'to_production', 'round_trip', 'custom'].includes(body.tripType) ? body.tripType : (body.direction === 'to_production' ? 'to_production' : 'to_store');
+    if (!riderEmployeeId) return c.json({ error: 'Choose a rider' }, 400);
+
+    const rider = await kv.get(`unified-employee:${riderEmployeeId}`);
+    if (!rider || rider.designation !== 'rider') return c.json({ error: 'That employee is not a rider' }, 400);
+
+    // ---- work out the stops
+    const makeStop = async (input: any): Promise<RiderStop | { error: string }> => {
+      if (input?.kind === 'production') {
+        const house = input.id ? await kv.get(`production_house_${input.id}`) : null;
+        return house ? { kind: 'production', id: input.id, name: house.name || 'Production house' } : { error: 'Production house not found' };
+      }
+      if (input?.kind === 'store') {
+        const st = input.id ? await kv.get(`store:${input.id}`) : null;
+        return st ? { kind: 'store', id: input.id, name: st.name || 'Store' } : { error: 'Store not found' };
+      }
+      if (input?.kind === 'custom') {
+        const name = typeof input.name === 'string' ? input.name.trim() : '';
+        if (name.length < 2) return { error: 'Give the custom location a name' };
+        if (!isValidLatLng(input.latitude, input.longitude)) return { error: `Set the map location for "${name}"` };
+        return { kind: 'custom', id: null, name, latitude: input.latitude, longitude: input.longitude };
+      }
+      return { error: 'Choose where the ride starts and ends' };
+    };
+
+    let stops: RiderStop[] = [];
+    if (tripType === 'custom') {
+      const pickup = await makeStop(body.pickup);
+      if ('error' in pickup) return c.json({ error: pickup.error }, 400);
+      const drop = await makeStop(body.drop);
+      if ('error' in drop) return c.json({ error: drop.error }, 400);
+      stops = [pickup, drop];
+    } else {
+      if (!storeId) return c.json({ error: 'Choose a store' }, 400);
+      const store = await kv.get(`store:${storeId}`);
+      if (!store) return c.json({ error: 'Store not found' }, 404);
+      if (!store.productionHouseId) return c.json({ error: `${store.name || 'This store'} has no production house linked` }, 400);
+      const houseStop = await makeStop({ kind: 'production', id: store.productionHouseId });
+      if ('error' in houseStop) return c.json({ error: houseStop.error }, 400);
+      const storeStop: RiderStop = { kind: 'store', id: storeId, name: store.name || 'Store' };
+      stops = tripType === 'to_production' ? [storeStop, houseStop]
+        : tripType === 'round_trip' ? [storeStop, houseStop, storeStop]
+        : [houseStop, storeStop];
+    }
+    if (stops.length === 2 && stops[0].kind === stops[1].kind && stops[0].id === stops[1].id && stops[0].kind !== 'custom') {
+      return c.json({ error: 'The ride starts and ends at the same place' }, 400);
+    }
+
+    const profile = await loadRiderProfile(riderEmployeeId);
+    const avail = riderAvailability(profile);
+    if (!avail.available && !force) {
+      return c.json({ error: `${profile?.name || rider.name} is unavailable right now (${avail.reason}).`, unavailable: true }, 409);
+    }
+
+    const today = getTodayIST();
+    const all = await getAllByPrefixWithRetry('rider-trip:');
+    const riderTrips = (all || []).filter((t: any) => t.riderEmployeeId === riderEmployeeId);
+    if (riderTrips.some((t: any) => RIDER_ACTIVE_STATUSES.includes(t.status))) {
+      return c.json({ error: `${rider.name} already has a ride in progress. Wait until it is delivered or cancel it first.` }, 400);
+    }
+    const todaysCount = riderTrips.filter((t: any) => t.date === today && t.status !== 'cancelled').length;
+    if (todaysCount >= RIDER_MAX_TRIPS_PER_DAY) {
+      return c.json({ error: `${rider.name} has already done ${RIDER_MAX_TRIPS_PER_DAY} rides today.` }, 400);
+    }
+
+    // Fare: what production typed, else the rider's own default rate. With no rate at all the
+    // rider has to name one first (and production approves it) before the ride can start.
+    const typedFare = typeof fare === 'number' && fare > 0 ? fare : null;
+    const startingFare = typedFare ?? (profile?.defaultRate > 0 ? profile.defaultRate : 0);
+
+    const primaryStore = stops.find((st) => st.kind === 'store') || null;
+    const primaryHouse = stops.find((st) => st.kind === 'production') || null;
+
+    // Stock requests this ride carries: only those for the store it finally delivers to, and not
+    // already delivered. They get marked delivered when the store confirms the ride.
+    const finalStop = stops[stops.length - 1];
+    let requestIds: string[] = [];
+    if (finalStop.kind === 'store' && requestedRequestIds.length > 0) {
+      const found = await Promise.all(requestedRequestIds.map((id) => kv.get(`production_request_${id}`)));
+      requestIds = requestedRequestIds.filter((id, i) => found[i] && found[i].storeId === finalStop.id && !REQUEST_DONE.includes(found[i].status));
+    }
+    const now = new Date().toISOString();
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 7)}`;
+    const trip = {
+      id,
+      date: today,
+      tripNumber: todaysCount + 1,
+      tripType,
+      direction: tripType === 'to_production' ? 'to_production' : 'to_store',
+      stops,
+      legIndex: 0,
+      legs: [],
+      requestIds,
+      riderEmployeeId,
+      riderName: profile?.name || rider.name,
+      storeId: primaryStore?.id || null,
+      storeName: primaryStore?.name || '',
+      productionHouseId: primaryHouse?.id || null,
+      productionHouseName: primaryHouse?.name || null,
+      note: typeof note === 'string' ? note.trim() : '',
+      fare: startingFare,
+      defaultFare: startingFare,
+      proposedFare: null,
+      fareStatus: startingFare > 0 ? 'agreed' : 'needs_rate',
+      status: 'called',
+      calledAt: now,
+      calledBy: actor.employeeId,
+      calledByName: actor.name,
+      onTheWayAt: null,
+      arrivedAt: null,
+      readyAt: null,
+      readyByName: null,
+      pickedUpAt: null,
+      deliveredAt: null,
+      cancelledAt: null,
+    };
+    await kv.set(`rider-trip:${id}`, trip);
+
+    const route = stops.map((st) => st.name).join(' → ');
+    await notifyEmployeeIds(
+      [rider],
+      'rider_called',
+      stops[0].kind === 'production' ? 'Come to the production house now' : `Pick up at ${stops[0].name} now`,
+      `${actor.name} is calling you for a ride: ${route}${startingFare > 0 ? ` (fare ₹${startingFare})` : ''}${trip.note ? ` - ${trip.note}` : ''}.`,
+      trip
+    );
+    return c.json({ success: true, trip });
+  } catch (error) {
+    console.log('Error calling rider:', error);
+    return c.json({ error: 'Failed to call rider' }, 500);
+  }
+});
+
+// Whoever hands the order over marks it ready: dispatch roles always; for store -> production
+// rides the store incharge of that store too.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/ready', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    const pickupStop = rideEnds(trip).pickup;
+    const isPickupStoreStaff = pickupStop.kind === 'store' &&
+      (actor.designation === 'store_incharge' || actor.designation === 'store_ops') && !!actor.storeId && actor.storeId === pickupStop.id;
+    if (!actor.canDispatch && !isPickupStoreStaff) return c.json({ error: 'Not allowed' }, 403);
+    if (!['called', 'on_the_way', 'arrived'].includes(trip.status)) {
+      return c.json({ error: 'This ride is already picked up or closed' }, 400);
+    }
+    if (trip.readyAt) return c.json({ success: true, trip });
+
+    const updated = { ...trip, readyAt: new Date().toISOString(), readyByName: actor.name };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    await notifyEmployeeIds(
+      [rider],
+      'rider_ready',
+      'Order ready for pickup',
+      trip.status === 'arrived' ? 'Your order is ready - collect it now.' : `The order is ready. Collect it when you reach ${rideEnds(trip).pickupName}.`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error marking trip ready:', error);
+    return c.json({ error: 'Failed to mark ready' }, 500);
+  }
+});
+
+// Rider moves their own trip to the next stage.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/advance', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    const { status, override } = await c.req.json();
+    // Dispatch can confirm a step on the rider's behalf (e.g. their GPS is not working) - skips the
+    // location check, and is recorded on the ride.
+    const isOverride = !!override && actor.canDispatch;
+    if (!isOverride && (!actor.isRider || trip.riderEmployeeId !== actor.employeeId)) {
+      return c.json({ error: 'This is not your ride' }, 403);
+    }
+    if (RIDER_NEXT_STATUS[trip.status] !== status) {
+      return c.json({ error: 'That is not the next step for this ride' }, 400);
+    }
+    // The fare has to be settled before the ride starts: either the default was accepted, or
+    // the rider's changed rate was approved by production. (Rides created before fares existed
+    // have no fareStatus and are never blocked.)
+    if (status === 'on_the_way' && trip.fareStatus && trip.fareStatus !== 'agreed') {
+      return c.json({
+        error: trip.fareStatus === 'proposed'
+          ? "Production hasn't approved your rate yet. Wait for their reply."
+          : 'Set your rate for this ride first - production has to agree to it.',
+      }, 400);
+    }
+    if (status === 'picked_up' && !trip.readyAt) {
+      return c.json({ error: "The order hasn't been marked ready for pickup yet. Wait for the go-ahead." }, 400);
+    }
+    // Location guardrails: arriving and picking up happen at the pickup stop, delivering at the drop.
+    let geo: any = isOverride ? { overriddenBy: actor.name } : null;
+    if (!isOverride && (status === 'arrived' || status === 'picked_up' || status === 'delivered')) {
+      const here = rideEnds(trip);
+      const check = await checkRiderAtStop(trip, status === 'delivered' ? here.drop : here.pickup, status === 'arrived' ? 'arrived' : status === 'picked_up' ? 'picked up' : 'delivered');
+      if (!check.ok) return c.json({ error: check.error }, 400);
+      geo = { verified: check.verified, meters: check.meters };
+    }
+    const geoKey = `${tripLegIndex(trip)}:${status}`;
+
+    const now = new Date().toISOString();
+    const stampField: Record<string, string> = {
+      on_the_way: 'onTheWayAt',
+      arrived: 'arrivedAt',
+      picked_up: 'pickedUpAt',
+      delivered: 'deliveredAt',
+    };
+    const ends = rideEnds(trip);
+    const who = trip.riderName;
+    const pickupParty = await stopParty(ends.pickup, trip);
+    const dropParty = await stopParty(ends.drop, trip);
+
+    // Delivering a leg that is not the last one (e.g. store -> production on a round trip): the
+    // rider is now AT the next pickup, so the ride carries on from "arrived" for the next leg.
+    if (status === 'delivered' && !isFinalLeg(trip)) {
+      const legRecord = {
+        pickup: ends.pickupName, drop: ends.dropName,
+        onTheWayAt: trip.onTheWayAt, arrivedAt: trip.arrivedAt, readyAt: trip.readyAt, pickedUpAt: trip.pickedUpAt, deliveredAt: now,
+      };
+      const next = tripStops(trip)[tripLegIndex(trip) + 2];
+      const advanced = {
+        ...trip,
+        legs: [...(trip.legs || []), legRecord],
+        legIndex: tripLegIndex(trip) + 1,
+        status: 'arrived',
+        onTheWayAt: null, arrivedAt: now, readyAt: null, readyByName: null, pickedUpAt: null, deliveredAt: null,
+        geo: { ...(trip.geo || {}), [geoKey]: geo },
+      };
+      await kv.set(`rider-trip:${trip.id}`, advanced);
+      await notifyEmployeeIds(dropParty, 'rider_arrived', 'Rider has arrived', `${who} delivered to ${ends.dropName} and is there for the next pickup (on to ${next?.name || 'the next stop'}). Mark the order ready.`, advanced);
+      await notifyEmployeeIds(pickupParty, 'rider_delivered', 'Leg delivered', `${who} delivered the order to ${ends.dropName}.`, advanced);
+      return c.json({ success: true, trip: advanced });
+    }
+
+    const updated = { ...trip, status, [stampField[status]]: now, ...(geo ? { geo: { ...(trip.geo || {}), [geoKey]: geo } } : {}) };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    if (status === 'on_the_way') {
+      await notifyEmployeeIds(pickupParty, 'rider_on_the_way', 'Rider is on the way', `${who} is heading to ${ends.pickupName} for the pickup.`, updated);
+    } else if (status === 'arrived') {
+      await notifyEmployeeIds(pickupParty, 'rider_arrived', 'Rider has arrived', `${who} is at ${ends.pickupName} for the pickup.`, updated);
+    } else if (status === 'picked_up') {
+      await notifyEmployeeIds(dropParty, 'rider_picked_up', 'Order is on its way', `${who} has picked up the order and is heading to ${ends.dropName}.`, updated);
+      await notifyEmployeeIds(pickupParty, 'rider_picked_up', 'Order picked up', `${who} has picked up the order for ${ends.dropName}.`, updated);
+    } else if (status === 'delivered') {
+      await notifyEmployeeIds(dropParty, 'rider_delivered', 'Order delivered', `${who} has delivered the order to ${ends.dropName}. Please check it and confirm you received it.`, updated);
+      await notifyEmployeeIds(pickupParty, 'rider_delivered', 'Order delivered', `${who} delivered the order to ${ends.dropName}.`, updated);
+    }
+    // The store may already have marked the carried stock requests delivered - then the ride's
+    // receipt is confirmed right away.
+    if (status === 'delivered') {
+      const settled = await autoReceiptFromRequests(updated);
+      if (settled) return c.json({ success: true, trip: settled });
+    }
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error advancing rider trip:', error);
+    return c.json({ error: 'Failed to update the ride' }, 500);
+  }
+});
+
+// Rider proposes a different rate for a ride that is waiting for them (before accepting it).
+app.post('/make-server-c2dd9b9d/rider/trips/:id/fare', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!actor.isRider || trip.riderEmployeeId !== actor.employeeId) return c.json({ error: 'This is not your ride' }, 403);
+    if (trip.status !== 'called') return c.json({ error: 'The rate can only be changed before you start the ride' }, 400);
+
+    const { amount } = await c.req.json();
+    if (typeof amount !== 'number' || !isFinite(amount) || amount <= 0 || amount > 100000) {
+      return c.json({ error: 'Enter a valid rate in rupees' }, 400);
+    }
+    const rounded = Math.round(amount);
+    // Same as the agreed fare: nothing to approve.
+    if (rounded === trip.fare && trip.fareStatus === 'agreed') return c.json({ success: true, trip });
+
+    const updated = { ...trip, proposedFare: rounded, fareStatus: 'proposed', fareProposedAt: new Date().toISOString() };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const productionHeads = await getAllProductionHeads();
+    const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+    await notifyEmployeeIds(
+      [...productionHeads, caller],
+      'rider_fare_proposed',
+      'Rider asks for a different rate',
+      `${trip.riderName} wants ₹${rounded} for the ride to ${rideEnds(trip).dropName}${trip.fare > 0 ? ` instead of ₹${trip.fare}` : ''}. Approve or reject it in Riders.`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error proposing rider fare:', error);
+    return c.json({ error: 'Failed to send your rate' }, 500);
+  }
+});
+
+// Production approves or rejects the rider's proposed rate.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/fare-decision', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (trip.fareStatus !== 'proposed' || !trip.proposedFare) return c.json({ error: 'There is no rate waiting for a decision' }, 400);
+
+    const { approve } = await c.req.json();
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    let updated;
+    if (approve) {
+      updated = { ...trip, fare: trip.proposedFare, proposedFare: null, fareStatus: 'agreed', fareDecidedByName: actor.name, fareDecidedAt: new Date().toISOString() };
+      await kv.set(`rider-trip:${trip.id}`, updated);
+      await notifyEmployeeIds([rider], 'rider_fare_decided', 'Rate approved', `${actor.name} approved ₹${updated.fare} for this ride. You can start now.`, updated);
+    } else {
+      // Rejected: the previous fare stands (if there was none, the rider must name a rate again).
+      updated = { ...trip, proposedFare: null, fareStatus: trip.fare > 0 ? 'agreed' : 'needs_rate', fareDecidedByName: actor.name, fareDecidedAt: new Date().toISOString() };
+      await kv.set(`rider-trip:${trip.id}`, updated);
+      await notifyEmployeeIds(
+        [rider],
+        'rider_fare_decided',
+        'Rate not approved',
+        updated.fare > 0 ? `${actor.name} kept the fare at ₹${updated.fare}. Start the ride, or ask the production incharge to talk.` : `${actor.name} did not approve that rate. Enter a new one.`,
+        updated
+      );
+    }
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error deciding rider fare:', error);
+    return c.json({ error: 'Failed to record the decision' }, 500);
+  }
+});
+
+// The receiving end confirms the delivery (or reports a problem): the store incharge of the final
+// stop, or dispatch roles. Does not hold up the rider's earnings - it is a record for production.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/receipt', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (trip.status !== 'delivered') return c.json({ error: 'The ride has not been delivered yet' }, 400);
+
+    const stops = tripStops(trip);
+    const lastStop = stops[stops.length - 1];
+    const isReceivingStoreStaff = lastStop.kind === 'store' &&
+      (actor.designation === 'store_incharge' || actor.designation === 'store_ops') && !!actor.storeId && actor.storeId === lastStop.id;
+    if (!actor.canDispatch && !isReceivingStoreStaff) return c.json({ error: 'Not allowed' }, 403);
+
+    const { ok, note } = await c.req.json();
+    const cleanNote = typeof note === 'string' ? note.trim() : '';
+    if (!ok && cleanNote.length < 3) return c.json({ error: 'Say what was wrong with the delivery' }, 400);
+
+    // Confirming the ride also marks the stock requests it carried as delivered, so the store only
+    // confirms once. (Reporting a problem leaves them as they are - use Stock Requests for a partial
+    // delivery.) A request production never marked shipped can't be delivered and is reported back.
+    let requestsDelivered = 0;
+    const requestsNotShipped: string[] = [];
+    if (ok) {
+      for (const requestId of Array.isArray(trip.requestIds) ? trip.requestIds : []) {
+        const outcome = await deliverRequestFromRide(requestId, actor.name);
+        if (outcome === 'delivered' || outcome === 'already') requestsDelivered++;
+        else if (outcome === 'not_shipped') requestsNotShipped.push(requestId);
+      }
+    }
+    const linkNote = requestsNotShipped.length > 0
+      ? ` ${requestsNotShipped.length} stock request${requestsNotShipped.length === 1 ? ' was' : 's were'} not shipped in Stock Requests yet, so ${requestsNotShipped.length === 1 ? 'it was' : 'they were'} left open.`
+      : '';
+    const receipt = {
+      status: ok ? 'confirmed' : 'issue',
+      note: cleanNote + (ok ? linkNote : ''),
+      byName: actor.name,
+      at: new Date().toISOString(),
+      requestsDelivered,
+    };
+    const updated = { ...trip, receipt };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+
+    const heads = await getAllProductionHeads();
+    const caller = trip.calledBy ? await kv.get(`unified-employee:${trip.calledBy}`) : null;
+    await notifyEmployeeIds(
+      [...heads, caller],
+      'rider_receipt',
+      ok ? 'Delivery received' : 'Problem with a delivery',
+      ok ? `${actor.name} confirmed ${lastStop.name} received the delivery from ${trip.riderName}.` : `${actor.name} reported a problem at ${lastStop.name}: ${cleanNote}`,
+      updated
+    );
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error recording delivery receipt:', error);
+    return c.json({ error: 'Failed to record the confirmation' }, 500);
+  }
+});
+
+// ---- Rider's own profile, availability and earnings ----
+app.get('/make-server-c2dd9b9d/rider/profile', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have a rider profile' }, 403);
+    const profile = await loadRiderProfile(actor.employeeId);
+    const avail = riderAvailability(profile);
+    return c.json({
+      profile: {
+        name: profile?.name || actor.name,
+        aadhaar: profile?.aadhaar || '',
+        defaultRate: profile?.defaultRate ?? null,
+        availability: profile?.availability || null,
+        unavailableUntil: profile?.unavailableUntil || null,
+      },
+      available: avail.available,
+      unavailableReason: avail.reason,
+    });
+  } catch (error) {
+    console.log('Error fetching rider profile:', error);
+    return c.json({ error: 'Failed to load your profile' }, 500);
+  }
+});
+
+app.put('/make-server-c2dd9b9d/rider/profile', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have a rider profile' }, 403);
+    const body = await c.req.json();
+
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (name.length < 2 || name.length > 80) return c.json({ error: 'Enter your full name' }, 400);
+
+    const aadhaar = typeof body.aadhaar === 'string' ? body.aadhaar.replace(/\s+/g, '') : '';
+    if (aadhaar && !/^\d{12}$/.test(aadhaar)) return c.json({ error: 'Aadhaar number must be 12 digits' }, 400);
+
+    const rate = body.defaultRate === null || body.defaultRate === '' || body.defaultRate === undefined ? null : Number(body.defaultRate);
+    if (rate !== null && (!isFinite(rate) || rate < 0 || rate > 100000)) return c.json({ error: 'Enter a valid rate per ride' }, 400);
+
+    // Availability: one from/to range per weekday.
+    const availability: Record<string, { enabled: boolean; from: string; to: string }> = {};
+    for (const day of RIDER_DAY_KEYS) {
+      const d = body.availability?.[day];
+      if (!d) continue;
+      const enabled = !!d.enabled;
+      const from = String(d.from || '');
+      const to = String(d.to || '');
+      if (enabled) {
+        const f = hhmmToMinutes(from);
+        const t = hhmmToMinutes(to);
+        if (isNaN(f) || isNaN(t) || f >= t) return c.json({ error: `${RIDER_DAY_LABELS[day]}: the end time must be after the start time` }, 400);
+      }
+      availability[day] = { enabled, from, to };
+    }
+
+    const existing = await loadRiderProfile(actor.employeeId);
+    const profile = {
+      ...(existing || {}),
+      employeeId: actor.employeeId,
+      name,
+      aadhaar,
+      defaultRate: rate,
+      availability: Object.keys(availability).length ? availability : existing?.availability || null,
+      updatedAt: new Date().toISOString(),
+    };
+    await kv.set(`rider-profile:${actor.employeeId}`, profile);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider profile:', error);
+    return c.json({ error: 'Failed to save your profile' }, 500);
+  }
+});
+
+// Rider marks themselves unavailable for a while (or available again) on top of their schedule.
+app.post('/make-server-c2dd9b9d/rider/availability', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders can change availability' }, 403);
+    const { unavailable, duration } = await c.req.json();
+
+    const { now, endOfDayIso } = riderIstNow();
+    let until: string | null = null;
+    if (unavailable) {
+      if (duration === 'hour') until = new Date(now.getTime() + 3600 * 1000).toISOString();
+      else if (duration === 'three_hours') until = new Date(now.getTime() + 3 * 3600 * 1000).toISOString();
+      else if (duration === 'rest_of_day') until = endOfDayIso;
+      else until = 'indefinite';
+    }
+    const existing = (await loadRiderProfile(actor.employeeId)) || { employeeId: actor.employeeId, name: actor.name };
+    await kv.set(`rider-profile:${actor.employeeId}`, { ...existing, unavailableUntil: until, updatedAt: new Date().toISOString() });
+    const avail = riderAvailability({ ...existing, unavailableUntil: until });
+    return c.json({ success: true, unavailableUntil: until, available: avail.available, unavailableReason: avail.reason });
+  } catch (error) {
+    console.log('Error saving rider availability:', error);
+    return c.json({ error: 'Failed to update availability' }, 500);
+  }
+});
+
+// What the rider has earned from delivered rides, and what has been paid out so far this month.
+app.get('/make-server-c2dd9b9d/rider/summary', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.isRider || !actor.employeeId) return c.json({ error: 'Only riders have earnings' }, 403);
+    const today = getTodayIST();
+    const month = today.slice(0, 7);
+    const [trips, payouts] = await Promise.all([getAllByPrefixWithRetry('rider-trip:'), getAllByPrefixWithRetry('payout:')]);
+    const mine = (trips || []).filter((t: any) => t.riderEmployeeId === actor.employeeId && t.status === 'delivered');
+    const sum = (rows: any[]) => rows.reduce((t, r) => t + (r.fare || 0), 0);
+    const todayRides = mine.filter((t: any) => t.date === today);
+    const monthRides = mine.filter((t: any) => (t.date || '').startsWith(month));
+    const paid = (payouts || [])
+      .filter((p: any) => p.employeeId === actor.employeeId && ((p.forMonth || (p.date || '').slice(0, 7)) === month))
+      .reduce((t: number, p: any) => t + (p.amount || 0), 0);
+    return c.json({
+      today: { rides: todayRides.length, earned: sum(todayRides) },
+      month: { rides: monthRides.length, earned: sum(monthRides), paid, balance: sum(monthRides) - paid },
+    });
+  } catch (error) {
+    console.log('Error computing rider summary:', error);
+    return c.json({ error: 'Failed to load earnings' }, 500);
+  }
+});
+
+// Dispatch cancels a ride that is not yet delivered.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/cancel', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!RIDER_ACTIVE_STATUSES.includes(trip.status)) return c.json({ error: 'This ride is already closed' }, 400);
+
+    const updated = { ...trip, status: 'cancelled', cancelledAt: new Date().toISOString() };
+    await kv.set(`rider-trip:${trip.id}`, updated);
+    const rider = await kv.get(`unified-employee:${trip.riderEmployeeId}`);
+    await notifyEmployeeIds([rider], 'rider_cancelled', 'Ride cancelled', `${actor.name} cancelled the ride to ${trip.storeName}.`, updated);
+    return c.json({ success: true, trip: updated });
+  } catch (error) {
+    console.log('Error cancelling rider trip:', error);
+    return c.json({ error: 'Failed to cancel the ride' }, 500);
+  }
+});
+
+// ---- Phase 2: live location + map pins ----
+// Location lives in its OWN record per trip (rider-location:{tripId}) rather than on the trip
+// itself: the rider's phone writes every few seconds, and a read-modify-write on the trip
+// record could overwrite a status change (arrived / picked up) that landed in between.
+const RIDER_LOCATION_STATUSES = ['on_the_way', 'arrived', 'picked_up'];
+const RIDER_TRACK_MAX_POINTS = 500;
+const RIDER_TRACK_MIN_STEP_METRES = 20;
+
+const isValidLatLng = (lat: any, lng: any) =>
+  typeof lat === 'number' && typeof lng === 'number' && isFinite(lat) && isFinite(lng) &&
+  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+
+function haversineMetres(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+// The rider's phone reports its position here while a ride is on the way / arrived / picked up.
+app.post('/make-server-c2dd9b9d/rider/trips/:id/location', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+    if (!actor.isRider || trip.riderEmployeeId !== actor.employeeId) return c.json({ error: 'This is not your ride' }, 403);
+    // 409 tells the phone this ride no longer needs tracking, so it can stop sharing.
+    if (!RIDER_LOCATION_STATUSES.includes(trip.status)) return c.json({ error: 'Ride is not being tracked', status: trip.status }, 409);
+
+    const { latitude, longitude, accuracy, speed, bearing } = await c.req.json();
+    if (!isValidLatLng(latitude, longitude)) return c.json({ error: 'Invalid location' }, 400);
+
+    const key = `rider-location:${trip.id}`;
+    const existing = await kv.get(key);
+    const track: [number, number, string][] = Array.isArray(existing?.track) ? existing.track : [];
+    const now = new Date().toISOString();
+    const last = track[track.length - 1];
+    if (!last || haversineMetres(last[0], last[1], latitude, longitude) >= RIDER_TRACK_MIN_STEP_METRES) {
+      track.push([latitude, longitude, now]);
+      if (track.length > RIDER_TRACK_MAX_POINTS) track.splice(0, track.length - RIDER_TRACK_MAX_POINTS);
+    }
+    await kv.set(key, {
+      tripId: trip.id,
+      latitude,
+      longitude,
+      accuracy: typeof accuracy === 'number' ? accuracy : null,
+      speed: typeof speed === 'number' ? speed : null,
+      bearing: typeof bearing === 'number' ? bearing : null,
+      updatedAt: now,
+      track,
+    });
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider location:', error);
+    return c.json({ error: 'Failed to save location' }, 500);
+  }
+});
+
+// Live position + the pins for every stop of one trip. Riders see their own; dispatch roles see
+// any active trip; store staff see a ride that is coming to / leaving from their store.
+app.get('/make-server-c2dd9b9d/rider/trips/:id/location', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+
+    const isOwnRider = actor.isRider && trip.riderEmployeeId === actor.employeeId;
+    if (!(isOwnRider || actor.canDispatch || storeStaffMayWatch(trip, actor))) return c.json({ error: 'Not allowed' }, 403);
+
+    const location = await kv.get(`rider-location:${trip.id}`);
+    const stops = tripStops(trip);
+    const places: { kind: string; name: string; latitude: number; longitude: number }[] = [];
+    const missingPins: string[] = [];
+    const seen = new Set<string>();
+    for (const stop of stops) {
+      const key = `${stop.kind}:${stop.id || stop.name}`;
+      if (seen.has(key)) continue;   // a round trip passes the same store twice
+      seen.add(key);
+      const coords = await stopCoordinates(stop);
+      if (coords) places.push({ kind: stop.kind, name: stop.name, ...coords });
+      else missingPins.push(stop.name);
+    }
+    const firstOf = (kind: string) => places.find((p) => p.kind === kind) || null;
+    return c.json({
+      status: trip.status,
+      location: location || null,
+      places,
+      missingPins,
+      // Kept for app versions that predate multi-stop rides.
+      production: firstOf('production'),
+      store: firstOf('store'),
+    });
+  } catch (error) {
+    console.log('Error fetching rider location:', error);
+    return c.json({ error: 'Failed to fetch location' }, 500);
+  }
+});
+
+// ---- ETA, distance and traffic for an active ride ----
+// Route distance/duration come from the free OSRM public router (free-flow driving time - it has
+// NO live traffic). Traffic is therefore judged from how fast the rider is actually moving
+// compared with that free-flow speed, and "late / early" compares the predicted leg time with
+// what this leg usually takes (median of past rides in the same direction, or - until there are
+// enough past rides - the route's free-flow time plus a 25% city buffer). If a paid traffic
+// provider (e.g. Google Directions) is added later, only osrmRoute() below needs to change.
+const OSRM_BASE = 'https://router.project-osrm.org';
+const ETA_CACHE_MS = 40_000;
+
+async function osrmRoute(aLat: number, aLng: number, bLat: number, bLng: number): Promise<{ distance: number; duration: number; source: string }> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`${OSRM_BASE}/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=false`, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'BunnyMomosInventory/1.0 (rider ETA)' },
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const json = await res.json();
+      const r = json?.routes?.[0];
+      if (r && typeof r.distance === 'number' && typeof r.duration === 'number') {
+        return { distance: r.distance, duration: r.duration, source: 'osrm' };
+      }
+    }
+  } catch (_) { /* fall through to the straight-line estimate */ }
+  // Straight-line distance x 1.35 for real roads, at a slow 22 km/h city average.
+  const distance = haversineMetres(aLat, aLng, bLat, bLng) * 1.35;
+  return { distance, duration: distance / (22 / 3.6), source: 'estimate' };
+}
+
+const median = (xs: number[]) => {
+  const a = [...xs].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+app.get('/make-server-c2dd9b9d/rider/trips/:id/eta', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    const trip = await kv.get(`rider-trip:${c.req.param('id')}`);
+    if (!trip) return c.json({ error: 'Trip not found' }, 404);
+
+    const isOwnRider = actor.isRider && trip.riderEmployeeId === actor.employeeId;
+    if (!(isOwnRider || actor.canDispatch || storeStaffMayWatch(trip, actor))) return c.json({ error: 'Not allowed' }, 403);
+
+    // Which leg is the rider on? On the way = heading to the pickup, picked up = heading to the drop.
+    const ends = rideEnds(trip);
+    const leg = trip.status === 'on_the_way' ? 'pickup' : trip.status === 'picked_up' ? 'drop' : null;
+    if (!leg) return c.json({ leg: null });
+    const targetStop = leg === 'pickup' ? ends.pickup : ends.drop;
+    const targetKind = targetStop.kind;
+    const targetName = targetStop.name;
+    const targetPlace = await stopCoordinates(targetStop);
+    const location = await kv.get(`rider-location:${trip.id}`);
+    if (!location) return c.json({ leg, targetName, unavailable: 'waiting_for_location' });
+    if (!targetPlace) return c.json({ leg, targetName, unavailable: 'destination_not_pinned' });
+
+    const legKey = `${tripLegIndex(trip)}:${leg}`;
+    const prev = await kv.get(`rider-eta:${trip.id}`);
+    const sameLeg = prev && prev.legKey === legKey;
+    if (sameLeg && Date.now() - new Date(prev.computedAt).getTime() < ETA_CACHE_MS) return c.json(prev);
+
+    const route = await osrmRoute(location.latitude, location.longitude, targetPlace.latitude, targetPlace.longitude);
+    // OSRM's driving times are free-flow and optimistic for a city like this (it happily assumes
+    // 50-80 km/h), which produced a 3 minute ETA for 3.8 km. Use a realistic city pace instead:
+    // at least 1.3x OSRM's time and never faster than a 25 km/h average.
+    const baseDuration = Math.max(route.duration * 1.3, route.distance / (25 / 3.6));
+    const freeFlowMps = baseDuration > 0 ? route.distance / baseDuration : 0;
+
+    // Observed speed over the last few minutes (stops included, so a jam shows up as slow).
+    const track: [number, number, string][] = Array.isArray(location.track) ? location.track : [];
+    const endMs = new Date(location.updatedAt).getTime();
+    const windowStart = endMs - 8 * 60 * 1000;
+    const recent = track.filter((p) => new Date(p[2]).getTime() >= windowStart);
+    let observedMps: number | null = null;
+    if (recent.length >= 2) {
+      let path = 0;
+      for (let i = 1; i < recent.length; i++) path += haversineMetres(recent[i - 1][0], recent[i - 1][1], recent[i][0], recent[i][1]);
+      const spanSec = (endMs - new Date(recent[0][2]).getTime()) / 1000;
+      if (spanSec >= 120) observedMps = path / spanSec;
+    } else if (recent.length <= 1 && track.length > 0) {
+      const lastMs = new Date(track[track.length - 1][2]).getTime();
+      if (endMs - lastMs >= 120 * 1000) observedMps = 0; // no movement for 2+ minutes
+    }
+
+    const nearTarget = route.distance < 150;
+    let level: 'light' | 'moderate' | 'heavy' | 'unknown' = 'unknown';
+    if (observedMps !== null && freeFlowMps > 0 && !nearTarget) {
+      const ratio = observedMps / freeFlowMps;
+      level = ratio < 0.35 ? 'heavy' : ratio < 0.7 ? 'moderate' : 'light';
+    }
+
+    let etaSeconds = baseDuration;
+    if (observedMps !== null && observedMps > 0.5 && !nearTarget) {
+      // A burst of speed (or a GPS jump) must not collapse the ETA - clip to 45 km/h.
+      const usable = Math.min(observedMps, 12.5);
+      etaSeconds = Math.min(baseDuration * 3, 0.5 * baseDuration + 0.5 * (route.distance / usable));
+    } else if (observedMps === 0 && !nearTarget) {
+      etaSeconds = baseDuration * 1.5;
+    }
+    etaSeconds = Math.round(Math.max(etaSeconds, nearTarget ? 0 : route.distance / 12.5)); // never faster than a 45 km/h average
+
+    // What this leg normally takes: median of past rides of the same type to/from the same store
+    // once there are three, else free-flow time + 25%. Fixed at the first estimate of the leg.
+    let expectedSeconds: number = sameLeg && prev.expectedSeconds ? prev.expectedSeconds : 0;
+    if (!expectedSeconds) {
+      const typeOf = (t: any) => t.tripType || t.direction;
+      const history = trip.storeId
+        ? (await getAllByPrefixWithRetry('rider-trip:'))
+            .filter((t: any) => t.status === 'delivered' && typeOf(t) === typeOf(trip) && t.storeId === trip.storeId && t.id !== trip.id)
+            .map((t: any) => leg === 'drop'
+              ? (t.deliveredAt && t.pickedUpAt ? (new Date(t.deliveredAt).getTime() - new Date(t.pickedUpAt).getTime()) / 1000 : 0)
+              : (t.arrivedAt && t.onTheWayAt ? (new Date(t.arrivedAt).getTime() - new Date(t.onTheWayAt).getTime()) / 1000 : 0))
+            .filter((x: number) => x > 60 && x < 3 * 3600)
+        : [];
+      expectedSeconds = history.length >= 3 ? Math.round(median(history)) : Math.round(baseDuration * 1.1);
+    }
+    const legStartIso = leg === 'drop' ? trip.pickedUpAt : trip.onTheWayAt;
+    const elapsedSeconds = legStartIso ? Math.max(0, (Date.now() - new Date(legStartIso).getTime()) / 1000) : 0;
+    const deltaSeconds = Math.round(elapsedSeconds + etaSeconds - expectedSeconds);
+    const tolerance = Math.max(300, expectedSeconds * 0.2);
+    const timing: 'late' | 'early' | 'on_time' = deltaSeconds > tolerance ? 'late' : deltaSeconds < -tolerance ? 'early' : 'on_time';
+
+    const result = {
+      leg,
+      legKey,
+      targetName,
+      distanceMeters: Math.round(route.distance),
+      etaSeconds,
+      etaAt: new Date(Date.now() + etaSeconds * 1000).toISOString(),
+      traffic: {
+        level,
+        observedKmh: observedMps === null ? null : Math.round(observedMps * 3.6),
+        freeFlowKmh: Math.round(freeFlowMps * 3.6),
+      },
+      timing,
+      deltaMinutes: Math.round(deltaSeconds / 60),
+      expectedMinutes: Math.round(expectedSeconds / 60),
+      source: route.source,
+      computedAt: new Date().toISOString(),
+      expectedSeconds,
+      lateNotified: !!(sameLeg && prev.lateNotified),
+    };
+
+    // Tell the people waiting at the destination once, when the rider is clearly running late.
+    if (timing === 'late' && deltaSeconds >= 600 && !result.lateNotified) {
+      result.lateNotified = true;
+      const party = await stopParty(targetStop, trip);
+      const why = level === 'heavy' ? ' - heavy traffic' : level === 'moderate' ? ' - slow traffic' : '';
+      await notifyEmployeeIds(
+        party,
+        'rider_running_late',
+        'Rider is running late',
+        `${trip.riderName} is about ${Math.round(deltaSeconds / 60)} min later than usual to ${targetName}${why}. New ETA ${new Date(result.etaAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}.`,
+        trip
+      );
+    }
+
+    await kv.set(`rider-eta:${trip.id}`, result);
+    return c.json(result);
+  } catch (error) {
+    console.log('Error computing rider ETA:', error);
+    return c.json({ error: 'Failed to compute ETA' }, 500);
+  }
+});
+
+// Which production houses / stores already have a map pin (dispatch roles).
+app.get('/make-server-c2dd9b9d/rider/places', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const [stores, houses, places] = await Promise.all([
+      kv.getByPrefix('store:'),
+      kv.getByPrefix('production_house_'),
+      kv.getByPrefix('rider-place:'),
+    ]);
+    const placeFor = (kind: string, id: string) => (places || []).find((p: any) => p.kind === kind && p.id === id) || null;
+    const shape = (kind: 'production' | 'store', e: any) => {
+      const p = placeFor(kind, e.id);
+      return { kind, id: e.id, name: e.name, latitude: p?.latitude ?? null, longitude: p?.longitude ?? null, setByName: p?.setByName ?? null, setAt: p?.setAt ?? null };
+    };
+    return c.json({
+      places: [
+        ...(houses || []).filter((h: any) => h?.id).map((h: any) => shape('production', h)),
+        ...(stores || []).filter((s: any) => s?.id).map((s: any) => shape('store', s)),
+      ],
+    });
+  } catch (error) {
+    console.log('Error fetching rider places:', error);
+    return c.json({ error: 'Failed to fetch places' }, 500);
+  }
+});
+
+// Pin a production house or store on the map (dispatch roles) - done while standing there.
+app.post('/make-server-c2dd9b9d/rider/places', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const actor = await getRiderActor(authResult.user);
+    if (!actor.canDispatch) return c.json({ error: 'Not allowed' }, 403);
+    const { kind, id, latitude, longitude } = await c.req.json();
+    if (kind !== 'production' && kind !== 'store') return c.json({ error: 'Invalid place type' }, 400);
+    if (!id || !isValidLatLng(latitude, longitude)) return c.json({ error: 'Invalid location' }, 400);
+    const entity = await kv.get(kind === 'production' ? `production_house_${id}` : `store:${id}`);
+    if (!entity) return c.json({ error: 'Place not found' }, 404);
+    await kv.set(`rider-place:${kind}:${id}`, { kind, id, latitude, longitude, setByName: actor.name, setAt: new Date().toISOString() });
+    return c.json({ success: true });
+  } catch (error) {
+    console.log('Error saving rider place:', error);
+    return c.json({ error: 'Failed to save place' }, 500);
+  }
+});
+
+// ============================================
 // PRODUCTION REQUESTS ROUTES
 // ============================================
 
-// Get all production requests
+// Fetch production requests whose requestDate >= fromDate (optional upper bound), paginated
+// and filtered in Postgres (not pulled into memory and filtered here) so the query stays cheap
+// as the table grows. With no fromDate, defaults are applied by the caller.
+async function getProductionRequestsFrom(fromDate?: string, toDate?: string): Promise<any[]> {
+  const pageSize = 1000;
+  let allResults: any[] = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value')
+      .like('key', 'production_request_%');
+
+    if (fromDate) {
+      query = query.gte('value->>requestDate', fromDate);
+    }
+    if (toDate) {
+      query = query.lte('value->>requestDate', toDate);
+    }
+
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (!data || data.length === 0) break;
+
+    allResults = allResults.concat(data.map((d) => d.value));
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allResults;
+}
+
+// Get production requests, scoped to a date range so the page doesn't load the
+// entire history on every visit. Accepts ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional).
+// With no `from`, defaults to the start of last month (covers the current month view
+// plus the previous-month comparison used by the stats cards); `to` is left open-ended
+// so future/advance requests are never excluded.
 app.get('/make-server-c2dd9b9d/production-requests', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
@@ -5469,14 +10033,24 @@ app.get('/make-server-c2dd9b9d/production-requests', async (c) => {
   }
 
   try {
-    const requests = await kv.getByPrefix('production_request_') || [];
-    
+    const requestedFrom = c.req.query('from');
+    const requestedTo = c.req.query('to');
+
+    let fromDate = requestedFrom;
+    if (!fromDate) {
+      const now = new Date();
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      fromDate = lastMonthStart.toISOString().split('T')[0];
+    }
+
+    const requests = await getProductionRequestsFrom(fromDate, requestedTo);
+
     // Sort by request date descending (newest first)
     const sortedRequests = requests.sort((a: any, b: any) => {
       return new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime();
     });
-    
-    return c.json({ requests: sortedRequests });
+
+    return c.json({ requests: sortedRequests, from: fromDate, to: requestedTo || null });
   } catch (error: any) {
     console.error('Error fetching production requests:', error);
     return c.json({ error: error.message }, 500);
@@ -5519,20 +10093,46 @@ app.post('/make-server-c2dd9b9d/production-requests', async (c) => {
     };
     
     await kv.set(`production_request_${id}`, request);
-    
+
     console.log('Production request created:', { id, storeId: request.storeId, storeName: request.storeName, requestedBy: request.requestedBy });
-    
-    // Send notification to all Production Heads
+
+    // Production Heads (Vijay) get pinged immediately once stores are actually open and
+    // staffed (9 AM IST onward) so acceptance/preparation starts right away. A request
+    // placed overnight/before 9 AM is deliberately NOT pinged here - waking someone up for
+    // it achieves nothing before the production house opens - it's picked up by the 9 AM
+    // "send-morning-request-reminders" cron instead, alongside anything still pending from
+    // this same run of a slower morning. Operations Heads (Aniket) are notified either way,
+    // immediately, purely as visibility - they don't act on acceptance themselves.
+    const hourNow = getHourIST();
+    const placedAtLabel = formatTime12h(getNowIST().substring(11, 16));
     const productionHeads = await getAllProductionHeads();
-    console.log('Notifying production heads:', productionHeads.length);
-    
-    for (const prodHead of productionHeads) {
-      if (prodHead.authUserId) {
+    const opsManagers = await getOperationsManagers(request.storeId);
+
+    if (hourNow >= 9) {
+      console.log('Notifying production heads immediately:', productionHeads.length);
+      for (const prodHead of productionHeads) {
+        if (prodHead.authUserId) {
+          await notifyUser(
+            prodHead.authUserId,
+            'production_request_new',
+            'New Stock Request',
+            `${request.storeName} has requested stock for ${new Date(request.requestDate).toLocaleDateString()} (placed ${placedAtLabel}). Please accept and start preparation as soon as possible.`,
+            id,
+            request.requestDate
+          );
+        }
+      }
+    } else {
+      console.log('Request placed before 9 AM IST - deferring production head notification to the 9 AM reminder job');
+    }
+
+    for (const opsManager of opsManagers) {
+      if (opsManager.authUserId) {
         await notifyUser(
-          prodHead.authUserId,
+          opsManager.authUserId,
           'production_request_new',
-          'New Production Request',
-          `${request.storeName} has submitted a new production request for ${new Date(request.requestDate).toLocaleDateString()}`,
+          'Stock Request Placed',
+          `${request.storeName} placed a stock request for ${new Date(request.requestDate).toLocaleDateString()} at ${placedAtLabel}.`,
           id,
           request.requestDate
         );
@@ -5545,6 +10145,97 @@ app.post('/make-server-c2dd9b9d/production-requests', async (c) => {
     return c.json({ error: error.message }, 500);
   }
 });
+
+// Shared by the /status route's 'delivered'/'partially-delivered' case AND the
+// quick-action "Delivered" notification button (POST /quick-action below) - both need
+// the exact same shipped-quantities-into-store, deducted-from-production-house inventory
+// math, and duplicating it invited the two paths to silently drift apart.
+async function creditStoreInventoryForDelivery(existingRequest: any, requestId: string) {
+  console.log('📦 Updating store inventory for delivered request:', {
+    requestId,
+    storeId: existingRequest.storeId
+  });
+
+  try {
+    const storeKey = `store_${existingRequest.storeId}`;
+    const store = await kv.get(storeKey);
+
+    if (!store) {
+      console.warn('⚠️ Store not found for inventory update:', existingRequest.storeId);
+      return;
+    }
+
+    const currentInventory = store.inventory || {};
+
+    const inventoryItemsData = await kv.getByPrefix('inventory_item_');
+    const finishedProducts = inventoryItemsData
+      .filter((item: any) => item.category === 'finished_product' && item.isActive)
+      .map((item: any) => ({
+        key: item.name,
+        camelKey: item.name.replace(/_([a-z])/g, (_: string, letter: string) => letter.toUpperCase()),
+        displayName: item.displayName
+      }));
+
+    finishedProducts.forEach(({ camelKey, key }: any) => {
+      const shippedQty = existingRequest.shippedQuantities?.[camelKey]
+        ?? existingRequest[camelKey]
+        ?? existingRequest[camelKey + 's']
+        ?? 0;
+
+      if (shippedQty > 0) {
+        currentInventory[camelKey] = (currentInventory[camelKey] || 0) + shippedQty;
+        console.log(`  ✅ Added ${shippedQty} ${camelKey} to store inventory (shipped qty)`);
+      }
+    });
+
+    await kv.set(storeKey, {
+      ...store,
+      inventory: currentInventory,
+      updatedAt: new Date().toISOString()
+    });
+
+    console.log('✅ Store inventory updated successfully:', currentInventory);
+
+    const productionHouseId = store.productionHouseId;
+    if (productionHouseId) {
+      console.log('🏭 Deducting from production house inventory:', productionHouseId);
+
+      const productionHouseKey = `production_house_${productionHouseId}`;
+      const productionHouse = await kv.get(productionHouseKey);
+
+      if (productionHouse) {
+        const phInventory = productionHouse.inventory || {};
+
+        finishedProducts.forEach(({ camelKey }: any) => {
+          const shippedQty = existingRequest.shippedQuantities?.[camelKey]
+            ?? existingRequest[camelKey]
+            ?? existingRequest[camelKey + 's']
+            ?? 0;
+
+          if (shippedQty > 0) {
+            phInventory[camelKey] = (phInventory[camelKey] || 0) - shippedQty;
+            console.log(`  ⬇️ Deducted ${shippedQty} ${camelKey} from production house inventory (shipped qty)`);
+          }
+        });
+
+        await kv.set(productionHouseKey, {
+          ...productionHouse,
+          inventory: phInventory,
+          updatedAt: new Date().toISOString()
+        });
+
+        console.log('✅ Production house inventory updated:', phInventory);
+      } else {
+        console.warn('⚠️ Production house not found:', productionHouseId);
+      }
+    } else {
+      console.warn('⚠️ Store has no mapped production house');
+    }
+  } catch (invError) {
+    console.error('❌ Error updating store inventory:', invError);
+    // Don't fail the whole request update if inventory update fails
+  }
+}
 
 // Update production request status
 app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
@@ -5587,100 +10278,7 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
       case 'partially-delivered':
         updates.deliveredAt = now;
         updates.deliveredBy = updatedBy;
-        
-        // Update store inventory when delivered
-        console.log('📦 Updating store inventory for delivered request:', { 
-          requestId: id, 
-          storeId: existingRequest.storeId 
-        });
-        
-        try {
-          // Get current store inventory
-          const storeKey = `store_${existingRequest.storeId}`;
-          const store = await kv.get(storeKey);
-          
-          if (store) {
-            const currentInventory = store.inventory || {};
-            
-            // Get all inventory items to build field mapping
-            const inventoryItemsData = await kv.getByPrefix('inventory_item_');
-            const finishedProducts = inventoryItemsData
-              .filter((item: any) => item.category === 'finished_product' && item.isActive)
-              .map((item: any) => ({
-                key: item.name,
-                camelKey: item.name.replace(/_([a-z])/g, (_: string, letter: string) => letter.toUpperCase()),
-                displayName: item.displayName
-              }));
-            
-            // Add SHIPPED quantities (not requested) to store inventory
-            finishedProducts.forEach(({ camelKey, key }: any) => {
-              // Use shippedQuantities if available, otherwise fall back to requested
-              const shippedQty = existingRequest.shippedQuantities?.[camelKey] 
-                ?? existingRequest[camelKey] 
-                ?? existingRequest[camelKey + 's'] 
-                ?? 0;
-              
-              if (shippedQty > 0) {
-                currentInventory[camelKey] = (currentInventory[camelKey] || 0) + shippedQty;
-                console.log(`  ✅ Added ${shippedQty} ${camelKey} to store inventory (shipped qty)`);
-              }
-            });
-            
-            // Save updated store inventory
-            await kv.set(storeKey, {
-              ...store,
-              inventory: currentInventory,
-              updatedAt: now
-            });
-            
-            console.log('✅ Store inventory updated successfully:', currentInventory);
-            
-            // Also deduct from production house inventory
-            const productionHouseId = store.productionHouseId;
-            if (productionHouseId) {
-              console.log('🏭 Deducting from production house inventory:', productionHouseId);
-              
-              const productionHouseKey = `production_house_${productionHouseId}`;
-              const productionHouse = await kv.get(productionHouseKey);
-              
-              if (productionHouse) {
-                const phInventory = productionHouse.inventory || {};
-                
-                // Deduct SHIPPED quantities (not requested) from production house inventory
-                finishedProducts.forEach(({ camelKey }: any) => {
-                  // Use shippedQuantities if available, otherwise fall back to requested
-                  const shippedQty = existingRequest.shippedQuantities?.[camelKey]
-                    ?? existingRequest[camelKey] 
-                    ?? existingRequest[camelKey + 's'] 
-                    ?? 0;
-                  
-                  if (shippedQty > 0) {
-                    phInventory[camelKey] = (phInventory[camelKey] || 0) - shippedQty;
-                    console.log(`  ⬇️ Deducted ${shippedQty} ${camelKey} from production house inventory (shipped qty)`);
-                  }
-                });
-                
-                // Save updated production house inventory
-                await kv.set(productionHouseKey, {
-                  ...productionHouse,
-                  inventory: phInventory,
-                  updatedAt: now
-                });
-                
-                console.log('✅ Production house inventory updated:', phInventory);
-              } else {
-                console.warn('⚠️ Production house not found:', productionHouseId);
-              }
-            } else {
-              console.warn('⚠️ Store has no mapped production house');
-            }
-          } else {
-            console.warn('⚠️ Store not found for inventory update:', existingRequest.storeId);
-          }
-        } catch (invError) {
-          console.error('❌ Error updating store inventory:', invError);
-          // Don't fail the whole request update if inventory update fails
-        }
+        await creditStoreInventoryForDelivery(existingRequest, id);
         break;
     }
     
@@ -5691,6 +10289,11 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     
     await kv.set(`production_request_${id}`, updatedRequest);
     
+    // If a rider delivered this request, confirming it here also confirms that ride's receipt.
+    if (status === 'delivered' || status === 'partially-delivered') {
+      await confirmRidesForRequest(id, typeof updatedBy === 'string' ? updatedBy : undefined);
+    }
+
     console.log('Production request status updated:', { id, status, updatedBy });
     
     // Send notifications based on status change
@@ -6130,17 +10733,18 @@ app.post('/make-server-c2dd9b9d/migrate-production-house-system', async (c) => {
       await kv.set(`production_house_${defaultHouseId}`, defaultHouse);
       console.log('✅ Created default production house:', defaultHouseId);
 
-      // Step 2: Map all existing stores to this production house
-      const stores = await kv.getByPrefix('store_');
+      // Step 2: Map all existing stores to this production house - stores are stored
+      // under the `store:` prefix (see /stores), not `store_`.
+      const stores = await kv.getByPrefix('store:');
       let mappedStores = 0;
-      
+
       for (const store of stores) {
         const updated = {
           ...store,
           productionHouseId: defaultHouseId,
           updatedAt: new Date().toISOString(),
         };
-        await kv.set(`store_${store.id}`, updated);
+        await kv.set(`store:${store.id}`, updated);
         mappedStores++;
       }
       console.log(`✅ Mapped ${mappedStores} stores to production house`);
@@ -6455,43 +11059,13 @@ app.post('/make-server-c2dd9b9d/production-houses/:id/fix-records', async (c) =>
   }
 });
 
-// Assign store to production house
-app.put('/make-server-c2dd9b9d/stores/:storeId/assign-production-house', async (c) => {
-  const auth = await verifyUser(c.req.header('Authorization'));
-  if ('error' in auth) {
-    return c.json({ error: auth.error }, auth.status);
-  }
-
-  try {
-    const storeId = c.req.param('storeId');
-    const { productionHouseId } = await c.req.json();
-
-    const existing = await kv.get(`store_${storeId}`);
-    if (!existing) {
-      return c.json({ error: 'Store not found' }, 404);
-    }
-
-    // Verify production house exists
-    const house = await kv.get(`production_house_${productionHouseId}`);
-    if (!house) {
-      return c.json({ error: 'Production house not found' }, 404);
-    }
-
-    const updated = {
-      ...existing,
-      productionHouseId,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await kv.set(`store_${storeId}`, updated);
-    console.log('Store assigned to production house:', { storeId, productionHouseId });
-
-    return c.json({ store: updated });
-  } catch (error: any) {
-    console.error('Error assigning store to production house:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
+// NOTE: there used to be a second, duplicate "assign store to production house" handler
+// here, registered under this exact same PUT path. Hono routes to whichever handler was
+// registered first (see the one above, ~6327), so this second one was dead code - it
+// never actually ran. It also read/wrote the store record under a `store_` key instead
+// of the real `store:` key every other store route uses, so if it HAD been reachable it
+// would have silently failed to find the store. Removed rather than fixed, since the
+// working handler above already covers this route.
 
 // Delete production house
 app.delete('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
@@ -6509,8 +11083,11 @@ app.delete('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
       return c.json({ error: 'Production house not found' }, 404);
     }
 
-    // Check if any stores are mapped to this production house
-    const allStores = await kv.getByPrefix('store_');
+    // Check if any stores are mapped to this production house - stores are actually
+    // stored under the `store:` prefix (see /stores and store creation below); this was
+    // reading `store_` instead, which never matches anything, so this guard silently
+    // never blocked deletion of a production house with real mapped stores.
+    const allStores = await kv.getByPrefix('store:');
     const mappedStores = allStores.filter((store: any) => store.productionHouseId === id);
     
     if (mappedStores.length > 0) {
@@ -6893,8 +11470,8 @@ app.post('/make-server-c2dd9b9d/fix-stock-requests', async (c) => {
     const allRequests = await kv.getByPrefix('stock_request_');
     console.log(`Found ${allRequests.length} stock requests to check`);
     
-    // Get all stores to map storeId -> productionHouseId
-    const allStores = await kv.getByPrefix('store_');
+    // Get all stores to map storeId -> productionHouseId (stores live under `store:`)
+    const allStores = await kv.getByPrefix('store:');
     const storeMap = new Map();
     allStores.forEach((store: any) => {
       storeMap.set(store.id, store.productionHouseId);
@@ -7287,9 +11864,10 @@ app.get('/make-server-c2dd9b9d/stock-recalibration/history/:locationId', async (
       let validLocationIds = [locationId];
       
       if (locationType === 'production_house') {
-        // Get all stores to find which ones map to this production house
-        const allStores = await kv.getByPrefix('store_');
-        const mappedStores = allStores.filter((store: any) => 
+        // Get all stores to find which ones map to this production house (stores live
+        // under `store:`, not `store_`)
+        const allStores = await kv.getByPrefix('store:');
+        const mappedStores = allStores.filter((store: any) =>
           store.productionHouseId === locationId
         );
         
@@ -7499,9 +12077,10 @@ app.get('/make-server-c2dd9b9d/stock-recalibration/wastage-report', async (c) =>
       let validLocationIds = locationId ? [locationId] : null;
       
       if (locationId && locationType === 'production_house') {
-        // Get all stores to find which ones map to this production house
-        const allStores = await kv.getByPrefix('store_');
-        const mappedStores = allStores.filter((store: any) => 
+        // Get all stores to find which ones map to this production house (stores live
+        // under `store:`, not `store_`)
+        const allStores = await kv.getByPrefix('store:');
+        const mappedStores = allStores.filter((store: any) =>
           store.productionHouseId === locationId
         );
         
@@ -7636,6 +12215,54 @@ app.post('/make-server-c2dd9b9d/stock-thresholds/:storeId', async (c) => {
     return c.json({ success: true, thresholds });
   } catch (error: any) {
     console.error('Error saving stock thresholds:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Shared (not per-store) momo plate configuration - pieces per plate and menu selling
+// price per plate, for each finished-product category. Used to convert POS-synced piece
+// counts into plates and revenue for the Category Sales profitability breakdown.
+// Keyed by the same category labels used in sales_data_ records (SalesDataRecord.data /
+// MomoCategory), not the camelKey convention used elsewhere in this file, so Category
+// Sales can read this config with no translation layer.
+const DEFAULT_MOMO_PLATE_CONFIG: Record<string, { piecesPerPlate: number; pricePerPlate: number }> = {
+  'Chicken Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Chicken Cheese Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Veg Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Paneer Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Corn Cheese Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Chicken Kurkure Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+  'Veg Kurkure Momos': { piecesPerPlate: 6, pricePerPlate: 0 },
+};
+
+app.get('/make-server-c2dd9b9d/momo-plate-config', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  try {
+    const config = await kv.get('momo-plate-config:global');
+    return c.json({ config: config || DEFAULT_MOMO_PLATE_CONFIG });
+  } catch (error: any) {
+    console.error('Error fetching momo plate config:', error);
+    return c.json({ config: DEFAULT_MOMO_PLATE_CONFIG });
+  }
+});
+
+app.post('/make-server-c2dd9b9d/momo-plate-config', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can update plate configuration' }, 403);
+  }
+  try {
+    const { config } = await c.req.json();
+    await kv.set('momo-plate-config:global', config);
+    return c.json({ success: true, config });
+  } catch (error: any) {
+    console.error('Error saving momo plate config:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -8099,8 +12726,9 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
     }
 
     const allEmployees = await kv.getByPrefix('unified-employee:');
+    // Riders don't fill attendance, so they are never reminded about it.
     const attendees = allEmployees.filter((e: any) =>
-      (e.role === 'employee' || e.role === 'manager') && e.employeeId && e.authUserId
+      (e.role === 'employee' || e.role === 'manager') && e.employeeId && e.authUserId && e.designation !== 'rider'
     );
 
     console.log(`Checking attendance for ${attendees.length} employees/managers`);
@@ -8250,6 +12878,262 @@ app.post('/make-server-c2dd9b9d/send-fulfillment-reminders', async (c) => {
 });
 
 // ============================================
+// STOCK/PRODUCTION REQUEST ACCEPTANCE ESCALATION (Production Heads, 12PM Noon)
+// ============================================
+// A store incharge's production request (e.g. Rohan requesting momos for his store)
+// notifies every Production Head immediately on creation (see POST /production-requests
+// above), but a request can still sit un-acted-on ('pending', not yet moved to
+// 'accepted') if that notification gets missed. This escalates: any request still
+// 'pending' by noon gets a second, more urgent nudge to whichever Production Head(s)
+// are on record (Vijay, in the current single-production-house setup), once per head
+// per day so it doesn't repeat every time the cron fires.
+app.post('/make-server-c2dd9b9d/send-acceptance-reminders', async (c) => {
+  try {
+    console.log('=== ACCEPTANCE ESCALATION CHECK (12PM) ===');
+    const today = getTodayIST();
+
+    const allProductionRequests = await kv.getByPrefix('production_request_');
+    const pendingRequests = allProductionRequests.filter((r: any) => r.status === 'pending');
+
+    if (pendingRequests.length === 0) {
+      console.log('No pending production requests - nothing to escalate');
+      return c.json({ success: true, message: 'No pending requests awaiting acceptance', summary: { pendingCount: 0, remindersSent: 0 } });
+    }
+
+    const productionHeads = await getAllProductionHeads();
+    let sent = 0;
+    let skipped = 0;
+
+    for (const prodHead of productionHeads) {
+      if (!prodHead.authUserId || !prodHead.employeeId) continue;
+
+      const dedupeKey = `acceptance_reminder_sent:${prodHead.employeeId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        continue;
+      }
+
+      const storeNames = [...new Set(pendingRequests.map((r: any) => r.storeName).filter(Boolean))] as string[];
+      const count = pendingRequests.length;
+      const message = `Hi ${prodHead.name}, ${count} stock request${count > 1 ? 's' : ''} from ${storeNames.join(', ') || 'a store'} ${count > 1 ? 'are' : 'is'} still pending your acceptance as of noon. Please accept and start preparation as soon as possible.`;
+
+      try {
+        await notifyUser(prodHead.authUserId, 'acceptance_reminder', '⏰ Stock Requests Awaiting Acceptance', message, undefined, today);
+        await kv.set(dedupeKey, { sentAt: new Date().toISOString(), pendingCount: count });
+        sent++;
+        console.log(`✓ Sent acceptance escalation to ${prodHead.name} (${count} pending)`);
+      } catch (error) {
+        console.error(`Error sending acceptance escalation to ${prodHead.name}:`, error);
+      }
+    }
+
+    console.log(`=== ACCEPTANCE ESCALATION SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'Acceptance escalation reminders processed',
+      summary: { pendingCount: pendingRequests.length, remindersSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending acceptance escalation reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// MORNING REQUEST REMINDER (Production Heads, 9AM)
+// ============================================
+// A request placed before 9 AM IST deliberately doesn't ping the Production Head at
+// creation time (see POST /production-requests above - no point waking someone up before
+// the production house is even open). This is that deferred ping: whatever's still
+// 'pending' once 9 AM arrives - whether placed overnight or simply not yet accepted - gets
+// notified now. Distinct dedupe key from the noon escalation above so both can fire
+// independently on the same day without one blocking the other.
+app.post('/make-server-c2dd9b9d/send-morning-request-reminders', async (c) => {
+  try {
+    console.log('=== MORNING REQUEST REMINDER CHECK (9AM) ===');
+    const today = getTodayIST();
+
+    const allProductionRequests = await kv.getByPrefix('production_request_');
+    const pendingRequests = allProductionRequests.filter((r: any) => r.status === 'pending');
+
+    if (pendingRequests.length === 0) {
+      console.log('No pending production requests this morning');
+      return c.json({ success: true, message: 'No pending requests this morning', summary: { pendingCount: 0, remindersSent: 0 } });
+    }
+
+    const productionHeads = await getAllProductionHeads();
+    let sent = 0;
+    let skipped = 0;
+
+    for (const prodHead of productionHeads) {
+      if (!prodHead.authUserId || !prodHead.employeeId) continue;
+
+      const dedupeKey = `morning_reminder_sent:${prodHead.employeeId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        continue;
+      }
+
+      const storeNames = [...new Set(pendingRequests.map((r: any) => r.storeName).filter(Boolean))] as string[];
+      const count = pendingRequests.length;
+      const message = `Hi ${prodHead.name}, ${count} stock request${count > 1 ? 's' : ''} from ${storeNames.join(', ') || 'a store'} ${count > 1 ? 'are' : 'is'} awaiting your acceptance. Please accept and start preparation as soon as possible.`;
+
+      try {
+        await notifyUser(prodHead.authUserId, 'morning_request_reminder', '🌅 Stock Requests Awaiting Acceptance', message, undefined, today);
+        await kv.set(dedupeKey, { sentAt: new Date().toISOString(), pendingCount: count });
+        sent++;
+        console.log(`✓ Sent morning reminder to ${prodHead.name} (${count} pending)`);
+      } catch (error) {
+        console.error(`Error sending morning reminder to ${prodHead.name}:`, error);
+      }
+    }
+
+    console.log(`=== MORNING REQUEST REMINDER SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'Morning request reminders processed',
+      summary: { pendingCount: pendingRequests.length, remindersSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending morning request reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// DELIVERY CONFIRMATION REMINDER (Store Incharges, 10PM)
+// ============================================
+// A production request that's been 'shipped' still needs the receiving store to confirm
+// it actually arrived (moves it to 'delivered'/'partially-delivered' - see PUT
+// /production-requests/:id/status) - until then the store's stock figures don't reflect
+// what's physically sitting there. This nudges whichever store incharge owns the request
+// (Rohan, for the current single-store setup) once per store per day if anything shipped
+// to them is still unconfirmed by 10 PM.
+app.post('/make-server-c2dd9b9d/send-delivery-confirmation-reminders', async (c) => {
+  try {
+    console.log('=== DELIVERY CONFIRMATION REMINDER CHECK (10PM) ===');
+    const today = getTodayIST();
+
+    const allProductionRequests = await kv.getByPrefix('production_request_');
+    const shippedRequests = allProductionRequests.filter((r: any) => r.status === 'shipped');
+
+    if (shippedRequests.length === 0) {
+      console.log('No shipped-but-unconfirmed requests tonight');
+      return c.json({ success: true, message: 'No shipped requests awaiting delivery confirmation', summary: { shippedCount: 0, remindersSent: 0 } });
+    }
+
+    const byStore = new Map<string, any[]>();
+    for (const req of shippedRequests) {
+      if (!req.storeId) continue;
+      if (!byStore.has(req.storeId)) byStore.set(req.storeId, []);
+      byStore.get(req.storeId)!.push(req);
+    }
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const [storeId, requests] of byStore) {
+      const storeIncharge = await getStoreIncharge(storeId);
+      if (!storeIncharge?.authUserId || !storeIncharge?.employeeId) continue;
+
+      const dedupeKey = `delivery_reminder_sent:${storeIncharge.employeeId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        continue;
+      }
+
+      const count = requests.length;
+      const message = `Hi ${storeIncharge.name}, ${count} shipment${count > 1 ? 's' : ''} to your store ${count > 1 ? 'haven\'t' : 'hasn\'t'} been confirmed as delivered yet. Please confirm receipt as soon as possible so stock figures stay accurate.`;
+
+      try {
+        await notifyUser(storeIncharge.authUserId, 'delivery_confirmation_reminder', '📦 Confirm Delivery', message, undefined, today);
+        await kv.set(dedupeKey, { sentAt: new Date().toISOString(), shippedCount: count });
+        sent++;
+        console.log(`✓ Sent delivery confirmation reminder to ${storeIncharge.name} (${count} shipped)`);
+      } catch (error) {
+        console.error(`Error sending delivery confirmation reminder to ${storeIncharge.name}:`, error);
+      }
+    }
+
+    console.log(`=== DELIVERY CONFIRMATION REMINDER SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'Delivery confirmation reminders processed',
+      summary: { shippedCount: shippedRequests.length, remindersSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending delivery confirmation reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// ONE-HOUR-AFTER-SHIPPED DELIVERY CHECK
+// ============================================
+// Runs every ~15 min (see cron migration). One hour after a request is marked shipped,
+// asks the store incharge "has this arrived?" with a one-tap Delivered button right on
+// the notification - no need to open the app. Separate from the 10PM catch-all reminder
+// above: this one fires fast, per-request, and can resolve the request by itself.
+app.post('/make-server-c2dd9b9d/send-shipped-delivery-check', async (c) => {
+  try {
+    console.log('=== ONE-HOUR SHIPPED DELIVERY CHECK ===');
+    const nowMs = Date.now();
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+
+    const allProductionRequests = await kv.getByPrefix('production_request_');
+    const dueRequests = allProductionRequests.filter((r: any) =>
+      (r.status === 'shipped' || r.status === 'partially-shipped') &&
+      r.shippedAt &&
+      !r.oneHourDeliveryCheckSentAt &&
+      (nowMs - new Date(r.shippedAt).getTime()) >= ONE_HOUR_MS
+    );
+
+    if (dueRequests.length === 0) {
+      console.log('No shipped requests have crossed the 1-hour mark');
+      return c.json({ success: true, message: 'Nothing due', summary: { sent: 0 } });
+    }
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const req of dueRequests) {
+      const storeIncharge = req.storeId ? await getStoreIncharge(req.storeId) : null;
+      if (!storeIncharge?.authUserId) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        await notifyUser(
+          storeIncharge.authUserId,
+          'shipped_delivery_check',
+          '📦 Has this arrived?',
+          `It's been an hour since ${req.storeName || 'your'} shipment left the production house. Tap Delivered below once it's arrived - no need to open the app.`,
+          req.id,
+          req.requestDate,
+          { recordType: 'production_request', recordId: req.id }
+        );
+        await kv.set(`production_request_${req.id}`, { ...req, oneHourDeliveryCheckSentAt: new Date().toISOString() });
+        sent++;
+        console.log(`✓ Sent 1-hour delivery check to ${storeIncharge.name} for request ${req.id}`);
+      } catch (error) {
+        console.error(`Error sending 1-hour delivery check for request ${req.id}:`, error);
+      }
+    }
+
+    console.log(`=== 1-HOUR DELIVERY CHECK SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({ success: true, message: '1-hour delivery checks processed', summary: { due: dueRequests.length, sent, skipped } });
+  } catch (error: any) {
+    console.error('Error sending 1-hour delivery checks:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
 // DAILY DATA ENTRY REMINDERS (Operations Managers, 8PM)
 // ============================================
 // Reminds Operations Managers who haven't logged inventory and/or sales data
@@ -8311,6 +13195,1124 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
     console.error('Error sending data entry reminders:', error);
     return c.json({ error: error.message }, 500);
   }
+});
+
+// ============================================
+// END-OF-DAY HIGH ALERT (Store/Production Incharges, 11:30PM)
+// ============================================
+// A much harder deadline than the 8PM data-entry reminder above (which is aimed at
+// Operations Managers and deliberately excludes store/production incharges - see
+// getOperationsManagers). This checks the incharges themselves: if a store incharge
+// (Rohan) hasn't logged today's sales, or a production incharge (Vijay) hasn't logged
+// today's production, by 11:30 PM there's no more time left in the day to fix it - so
+// this escalates past just the incharge, to Operations Heads and Cluster Heads too
+// (Aniket, Subham), rather than a quiet one-person nudge. Fires once per incharge per day.
+// Weekly nudge to count the real Paytm/bank balance and recalibrate. The app's Paytm
+// balance is a running calculation from the last physical count, so any payment or receipt
+// that never gets logged (found 2026-10-16: a month of drift, Rs.5,173, from unlogged
+// transfers and Zomato payouts that were never uploaded) silently accumulates until
+// someone checks. A regular count caps that drift at one week. Skipped when a
+// recalibration already happened within the last 6 days, so it never nags right after one.
+// Cron-secret protected like the other cron-only routes.
+app.post('/make-server-c2dd9b9d/cron/weekly-paytm-recalibration-reminder', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const today = getTodayIST();
+    const stores = await kv.getByPrefix('store:');
+    const recalibrations = await getAllByPrefixWithRetry('online-cash-recalibration:');
+    const clusterHeads = await getAllClusterHeads();
+    let sent = 0;
+
+    for (const store of stores) {
+      const storeRecals = recalibrations.filter((r: any) => r.storeId === store.id && r.date);
+      const lastDate = storeRecals.map((r: any) => r.date as string).sort().pop() || null;
+      const daysSince = lastDate
+        ? Math.round((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${lastDate}T00:00:00Z`).getTime()) / 86400000)
+        : null;
+      if (daysSince !== null && daysSince < 6) continue;
+
+      // Only stores that actually trade - an inactive/sandbox store has nothing to count.
+      const hasRecentSales = (await getAllByPrefixWithRetry('sales:')).some((s: any) =>
+        s.storeId === store.id && s.date && s.date >= addDaysToDateString(today, -7)
+      );
+      if (!hasRecentSales) continue;
+
+      const since = lastDate ? `Last recalibrated ${daysSince} days ago (${lastDate}).` : 'It has never been recalibrated.';
+      for (const clusterHead of clusterHeads) {
+        if (!clusterHead.authUserId) continue;
+        await notifyUser(
+          clusterHead.authUserId,
+          'paytm_recalibration_reminder',
+          'Weekly Paytm check',
+          `${store.name}: please check your actual Paytm/bank balance and recalibrate if it differs from the app. ${since}`,
+          store.id,
+          today
+        );
+        sent++;
+      }
+    }
+
+    return c.json({ success: true, sent });
+  } catch (error: any) {
+    console.log('Error sending weekly Paytm recalibration reminder:', error);
+    return c.json({ error: 'Failed to send reminder' }, 500);
+  }
+});
+
+app.post('/make-server-c2dd9b9d/send-eod-data-alerts', async (c) => {
+  try {
+    console.log('=== END-OF-DAY DATA ALERT CHECK (11:30PM) ===');
+    const today = getTodayIST();
+
+    const allEmployees = await kv.getByPrefix('unified-employee:');
+    const storeIncharges = allEmployees.filter((e: any) => e.designation === 'store_incharge');
+    const productionIncharges = allEmployees.filter((e: any) => e.designation === 'production_incharge');
+    const opsManagers = await getOperationsManagers();
+    const clusterHeads = await getAllClusterHeads();
+
+    let sent = 0;
+    let skipped = 0;
+
+    const raiseAlert = async (incharge: any, dataLabel: string) => {
+      const dedupeKey = `eod_alert_sent:${incharge.employeeId}:${today}`;
+      if (await kv.get(dedupeKey)) {
+        skipped++;
+        return;
+      }
+
+      const message = `HIGH ALERT: ${incharge.name} (${incharge.employeeId}) has not logged today's (${today}) ${dataLabel} data, even at 11:30 PM. Please follow up immediately.`;
+
+      // Dedupe recipients by authUserId - the incharge, every Operations Head, and every
+      // Cluster Head, but only once each even if a name happens to appear in more than
+      // one of those groups.
+      const recipients = new Map<string, any>();
+      for (const person of [incharge, ...opsManagers, ...clusterHeads]) {
+        if (person?.authUserId) recipients.set(person.authUserId, person);
+      }
+
+      for (const recipient of recipients.values()) {
+        try {
+          await notifyUser(
+            recipient.authUserId,
+            'eod_data_alert',
+            `🚨 High Alert: ${dataLabel === 'sales' ? 'Sales' : 'Production'} Data Not Updated`,
+            message,
+            undefined,
+            today
+          );
+        } catch (error) {
+          console.error(`Error sending EOD alert to ${recipient.name || recipient.authUserId}:`, error);
+        }
+      }
+
+      await kv.set(dedupeKey, { sentAt: new Date().toISOString(), dataLabel });
+      sent++;
+      console.log(`✓ Sent EOD high alert for ${incharge.name} (missing ${dataLabel}) to ${recipients.size} recipient(s)`);
+    };
+
+    for (const incharge of storeIncharges) {
+      if (!incharge.authUserId || !incharge.employeeId) continue;
+      const salesEntries = await kv.getByPrefix(`sales:${incharge.authUserId}:`);
+      const hasSalesToday = salesEntries.some((e: any) => e.date === today);
+      if (hasSalesToday) {
+        skipped++;
+        continue;
+      }
+      await raiseAlert(incharge, 'sales');
+    }
+
+    for (const incharge of productionIncharges) {
+      if (!incharge.authUserId || !incharge.employeeId) continue;
+      const productionEntries = await kv.getByPrefix(`production:${incharge.authUserId}:`);
+      const hasProductionToday = productionEntries.some((e: any) => e.date === today);
+      if (hasProductionToday) {
+        skipped++;
+        continue;
+      }
+      await raiseAlert(incharge, 'production');
+    }
+
+    console.log(`=== END-OF-DAY DATA ALERT SUMMARY: ${sent} sent, ${skipped} skipped ===`);
+
+    return c.json({
+      success: true,
+      message: 'End-of-day data alerts processed',
+      summary: { totalChecked: storeIncharges.length + productionIncharges.length, alertsSent: sent, skipped },
+    });
+  } catch (error: any) {
+    console.error('Error sending end-of-day data alerts:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// POS NIGHTLY AUTO-SYNC (Ciferon)
+// ============================================
+// Runs nightly via pg_cron at 10:30 PM IST (17:00 UTC) - see
+// supabase/migrations/20260728000000_pos_nightly_sync_cron.sql. No user session exists at
+// cron time, so this route is gated by a shared secret header instead of verifyUser,
+// matching the reminder-job routes above but with an added secret check since this route
+// writes financial/stock data rather than just sending notifications.
+//
+// Two independent steps per store (each isolated so one failing doesn't block the other):
+//   Step A (reliable): official SaleDetails API -> cash/paytm/zomato/swiggy totals for the
+//     day, written into that day's sales: record (posOnlineSales/posOfflineSales/
+//     cashAmount/paytmAmount) and online_sales: record (swiggySales/zomatoSales).
+//   Step B (fragile): undocumented OrderReport/v2/SaleCount endpoint, which needs a live
+//     admin-panel login (no long-lived key exists for item-wise data - confirmed by
+//     testing the integration key against it directly, which fails) - item-wise sold
+//     quantities classified into the 7 finished-product categories and written as a
+//     SalesDataRecord via the same path manual sales-sheet uploads use, so
+//     ProductionRequests.tsx's Opening+Received-Sold reconciliation picks it up unchanged.
+// Shared sync logic - called by both the cron-secret-gated nightly route and the
+// verifyUser-gated manual "Sync Now" button, so there is exactly one implementation.
+// All stores open at 3 PM IST - syncing "today" before then would either return nothing
+// or (worse) a handful of pre-opening test/staging orders that read as confusing partial
+// sales, so the whole run is skipped rather than writing a misleading record for the day.
+const STORE_OPENING_HOUR_IST = 15;
+
+// targetDate lets a cluster head backfill-correct a past day's already-closed sales record
+// (e.g. one written before the offlineSales staleness fix) by re-pulling that day's real
+// SaleDetails from Ciferon. Only Step A (cash/Paytm/online totals) runs for a backfill -
+// Step B (item-wise stock) and Step C (low-stock alert) are "tonight" side effects that
+// don't make sense to redo for a day that's already closed and reconciled elsewhere.
+async function runPosSync(targetDate?: string) {
+  const isBackfill = !!targetDate && targetDate !== getTodayIST();
+  const today = targetDate || getTodayIST();
+  const todayRfc1123 = new Date(`${today}T00:00:00Z`).toUTCString();
+  const results: any[] = [];
+
+  if (!isBackfill && getHourIST() < STORE_OPENING_HOUR_IST) {
+    return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
+  }
+
+  try {
+    const allStores = await kv.getByPrefix('store:');
+    const storesWithCiferon = (allStores || []).filter((s: any) => s.ciferonStoreId);
+
+    for (const store of storesWithCiferon) {
+      const storeResult: any = { storeId: store.id, storeName: store.name, date: today };
+
+      // ---- Step A: reliable cash/online sync via SaleDetails ----
+      try {
+        const apiKey = Deno.env.get('CIFERON_API_KEY');
+        if (!apiKey) throw new Error('CIFERON_API_KEY not configured');
+
+        const saleDetailsRes = await fetch('https://api.ciferon.com/api/LoginApi/SaleDetails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ StartDate: today, EndDate: today })
+        });
+
+        if (!saleDetailsRes.ok) {
+          throw new Error(`SaleDetails returned HTTP ${saleDetailsRes.status}`);
+        }
+        const saleDetailsData = await saleDetailsRes.json();
+        if (!saleDetailsData.IsSuccess) {
+          throw new Error('SaleDetails responded with IsSuccess=false');
+        }
+
+        const allOrders = saleDetailsData.Result?.orderList || [];
+        // Exclude cancelled orders - Ciferon still returns them in the day's orderList with
+        // their original BillAmount, which would otherwise inflate every total below.
+        //
+        // Also exclude anything whose real TransactionTime isn't actually `today` - Ciferon's
+        // SaleDetails endpoint doesn't reliably honor EndDate for the most recent day: a
+        // request for {StartDate: today, EndDate: today} was confirmed (via the raw response)
+        // to also include orders from the following day up through the moment of the request,
+        // which silently inflated "today"'s totals with tomorrow's not-yet-closed sales. Since
+        // each order carries its own TransactionTime, filtering on that directly is a safe fix
+        // regardless of whatever Ciferon's date-range filter is actually doing server-side.
+        // Only orders whose real TransactionTime falls on `today` (see note above) - this
+        // pre-filter set (todaysOrders) still includes cancelled orders, since discount and
+        // cancellation stats need to be reported for the day regardless of settlement status.
+        const todaysOrders = allOrders.filter((order: any) => getCiferonOrderDate(order) === today);
+        const isOnlineMode = (mode: string) => mode === 'Zomato' || mode === 'Swiggy';
+
+        const orders = todaysOrders.filter((order: any) => !(order.TransactionStatus || '').toLowerCase().includes('cancel'));
+        let cashTotal = 0, paytmTotal = 0, zomatoTotal = 0, swiggyTotal = 0;
+        let offlineDiscount = 0, onlineDiscount = 0;
+        // Financially, Paytm/PhonePe/Card/Google Pay/Razorpay are still all deliberately
+        // folded into one "Paytm" bucket above (nothing is missing from reconciliation) -
+        // this just ALSO keeps the raw per-mode split for insight purposes, e.g. seeing
+        // how much volume actually goes through Card/GPay vs Paytm within that bucket.
+        const paymentModeBreakdown: Record<string, number> = {};
+        let complimentaryCount = 0, complimentaryAmount = 0;
+        for (const order of orders) {
+          const mode = (order.PaymentMode && order.PaymentMode[0]) || 'Unknown';
+          const amount = order.BillAmount || 0;
+          const discount = order.DiscountAmount || 0;
+          paymentModeBreakdown[mode] = (paymentModeBreakdown[mode] || 0) + amount;
+          if (order.IsComplimentary) {
+            // CONFIRMED BUG (found 2026-09-14): a complimentary/free order collects no real
+            // cash or Paytm, but Ciferon still tags it with SOME PaymentMode (often blank,
+            // which the fallback above turns into 'Unknown') - and 'Unknown' fell into the
+            // catch-all "else" branch below, silently added to paytmTotal as if it were a
+            // real digital payment. That inflated posOfflineSales/offlineSales by the comp
+            // amount, which then always came up short against the store incharge's actual
+            // cash+Paytm count - a real, recurring mismatch, not a counting mistake. Comp
+            // orders are tallied separately (complimentaryCount/Amount) and must NOT touch
+            // any of the real collectible totals below.
+            complimentaryCount++;
+            complimentaryAmount += amount;
+            continue;
+          }
+          if (mode === 'Cash') { cashTotal += amount; offlineDiscount += discount; }
+          else if (mode === 'Zomato') { zomatoTotal += amount; onlineDiscount += discount; }
+          else if (mode === 'Swiggy') { swiggyTotal += amount; onlineDiscount += discount; }
+          else { paytmTotal += amount; offlineDiscount += discount; } // Paytm/PhonePe/Card/Google Pay/Razorpay - all digital counter payments
+        }
+
+        // Cancelled orders, split the same way, so the day's cancellation impact is visible
+        // per offline/online instead of just silently dropped from every total.
+        const cancelledOrders = todaysOrders.filter((order: any) => (order.TransactionStatus || '').toLowerCase().includes('cancel'));
+        let offlineCancelledAmount = 0, offlineCancelledCount = 0, onlineCancelledAmount = 0, onlineCancelledCount = 0;
+        for (const order of cancelledOrders) {
+          const mode = (order.PaymentMode && order.PaymentMode[0]) || 'Unknown';
+          const amount = order.BillAmount || 0;
+          if (isOnlineMode(mode)) { onlineCancelledAmount += amount; onlineCancelledCount++; }
+          else { offlineCancelledAmount += amount; offlineCancelledCount++; }
+        }
+
+        const posOfflineSales = cashTotal + paytmTotal;
+        const posOnlineSales = zomatoTotal + swiggyTotal;
+
+        const storeIncharge = await getStoreIncharge(store.id);
+        if (!storeIncharge || !storeIncharge.authUserId) {
+          throw new Error('No store incharge with an auth account found for this store');
+        }
+        const userId = storeIncharge.authUserId;
+
+        const allSales = await kv.getByPrefix('sales:');
+        const existingSale = (allSales || []).find((s: any) => s.storeId === store.id && s.date === today);
+        const fetchedSalesTotal = posOfflineSales + posOnlineSales;
+        const existingSalesTotal = getExistingSalesAmountTotal(existingSale);
+        const shouldSkipZeroOverwrite = !!existingSale && fetchedSalesTotal <= 0 && existingSalesTotal > 0;
+
+        // Carry forward yesterday's real actual cash-in-hand instead of hardcoding 0 below -
+        // otherwise the store incharge's own form later pre-fills previousCashInHand from
+        // this placeholder's stale 0 instead of the real balance, and the cluster head's
+        // read-only view shows a nonsense "previous day's cash ₹0" until the incharge
+        // manually reconciles and overwrites it.
+        const yesterday = new Date(`${today}T00:00:00Z`);
+        yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+        const yesterdayStr = yesterday.toISOString().substring(0, 10);
+        const yesterdaySale = (allSales || []).find((s: any) => s.storeId === store.id && s.date === yesterdayStr);
+        const carriedPreviousCashInHand = yesterdaySale?.actualCashInHand ?? 0;
+
+        if (shouldSkipZeroOverwrite) {
+          storeResult.stepA = {
+            success: true,
+            skipped: true,
+            reason: 'Skipped zero POS result to avoid overwriting an existing non-zero sales row',
+            cashTotal,
+            paytmTotal,
+            zomatoTotal,
+            swiggyTotal,
+            orderCount: orders.length,
+            rawOrderCount: allOrders.length,
+            datedOrderCount: todaysOrders.length
+          };
+        } else if (existingSale) {
+          const key = `sales:${existingSale.userId}:${existingSale.id}`;
+          // CONFIRMED BUG (found 2026-09-14): once the store incharge has entered/saved
+          // their OWN Cash/Paytm split, that split is the ground truth - Ciferon's
+          // per-order PaymentMode tagging is genuinely unreliable during a rush (a busy
+          // counter routinely mis-keys Cash vs Card/Paytm on the POS terminal). Every
+          // resync of this same day (the nightly cron re-running after the incharge has
+          // already reconciled, a manual "Sync Now", a delayed Ciferon finalization)
+          // was unconditionally overwriting cashAmount/paytmAmount with fresh
+          // cashTotal/paytmTotal, silently discarding an honest physical count in favor
+          // of Ciferon's own mis-tagged split. The TOTAL (offlineSales, built from real
+          // bill amounts, not payment-mode tags) is still reliable and must stay synced;
+          // only the CASH/PAYTM SPLIT is protected once a human has set it. If the
+          // corrected total no longer matches the preserved split, the existing "Cash +
+          // Paytm is short/over Net offline sales" warning surfaces that for a human to
+          // resolve - exactly what it's for, instead of the system quietly overwriting
+          // what was actually counted.
+          const hasHumanSplit = !!existingSale.createdBy && existingSale.createdBy !== 'pos-sync';
+          await kv.set(key, {
+            ...existingSale,
+            offlineSales: posOfflineSales, // BUG FIX: this was left stale on re-sync, only cashAmount/paytmAmount updated
+            ...(hasHumanSplit ? {} : { cashAmount: cashTotal, paytmAmount: paytmTotal }),
+            // Stamped on every pos-sync write only (never touched by the store incharge's own
+            // save, which merges via PUT /sales/:id and so leaves this alone) - lets the UI
+            // show "last synced" without guessing from approvedAt/createdAt, which reflect
+            // human review, not Ciferon sync freshness.
+            syncedAt: getNowIST(),
+            posOnlineSales,
+            posOfflineSales,
+            offlineDiscount,
+            onlineDiscount,
+            offlineCancelledAmount,
+            offlineCancelledCount,
+            onlineCancelledAmount,
+            onlineCancelledCount,
+            paymentModeBreakdown,
+            complimentaryCount,
+            complimentaryAmount
+          });
+          if (hasHumanSplit && existingSale.storeId && existingSale.date) {
+            // The corrected total can change what "should" have been collected after a
+            // day was already reconciled - re-run the Paytm cascade so
+            // actualPaytmBalance reflects it instead of going stale.
+            await cascadeRecomputePaytmBalances(existingSale.storeId, existingSale.date);
+          }
+        } else {
+          // CONFIRMED BUG (found 2026-08-29): a random itemId here means two near-simultaneous
+          // runPosSync invocations (e.g. the scheduled cron overlapping a manual "Sync Now"
+          // click) can both run the read-then-check above, both see no existing record for
+          // (store, today), and both create their own separate sales: record - a real
+          // duplicate found 289ms apart, each internally correct but disagreeing with each
+          // other on actualPaytmBalance, and nothing downstream (previousPaytm chaining,
+          // revenue totals, item breakdowns) has any way to know which one is "the" record for
+          // that day. A deterministic itemId makes two concurrent creates collide on the same
+          // KV key instead of becoming siblings - the second write just overwrites the first
+          // with equivalent data, so this is safe with no locking needed. Keyed by store too,
+          // not just date, since two stores can share the same storeIncharge/userId.
+          const itemId = `pos-sync-${store.id}-${today}`;
+          const key = `sales:${userId}:${itemId}`;
+          await kv.set(key, {
+            id: itemId,
+            userId,
+            storeId: store.id,
+            date: today,
+            offlineSales: posOfflineSales,
+            paytmAmount: paytmTotal,
+            cashAmount: cashTotal,
+            onlineSales: 0,
+            onlineSalesCommission: 0,
+            employeeSalary: 0,
+            posOnlineSales,
+            posOfflineSales,
+            offlineDiscount,
+            onlineDiscount,
+            offlineCancelledAmount,
+            offlineCancelledCount,
+            onlineCancelledAmount,
+            onlineCancelledCount,
+            paymentModeBreakdown,
+            complimentaryCount,
+            complimentaryAmount,
+            approvalStatus: 'pending',
+            actualCashInHand: 0,
+            cashOffset: 0,
+            approvalRequired: false,
+            approvedBy: null,
+            approvedAt: null,
+            approvalRequested: false,
+            approvalRequestedAt: null,
+            requestedCashInHand: null,
+            requestedOffset: null,
+            rejectedBy: null,
+            rejectedAt: null,
+            rejectionReason: null,
+            previousCashInHand: carriedPreviousCashInHand,
+            usedOnlineMoney: 0,
+            actualPaytmBalance: 0,
+            paytmOffset: 0,
+            createdBy: 'pos-sync',
+            createdByName: 'Ciferon POS Auto-Sync',
+            syncedAt: getNowIST(),
+          });
+        }
+
+        // Upsert online_sales: record (Zomato/Swiggy split), same as the manual OnlineSalesTab entry
+        const allOnlineSales = await kv.getByPrefix('online_sales:');
+        const existingOnlineSales = (allOnlineSales || []).find((s: any) => s.storeId === store.id && s.date === today);
+        const existingOnlineSalesTotal = (existingOnlineSales?.swiggySales || 0) + (existingOnlineSales?.zomatoSales || 0);
+        const shouldSkipZeroOnlineOverwrite = !!existingOnlineSales && posOnlineSales <= 0 && existingOnlineSalesTotal > 0;
+        if (shouldSkipZeroOnlineOverwrite) {
+          // Keep a previously good online-sales split if Ciferon returns an empty result for
+          // this date; the main sales row skip above records the diagnostic details.
+        } else if (existingOnlineSales) {
+          await kv.set(`online_sales:${existingOnlineSales.id}`, {
+            ...existingOnlineSales,
+            swiggySales: swiggyTotal,
+            zomatoSales: zomatoTotal
+          });
+        } else {
+          // Same race condition as the sales: record above (found 2026-08-29, this parallel
+          // Zomato/Swiggy split copy wasn't covered by that fix) - a random/time-based id let
+          // two near-simultaneous runPosSync invocations each create their own record for the
+          // same (store, date), and the "Online Sales" card sums every online_sales: record
+          // matching that date/store, silently double-counting. Deterministic id makes
+          // concurrent creates collide on one KV key instead of becoming siblings.
+          const entryId = `ONLINE-SALES-POS-${store.id}-${today}`;
+          await kv.set(`online_sales:${entryId}`, {
+            id: entryId,
+            date: today,
+            swiggySales: swiggyTotal,
+            zomatoSales: zomatoTotal,
+            storeId: store.id,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        if (!storeResult.stepA) {
+          storeResult.stepA = { success: true, cashTotal, paytmTotal, zomatoTotal, swiggyTotal, orderCount: orders.length, rawOrderCount: allOrders.length, datedOrderCount: todaysOrders.length };
+        }
+      } catch (stepAError: any) {
+        storeResult.stepA = { success: false, error: stepAError?.message || String(stepAError) };
+        console.error(`[pos-sync] Step A failed for store ${store.id}:`, stepAError);
+      }
+
+      // ---- Step B: item-wise category sync (Category Sales / Store Stock Status). Also
+      // runs during a backfill now (the classifier's Mania Combo bug is fixed, and Category
+      // Sales needs to be able to pull historical dates via the API, not just "today") ----
+      try {
+        const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+        const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+        if (!adminEmail || !adminPassword) throw new Error('CIFERON_ADMIN_EMAIL/PASSWORD not configured');
+
+        const loginRes = await fetch('https://api.ciferon.com/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+        });
+        if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
+        const loginData = await loginRes.json();
+        // Field name unconfirmed for a scripted login (only observed via localStorage after
+        // an interactive login) - check the common shapes defensively rather than assume one.
+        const authkey =
+          loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+          loginData?.AuthKey || loginData?.token || loginData?.Token;
+        if (!authkey) {
+          throw new Error(`Ciferon login did not return a recognizable authkey. Response keys: ${Object.keys(loginData || {}).join(', ')}`);
+        }
+
+        const saleCountUrl = `https://api.ciferon.com/Api/OrderReport/v2/SaleCount?StartDate=${encodeURIComponent(todayRfc1123)}&EndDate=${encodeURIComponent(todayRfc1123)}&StoreIds=undefined&IsInit=false&searchString=undefined&CompanyBrandId=0&FoodType=undefined&TerminalId=0&IsTallyMode=false&isSuperCategory=false&FloorId=0`;
+        const saleCountRes = await fetch(saleCountUrl, {
+          headers: {
+            'Authorization': `Bearer ${authkey}`,
+            'StoreId': String(store.ciferonStoreId),
+            'BrandId': '0',
+            'Accept': 'application/json'
+          }
+        });
+        if (!saleCountRes.ok) throw new Error(`SaleCount returned HTTP ${saleCountRes.status}`);
+        const saleCountData = await saleCountRes.json();
+        if (!saleCountData.IsSuccess) throw new Error('SaleCount responded with IsSuccess=false');
+
+        // Flatten CategoryList[].ProductList[] into a single product array, keeping each
+        // product's PlatformList (per-channel qty/revenue) alongside it. Result.Columns
+        // gives the channel name for each PlatformList index (e.g. ["POS","Zomato","Swiggy",
+        // "Contactless"] - PlatformList[1] is that product's Zomato figures).
+        const categoryList = saleCountData.Result?.lists || [];
+        const channelNames: string[] = saleCountData.Result?.Columns || [];
+        const products: Array<{ ProductName: string; Quantity: number; PlatformList?: Array<{ Value: string | number; Text: string | number }> }> = [];
+        for (const cat of categoryList) {
+          for (const prod of (cat.ProductList || [])) {
+            products.push({ ProductName: prod.ProductName, Quantity: prod.Quantity, PlatformList: prod.PlatformList });
+          }
+        }
+
+        const { totals: categoryTotals, byChannel } = classifyAndSumProductsByChannel(products, channelNames);
+        const productBreakdown = classifyProductBreakdown(products);
+        // Per-menu-item (not rolled up to category) channel split - lets the Aggregator
+        // Payout page's "Are We Pricing This Right?" section compare online vs dine-in price
+        // per actual menu item instead of per broad category (see classifyAndSumProductsByItemAndChannel).
+        const itemChannelBreakdown = classifyAndSumProductsByItemAndChannel(products, channelNames);
+
+        // Upsert (not duplicate) today's pos-sync-originated SalesDataRecord for this store
+        const allSalesData = await kv.getByPrefix('sales_data_');
+        const existingRecord = (allSalesData || []).find(
+          (r: any) => r.storeId === store.id && r.date === today && r.uploadedBy === 'pos-sync'
+        );
+
+        // Ciferon's SaleCount/OrderReport endpoint has been observed to hand back the
+        // previous day's already-closed totals verbatim instead of the requested day's
+        // (same underlying date-range unreliability documented for Step A's SaleDetails
+        // above, but with no per-order timestamp to filter on here). Every category
+        // matching the prior day's stored figure exactly is a near-impossible coincidence
+        // for a real business day, so treat it as a stale/cached response: don't silently
+        // overwrite what may be correct data for `today`, and flag it for a human to
+        // verify against Ciferon's own dashboard instead.
+        const yesterdayRecord = (allSalesData || []).find(
+          (r: any) => r.storeId === store.id && r.date === addDaysToDateString(today, -1) && r.uploadedBy === 'pos-sync'
+        );
+        const looksStale = !!yesterdayRecord && JSON.stringify(yesterdayRecord.data) === JSON.stringify(categoryTotals)
+          && Object.values(categoryTotals as Record<string, number>).some((v) => (v || 0) > 0);
+
+        if (looksStale) {
+          storeResult.stepB = {
+            success: false,
+            skipped: true,
+            reason: `Item-wise totals for ${today} are identical to ${addDaysToDateString(today, -1)} - likely a stale Ciferon response, not written`,
+            categoryTotals
+          };
+          console.warn(`[pos-sync] Step B looks stale for store ${store.id} on ${today} (identical to previous day) - skipping write`);
+
+          try {
+            const clusterHeads = await getAllClusterHeads();
+            const opsManagers = await getOperationsManagers(store.id);
+            const recipients = [...clusterHeads, ...opsManagers];
+            for (const recipient of recipients) {
+              if (recipient.authUserId) {
+                await notifyUser(
+                  recipient.authUserId,
+                  'pos_sync_stock_failed',
+                  'POS Item-wise Sync Looks Stale',
+                  `Tonight's item-wise stock sync for ${store.name} on ${today} returned totals identical to ${addDaysToDateString(today, -1)} - likely a stale Ciferon response. Not saved; please verify against Ciferon's dashboard and use manual sales-data upload if needed.`,
+                  store.id,
+                  today
+                );
+              }
+            }
+          } catch (notifyError) {
+            console.error('[pos-sync] Failed to send Step B staleness notification:', notifyError);
+          }
+        } else {
+          const recordId = existingRecord?.id || `POS-SYNC-${store.id}-${today}`;
+          await kv.set(`sales_data_${recordId}`, {
+            id: recordId,
+            date: today,
+            storeId: store.id,
+            storeName: store.name,
+            data: categoryTotals,
+            // Per-channel (POS/Zomato/Swiggy/...) pieces + revenue per momo category - lets
+            // Category Sales compute a real revenue-per-momo figure instead of an assumed price.
+            channelBreakdown: byChannel,
+            // Per-menu-item detail (e.g. "Chicken Steamed Momos" kept separate from "Chicken
+            // Afghani Momos", not collapsed into "Chicken Momos") - lets Category Sales show
+            // real item-level detail on top of the rolled-up category totals above.
+            productBreakdown,
+            // Per-menu-item channel split (pieces/revenue by POS/Zomato/Swiggy/... for each
+            // real product name, not rolled up to category) - see classifyAndSumProductsByItemAndChannel.
+            itemChannelBreakdown,
+            uploadedBy: 'pos-sync',
+            uploadedAt: new Date().toISOString()
+          });
+
+          storeResult.stepB = { success: true, categoryTotals, productCount: products.length };
+        }
+      } catch (stepBError: any) {
+        storeResult.stepB = { success: false, error: stepBError?.message || String(stepBError) };
+        console.error(`[pos-sync] Step B failed for store ${store.id}:`, stepBError);
+
+        // Step B is known-fragile - alert so the manual /sales-data upload is used as a
+        // fallback for today, rather than silently having no item-wise data at all.
+        try {
+          const clusterHeads = await getAllClusterHeads();
+          const opsManagers = await getOperationsManagers(store.id);
+          const recipients = [...clusterHeads, ...opsManagers];
+          for (const recipient of recipients) {
+            if (recipient.authUserId) {
+              await notifyUser(
+                recipient.authUserId,
+                'pos_sync_stock_failed',
+                'POS Item-wise Sync Failed',
+                `Tonight's item-wise stock sync failed for ${store.name}: ${stepBError?.message || String(stepBError)}. Please use manual sales-data upload for ${today}.`,
+                store.id,
+                today
+              );
+            }
+          }
+        } catch (notifyError) {
+          console.error('[pos-sync] Failed to send Step B failure notification:', notifyError);
+        }
+      }
+
+      // ---- Step D: per-order item detail (OrderReport/Sale, IsAllVisible=true) - each
+      // order's real momo content plus its ExternalId (the Zomato/Swiggy order ID), so an
+      // uploaded settlement's per-order payout can be joined back to exactly which momo
+      // types were in it, instead of assuming a uniform commission rate across all types.
+      //
+      // CONFIRMED RISK - do not backfill an old date to "fix" a coverage gap without reading
+      // this: this endpoint returns Ciferon's LIVE, non-cancelled-only order list (confirmed
+      // via a raw fetch - the response's own `totalOrder` field matches OrderList.length
+      // exactly, so it isn't pagination truncating anything), not an immutable historical
+      // snapshot. An order that was live when the ORIGINAL same-day sync ran can later be
+      // cancelled/voided in Ciferon days or weeks after, even though the (already-closed,
+      // already-paid) aggregator-settlement record still lists it - so backfilling that same
+      // date later can come back with FEWER orders than the original sync captured, silently
+      // losing ones that used to match. Tried exactly this on 2026-08-25 to fix 30 "unmatched"
+      // Zomato orders in OnlineSalesTab's channelEconomicsData (29 of them traced to a real,
+      // one-time gap on 2026-08-17 - that day's original sync ran before all 78 of the day's
+      // orders had been placed) - backfilling 2026-08-05/06/07/14/15/16/17/18 fully closed the
+      // 08-17 gap but coincidentally dropped since-cancelled orders whose PLACEMENT date fell
+      // in that range but which had SETTLED on 08-10 and 08-21 (settlement lags placement by
+      // 1-3+ days) - net result went from 30 to 39 unmatched, with no snapshot of the prior
+      // records to revert to. If a gap like this recurs, treat it as inherent, accept the
+      // lower match rate, or accompany a backfill with an explicit before/after order-ID diff
+      // (not just a total count) so a regression like this is caught before it lands. ----
+      try {
+        const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+        const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+        if (!adminEmail || !adminPassword) throw new Error('CIFERON_ADMIN_EMAIL/PASSWORD not configured');
+
+        const loginRes = await fetch('https://api.ciferon.com/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+        });
+        if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
+        const loginData = await loginRes.json();
+        const authkey =
+          loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+          loginData?.AuthKey || loginData?.token || loginData?.Token;
+        if (!authkey) throw new Error(`Ciferon login did not return a recognizable authkey. Response keys: ${Object.keys(loginData || {}).join(', ')}`);
+
+        const orderSaleParams = new URLSearchParams({
+          StartDate: todayRfc1123,
+          EndDate: todayRfc1123,
+          ReportType: 'SaleReport',
+          IsAllVisible: 'true',
+          IsSplitPaymentMode: 'false',
+          SaleOrderType: 'undefined',
+          IsCancel: 'false',
+          IsComplementary: 'false',
+          IsPending: 'false',
+          IsSettle: 'false',
+          IsInit: 'false',
+          PaymentModeIds: 'undefined',
+          StoreIds: 'undefined',
+          PaymentFilter: 'undefined',
+          IsEdit: 'false',
+          IsReprint: 'false',
+          IsCustomerGst: 'false',
+          IsDiscount: 'false',
+          CompanyBrandId: '0',
+          IsDeliveryApp: 'false',
+          TerminalId: '0',
+        });
+        const orderSaleRes = await fetch(`https://api.ciferon.com/api/OrderReport/Sale?${orderSaleParams.toString()}`, {
+          headers: {
+            'Authorization': `Bearer ${authkey}`,
+            'StoreId': String(store.ciferonStoreId),
+            'BrandId': '0',
+            'Accept': 'application/json'
+          }
+        });
+        if (!orderSaleRes.ok) throw new Error(`OrderReport/Sale returned HTTP ${orderSaleRes.status}`);
+        const orderSaleData = await orderSaleRes.json();
+        if (!orderSaleData.IsSuccess) throw new Error('OrderReport/Sale responded with IsSuccess=false');
+
+        const orders = (orderSaleData.Result?.OrderList || []).map((o: any) => ({
+          orderId: o.OrderId,
+          externalId: o.ExternalId ? String(o.ExternalId) : null,
+          paymentMode: o.PaymentMode,
+          grandTotal: o.GrandTotal || 0,
+          subtotal: o.Subtotal || 0,
+          discount: o.Discount || 0,
+          // 'DineIn' | 'TakeAway' | 'HomeDelivery' (Zomato/Swiggy orders are also
+          // HomeDelivery) - confirmed against the raw OrderReport/Sale response (NOT the
+          // field named "Type", which is unrelated ["SaleInvoice" etc] - the real order-type
+          // field is SaleOrderType). Used by /utilities-consumption to attribute box
+          // (TakeAway+HomeDelivery) vs tray (DineIn) usage per order.
+          orderType: o.SaleOrderType || null,
+          orderHourIST: getCiferonOrderHourIST(o),
+          items: classifyOrderItems((o.OrderItemWrapperList || []).map((i: any) => ({
+            ProductId: i.ProductId, ProductName: i.ProductName, Quantity: i.Quantity, Rate: i.Rate, Total: i.Total
+          }))),
+          // Raw per-item name/quantity/category, kept separate from the momo-category
+          // classification above - CategoryName === 'Addon' marks a combo's auto-decomposed
+          // sibling lines (e.g. a Mania Combo's embedded burger/extra-momos/soft-drink),
+          // which represent the SAME physical order as their combo's own line, not an
+          // independently-boxed item - confirmed against real order data. Used by
+          // /utilities-consumption for box/tray counting (skip Addon lines) and beverage
+          // consumption (match by name regardless of Addon, since a combo's embedded soft
+          // drink is still a real bottle handed to the customer).
+          rawItems: (o.OrderItemWrapperList || []).map((i: any) => ({
+            productName: i.ProductName || '',
+            quantity: i.Quantity || 0,
+            categoryName: i.CategoryName || '',
+          })),
+        }));
+
+        await kv.set(`order-item-detail:${store.id}:${today}`, {
+          storeId: store.id,
+          date: today,
+          orders,
+          syncedAt: new Date().toISOString(),
+        });
+
+        storeResult.stepD = { success: true, orderCount: orders.length };
+      } catch (stepDError: any) {
+        storeResult.stepD = { success: false, error: stepDError?.message || String(stepDError) };
+        console.error(`[pos-sync] Step D failed for store ${store.id}:`, stepDError);
+      }
+
+      // ---- Step C: low-stock alert (opening + this month's received - this month's sold,
+      // same formula ProductionRequests.tsx's "Store Stock Status" uses, simplified to
+      // skip its mid-month-recalibration-override edge case) ----
+      if (isBackfill) {
+        storeResult.stepC = { success: true, skipped: true, reason: 'backfill only re-runs Step A' };
+      } else
+      try {
+        const CATEGORY_KEYS: Array<{ camelKey: string; legacyKey: string }> = [
+          { camelKey: 'chicken', legacyKey: 'Chicken Momos' },
+          { camelKey: 'chickenCheese', legacyKey: 'Chicken Cheese Momos' },
+          { camelKey: 'veg', legacyKey: 'Veg Momos' },
+          { camelKey: 'paneer', legacyKey: 'Paneer Momos' },
+          { camelKey: 'cheeseCorn', legacyKey: 'Corn Cheese Momos' },
+          { camelKey: 'chickenKurkure', legacyKey: 'Chicken Kurkure Momos' },
+          { camelKey: 'vegKurkure', legacyKey: 'Veg Kurkure Momos' },
+        ];
+        const currentMonth = today.substring(0, 7);
+        const monthStart = `${currentMonth}-01`;
+
+        // Opening balance from this month's most recent store recalibration, if any
+        const allRecalibrations = await kv.getByPrefix('recalibration_');
+        const storeRecalibrations = (allRecalibrations || [])
+          .filter((r: any) => r.locationId === store.id && r.locationType === 'store' && r.date?.startsWith(currentMonth))
+          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const latestRecal = storeRecalibrations[0];
+
+        const openingBalance: Record<string, number> = {};
+        if (latestRecal?.items) {
+          const allInventoryItems = await kv.getByPrefix('inventory_item_');
+          for (const item of latestRecal.items) {
+            const invItem = (allInventoryItems || []).find((i: any) => i.id === item.itemId || i.name === item.itemId);
+            if (invItem) {
+              const camelKey = invItem.name.replace(/_([a-z])/g, (_: string, c: string) => c.toUpperCase());
+              openingBalance[camelKey] = item.actualQuantity;
+            }
+          }
+        }
+
+        // This month's delivered/partially-delivered production requests for this store.
+        // Real records use statuses like "delivered", "partially-delivered", or
+        // "partially-shipped" - deliveredAt being set is the reliable signal that some
+        // quantity actually reached the store, regardless of the exact status string. The
+        // real shipped amount lives in shippedQuantities (falls back to the requested
+        // top-level field for older records that predate that field).
+        const monthRequests = await getProductionRequestsFrom(monthStart);
+        const deliveredRequests = (monthRequests || []).filter((r: any) => r.storeId === store.id && !!r.deliveredAt);
+        const received: Record<string, number> = {};
+        for (const key of CATEGORY_KEYS) {
+          received[key.camelKey] = deliveredRequests.reduce((sum: number, r: any) => {
+            const shipped = r.shippedQuantities?.[key.camelKey];
+            const qty = shipped !== undefined ? shipped : ((r[key.camelKey] || 0) + (r[key.camelKey + 's'] || 0));
+            return sum + qty;
+          }, 0);
+        }
+
+        // This month's sold, from SalesDataRecords - includes tonight's Step B write
+        const monthSalesRecords = (await kv.getByPrefix('sales_data_') || [])
+          .filter((r: any) => r.storeId === store.id && r.date?.startsWith(currentMonth));
+        const sold: Record<string, number> = {};
+        for (const key of CATEGORY_KEYS) {
+          sold[key.camelKey] = monthSalesRecords.reduce(
+            (sum: number, r: any) => sum + (r.data?.[key.legacyKey] || 0), 0
+          );
+        }
+
+        const thresholdsRecord = (await kv.get(`stock-thresholds:${store.id}`)) || {};
+        const lowCategories: string[] = [];
+        for (const key of CATEGORY_KEYS) {
+          const stock = (openingBalance[key.camelKey] || 0) + received[key.camelKey] - sold[key.camelKey];
+          const thresholds = (thresholdsRecord as any)[key.camelKey] || { high: 600, medium: 300, low: 150 };
+          if (stock <= thresholds.low) {
+            lowCategories.push(`${key.legacyKey} (${stock} left)`);
+          }
+        }
+
+        // NOTE: notification-sending is intentionally disabled for now. A live test against
+        // this store's real data showed the received-quantity calc below doesn't yet match
+        // real production-request records, which use statuses like "partially-delivered"/
+        // "partially-shipped" (not just "delivered") and store the actual shipped amount in
+        // a separate shippedQuantities sub-object, not the top-level requested-quantity
+        // fields this reads today - so lowCategories can be wrong. Fix that calc and verify
+        // it against ProductionRequests.tsx's real on-screen numbers for this store before
+        // re-enabling the notifyUser block below (kept, commented, to make re-enabling easy).
+        if (lowCategories.length > 0) {
+          console.log(`[pos-sync] Step C would have alerted for ${store.name}:`, lowCategories);
+          /*
+          const recipients: any[] = [];
+          const storeIncharge = await getStoreIncharge(store.id);
+          if (storeIncharge) recipients.push(storeIncharge);
+          recipients.push(...(await getOperationsManagers(store.id)));
+          if (store.productionHouseId) {
+            const productionHouse = await kv.get(`production_house_${store.productionHouseId}`);
+            if (productionHouse?.productionHeadId) {
+              const productionHead = await kv.get(`unified-employee:${productionHouse.productionHeadId}`);
+              if (productionHead) recipients.push(productionHead);
+            }
+          }
+          recipients.push(...(await getAllClusterHeads()));
+
+          const notified = new Set<string>();
+          for (const recipient of recipients) {
+            if (recipient?.authUserId && !notified.has(recipient.authUserId)) {
+              notified.add(recipient.authUserId);
+              await notifyUser(
+                recipient.authUserId,
+                'low_stock_alert',
+                '⚠️ Low Stock Alert',
+                `${store.name} is running low on: ${lowCategories.join(', ')}`,
+                store.id,
+                today
+              );
+            }
+          }
+          */
+        }
+
+        storeResult.stepC = { success: true, lowCategories };
+      } catch (stepCError: any) {
+        storeResult.stepC = { success: false, error: stepCError?.message || String(stepCError) };
+        console.error(`[pos-sync] Step C failed for store ${store.id}:`, stepCError);
+      }
+
+      // Per-store audit log so failures are diagnosable without digging through function logs
+      await kv.set(`pos-sync-log:${today}:${store.id}`, {
+        date: today,
+        storeId: store.id,
+        storeName: store.name,
+        stepA: storeResult.stepA,
+        stepB: storeResult.stepB,
+        stepC: storeResult.stepC,
+        stepD: storeResult.stepD,
+        ranAt: new Date().toISOString()
+      });
+
+      results.push(storeResult);
+    }
+
+    return { success: true, date: today, results };
+  } catch (error: any) {
+    console.error('[pos-sync] Unexpected error:', error);
+    return { success: false, error: error?.message || 'pos-sync failed', results, status: 500 };
+  }
+}
+
+// Nightly cron-invoked entrypoint - no user session exists at cron time, so this is
+// gated by a shared secret header instead of verifyUser (see the migration referenced
+// above), with an added secret check since this route writes financial/stock data
+// rather than just sending notifications like the reminder-job routes above.
+app.post('/make-server-c2dd9b9d/pos-sync', async (c) => {
+  const cronSecret = c.req.header('X-Cron-Secret');
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || cronSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const result = await runPosSync();
+  return c.json(result, (result as any).status || 200);
+});
+
+// Manual "Sync Now" button entrypoint - lets production head, operations manager, store
+// incharge, or cluster head trigger today's sync early instead of waiting for the 10:30 PM
+// cron, e.g. to check figures before closing. Same underlying logic as the cron route above.
+app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isStoreIncharge = designation === 'store_incharge';
+  const isProductionIncharge = designation === 'production_incharge';
+  const isOperationsManager = role === 'manager' && !isStoreIncharge && !isProductionIncharge;
+  if (role !== 'cluster_head' && !isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
+    return c.json({ error: 'Only production head, operations manager, store incharge, or cluster head can trigger a manual POS sync' }, 403);
+  }
+
+  const result = await runPosSync();
+  return c.json(result, (result as any).status || 200);
+});
+
+// TEMP DIAGNOSTIC - remove after backfilling the Aug 5-7 / 14-18 order-item-detail gap
+// (confirmed 29 of 30 "unmatched" Zomato orders trace to the 2026-08-17 order-item-detail
+// sync only having captured 46 of that day's 78 real orders - the same-day sync ran before
+// the day finished). Unauthenticated on purpose, matching this session's established
+// diagnostic-route pattern - remove once the backfill is confirmed and redeploy clean.
+// Backfill entrypoint - cluster head only. Re-pulls a specific already-closed day's
+// SaleDetails from Ciferon and overwrites that day's cash/Paytm/online totals, for
+// correcting a historical record written before a sync bug was fixed (Step A only -
+// see runPosSync's isBackfill branch).
+app.post('/make-server-c2dd9b9d/pos-sync/backfill', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (authResult.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only cluster heads can backfill a past day\'s POS sync' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const date = body?.date;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'Provide a date in YYYY-MM-DD format' }, 400);
+  }
+
+  const result = await runPosSync(date);
+  return c.json(result, (result as any).status || 200);
+});
+
+// One-off admin utility - backfills every day in [startDate, endDate] via the same
+// per-day backfill path above, for verifying the sync end-to-end across a range at once.
+// Gated by a dedicated secret (not user auth) since it's a maintenance tool, not an
+// in-app feature - never exposed in the frontend.
+app.post('/make-server-c2dd9b9d/pos-sync/admin-bulk-backfill', async (c) => {
+  const adminSecret = c.req.header('X-Admin-Secret');
+  const expectedSecret = Deno.env.get('ADMIN_TOOLS_SECRET');
+  if (!expectedSecret || adminSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { startDate, endDate } = body || {};
+  if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return c.json({ error: 'Provide startDate and endDate in YYYY-MM-DD format' }, 400);
+  }
+
+  const results: any[] = [];
+  let cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (cursor <= end) {
+    const date = cursor.toISOString().substring(0, 10);
+    const result = await runPosSync(date);
+    results.push({ date, result });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return c.json({ success: true, days: results.length, results });
+});
+
+// One-off debug utility - returns Ciferon's raw SaleDetails response for a single date,
+// unprocessed, so a discrepancy between our aggregated totals and Ciferon's own dashboard
+// can be inspected order-by-order instead of guessing. Same admin-secret gate as the bulk
+// backfill above - never exposed in the frontend.
+app.post('/make-server-c2dd9b9d/pos-sync/admin-raw-fetch', async (c) => {
+  const adminSecret = c.req.header('X-Admin-Secret');
+  const expectedSecret = Deno.env.get('ADMIN_TOOLS_SECRET');
+  if (!expectedSecret || adminSecret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const { date, mode, storeId } = body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'Provide date in YYYY-MM-DD format' }, 400);
+  }
+
+  if (mode === 'salecount') {
+    // Same login + endpoint Step B uses - dumped raw and unprocessed, to check whether the
+    // response actually carries any per-order or per-channel (Zomato/Swiggy/offline) detail
+    // beyond the day-level ProductName+Quantity totals the classifier currently reads.
+    const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+    const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+    if (!adminEmail || !adminPassword) return c.json({ error: 'CIFERON_ADMIN_EMAIL/PASSWORD not configured' }, 500);
+
+    const allStores = await kv.getByPrefix('store:');
+    const store = storeId
+      ? (allStores || []).find((s: any) => s.id === storeId)
+      : (allStores || []).find((s: any) => s.ciferonStoreId);
+    if (!store?.ciferonStoreId) return c.json({ error: 'No store with a ciferonStoreId found' }, 400);
+
+    const loginRes = await fetch('https://api.ciferon.com/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+    });
+    if (!loginRes.ok) return c.json({ error: `Ciferon login returned HTTP ${loginRes.status}` }, 502);
+    const loginData = await loginRes.json();
+    const authkey =
+      loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+      loginData?.AuthKey || loginData?.token || loginData?.Token;
+    if (!authkey) return c.json({ error: 'No authkey in Ciferon login response', loginDataKeys: Object.keys(loginData || {}) }, 502);
+
+    const dateRfc1123 = new Date(`${date}T00:00:00Z`).toUTCString();
+    const saleCountUrl = `https://api.ciferon.com/Api/OrderReport/v2/SaleCount?StartDate=${encodeURIComponent(dateRfc1123)}&EndDate=${encodeURIComponent(dateRfc1123)}&StoreIds=undefined&IsInit=false&searchString=undefined&CompanyBrandId=0&FoodType=undefined&TerminalId=0&IsTallyMode=false&isSuperCategory=false&FloorId=0`;
+    const saleCountRes = await fetch(saleCountUrl, {
+      headers: {
+        'Authorization': `Bearer ${authkey}`,
+        'StoreId': String(store.ciferonStoreId),
+        'BrandId': '0',
+        'Accept': 'application/json'
+      }
+    });
+    const data = await saleCountRes.json().catch(() => null);
+    return c.json({ requestedDate: date, httpStatus: saleCountRes.status, raw: data });
+  }
+
+  if (mode === 'ordersale') {
+    // OrderReport/Sale (the admin panel's "Sales Summary" report) - checking whether its
+    // OrderList actually carries per-order item content when IsAllVisible=true, since the
+    // page's "Show Items" checkbox displays exactly that from a captured real request.
+    const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+    const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+    if (!adminEmail || !adminPassword) return c.json({ error: 'CIFERON_ADMIN_EMAIL/PASSWORD not configured' }, 500);
+
+    const allStores = await kv.getByPrefix('store:');
+    const store = storeId
+      ? (allStores || []).find((s: any) => s.id === storeId)
+      : (allStores || []).find((s: any) => s.ciferonStoreId);
+    if (!store?.ciferonStoreId) return c.json({ error: 'No store with a ciferonStoreId found' }, 400);
+
+    const loginRes = await fetch('https://api.ciferon.com/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ UserName: adminEmail, Password: adminPassword })
+    });
+    if (!loginRes.ok) return c.json({ error: `Ciferon login returned HTTP ${loginRes.status}` }, 502);
+    const loginData = await loginRes.json();
+    const authkey =
+      loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey ||
+      loginData?.AuthKey || loginData?.token || loginData?.Token;
+    if (!authkey) return c.json({ error: 'No authkey in Ciferon login response', loginDataKeys: Object.keys(loginData || {}) }, 502);
+
+    const dateRfc1123 = new Date(`${date}T00:00:00Z`).toUTCString();
+    const params = new URLSearchParams({
+      StartDate: dateRfc1123,
+      EndDate: dateRfc1123,
+      ReportType: 'SaleReport',
+      IsAllVisible: 'true',
+      IsSplitPaymentMode: 'false',
+      SaleOrderType: 'undefined',
+      IsCancel: 'false',
+      IsComplementary: 'false',
+      IsPending: 'false',
+      IsSettle: 'false',
+      IsInit: 'false',
+      PaymentModeIds: 'undefined',
+      StoreIds: 'undefined',
+      PaymentFilter: 'undefined',
+      IsEdit: 'false',
+      IsReprint: 'false',
+      IsCustomerGst: 'false',
+      IsDiscount: 'false',
+      CompanyBrandId: '0',
+      IsDeliveryApp: 'false',
+      TerminalId: '0',
+    });
+    const orderSaleUrl = `https://api.ciferon.com/api/OrderReport/Sale?${params.toString()}`;
+    const orderSaleRes = await fetch(orderSaleUrl, {
+      headers: {
+        'Authorization': `Bearer ${authkey}`,
+        'StoreId': String(store.ciferonStoreId),
+        'BrandId': '0',
+        'Accept': 'application/json'
+      }
+    });
+    const data = await orderSaleRes.json().catch(() => null);
+    return c.json({ requestedDate: date, httpStatus: orderSaleRes.status, raw: data });
+  }
+
+  const apiKey = Deno.env.get('CIFERON_API_KEY');
+  if (!apiKey) return c.json({ error: 'CIFERON_API_KEY not configured' }, 500);
+
+  const res = await fetch('https://api.ciferon.com/api/LoginApi/SaleDetails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ StartDate: date, EndDate: date })
+  });
+  const data = await res.json();
+  return c.json({ requestedDate: date, httpStatus: res.status, raw: data });
 });
 
 // ============================================
@@ -8651,40 +14653,57 @@ app.get('/make-server-c2dd9b9d/online-cash-recalibration/all', async (c) => {
   }
 });
 
-// Save online cash recalibration
+// Save online cash recalibration (one per store PER DATE, so a cluster head can log a
+// separate weekly Sunday reconciliation each week without overwriting earlier weeks).
 app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only the cluster head can log an online cash recalibration' }, 403);
+  }
+
   try {
     const recalibration = await c.req.json();
-    
+    if (!recalibration.date) {
+      return c.json({ error: 'date is required' }, 400);
+    }
+
     console.log('💾 [SERVER] ===== SAVING RECALIBRATION =====');
     console.log('📦 [SERVER] Received recalibration data:', recalibration);
     console.log('🏪 [SERVER] Store ID:', recalibration.storeId);
-    console.log('📅 [SERVER] Month:', recalibration.month);
     console.log('📅 [SERVER] Date:', recalibration.date);
     console.log('💰 [SERVER] Actual Balance:', recalibration.actualBalance);
-    
+
     // Add createdAt timestamp if not present
     const timestamp = recalibration.createdAt || new Date().toISOString();
     const recalibrationWithTimestamp = {
       ...recalibration,
-      id: `ONLINE-CASH-RECAL-${recalibration.storeId}-${recalibration.month}`,
+      month: recalibration.date.substring(0, 7), // kept for display/backward-compat only
+      id: `ONLINE-CASH-RECAL-${recalibration.storeId}-${recalibration.date}`,
       createdAt: timestamp,
       timestamp: timestamp // For backward compatibility
     };
-    
+
     console.log('🆔 [SERVER] Generated ID:', recalibrationWithTimestamp.id);
     console.log('⏰ [SERVER] Timestamp:', timestamp);
-    
-    // Use month as part of key for easier querying (one recalibration per month per store)
-    const key = `online-cash-recalibration:${recalibration.storeId}:${recalibration.month}`;
+
+    // Use the exact date as part of the key (one recalibration per date per store)
+    const key = `online-cash-recalibration:${recalibration.storeId}:${recalibration.date}`;
     console.log('🔑 [SERVER] Storage key:', key);
-    
+
     await kvWithRetry.set(key, recalibrationWithTimestamp);
-    
+
     console.log(`✅ [SERVER] Online cash recalibration saved to KV store`);
     console.log('📊 [SERVER] Final data:', recalibrationWithTimestamp);
     console.log('💾 [SERVER] ===== END SAVING RECALIBRATION =====\n');
-    
+
+    // This recalibration is now the authoritative anchor for its own date - ripple it
+    // forward so every later day's stored Paytm balance reflects it immediately, instead
+    // of waiting for some unrelated settlement/topup edit to happen to trigger a recompute.
+    await cascadeRecomputePaytmBalances(recalibration.storeId, recalibration.date);
+
     return c.json({ success: true, recalibration: recalibrationWithTimestamp });
   } catch (error) {
     console.error('❌ [SERVER] Error saving online cash recalibration:', error);
@@ -8694,37 +14713,44 @@ app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
 
 // Update online cash recalibration
 app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only the cluster head can edit an online cash recalibration' }, 403);
+  }
+
   try {
     const recalibrationId = c.req.param('id');
     const updates = await c.req.json();
-    
+
     console.log('🔄 Updating recalibration ID:', recalibrationId);
-    
-    // Parse the ID to get storeId and month
-    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM}
-    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-02
-    // We need to extract everything after "ONLINE-CASH-RECAL-" and split from the end for YYYY-MM
+
+    // Parse the ID to get storeId and date
+    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM-DD}
+    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-08-09
     const prefix = 'ONLINE-CASH-RECAL-';
     if (!recalibrationId.startsWith(prefix)) {
       return c.json({ error: 'Invalid recalibration ID format' }, 400);
     }
-    
+
     const afterPrefix = recalibrationId.substring(prefix.length);
-    // The last 7 characters should be YYYY-MM (e.g., "2026-02")
-    const month = afterPrefix.slice(-7); // Last 7 chars: "2026-02"
-    const storeId = afterPrefix.slice(0, -8); // Everything before the month and its separator hyphen
-    
-    console.log('📝 Parsed storeId:', storeId, 'month:', month);
-    
-    const key = `online-cash-recalibration:${storeId}:${month}`;
-    
+    // The last 10 characters should be YYYY-MM-DD (e.g., "2026-08-09")
+    const date = afterPrefix.slice(-10);
+    const storeId = afterPrefix.slice(0, -11); // Everything before the date and its separator hyphen
+
+    console.log('📝 Parsed storeId:', storeId, 'date:', date);
+
+    const key = `online-cash-recalibration:${storeId}:${date}`;
+
     // Get existing recalibration
     const existing = await kvWithRetry.get(key);
     if (!existing) {
       console.log('❌ Recalibration not found at key:', key);
       return c.json({ error: 'Recalibration not found' }, 404);
     }
-    
+
     // Merge updates with existing data
     const updated = {
       ...existing,
@@ -8732,27 +14758,27 @@ app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
       id: recalibrationId, // Keep the ID
       updatedAt: new Date().toISOString(),
     };
-    
-    // If date is updated, recalculate month
-    if (updates.date) {
-      const newMonth = updates.date.substring(0, 7); // YYYY-MM
-      if (newMonth !== month) {
-        // Month changed - need to delete old key and create new one
-        await kvWithRetry.del(key);
-        const newKey = `online-cash-recalibration:${storeId}:${newMonth}`;
-        updated.id = `ONLINE-CASH-RECAL-${storeId}-${newMonth}`;
-        updated.month = newMonth;
-        await kvWithRetry.set(newKey, updated);
-        console.log(`✅ Online cash recalibration moved from ${month} to ${newMonth}`, updated);
-      } else {
-        await kvWithRetry.set(key, updated);
-        console.log(`✅ Online cash recalibration updated: ${key}`, updated);
-      }
+
+    // If date is updated, move to the new key
+    let cascadeFromDate = date;
+    if (updates.date && updates.date !== date) {
+      const newDate = updates.date;
+      await kvWithRetry.del(key);
+      const newKey = `online-cash-recalibration:${storeId}:${newDate}`;
+      updated.id = `ONLINE-CASH-RECAL-${storeId}-${newDate}`;
+      updated.month = newDate.substring(0, 7);
+      await kvWithRetry.set(newKey, updated);
+      console.log(`✅ Online cash recalibration moved from ${date} to ${newDate}`, updated);
+      // Recompute from whichever date is earlier - the old date's anchor override no
+      // longer applies from there, and the new date's does from wherever it now sits.
+      cascadeFromDate = date < newDate ? date : newDate;
     } else {
       await kvWithRetry.set(key, updated);
       console.log(`✅ Online cash recalibration updated: ${key}`, updated);
     }
-    
+
+    await cascadeRecomputePaytmBalances(storeId, cascadeFromDate);
+
     return c.json({ success: true, recalibration: updated });
   } catch (error) {
     console.error('❌ Error updating online cash recalibration:', error);
@@ -8762,68 +14788,68 @@ app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
 
 // Delete online cash recalibration
 app.delete('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) {
+    return c.json({ error: auth.error }, auth.status);
+  }
+  if (auth.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only the cluster head can delete an online cash recalibration' }, 403);
+  }
+
   try {
     const recalibrationId = c.req.param('id');
     console.log('🗑️ Deleting online cash recalibration with ID:', recalibrationId);
-    
-    // Parse the ID to get storeId and month
-    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM}
-    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-02
+
+    // Parse the ID to get storeId and date
+    // ID format: ONLINE-CASH-RECAL-{storeId}-{YYYY-MM-DD}
+    // Example: ONLINE-CASH-RECAL-STORE-1766938921191-9LCH05-2026-08-09
     const prefix = 'ONLINE-CASH-RECAL-';
     if (!recalibrationId.startsWith(prefix)) {
       return c.json({ error: 'Invalid recalibration ID format' }, 400);
     }
-    
+
     const afterPrefix = recalibrationId.substring(prefix.length);
-    // The last 7 characters should be YYYY-MM (e.g., "2026-02")
-    const month = afterPrefix.slice(-7); // Last 7 chars: "2026-02"
-    const storeId = afterPrefix.slice(0, -8); // Everything before the month and its separator hyphen
-    
-    console.log('📝 Parsed storeId:', storeId, 'month:', month);
-    
+    // The last 10 characters should be YYYY-MM-DD (e.g., "2026-08-09")
+    const date = afterPrefix.slice(-10);
+    const storeId = afterPrefix.slice(0, -11); // Everything before the date and its separator hyphen
+
+    console.log('📝 Parsed storeId:', storeId, 'date:', date);
+
     // Get all recalibrations for this store using prefix search
     const allRecalibrations = await kvWithRetry.getByPrefix(`online-cash-recalibration:${storeId}:`);
     console.log('🔍 Found recalibrations for store:', allRecalibrations?.length || 0);
-    
-    // Also query the actual database keys for debugging
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    );
-    const { data: dbKeys } = await supabase
-      .from('kv_store_c2dd9b9d')
-      .select('key')
-      .like('key', `online-cash-recalibration:${storeId}:%`);
-    console.log('🔍 Actual database keys for store:', dbKeys?.map(d => d.key) || []);
-    
+
     if (!allRecalibrations || allRecalibrations.length === 0) {
       console.log('❌ No recalibrations found for store:', storeId);
       return c.json({ error: 'No recalibrations found for this store' }, 404);
     }
-    
-    // Find the one matching the month
-    const targetRecal = allRecalibrations.find((r: any) => r.month === month);
-    
+
+    // Find the one matching the date
+    const targetRecal = allRecalibrations.find((r: any) => r.date === date);
+
     if (!targetRecal) {
-      console.log('❌ No recalibration found for month:', month);
-      console.log('Available months:', allRecalibrations.map((r: any) => r.month));
-      return c.json({ error: 'Recalibration not found for this month' }, 404);
+      console.log('❌ No recalibration found for date:', date);
+      console.log('Available dates:', allRecalibrations.map((r: any) => r.date));
+      return c.json({ error: 'Recalibration not found for this date' }, 404);
     }
-    
+
     console.log('✅ Found target recalibration:', {
       id: targetRecal.id,
       storeId: targetRecal.storeId,
-      month: targetRecal.month,
       date: targetRecal.date
     });
-    
+
     // Construct the key and delete
-    const key = `online-cash-recalibration:${storeId}:${month}`;
+    const key = `online-cash-recalibration:${storeId}:${date}`;
     console.log('🔑 Deleting key:', key);
-    
+
     await kvWithRetry.del(key);
     console.log(`✅ Online cash recalibration deleted: ${key}`);
-    
+
+    // The anchor override for this date is gone - every day from here forward needs to
+    // fall back to the formula (or an earlier/later recalibration, if one exists).
+    await cascadeRecomputePaytmBalances(storeId, date);
+
     return c.json({ success: true, message: 'Recalibration deleted successfully' });
   } catch (error) {
     console.error('❌ Error deleting online cash recalibration:', error);
@@ -9007,11 +15033,33 @@ app.delete('/make-server-c2dd9b9d/investors/:id', async (c) => {
 // ONLINE LOANS (Paytm/Online Cash Loans)
 // ============================================
 
-// Apply for a new loan
+// Request a new loan - raised by an operations manager or cluster head for expenses over
+// ₹5,000, requires cluster-head approval before it counts toward Paytm cash-in-hand (see
+// the approve/reject routes below and calculatePaytmBalance's status gate).
 app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
   try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    const isClusterHead = role === 'cluster_head';
+
+    if (!isOperationsManager && !isClusterHead) {
+      return c.json({ error: 'Only operations managers and cluster heads can request a loan' }, 403);
+    }
+
     const loanData = await c.req.json();
-    
+    if (!loanData.loanAmount || loanData.loanAmount <= 5000) {
+      return c.json({ error: 'Loans must be for more than ₹5,000' }, 400);
+    }
+    if (!loanData.storeId) {
+      return c.json({ error: 'storeId is required' }, 400);
+    }
+
     // Get investor name if investorId is provided
     let investorName = null;
     if (loanData.investorId) {
@@ -9020,32 +15068,167 @@ app.post('/make-server-c2dd9b9d/online-loans', async (c) => {
         investorName = investor.name;
       }
     }
-    
+
     // Generate unique ID
     const timestamp = Date.now();
     const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
     const loanId = `ONLINE-LOAN-${loanData.storeId}-${timestamp}-${randomStr}`;
-    
+    const requestedByName = authResult.user.user_metadata?.name || authResult.user.email;
+
     const loan = {
       ...loanData,
       id: loanId,
-      status: 'active',
+      status: 'pending',
       repaidAmount: 0,
       repaymentDate: null,
       repaymentType: null,
       investorName,
+      requestedByName,
+      requestedByUserId: authResult.user.id,
+      approvedBy: null,
+      approvedAt: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null,
       createdAt: getNowIST(),
     };
-    
+
     const key = `online-loan:${loanData.storeId}:${loanId}`;
     await kvWithRetry.set(key, loan);
-    
-    console.log(`✅ Online loan created: ${key}`, loan);
-    
+
+    console.log(`✅ Online loan requested: ${key}`, loan);
+
+    // Notify all cluster heads (mirrors the Cash Top-up Request pattern)
+    const clusterHeads = await getAllClusterHeads();
+    for (const clusterHead of clusterHeads) {
+      if (clusterHead.authUserId) {
+        await notifyUser(
+          clusterHead.authUserId,
+          'loan_requested',
+          'Loan Approval Needed',
+          `${requestedByName} requested a loan of ₹${loanData.loanAmount.toLocaleString()} for ${loanData.storeName || loanData.storeId}`,
+          loanId,
+          loanData.loanDate
+        );
+      }
+    }
+
     return c.json({ success: true, loan });
   } catch (error) {
     console.error('❌ Error creating online loan:', error);
     return c.json({ error: 'Failed to create loan', details: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// Approve a pending loan (cluster head only) - counts toward Paytm cash-in-hand from here
+app.post('/make-server-c2dd9b9d/online-loans/:id/approve', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can approve loans' }, 403);
+    }
+
+    const loanId = c.req.param('id');
+    const idParts = loanId.split('-');
+    if (idParts.length < 4) {
+      return c.json({ error: 'Invalid loan ID format' }, 400);
+    }
+    const storeId = idParts.slice(2, -2).join('-');
+    const key = `online-loan:${storeId}:${loanId}`;
+
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      return c.json({ error: 'Loan not found' }, 404);
+    }
+    if (existing.status !== 'pending') {
+      return c.json({ error: 'This loan has already been resolved' }, 400);
+    }
+
+    const approved = {
+      ...existing,
+      status: 'active',
+      approvedBy: authResult.user.email,
+      approvedAt: getNowIST(),
+    };
+    await kvWithRetry.set(key, approved);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existing.requestedByUserId) {
+      await notifyUser(
+        existing.requestedByUserId,
+        'loan_approved',
+        'Loan Approved ✓',
+        `${clusterHeadName} approved your loan request of ₹${existing.loanAmount.toLocaleString()}`,
+        loanId,
+        existing.loanDate
+      );
+    }
+
+    return c.json({ success: true, loan: approved });
+  } catch (error) {
+    console.error('❌ Error approving loan:', error);
+    return c.json({ error: 'Failed to approve loan' }, 500);
+  }
+});
+
+// Reject a pending loan (cluster head only)
+app.post('/make-server-c2dd9b9d/online-loans/:id/reject', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    if (authResult.user.user_metadata?.role !== 'cluster_head') {
+      return c.json({ error: 'Only cluster heads can reject loans' }, 403);
+    }
+
+    const loanId = c.req.param('id');
+    const { reason } = await c.req.json();
+    const idParts = loanId.split('-');
+    if (idParts.length < 4) {
+      return c.json({ error: 'Invalid loan ID format' }, 400);
+    }
+    const storeId = idParts.slice(2, -2).join('-');
+    const key = `online-loan:${storeId}:${loanId}`;
+
+    const existing = await kvWithRetry.get(key);
+    if (!existing) {
+      return c.json({ error: 'Loan not found' }, 404);
+    }
+    if (existing.status !== 'pending') {
+      return c.json({ error: 'This loan has already been resolved' }, 400);
+    }
+
+    const rejected = {
+      ...existing,
+      status: 'rejected',
+      rejectedBy: authResult.user.email,
+      rejectedAt: getNowIST(),
+      rejectionReason: reason || '',
+    };
+    await kvWithRetry.set(key, rejected);
+
+    const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
+    if (existing.requestedByUserId) {
+      await notifyUser(
+        existing.requestedByUserId,
+        'loan_rejected',
+        'Loan Rejected ✗',
+        `${clusterHeadName} rejected your loan request of ₹${existing.loanAmount.toLocaleString()}${reason ? `: ${reason}` : ''}`,
+        loanId,
+        existing.loanDate
+      );
+    }
+
+    return c.json({ success: true, loan: rejected });
+  } catch (error) {
+    console.error('❌ Error rejecting loan:', error);
+    return c.json({ error: 'Failed to reject loan' }, 500);
   }
 });
 

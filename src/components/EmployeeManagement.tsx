@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Users, UserPlus, Search, Edit2, Trash2, Calendar, DollarSign, FileText, Upload, KeyRound, RefreshCw, UserCog, AlertCircle, Store, Key, Clock } from 'lucide-react';
+import { Users, UserPlus, Search, Edit2, Trash2, Calendar, DollarSign, FileText, Upload, KeyRound, RefreshCw, UserCog, AlertCircle, Store, Key, Clock, Building2 } from 'lucide-react';
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { HierarchyManagement } from './HierarchyManagement';
 import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 import { PayrollManagement } from './PayrollManagement';
 import { AttendancePortal } from './AttendancePortal';
+import { getTodayIST } from '../utils/timezone';
+import { employeeBelongsToStore } from '../utils/entityAccess';
 
 type Employee = api.Employee;
 
@@ -19,10 +21,21 @@ interface EmployeeManagementProps {
     accessToken?: string;
   };
   selectedStoreId?: string | null;
+  // Notification deep-link: jumps straight to the Attendance sub-tab and forwards
+  // this value into AttendancePortal's own tab (e.g. 'approve-leave', 'timesheet').
+  initialAttendanceTab?: string | null;
 }
 
-export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagementProps) {
+export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab = null }: EmployeeManagementProps) {
   const [activeTab, setActiveTab] = useState<'employees' | 'hierarchy' | 'payroll' | 'attendance'>('employees');
+
+  // A notification deep-link arriving for the Attendance sub-tab should switch to it
+  // immediately, even if some other tab is currently active.
+  useEffect(() => {
+    if (initialAttendanceTab) {
+      setActiveTab('attendance');
+    }
+  }, [initialAttendanceTab]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [archivedEmployees, setArchivedEmployees] = useState<any[]>([]);
   const [showPastEmployees, setShowPastEmployees] = useState(false);
@@ -50,6 +63,11 @@ export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagement
   const [showChangeStore, setShowChangeStore] = useState(false);
   const [changingStoreFor, setChangingStoreFor] = useState<Employee | null>(null);
   const [selectedNewStore, setSelectedNewStore] = useState('');
+  const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
+  const [showManageAccess, setShowManageAccess] = useState(false);
+  const [managingAccessFor, setManagingAccessFor] = useState<Employee | null>(null);
+  const [selectedAssignedStores, setSelectedAssignedStores] = useState<string[]>([]);
+  const [selectedAssignedProductionHouses, setSelectedAssignedProductionHouses] = useState<string[]>([]);
   const [showDesignationModal, setShowDesignationModal] = useState(false);
   const [editingDesignationFor, setEditingDesignationFor] = useState<Employee | null>(null);
   const [showAssignDesignation, setShowAssignDesignation] = useState(false);
@@ -64,10 +82,13 @@ export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagement
     password: '',
     role: 'employee' as 'manager' | 'employee' | 'cluster_head',
     employmentType: 'fulltime' as 'fulltime' | 'contract',
-    joiningDate: new Date().toISOString().split('T')[0],
+    joiningDate: getTodayIST(),
     dob: '',
     phone: '',
     storeId: user.storeId || '' as string, // Auto-set to manager's store
+    // Fixed monthly salary breakdown (Basic, HRA, etc.) - drives the payslip's itemized
+    // breakdown. Variable/incentive pay isn't set here since it's entered fresh per payout.
+    salaryStructure: [] as { label: string; amount: number }[],
   });
 
   console.log('EmployeeManagement: Current user:', user);
@@ -88,8 +109,46 @@ export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagement
     loadEmployees();
     if (isClusterHead) {
       loadStores();
+      loadProductionHouses();
     }
   }, [selectedStoreId]); // Reload when store changes
+
+  const loadProductionHouses = async () => {
+    try {
+      const data = await api.getProductionHouses();
+      setProductionHouses(data);
+    } catch (error) {
+      // Silently handle authentication errors (user not logged in yet)
+      if (error instanceof Error &&
+          (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
+        return;
+      }
+      console.error('Error loading production houses:', error);
+    }
+  };
+
+  const handleOpenManageAccess = (emp: Employee) => {
+    setManagingAccessFor(emp);
+    setSelectedAssignedStores(emp.assignedStoreIds || []);
+    setSelectedAssignedProductionHouses(emp.assignedProductionHouseIds || []);
+    setShowManageAccess(true);
+  };
+
+  const handleSaveAccess = async () => {
+    if (!managingAccessFor) return;
+    setLoading(true);
+    try {
+      await api.updateEmployeeAssignments(managingAccessFor.employeeId, selectedAssignedStores, selectedAssignedProductionHouses);
+      await loadEmployees();
+      alert(`Access updated for ${managingAccessFor.name}`);
+      setShowManageAccess(false);
+      setManagingAccessFor(null);
+    } catch (error) {
+      alert(`Failed to update access: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadStores = async () => {
     try {
@@ -121,13 +180,11 @@ export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagement
         console.log('📋 Loading all employees for cluster head');
         data = await api.getAllEmployees();
         
-        // If a specific store is selected, filter by that store (include null/undefined storeIds for backward compatibility)
+        // If a specific store is selected, filter by that store (also matches this
+        // store's linked production house - see entityAccess.ts's employeeBelongsToStore
+        // for why a production incharge/ops employee needs that extra check).
         if (selectedStoreId) {
-          data = data.filter((emp: any) => 
-            emp.storeId === selectedStoreId || 
-            emp.storeId === null || 
-            emp.storeId === undefined
-          );
+          data = data.filter((emp: any) => employeeBelongsToStore(emp, selectedStoreId, stores));
         }
       } else {
         // Fallback: load all
@@ -224,6 +281,10 @@ export function EmployeeManagement({ user, selectedStoreId }: EmployeeManagement
         createdAt: new Date().toISOString(),
       };
 
+      if (formData.salaryStructure.length > 0) {
+        employeeData.salaryStructure = formData.salaryStructure.filter((c) => c.label.trim());
+      }
+
       // Add hierarchy relationships
       if (formData.role === 'employee') {
         employeeData.managerId = user.employeeId; // Employee reports to current user (manager)
@@ -262,10 +323,11 @@ The employee can now login with their email and password.`);
         password: '',
         role: 'employee',
         employmentType: 'fulltime',
-        joiningDate: new Date().toISOString().split('T')[0],
+        joiningDate: getTodayIST(),
         dob: '',
         phone: '',
         storeId: user.storeId || '' as string, // Auto-set to manager's store
+        salaryStructure: [],
       });
       setAadharFront('');
       setAadharBack('');
@@ -346,6 +408,7 @@ New Password: ${result.credentials.password}
         dob: editingEmployee.dob,
         phone: editingEmployee.phone,
         status: editingEmployee.status,
+        salaryStructure: editingEmployee.salaryStructure,
       };
 
       console.log('Updating employee with data:', updateData);
@@ -584,68 +647,73 @@ New Password: ${result.credentials.password}
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl text-gray-900 mb-2">Employee Management</h1>
-          <p className="text-gray-600">Unified employee, manager, and contract worker management</p>
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0">
+            <Users className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Employee Management</h1>
+            <p className="text-sm sm:text-base text-gray-500">Unified employee, manager, and contract worker management</p>
+          </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow-md p-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 sm:gap-4 mb-6">
+          <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-2xl shadow-lg shadow-teal-500/20 p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl text-gray-900">{stats.total}</p>
+                <p className="text-xs uppercase tracking-wide text-teal-100">Total</p>
+                <p className="text-2xl font-semibold">{stats.total}</p>
               </div>
-              <Users className="w-8 h-8 text-teal-500" />
+              <Users className="w-8 h-8 text-teal-100" />
             </div>
           </div>
 
           {isClusterHead && (
-            <div className="bg-white rounded-lg shadow-md p-4">
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg shadow-blue-500/20 p-4 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Managers</p>
-                  <p className="text-2xl text-gray-900">{stats.managers}</p>
+                  <p className="text-xs uppercase tracking-wide text-blue-100">Managers</p>
+                  <p className="text-2xl font-semibold">{stats.managers}</p>
                 </div>
-                <Users className="w-8 h-8 text-blue-500" />
+                <Users className="w-8 h-8 text-blue-100" />
               </div>
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-4">
+          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl shadow-lg shadow-emerald-500/20 p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Full-Time</p>
-                <p className="text-2xl text-gray-900">{stats.fulltime}</p>
+                <p className="text-xs uppercase tracking-wide text-emerald-100">Full-Time</p>
+                <p className="text-2xl font-semibold">{stats.fulltime}</p>
               </div>
-              <FileText className="w-8 h-8 text-green-500" />
+              <FileText className="w-8 h-8 text-emerald-100" />
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-md p-4">
+          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-2xl shadow-lg shadow-amber-500/20 p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Contract</p>
-                <p className="text-2xl text-gray-900">{stats.contract}</p>
+                <p className="text-xs uppercase tracking-wide text-amber-100">Contract</p>
+                <p className="text-2xl font-semibold">{stats.contract}</p>
               </div>
-              <FileText className="w-8 h-8 text-orange-500" />
+              <FileText className="w-8 h-8 text-amber-100" />
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-md p-4">
+          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-2xl shadow-lg shadow-rose-500/20 p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Active</p>
-                <p className="text-2xl text-gray-900">{stats.active}</p>
+                <p className="text-xs uppercase tracking-wide text-rose-100">Active</p>
+                <p className="text-2xl font-semibold">{stats.active}</p>
               </div>
-              <Users className="w-8 h-8 text-rose-500" />
+              <Users className="w-8 h-8 text-rose-100" />
             </div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow-md mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mb-6">
           <div className="flex border-b border-gray-200">
             <button
               onClick={() => setActiveTab('employees')}
@@ -712,7 +780,7 @@ New Password: ${result.credentials.password}
         ) : activeTab === 'payroll' ? (
           <PayrollManagement 
             userRole={user.role as 'manager' | 'cluster_head'} 
-            selectedDate={new Date().toISOString().split('T')[0]}
+            selectedDate={getTodayIST()}
             userEmployeeId={user.employeeId}
             userName={user.name}
             selectedStoreId={selectedStoreId}
@@ -726,11 +794,13 @@ New Password: ${result.credentials.password}
               role: user.role
             }}
             selectedStoreId={selectedStoreId}
+            initialTab={initialAttendanceTab}
+            stores={stores}
           />
         ) : (
           <>
             {/* Action Bar */}
-            <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
               <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -895,6 +965,71 @@ New Password: ${result.credentials.password}
                   />
                 </div>
 
+                {/* Salary Structure (fixed monthly components - Basic, HRA, etc.) */}
+                {formData.employmentType === 'fulltime' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm text-gray-700">Salary Structure (Optional)</label>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({
+                          ...formData,
+                          salaryStructure: [...formData.salaryStructure, { label: '', amount: 0 }],
+                        })}
+                        className="text-xs text-orange-600 hover:text-orange-800"
+                      >
+                        + Add Component
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {formData.salaryStructure.map((comp, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={comp.label}
+                            onChange={(e) => {
+                              const updated = [...formData.salaryStructure];
+                              updated[idx] = { ...updated[idx], label: e.target.value };
+                              setFormData({ ...formData, salaryStructure: updated });
+                            }}
+                            placeholder="e.g. Basic, HRA, Conveyance"
+                            className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                          />
+                          <input
+                            type="number"
+                            value={comp.amount || ''}
+                            onChange={(e) => {
+                              const updated = [...formData.salaryStructure];
+                              updated[idx] = { ...updated[idx], amount: parseFloat(e.target.value) || 0 };
+                              setFormData({ ...formData, salaryStructure: updated });
+                            }}
+                            placeholder="Amount"
+                            className="w-28 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setFormData({
+                              ...formData,
+                              salaryStructure: formData.salaryStructure.filter((_, i) => i !== idx),
+                            })}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {formData.salaryStructure.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Fixed total: ₹{formData.salaryStructure.reduce((sum, c) => sum + (c.amount || 0), 0).toLocaleString()}/month
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      💡 These appear on the payslip every month. Variable/incentive pay is entered separately at payout time.
+                    </p>
+                  </div>
+                )}
+
                 {/* Store Assignment (Cluster Head Only for managers, Auto-assigned for employees under manager) */}
                 {isClusterHead && formData.role === 'manager' && (
                   <div>
@@ -983,7 +1118,7 @@ New Password: ${result.credentials.password}
                         password: '',
                         role: 'employee',
                         employmentType: 'fulltime',
-                        joiningDate: new Date().toISOString().split('T')[0],
+                        joiningDate: getTodayIST(),
                         dob: '',
                         phone: '',
                         storeId: user.storeId || '' as string, // Auto-set to manager's store
@@ -1097,6 +1232,71 @@ New Password: ${result.credentials.password}
                   />
                 </div>
 
+                {/* Salary Structure (fixed monthly components - Basic, HRA, etc.) */}
+                {editingEmployee.employmentType === 'fulltime' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm text-gray-700">Salary Structure (Optional)</label>
+                      <button
+                        type="button"
+                        onClick={() => setEditingEmployee({
+                          ...editingEmployee,
+                          salaryStructure: [...(editingEmployee.salaryStructure || []), { label: '', amount: 0 }],
+                        })}
+                        className="text-xs text-orange-600 hover:text-orange-800"
+                      >
+                        + Add Component
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {(editingEmployee.salaryStructure || []).map((comp, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={comp.label}
+                            onChange={(e) => {
+                              const updated = [...(editingEmployee.salaryStructure || [])];
+                              updated[idx] = { ...updated[idx], label: e.target.value };
+                              setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                            }}
+                            placeholder="e.g. Basic, HRA, Conveyance"
+                            className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                          />
+                          <input
+                            type="number"
+                            value={comp.amount || ''}
+                            onChange={(e) => {
+                              const updated = [...(editingEmployee.salaryStructure || [])];
+                              updated[idx] = { ...updated[idx], amount: parseFloat(e.target.value) || 0 };
+                              setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                            }}
+                            placeholder="Amount"
+                            className="w-28 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (editingEmployee.salaryStructure || []).filter((_, i) => i !== idx);
+                              setEditingEmployee({ ...editingEmployee, salaryStructure: updated });
+                            }}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {(editingEmployee.salaryStructure || []).length > 0 && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Fixed total: ₹{(editingEmployee.salaryStructure || []).reduce((sum, c) => sum + (c.amount || 0), 0).toLocaleString()}/month
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      💡 These appear on the payslip every month. Variable/incentive pay is entered separately at payout time.
+                    </p>
+                  </div>
+                )}
+
                 {/* Aadhar Upload (For employees only) */}
                 {editingEmployee.role === 'employee' && (
                   <>
@@ -1163,7 +1363,7 @@ New Password: ${result.credentials.password}
         )}
 
         {/* Employee List */}
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gradient-to-r from-orange-100 to-amber-100">
@@ -1345,6 +1545,15 @@ New Password: ${result.credentials.password}
                               <Store className="w-5 h-5" />
                             </button>
                           )}
+                          {isClusterHead && emp.role === 'manager' && (
+                            <button
+                              onClick={() => handleOpenManageAccess(emp)}
+                              className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                              title="Manage Store & Production House Access"
+                            >
+                              <Building2 className="w-5 h-5" />
+                            </button>
+                          )}
                           {isClusterHead && emp.role === 'employee' && (
                             <button
                               onClick={() => handleOpenAssignDesignation(emp)}
@@ -1376,11 +1585,11 @@ New Password: ${result.credentials.password}
 
         {/* Past Employees Section */}
         {isClusterHead && archivedEmployees.length > 0 && (
-          <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mt-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <Clock className="w-6 h-6 text-gray-500" />
-                <h3 className="text-xl text-gray-700">Past Employees ({archivedEmployees.length})</h3>
+                <h3 className="text-xl font-bold text-gray-700">Past Employees ({archivedEmployees.length})</h3>
               </div>
               <button
                 onClick={() => setShowPastEmployees(!showPastEmployees)}
@@ -1611,7 +1820,7 @@ New Password: ${result.credentials.password}
 
               <div className="p-6 space-y-4">
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-                  <h3 className="text-lg text-green-900 mb-2">Migration Summary</h3>
+                  <h3 className="text-lg font-bold text-green-900 mb-2">Migration Summary</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-green-700">Total Employees</p>
@@ -1640,7 +1849,7 @@ New Password: ${result.credentials.password}
 
                 {migrationResult.updates && migrationResult.updates.length > 0 && (
                   <div>
-                    <h3 className="text-lg text-gray-900 mb-3">✓ Successfully Updated</h3>
+                    <h3 className="text-lg font-bold text-gray-900 mb-3">✓ Successfully Updated</h3>
                     <div className="max-h-60 overflow-y-auto overflow-x-auto border border-gray-200 rounded-lg">
                       <table className="w-full">
                         <thead className="bg-gray-50 sticky top-0">
@@ -1668,7 +1877,7 @@ New Password: ${result.credentials.password}
 
                 {migrationResult.manualAssignmentNeeded && migrationResult.manualAssignmentNeeded.length > 0 && (
                   <div>
-                    <h3 className="text-lg text-gray-900 mb-3">⚠ Needs Manual Store Assignment</h3>
+                    <h3 className="text-lg font-bold text-gray-900 mb-3">⚠ Needs Manual Store Assignment</h3>
                     <div className="max-h-60 overflow-y-auto overflow-x-auto border border-yellow-200 rounded-lg bg-yellow-50">
                       <table className="w-full">
                         <thead className="bg-yellow-100 sticky top-0">
@@ -1701,7 +1910,7 @@ New Password: ${result.credentials.password}
 
                 {migrationResult.errorDetails && migrationResult.errorDetails.length > 0 && (
                   <div>
-                    <h3 className="text-lg text-gray-900 mb-3">✗ Errors</h3>
+                    <h3 className="text-lg font-bold text-gray-900 mb-3">✗ Errors</h3>
                     <div className="max-h-60 overflow-y-auto overflow-x-auto border border-red-200 rounded-lg bg-red-50">
                       <table className="w-full">
                         <thead className="bg-red-100 sticky top-0">
@@ -2001,6 +2210,91 @@ New Password: ${result.credentials.password}
                       setShowChangeStore(false);
                       setChangingStoreFor(null);
                       setSelectedNewStore('');
+                    }}
+                    className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Manage Store & Production House Access Modal - explicit multi-assignment,
+            replacing the assumption that one employee maps to exactly one store. A
+            manager/incharge can be given access to several stores and/or production
+            houses here; this is the source of truth screens should read going forward
+            instead of guessing from the single (and ambiguous) storeId field. */}
+        {showManageAccess && managingAccessFor && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[85vh] overflow-y-auto">
+              <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
+                <h2 className="text-2xl">Manage Access</h2>
+                <p className="text-sm text-blue-100 mt-1">
+                  {managingAccessFor.name} ({managingAccessFor.employeeId})
+                </p>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <p className="text-xs text-gray-500">
+                  Select every store and/or production house this person should have access to. Unlike "Change Store" (one store only), this supports multiple - useful for someone covering more than one location.
+                </p>
+
+                <div>
+                  <label className="block text-sm text-gray-700 mb-2">Stores</label>
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                    {stores.map((store) => (
+                      <label key={store.id} className="flex items-center gap-2 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={selectedAssignedStores.includes(store.id)}
+                          onChange={(e) => {
+                            setSelectedAssignedStores((prev) =>
+                              e.target.checked ? [...prev, store.id] : prev.filter((id) => id !== store.id)
+                            );
+                          }}
+                        />
+                        {store.name} - {store.location}
+                      </label>
+                    ))}
+                    {stores.length === 0 && <p className="text-xs text-gray-400">No stores found.</p>}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-700 mb-2">Production Houses</label>
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                    {productionHouses.map((ph) => (
+                      <label key={ph.id} className="flex items-center gap-2 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={selectedAssignedProductionHouses.includes(ph.id)}
+                          onChange={(e) => {
+                            setSelectedAssignedProductionHouses((prev) =>
+                              e.target.checked ? [...prev, ph.id] : prev.filter((id) => id !== ph.id)
+                            );
+                          }}
+                        />
+                        {ph.name} - {ph.location}
+                      </label>
+                    ))}
+                    {productionHouses.length === 0 && <p className="text-xs text-gray-400">No production houses found.</p>}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={handleSaveAccess}
+                    disabled={loading}
+                    className="flex-1 bg-stone-800 hover:bg-stone-900 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
+                  >
+                    {loading ? 'Saving...' : 'Save Access'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowManageAccess(false);
+                      setManagingAccessFor(null);
                     }}
                     className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-all"
                   >

@@ -84,45 +84,50 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-orange-600 to-red-600 rounded-xl p-6 text-white">
-        <div className="flex items-center gap-3 mb-2">
-          <Settings className="w-8 h-8" />
-          <h2 className="text-2xl">Cluster Management</h2>
+      <div className="relative overflow-hidden bg-gradient-to-r from-teal-600 via-emerald-500 to-teal-600 rounded-2xl p-6 sm:p-8 shadow-xl">
+        <div className="absolute inset-0 bg-white/10" />
+        <div className="relative flex items-center gap-4">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
+            <Settings className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Cluster Management</h1>
+            <p className="text-sm sm:text-base text-white/80 mt-1">
+              Assign stores and production houses to your cluster. You'll be able to view reports and analytics for all assigned locations.
+            </p>
+          </div>
         </div>
-        <p className="text-orange-100">
-          Assign stores and production houses to your cluster. You'll be able to view reports and analytics for all assigned locations.
-        </p>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg p-6 text-white">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/20 text-white">
           <Store className="w-8 h-8 mb-2 opacity-90" />
           <p className="text-sm opacity-90 mb-1">Assigned Stores</p>
-          <p className="text-3xl">{selectedStoreIds.length}</p>
+          <p className="text-2xl font-semibold">{selectedStoreIds.length}</p>
           <p className="text-xs opacity-75 mt-1">of {context.stores.length} total</p>
         </div>
-        
-        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-6 text-white">
+
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 shadow-lg shadow-orange-500/20 text-white">
           <Building2 className="w-8 h-8 mb-2 opacity-90" />
           <p className="text-sm opacity-90 mb-1">Production Houses</p>
-          <p className="text-3xl">{selectedProductionHouseIds.length}</p>
+          <p className="text-2xl font-semibold">{selectedProductionHouseIds.length}</p>
           <p className="text-xs opacity-75 mt-1">of {context.productionHouses.length} total</p>
         </div>
-        
-        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-lg p-6 text-white">
+
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 shadow-lg shadow-emerald-500/20 text-white">
           <Users className="w-8 h-8 mb-2 opacity-90" />
           <p className="text-sm opacity-90 mb-1">Total Locations</p>
-          <p className="text-3xl">{selectedStoreIds.length + selectedProductionHouseIds.length}</p>
+          <p className="text-2xl font-semibold">{selectedStoreIds.length + selectedProductionHouseIds.length}</p>
           <p className="text-xs opacity-75 mt-1">in your cluster</p>
         </div>
       </div>
 
       {/* Stores Section */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
         <div className="flex items-center gap-2 mb-4">
-          <Store className="w-5 h-5 text-orange-600" />
-          <h3 className="text-lg text-gray-900">Stores</h3>
+          <Store className="w-5 h-5 text-teal-600" />
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Stores</h3>
           <span className="ml-auto text-sm text-gray-500">
             {selectedStoreIds.length} selected
           </span>
@@ -163,10 +168,10 @@ export function ClusterManagement({ context }: ClusterManagementProps) {
       </div>
 
       {/* Production Houses Section */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
         <div className="flex items-center gap-2 mb-4">
-          <Building2 className="w-5 h-5 text-orange-600" />
-          <h3 className="text-lg text-gray-900">Production Houses</h3>
+          <Building2 className="w-5 h-5 text-teal-600" />
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Production Houses</h3>
           <span className="ml-auto text-sm text-gray-500">
             {selectedProductionHouseIds.length} selected
           </span>

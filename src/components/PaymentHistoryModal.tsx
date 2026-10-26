@@ -115,13 +115,18 @@ export function PaymentHistoryModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        <div className="bg-gradient-to-r from-orange-600 to-red-600 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl text-white font-semibold">Payment History</h2>
-            <p className="text-orange-100 text-sm mt-1">
-              {employee.name} ({employee.employeeId})
-            </p>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+        <div className="bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">
+              <DollarSign className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg sm:text-xl text-white font-bold tracking-tight">Payment History</h2>
+              <p className="text-orange-100 text-sm mt-1">
+                {employee.name} ({employee.employeeId})
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -134,27 +139,27 @@ export function PaymentHistoryModal({
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-700 mb-1">Total Payouts</p>
-              <p className="text-2xl font-semibold text-blue-900">
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+              <p className="text-xs uppercase tracking-wide text-blue-100 mb-1">Total Payouts</p>
+              <p className="text-2xl font-semibold">
                 {payouts.length}
               </p>
-              <p className="text-sm text-blue-600 mt-1">
+              <p className="text-xs text-blue-100 mt-1">
                 ₹{totalPayouts.toLocaleString('en-IN')}
               </p>
             </div>
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-              <p className="text-sm text-orange-700 mb-1">Personal Expenses</p>
-              <p className="text-2xl font-semibold text-orange-900">
+            <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+              <p className="text-xs uppercase tracking-wide text-orange-100 mb-1">Personal Expenses</p>
+              <p className="text-2xl font-semibold">
                 {personalExpenses.length}
               </p>
-              <p className="text-sm text-orange-600 mt-1">
+              <p className="text-xs text-orange-100 mt-1">
                 ₹{totalExpenses.toLocaleString('en-IN')}
               </p>
             </div>
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="text-sm text-green-700 mb-1">Total Paid</p>
-              <p className="text-2xl font-semibold text-green-900">
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+              <p className="text-xs uppercase tracking-wide text-emerald-100 mb-1">Total Paid</p>
+              <p className="text-2xl font-semibold">
                 ₹{(totalPayouts + totalExpenses).toLocaleString('en-IN')}
               </p>
             </div>
@@ -162,13 +167,13 @@ export function PaymentHistoryModal({
 
           {/* Month-wise Payment History */}
           <div>
-            <h3 className="text-lg text-gray-900 mb-3 flex items-center gap-2">
+            <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3 flex items-center gap-2">
               <DollarSign className="w-5 h-5 text-orange-600" />
               Payment History (Month-wise)
             </h3>
-            
+
             {payouts.length === 0 && personalExpenses.length === 0 ? (
-              <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
+              <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-xl">
                 <DollarSign className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p>No payment history found</p>
               </div>

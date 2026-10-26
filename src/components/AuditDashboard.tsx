@@ -6,6 +6,7 @@ import { Analytics } from './Analytics';
 import { InventoryView } from './InventoryView';
 import { PayrollManagement } from './PayrollManagement';
 import { ProductionManagement } from './ProductionManagement';
+import { getTodayIST } from '../utils/timezone';
 
 type Props = {
  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string };
@@ -44,7 +45,7 @@ export function AuditDashboard({
 }: Props) {
  const [activeView, setActiveView] = useState<'analytics' | 'inventory' | 'sales' | 'production' | 'payroll'>('analytics');
  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
- const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+ const [selectedDate, setSelectedDate] = useState<string>(getTodayIST());
 
  // Create a read-only context object for components that need it
  const contextValue: InventoryContextType = {
@@ -58,6 +59,9 @@ export function AuditDashboard({
  stockRequests,
  productionRequests,
  onlineCashRecalibrations: [],
+ onlineSalesData: [],
+ onlinePayoutData: [],
+ aggregatorSettlements: [],
  stores,
  managedStoreIds: [],
  managedProductionHouseIds: [],
@@ -91,6 +95,11 @@ export function AuditDashboard({
  cancelStockRequest: async () => {}, // No-op for audit
  isManager: false,
  user: user,
+ refreshData: () => onDataUpdate(user.accessToken),
+ // This read-only dashboard has no manual "Refresh data" button of its own to bump this
+ // from, so it's a static 0 - components watching it (see App.tsx's dataRefreshedAt) just
+ // never see it change here, same as before this field existed.
+ dataRefreshedAt: 0,
  };
 
  const navItems = [
@@ -177,7 +186,7 @@ export function AuditDashboard({
  )}
 
  {activeView === 'inventory' && (
- <div className="bg-white rounded-xl shadow-sm p-6">
+ <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
  <h2 className="text-2xl font-bold text-gray-900">Inventory View</h2>
@@ -196,7 +205,7 @@ export function AuditDashboard({
  )}
 
  {activeView === 'sales' && (
- <div className="bg-white rounded-xl shadow-sm p-6">
+ <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
  <h2 className="text-2xl font-bold text-gray-900">Sales Data</h2>
@@ -280,7 +289,7 @@ export function AuditDashboard({
  )}
 
  {activeView === 'production' && (
- <div className="bg-white rounded-xl shadow-sm p-6">
+ <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
  <h2 className="text-2xl font-bold text-gray-900">Production Data</h2>
@@ -299,7 +308,7 @@ export function AuditDashboard({
  )}
 
  {activeView === 'payroll' && (
- <div className="bg-white rounded-xl shadow-sm p-6">
+ <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
  <h2 className="text-2xl font-bold text-gray-900">Payroll Data</h2>
