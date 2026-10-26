@@ -34,6 +34,7 @@ const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').
 import { Notifications } from './components/Notifications';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { BunnyChat } from './components/BunnyChat';
+import { ProfileCompletionCard } from './components/ProfileCompletionCard';
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
@@ -2370,6 +2371,8 @@ export default function App() {
 
  {/* Employee Main Content */}
  <main className="pb-6" data-ai-screen>
+ {/* Aadhaar, phone and email still missing: asked for on the home screen until done. */}
+ {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
@@ -2995,6 +2998,7 @@ export default function App() {
 
  {/* Main Content */}
  <main className="pb-6" data-ai-screen>
+ {activeView === 'analytics' && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />

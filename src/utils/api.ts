@@ -653,6 +653,18 @@ export async function dismissCalendarSuggestion(accessToken: string, date: strin
   await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/dismiss`, accessToken, { method: 'POST' });
 }
 
+// "Complete your profile" (server profile.ts): the signed-in person's own Aadhaar photos, phone
+// and personal email.
+export interface MyProfileStatus { required: boolean; complete: boolean; missing: ('aadharFront' | 'aadharBack' | 'phone' | 'contactEmail')[]; phone?: string; contactEmail?: string }
+
+export async function getMyProfile(accessToken: string): Promise<MyProfileStatus> {
+  return fetchWithAuth(`${API_BASE}/me/profile`, accessToken);
+}
+
+export async function updateMyProfile(accessToken: string, updates: { phone?: string; contactEmail?: string; aadharFront?: string; aadharBack?: string }): Promise<MyProfileStatus> {
+  return fetchWithAuth(`${API_BASE}/me/profile`, accessToken, { method: 'PUT', body: JSON.stringify(updates) });
+}
+
 // Voice entry: one spoken sentence read into form fields (server /ai/voice-fill, Haiku).
 export interface VoiceSalesFields { paytm: number | null; cash: number | null; cashInHand: number | null; unclear: string }
 export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; amount: number | null }
