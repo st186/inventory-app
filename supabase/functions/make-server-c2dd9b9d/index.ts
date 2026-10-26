@@ -1,12 +1,70 @@
 import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient as createSupabaseClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
+
+// ---- Trusted roles (security review, 27 Oct 2026) ----
+// A person's role, designation, store and employee id are trusted only from app_metadata, which
+// the server alone can write: user_metadata can be edited by the signed-in person themself, so
+// reading roles from it let anyone make themselves owner. Every admin createUser /
+// updateUserById that sets one of these in user_metadata also writes it to app_metadata
+// (createClient below wraps the client), and verifyUser reads them back from app_metadata only.
+const TRUSTED_AUTH_KEYS = ['role', 'designation', 'storeId', 'employeeId', 'productionHouseId', 'assignedStoreIds', 'assignedProductionHouseIds'];
+
+function mirrorTrustedKeys(attrs: any) {
+  const meta = attrs?.user_metadata;
+  if (!meta) return attrs;
+  const trusted: Record<string, any> = {};
+  for (const k of TRUSTED_AUTH_KEYS) if (k in meta) trusted[k] = meta[k];
+  return Object.keys(trusted).length ? { ...attrs, app_metadata: { ...(attrs.app_metadata || {}), ...trusted } } : attrs;
+}
+
+function createClient(url: string, key: string, options?: any): any {
+  const client: any = createSupabaseClient(url, key, options);
+  const admin = client.auth.admin;
+  const createUser = admin.createUser.bind(admin);
+  const updateUserById = admin.updateUserById.bind(admin);
+  admin.createUser = (attrs: any) => createUser(mirrorTrustedKeys(attrs));
+  admin.updateUserById = (id: string, attrs: any) => updateUserById(id, mirrorTrustedKeys(attrs));
+  return client;
+}
+
+// The user with role fields taken from app_metadata only. A login the server never set up gets
+// the least access (employee).
+function withTrustedRoles(user: any) {
+  const app = user?.app_metadata || {};
+  const meta: Record<string, any> = { ...(user?.user_metadata || {}) };
+  for (const k of TRUSTED_AUTH_KEYS) {
+    if (k in app) meta[k] = app[k];
+    else delete meta[k];
+  }
+  if (!app.role) meta.role = 'employee';
+  return { ...user, user_metadata: meta };
+}
+
+// The signed-in caller's role and employee id (already verified by the login gate).
+async function viewerOf(c: any): Promise<{ role?: string; employeeId?: string }> {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  return 'error' in auth ? {} : { role: auth.user.user_metadata?.role, employeeId: auth.user.user_metadata?.employeeId };
+}
+
+// Who sees what in employee records: Aadhaar card images only the owner and the person
+// themself; pay, date of birth and phone also managers and audit.
+function employeeForViewer(emp: any, viewer: { role?: string; employeeId?: string }) {
+  if (!emp || viewer.role === 'cluster_head') return emp;
+  if (viewer.employeeId && (emp.employeeId === viewer.employeeId || emp.id === viewer.employeeId)) return emp;
+  const { aadharFront, aadharBack, ...rest } = emp;
+  const out: any = { ...rest, hasAadharImages: !!(aadharFront || aadharBack) };
+  if (viewer.role !== 'manager' && viewer.role !== 'audit') {
+    for (const k of ['salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'dob', 'dateOfBirth', 'phone', 'bankDetails', 'tempPassword']) delete out[k];
+  }
+  return out;
+}
 
 // ============================================
 // IST TIMEZONE UTILITIES (GMT+5:30)
@@ -190,6 +248,63 @@ console.log('✅ CORS configured successfully');
 app.use('*', logger(console.log));
 console.log('✅ Logger middleware configured');
 
+// ---- Login gate (security review, 27 Oct 2026) ----
+// Every route needs a signed-in user except a short public list and the cron-only routes (which
+// carry X-Cron-Secret). Leftover setup/test/debug routes are switched off. The most sensitive
+// routes are limited by role here as well; routes still do their own finer checks.
+const API_PREFIX = '/make-server-c2dd9b9d';
+const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action'];
+const DISABLED_ROUTES = [
+  '/auth/signup', '/auth/setup-test-cluster-head', '/auth/admin-login', '/auth/reset-all-accounts', '/auth/fix-role',
+  '/auth/create-employee-accounts', '/setup-cluster-head', '/debug/', '/diagnostic/', '/attendance/employees', '/attendance/managers',
+];
+const OWNER_ONLY = ['cluster_head'];
+const LEADS = ['cluster_head', 'manager'];
+const WRITES = ['POST', 'PUT', 'DELETE'];
+const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
+  { test: /^\/unified-employees\/[^/]+\/reset-password$/, roles: OWNER_ONLY },
+  { test: /^\/cluster-heads(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
+  { test: /^\/item-sales(\/|$)/, methods: ['DELETE'], roles: OWNER_ONLY },
+  { test: /^\/investors(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
+  { test: /^\/(unified-employees|employees|archived-employees)(\/|$)/, methods: WRITES, roles: LEADS },
+  { test: /^\/payouts(\/|$)/, methods: WRITES, roles: LEADS },
+  { test: /^\/salary-advances\/.+/, methods: ['PUT', 'DELETE'], roles: LEADS },
+  { test: /^\/(timesheets|leaves)\/[^/]+\/(approve|reject)$/, roles: LEADS },
+  { test: /^\/push\/send$/, roles: LEADS },
+  // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
+  { test: /^\/send-/, roles: LEADS },
+];
+const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
+
+app.use(`${API_PREFIX}/*`, async (c, next) => {
+  if (c.req.method === 'OPTIONS') return next();
+  const path = c.req.path.slice(API_PREFIX.length) || '/';
+  if (DISABLED_ROUTES.some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p || path.startsWith(`${p}/`)))) {
+    return c.json({ error: 'This feature has been switched off' }, 410);
+  }
+  if (PUBLIC_ROUTES.some((p) => path === p || path.startsWith(`${p}/`))) return next();
+  const cronSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (cronSecret && c.req.header('X-Cron-Secret') === cronSecret) return next();
+
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  const role = auth.user.user_metadata?.role;
+  const gate = ROLE_GATES.find((g) => g.test.test(path) && (!g.methods || g.methods.includes(c.req.method)));
+  if (gate && !gate.roles.includes(role)) return c.json({ error: 'You are not allowed to do this' }, 403);
+
+  if (WRITES.includes(c.req.method) && /^\/unified-employees(\/|$)/.test(path) && role !== 'cluster_head') {
+    // Only the owner hands out manager, owner or audit roles.
+    const body = await c.req.json().catch(() => ({}));
+    if (body?.role && !['employee', 'rider'].includes(body.role)) return c.json({ error: 'Only the owner can give someone this role' }, 403);
+  }
+  if (PUSH_SELF_ROUTES.test(path) && role !== 'cluster_head') {
+    // Notifications can only be pointed at your own phone.
+    const body = await c.req.json().catch(() => ({}));
+    if (body?.userId && body.userId !== auth.user.user_metadata?.employeeId) return c.json({ error: 'You can only set up notifications for yourself' }, 403);
+  }
+  return next();
+});
+
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -291,6 +406,8 @@ const kvWithRetry = {
   mdel: (keys: string[]) => retryWithBackoff(() => kv.mdel(keys), `kv.mdel`)
 };
 
+const verifiedTokens = new Map<string, { at: number; result: any }>();
+
 // Middleware to verify user authentication with retry logic
 async function verifyUser(authHeader: string | null, retryCount = 0): Promise<any> {
   if (!authHeader) {
@@ -298,6 +415,9 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
   }
   
   const accessToken = authHeader.split(' ')[1];
+  // The login gate and the route itself both verify the same token: reuse a fresh answer.
+  const cachedAuth = verifiedTokens.get(accessToken);
+  if (cachedAuth && Date.now() - cachedAuth.at < 30000) return cachedAuth.result;
   const maxRetries = 3;
   const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000); // Exponential backoff, max 5s
   
@@ -312,19 +432,17 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
     try {
       const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
       if (!userError && userData?.user) {
-        // Merge the fresh metadata into the user object
-        return { 
-          user: {
-            ...user,
-            user_metadata: userData.user.user_metadata
-          }
-        };
+        // Fresh metadata, with roles from app_metadata only (see withTrustedRoles).
+        const result = { user: withTrustedRoles({ ...user, user_metadata: userData.user.user_metadata, app_metadata: userData.user.app_metadata }) };
+        if (verifiedTokens.size > 500) verifiedTokens.clear();
+        verifiedTokens.set(accessToken, { at: Date.now(), result });
+        return result;
       }
     } catch (e) {
       console.log('Error fetching fresh user data:', e);
     }
-    
-    return { user };
+
+    return { user: withTrustedRoles(user) };
   } catch (error: any) {
     // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
     // is returned as a normal { error } value above (line ~179), not thrown. So anything
@@ -3118,7 +3236,8 @@ app.get('/make-server-c2dd9b9d/employees', async (c) => {
     // Combine both arrays
     const allEmployees = [...oldEmployees, ...normalizedUnified];
     
-    return c.json({ success: true, employees: allEmployees });
+    const viewer = await viewerOf(c);
+    return c.json({ success: true, employees: allEmployees.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error: any) {
     console.log('Error fetching employees:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -3149,7 +3268,7 @@ app.put('/make-server-c2dd9b9d/employees/:id', async (c) => {
     const employeeId = c.req.param('id');
     const updates = await c.req.json();
     
-    console.log('Updating employee:', employeeId, JSON.stringify(updates));
+    console.log('Updating employee:', employeeId, Object.keys(updates || {}));
     
     // Try both old and new key formats for backward compatibility
     let key = `employee:${employeeId}`;
@@ -3284,7 +3403,8 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
       employeeId: emp.employeeId || emp.id,
       type: emp.employmentType || emp.type
     }));
-    return c.json({ success: true, employees: normalized });
+    const viewer = await viewerOf(c);
+    return c.json({ success: true, employees: normalized.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
     console.log('Error fetching archived employees:', error);
     return c.json({ error: 'Failed to fetch archived employees' }, 500);
@@ -3310,7 +3430,7 @@ app.get('/make-server-c2dd9b9d/payouts', async (c) => {
 app.post('/make-server-c2dd9b9d/payouts', async (c) => {
   try {
     const body = await c.req.json();
-    console.log('Received payout request:', JSON.stringify(body));
+    console.log('Received payout request:', Array.isArray(body) ? body.length : 1, "item(s)");
     
     const { payouts } = body;
     
@@ -3331,7 +3451,7 @@ app.post('/make-server-c2dd9b9d/payouts', async (c) => {
     const values: any[] = [];
     
     payouts.forEach((payout, index) => {
-      console.log(`Payout ${index}:`, JSON.stringify(payout));
+      console.log(`Payout ${index}:`, payout?.employeeId, payout?.date);
       const key = `payout:${payout.id}`;
       keys.push(key);
       values.push(payout);
@@ -3383,7 +3503,7 @@ app.put('/make-server-c2dd9b9d/payouts/:id', async (c) => {
     const payoutId = c.req.param('id');
     const updates = await c.req.json();
     
-    console.log('Updating payout:', payoutId, JSON.stringify(updates));
+    console.log('Updating payout:', payoutId, Object.keys(updates || {}));
     
     const key = `payout:${payoutId}`;
     const existingPayout = await kv.get(key);
@@ -5679,7 +5799,7 @@ app.put('/make-server-c2dd9b9d/salary-advances/:id', async (c) => {
   try {
     const advanceId = c.req.param('id');
     const updates = await c.req.json();
-    console.log('Updating salary advance:', advanceId, JSON.stringify(updates));
+    console.log('Updating salary advance:', advanceId, Object.keys(updates || {}));
     
     const key = `salary_advance:${advanceId}`;
     const existing = await kv.get(key);
@@ -6908,8 +7028,8 @@ app.get('/make-server-c2dd9b9d/unified-employees', async (c) => {
     console.log('GET /unified-employees - Fetching all employees');
     const employees = await kv.getByPrefix('unified-employee:');
     console.log('GET /unified-employees - Found', employees.length, 'employees');
-    console.log('GET /unified-employees - Sample employee structure:', employees[0] ? JSON.stringify(employees[0]) : 'none');
-    return c.json({ employees });
+    const viewer = await viewerOf(c);
+    return c.json({ employees: employees.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
     console.log('Error fetching unified employees:', error);
     return c.json({ error: 'Failed to fetch employees' }, 500);
@@ -6931,7 +7051,7 @@ app.get('/make-server-c2dd9b9d/unified-employees/manager/:managerId', async (c) 
     
     const employees = allEmployees.filter((emp: any) => emp.managerId === managerId);
     console.log('Filtered employees for manager:', employees.length);
-    console.log('Filtered employees:', JSON.stringify(employees, null, 2));
+    console.log('Filtered employees:', employees.length);
     
     return c.json({ employees });
   } catch (error) {
@@ -7259,7 +7379,7 @@ app.put('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
     const updates = await c.req.json();
     
     console.log('Update unified employee - employeeId:', employeeId);
-    console.log('Update unified employee - updates:', JSON.stringify(updates));
+    console.log('Update unified employee - updates:', Object.keys(updates || {}));
     
     // Debug: List all employee keys to check what exists
     const allEmployees = await kv.getByPrefix('unified-employee:');
@@ -7285,7 +7405,7 @@ app.put('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
       createdAt: employee.createdAt, // Don't allow changing creation date
     };
     
-    console.log('Update unified employee - updated employee data:', JSON.stringify(updatedEmployee));
+    console.log('Update unified employee - updated employee data:', updatedEmployee?.employeeId);
     
     // Update in KV store
     await kv.set(`unified-employee:${employeeId}`, updatedEmployee);
@@ -7769,11 +7889,13 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/role', async (c) => {
     // Update in KV store
     await kv.set(`unified-employee:${employeeId}`, employee);
 
-    // Update in Supabase Auth metadata
+    // Update in Supabase Auth metadata - the employee's own, with the new role. (It used to
+    // spread the owner's metadata here, giving the employee the owner's employee id and store.)
     if (employee.authUserId) {
+      const { data: target } = await supabase.auth.admin.getUserById(employee.authUserId);
       await supabase.auth.admin.updateUserById(employee.authUserId, {
         user_metadata: {
-          ...authResult.user.user_metadata,
+          ...(target?.user?.user_metadata || {}),
           role: newRole
         }
       });

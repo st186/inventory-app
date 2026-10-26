@@ -38,7 +38,6 @@ import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
-import { SetupClusterHead } from './components/SetupClusterHead';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
@@ -421,9 +420,6 @@ export default function App() {
  // Get singleton Supabase client
  const supabaseClient = getSupabaseClient();
 
- // Check for setup URL parameter
- const urlParams = new URLSearchParams(window.location.search);
- const isSetupMode = urlParams.get('setup') === 'cluster-head';
 
  // Load stores for cluster heads
  const loadStores = async () => {
@@ -598,7 +594,7 @@ export default function App() {
  setTimeout(async () => {
  try {
  const userData = await supabaseClient.auth.getUser(accessToken);
- const userRole = userData.data?.user?.user_metadata?.role;
+ const userRole = userData.data?.user?.app_metadata?.role ?? userData.data?.user?.user_metadata?.role;
  
  // Only proceed if user is authenticated and is a cluster head
  if (userData.data?.user && userRole === 'cluster_head') {
@@ -815,15 +811,15 @@ export default function App() {
  
  const processSession = async (session: any) => {
  let storeId = null;
- let designation = session.user.user_metadata?.designation || null;
+ let designation = (session.user.app_metadata?.designation ?? session.user.user_metadata?.designation) || null;
  let assignedStoreIds: string[] = [];
  let assignedProductionHouseIds: string[] = [];
 
  // For employees, fetch full employee record to get storeId
- if (session.user.user_metadata?.employeeId) {
+ if ((session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId)) {
  try {
  const employees = await api.getEmployees();
- const employeeRecord = employees.find(emp => emp.employeeId === session.user.user_metadata?.employeeId);
+ const employeeRecord = employees.find(emp => emp.employeeId === (session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId));
  if (employeeRecord) {
  storeId = employeeRecord.storeId || null;
  designation = employeeRecord.designation || designation;
@@ -838,8 +834,8 @@ export default function App() {
  const userData = {
  email: session.user.email || '',
  name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
- role: session.user.user_metadata?.role || 'manager',
- employeeId: session.user.user_metadata?.employeeId || null,
+ role: (session.user.app_metadata?.role ?? session.user.user_metadata?.role) || 'manager',
+ employeeId: (session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId) || null,
  accessToken: session.access_token,
  storeId,
  designation,
@@ -1010,15 +1006,15 @@ export default function App() {
 
  if (data.user && data.session) {
  let storeId = null;
- let designation = data.user.user_metadata?.designation || null;
+ let designation = (data.user.app_metadata?.designation ?? data.user.user_metadata?.designation) || null;
  let assignedStoreIds: string[] = [];
  let assignedProductionHouseIds: string[] = [];
 
  // For employees, fetch full employee record to get storeId
- if (data.user.user_metadata?.employeeId) {
+ if ((data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId)) {
  try {
  const employees = await api.getEmployees();
- const employeeRecord = employees.find(emp => emp.employeeId === data.user.user_metadata?.employeeId);
+ const employeeRecord = employees.find(emp => emp.employeeId === (data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId));
  if (employeeRecord) {
  storeId = employeeRecord.storeId || null;
  designation = employeeRecord.designation || designation;
@@ -1033,8 +1029,8 @@ export default function App() {
  const userData = {
  email: data.user.email || '',
  name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
- role: data.user.user_metadata?.role || 'manager',
- employeeId: data.user.user_metadata?.employeeId || null,
+ role: (data.user.app_metadata?.role ?? data.user.user_metadata?.role) || 'manager',
+ employeeId: (data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId) || null,
  accessToken: data.session.access_token,
  storeId,
  designation,
@@ -1786,10 +1782,6 @@ export default function App() {
  );
  }
 
- // Show setup page if in setup mode
- if (isSetupMode) {
- return <SetupClusterHead />;
- }
 
  // Show auth page if not logged in
  if (!user) {

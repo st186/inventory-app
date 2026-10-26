@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { PushNotifications, type Token, type PushNotificationSchema, type ActionPerformed } from '@capacitor/push-notifications';
 import { projectId, publicAnonKey } from './supabase/info';
 import { getNavigationTarget, type NotificationNavigationTarget } from './notificationNavigation';
+import { currentAccessToken } from './accessToken';
 
 export function isNativePushSupported(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
@@ -16,7 +17,7 @@ async function sendFcmTokenToServer(token: string, userId: string): Promise<bool
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${await currentAccessToken()}`,
         },
         body: JSON.stringify({ token, userId }),
       }
@@ -36,7 +37,7 @@ export async function unsubscribeNativePushNotifications(userId: string): Promis
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${await currentAccessToken()}`,
         },
         body: JSON.stringify({ userId }),
       }

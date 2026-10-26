@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, X, Check, AlertCircle } from 'lucide-react';
 import { Card } from './ui/card';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { currentAccessToken } from '../utils/accessToken';
 
 type Props = {
   entityType: 'store' | 'production_house';
@@ -55,7 +56,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${await currentAccessToken()}`
           },
           body: JSON.stringify(payload),
         }

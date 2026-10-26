@@ -4,6 +4,7 @@ import { Plus, Trash2, Edit2, Package, Check, X, AlertCircle, Factory, Store as 
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { currentAccessToken } from '../utils/accessToken';
 
 type Props = {
   context: InventoryContextType;
@@ -54,7 +55,7 @@ export function InventoryItemsManagement({ context, onBack }: Props) {
         `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/inventory-items`,
         {
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${await currentAccessToken()}`
           }
         }
       );
@@ -99,7 +100,7 @@ export function InventoryItemsManagement({ context, onBack }: Props) {
         method: editingId ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`
+          'Authorization': `Bearer ${await currentAccessToken()}`
         },
         body: JSON.stringify(payload),
       });
@@ -147,7 +148,7 @@ export function InventoryItemsManagement({ context, onBack }: Props) {
         {
           method: 'DELETE',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${await currentAccessToken()}`
           }
         }
       );
@@ -174,7 +175,7 @@ export function InventoryItemsManagement({ context, onBack }: Props) {
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${await currentAccessToken()}`
           }
         }
       );

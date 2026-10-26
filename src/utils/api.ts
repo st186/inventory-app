@@ -4,6 +4,7 @@ import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData }
 import type { DispatchInfo, DeliveryReceipt } from './batches';
 import type { StockOutEntry } from './stockOuts';
 import type { AccuracySummary, BacktestDay, CalendarEvent, DayRecord, EffectLearning, ForecastDay, ForecastSettings } from './forecast';
+import { currentAccessToken } from './accessToken';
 
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
@@ -2176,7 +2177,7 @@ export async function fetchInventoryItems(
       `${API_BASE}/inventory-items?${params.toString()}`,
       {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`
+          'Authorization': `Bearer ${await currentAccessToken()}`
         }
       }
     );
@@ -2204,7 +2205,7 @@ export async function addInventoryItem(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     },
     body: JSON.stringify(item),
   });
@@ -2236,7 +2237,7 @@ export async function updateInventoryItem(
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     },
     body: JSON.stringify(updates),
   });
@@ -2254,7 +2255,7 @@ export async function deleteInventoryItem(id: string): Promise<void> {
   const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
     method: 'DELETE',
     headers: {
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     }
   });
 
@@ -2268,7 +2269,7 @@ export async function initializeDefaultInventoryItems(): Promise<DynamicInventor
   const response = await fetch(`${API_BASE}/inventory-items/initialize-defaults`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     }
   });
 
@@ -2626,7 +2627,7 @@ export async function getCustomItems(): Promise<CustomItem[]> {
     const response = await fetch(`${API_BASE}/custom-items`, {
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${publicAnonKey}`
+        'Authorization': `Bearer ${await currentAccessToken()}`
       },
     });
     
@@ -2706,7 +2707,7 @@ export interface CustomCategory {
 export async function getCustomCategories(): Promise<CustomCategory[]> {
   try {
     const response = await fetch(`${API_BASE}/custom-categories`, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await currentAccessToken()}` },
     });
     if (!response.ok) return [];
     const data = await response.json();

@@ -1,5 +1,6 @@
 // Push Notification Utilities
 import { projectId, publicAnonKey } from './supabase/info';
+import { currentAccessToken } from './accessToken';
 
 // Check if push notifications are supported
 export function isPushNotificationSupported(): boolean {
@@ -173,7 +174,7 @@ export async function sendSubscriptionToServer(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${await currentAccessToken()}`,
         },
         body: JSON.stringify({
           subscription: subscription.toJSON(),
@@ -225,7 +226,7 @@ export async function unsubscribeFromPushNotifications(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${await currentAccessToken()}`,
           },
           body: JSON.stringify({ userId }),
         }
