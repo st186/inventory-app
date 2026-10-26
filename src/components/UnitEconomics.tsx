@@ -5,33 +5,11 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Scale, Info, ChevronRight } from 'lucide-react';
+import type { PnlBreakdown } from '../utils/pnl';
 
-export type PnlBreakdown = {
-  revenue: number;
-  counterRevenue: number;
-  onlineRevenue: number;
-  zomatoRevenue: number;
-  swiggyRevenue: number;
-  onlineDiscounts: number; // restaurant-funded discounts on settled online orders (already out of revenue)
-  food: number; // ingredients
-  packaging: number;
-  commission: number; // Zomato/Swiggy commission, excl. GST
-  platformAds: number;
-  marketing: number;
-  staff: number; // salaries incl. personal expenses
-  occupancy: number; // rent, electricity, internet & phone
-  otherOpex: number; // running costs incl. the POS subscription's share
-  depreciation: number; // equipment and the scooter, spread over their life
-  interest: number;
-  shortages: number; // approved cash shortages
-  netProfit: number;
-  estimatedCommission: number; // commission + ads estimated for days not settled yet
-  estimatedDays: number;
-  // The parts of staff and occupancy that are paid once a month (permanent salaries; rent and
-  // electricity) - the normalized view swaps them for a day-by-day share.
-  staffSmoothable?: number;
-  occupancySmoothable?: number;
-};
+// The P&L shape now lives with the one function that builds it (utils/pnl.ts); re-exported so
+// existing imports from here keep working.
+export type { PnlBreakdown };
 
 // Swap month-end salaries, rent and electricity for their day-by-day share of the period
 // (utils/dailyCostSmoothing.ts), so a month in progress isn't flattered by bills not yet paid.
