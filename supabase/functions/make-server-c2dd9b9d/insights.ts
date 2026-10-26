@@ -6,7 +6,7 @@
 // production counts and expense totals by category go to Claude - never salaries, Aadhaar,
 // phone numbers or other personal details.
 //
-// Needs the ANTHROPIC_API_KEY secret. AI_MODEL (default claude-opus-5-5) and
+// Needs the ANTHROPIC_API_KEY secret. AI_MODEL (default claude-haiku-5-5, the cheapest) and
 // AI_MONTHLY_CAP_USD (default 30) are optional secrets.
 
 import Anthropic from 'npm:@anthropic-ai/sdk';
@@ -23,7 +23,9 @@ type Kv = {
 };
 type Deps = { kv: Kv; verifyUser: (authHeader: string | null) => Promise<any>; getTodayIST: () => string };
 
-const AI_MODEL = Deno.env.get('AI_MODEL') || 'claude-opus-5-5';
+// Haiku by default (owner, 27 Oct 2026): about 40x cheaper than Opus. Set the AI_MODEL secret
+// to claude-sonnet-5-5 or claude-opus-5-5 for better writing at higher cost.
+const AI_MODEL = Deno.env.get('AI_MODEL') || 'claude-haiku-5-5';
 const AI_MONTHLY_CAP_USD = Number(Deno.env.get('AI_MONTHLY_CAP_USD') || '30');
 // $ per million tokens: input, output, cache read. Cache writes cost 1.25x input.
 const PRICES: Record<string, [number, number, number]> = {
@@ -33,6 +35,8 @@ const PRICES: Record<string, [number, number, number]> = {
 };
 // Server-side refusal fallback: Opus and Sonnet only (Haiku has none).
 const SUPPORTS_FALLBACK = /opus|sonnet|fable/.test(AI_MODEL);
+// The dynamic-filtering web search is documented for Opus and Sonnet; Haiku gets the basic one.
+const WEB_SEARCH_TOOL = /haiku/.test(AI_MODEL) ? 'web_search_20250305' : 'web_search_20260209';
 // Invoice scanning is switched off: it came to about ₹3 a bill, too much for what it saves
 // (owner, 27 Oct 2026). Set the AI_INVOICE_SCAN secret to "on" to bring it back.
 const INVOICE_SCAN_ON = Deno.env.get('AI_INVOICE_SCAN') === 'on';
@@ -556,7 +560,7 @@ ${JSON.stringify({
         purpose: 'calendar',
         effort: 'low',
         maxTokens: 8000,
-        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: { type: 'approximate', country: 'IN', region: 'West Bengal', city: 'Bardhaman', timezone: 'Asia/Kolkata' } }],
+        tools: [{ type: WEB_SEARCH_TOOL, name: 'web_search', max_uses: 5, user_location: { type: 'approximate', country: 'IN', region: 'West Bengal', city: 'Bardhaman', timezone: 'Asia/Kolkata' } }],
         messages: [{
           role: 'user',
           content: `List the days between ${from} and ${to} that are likely to change sales at a momo shop in Bardhaman, West Bengal: Bengali and national festivals, puja days when many people avoid non-veg, big local fairs, public holidays. Check the exact ${from.slice(0, 4)} dates with web search - lunar festival dates move every year.

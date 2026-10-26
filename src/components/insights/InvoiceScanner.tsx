@@ -8,7 +8,7 @@ import { SELECTABLE_INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, SELECTABLE_OVERHE
 import { getTodayIST } from '../../utils/timezone';
 import { productionShouldCover } from '../../utils/cashSource';
 import { useCashCover, type LoadCashCover } from '../useCashCover';
-import { ProductionCashNotice } from '../ProductionCashChoice';
+import { ProductionCashChoice } from '../ProductionCashChoice';
 
 type Props = {
   context: InventoryContextType;
@@ -68,7 +68,7 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
   const storeIdForBill = (storeOptions?.length ? pickedStore : storeId) || '';
   const productionCashHouseId = allowOwnerPayment && entity === 'store' && storeIdForBill ? productionHouseForStore?.(storeIdForBill) || null : null;
   const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForBill : null, date);
-  const [keepStoreCash, setKeepStoreCash] = useState(false);
+  const [fromProductionCash, setFromProductionCash] = useState(false);
   const [saving, setSaving] = useState(false);
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -123,10 +123,10 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
 
   const update = (i: number, patch: Partial<Line>) => setLines((prev) => prev.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const included = lines.filter((l) => l.include);
-  // Production's cash steps in only when the store's cash can't cover the whole bill and production's can.
+  // Production's cash is offered (unticked) only when the store's cash can't cover the whole bill and production's can.
   const billTotal = included.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0);
   const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId && productionShouldCover(cashCover, billTotal);
-  const useProductionCash = productionCanCover && !keepStoreCash;
+  const useProductionCash = productionCanCover && fromProductionCash;
   const total = included.reduce((t, l) => t + (parseFloat(l.amount) || 0), 0);
   const mismatch = invoice?.billTotal ? Math.abs(total - invoice.billTotal) > 1 : false;
 
@@ -226,13 +226,8 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
                   {allowOwnerPayment && <option value="owner">Paid with my own money</option>}
                 </select>
               </div>
-              {productionCanCover && cashCover && (
-                <ProductionCashNotice
-                  cover={cashCover}
-                  amount={billTotal}
-                  usingProduction={useProductionCash}
-                  onChange={(useProduction) => setKeepStoreCash(!useProduction)}
-                />
+              {productionCanCover && (
+                <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={billTotal} cover={cashCover} />
               )}
 
               <ul className="space-y-2">

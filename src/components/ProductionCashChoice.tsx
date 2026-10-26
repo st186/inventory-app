@@ -1,7 +1,8 @@
 import { CashCover, formatRupees, productionShouldCover, storeCashPortion } from '../utils/cashSource';
 
-// Store bills come off the store's own cash. Production's cash steps in only when the store's
-// cash can't cover the bill and production's can (cluster head only; see utils/cashSource.ts).
+// Store bills come off the store's own cash. When the store's cash can't cover a bill and
+// production's can, an unticked "Taken from production cash in hand" box is offered (cluster
+// head only; see utils/cashSource.ts) - in Quick Add, the invoice scanner and the edit forms.
 
 type EditedBill = {
   paidFromProductionHouseId?: string | null;
@@ -10,34 +11,6 @@ type EditedBill = {
   totalCost?: number;
   amount?: number;
 };
-
-// New bills (Quick Add, invoice scan): switched to production's cash automatically when needed.
-// Says so, and lets the cluster head keep it on store cash anyway.
-export function ProductionCashNotice({ cover, amount, usingProduction, onChange }: {
-  cover: CashCover;
-  amount: number;
-  usingProduction: boolean;
-  onChange: (useProduction: boolean) => void;
-}) {
-  return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1.5">
-      {usingProduction ? (
-        <>
-          <p>
-            The store's cash for the day is {formatRupees(cover.storeCash)}, not enough for this {formatRupees(amount)} bill,
-            so it's paid from production's cash ({formatRupees(cover.productionCash)} in hand). It still counts as the store's cost.
-          </p>
-          <button type="button" onClick={() => onChange(false)} className="font-semibold underline">Use store cash anyway</button>
-        </>
-      ) : (
-        <>
-          <p>Paying from store cash leaves the store at {formatRupees(cover.storeCash - amount)} for the day.</p>
-          <button type="button" onClick={() => onChange(true)} className="font-semibold underline">Pay from production cash instead</button>
-        </>
-      )}
-    </div>
-  );
-}
 
 // The store's and production's cash before this bill: an edited bill is already inside today's
 // figures, so its own cash is added back to whichever till it came from.

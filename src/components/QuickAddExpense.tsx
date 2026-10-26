@@ -21,7 +21,7 @@ import {
 } from '../utils/expenseMatcher';
 import { productionShouldCover } from '../utils/cashSource';
 import { useCashCover, type LoadCashCover } from './useCashCover';
-import { ProductionCashNotice } from './ProductionCashChoice';
+import { ProductionCashChoice } from './ProductionCashChoice';
 
 type Props = {
   selectedDate: string;
@@ -173,17 +173,17 @@ export function QuickAddExpense({
       : { entityType: 'store' as const, storeId: (storeOptions?.length ? pickedStoreId : effectiveStoreId) || undefined };
 
   // A store bill comes off the store's own cash. Only when the store's cash for the day can't
-  // cover it and the linked production house's cash can is it paid from production's cash
-  // instead - automatically, with a one-tap way back to store cash.
+  // cover it and the linked production house's cash can is there a tick box (unticked) to take
+  // it from production's cash instead.
   const storeIdForCash = (storeOptions?.length ? pickedStoreId : effectiveStoreId) || '';
   const productionCashHouseId = ownerPaymentOption && entity === 'store' && storeIdForCash
     ? productionHouseForStore?.(storeIdForCash) || null
     : null;
   const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, selectedDate);
-  const [keepStoreCash, setKeepStoreCash] = useState(false);
+  const [fromProductionCash, setFromProductionCash] = useState(false);
   const enteredAmount = parseFloat(amount) || 0;
   const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId && productionShouldCover(cashCover, enteredAmount);
-  const useProductionCash = productionCanCover && !keepStoreCash;
+  const useProductionCash = productionCanCover && fromProductionCash;
 
   // Everyone else's quick-add expense is paid from the cash in hand.
   const paymentFieldsFor = (amt: number) =>
@@ -387,13 +387,10 @@ export function QuickAddExpense({
                     : 'Comes off the business Paytm balance.'}
                 </p>
               )}
-              {productionCanCover && cashCover && (
-                <ProductionCashNotice
-                  cover={cashCover}
-                  amount={enteredAmount}
-                  usingProduction={useProductionCash}
-                  onChange={(useProduction) => setKeepStoreCash(!useProduction)}
-                />
+              {productionCanCover && (
+                <div className="mt-2">
+                  <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} />
+                </div>
               )}
             </div>
           )}
