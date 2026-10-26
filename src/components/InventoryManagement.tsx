@@ -19,9 +19,9 @@ import { InvoiceScanner } from './insights/InvoiceScanner';
 import { PriceCheckPanel } from './PriceCheck';
 import { buildPriceGuide, checkPurchase, type PriceFlag } from '../utils/expenseChecks';
 
-// Invoice scanning is switched off (about ₹3 a bill on the AI model). The server refuses it
-// too, unless its AI_INVOICE_SCAN secret is "on" (see insights.ts).
-const INVOICE_SCAN_ENABLED = false;
+// Invoice scanning is on (about ₹0.03 a bill on Haiku). The server can still switch it off with
+// its AI_INVOICE_SCAN secret set to "off" (see insights.ts).
+const INVOICE_SCAN_ENABLED = true;
 
 type Props = {
  context: InventoryContextType;

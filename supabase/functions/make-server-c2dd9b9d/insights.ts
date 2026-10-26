@@ -50,9 +50,9 @@ const WEB_SEARCH_USD = 0.01;
 const SUPPORTS_FALLBACK = /opus|sonnet|fable/.test(AI_MODEL);
 // The dynamic-filtering web search is documented for Opus and Sonnet; Haiku gets the basic one.
 const WEB_SEARCH_TOOL = /haiku/.test(AI_MODEL) ? 'web_search_20250305' : 'web_search_20260209';
-// Invoice scanning is switched off: it came to about ₹3 a bill, too much for what it saves
-// (owner, 27 Oct 2026). Set the AI_INVOICE_SCAN secret to "on" to bring it back.
-const INVOICE_SCAN_ON = Deno.env.get('AI_INVOICE_SCAN') === 'on';
+// Invoice scanning: on (owner, 27 Oct 2026). It was switched off at about ₹3 a bill on Opus;
+// on Haiku the same scan is about ₹0.03. Set the AI_INVOICE_SCAN secret to "off" to stop it.
+const INVOICE_SCAN_ON = Deno.env.get('AI_INVOICE_SCAN') !== 'off';
 
 const EFFECTS: DayEffect[] = ['normal', 'closed', 'low_nonveg', 'busy', 'quiet'];
 const PRODUCTION_KEYS: Record<string, MomoKey> = {
