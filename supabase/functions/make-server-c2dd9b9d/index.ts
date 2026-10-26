@@ -10767,7 +10767,9 @@ async function creditStoreInventoryForDelivery(existingRequest: any, requestId: 
   });
 
   try {
-    const storeKey = `store_${existingRequest.storeId}`;
+    // Stores live under `store:` (see /stores). This read `store_`, never found the store and
+    // returned here, so neither the store credit nor the production-house deduction below ran.
+    const storeKey = `store:${existingRequest.storeId}`;
     const store = await kv.get(storeKey);
 
     if (!store) {
