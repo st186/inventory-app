@@ -5011,17 +5011,28 @@ function computeLedgerOpening(houseLedgerRecords: any[], date: string): Record<s
   return opening;
 }
 
+// One production house's closed days and logged items, read by key prefix
+// (production-ledger:{house}:{date}, production-ledger-item:{house}:{date}:{id}) - just one
+// day's items when itemDate is given - and paginated. The plain prefix read of every house's
+// rows stops at 1000, after which logged items and closed days silently dropped out of the
+// totals and openings.
+async function getHouseLedger(productionHouseId: string, itemDate?: string): Promise<{ houseRecords: any[]; houseItems: any[] }> {
+  const [records, items] = await Promise.all([
+    getAllByPrefixWithRetry(`production-ledger:${productionHouseId}:`),
+    getAllByPrefixWithRetry(`production-ledger-item:${productionHouseId}:${itemDate ? `${itemDate}:` : ''}`),
+  ]);
+  return {
+    houseRecords: records.filter((r: any) => r.productionHouseId === productionHouseId),
+    houseItems: items.filter((i: any) => i.productionHouseId === productionHouseId && (!itemDate || i.date === itemDate)),
+  };
+}
+
 async function cascadeRecomputeProductionLedger(productionHouseId: string, fromDate: string): Promise<void> {
   try {
     const today = getTodayIST();
     if (fromDate > today) return;
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId);
 
     let cursor = fromDate;
     let updated = 0;
@@ -5171,23 +5182,17 @@ app.get('/make-server-c2dd9b9d/production-ledger', async (c) => {
       return c.json({ error: 'productionHouseId is required' }, 400);
     }
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
-
     if (from && to) {
-      return c.json({ entries: houseRecords.filter((r: any) => r.date >= from && r.date <= to) });
+      const records = await getAllByPrefixWithRetry(`production-ledger:${productionHouseId}:`);
+      return c.json({ entries: records.filter((r: any) => r.productionHouseId === productionHouseId && r.date >= from && r.date <= to) });
     }
 
     if (!date) {
       return c.json({ error: 'date, or from+to, is required' }, 400);
     }
 
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
     const todaysItems = houseItems
-      .filter((i: any) => i.date === date)
       .sort((a: any, b: any) => (a.loggedAt || '').localeCompare(b.loggedAt || ''));
     const existing = houseRecords.find((r: any) => r.date === date);
     // Whether this house has ever closed a day strictly before `date` - the frontend uses
@@ -5287,7 +5292,8 @@ app.put('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const allItems = await kv.getByPrefix('production-ledger-item:');
+    // Paginated - the plain prefix read stops at 1000 rows, so items past that were "not found".
+    const allItems = await getAllByPrefixWithRetry('production-ledger-item:');
     const existing = allItems.find((i: any) => i.id === itemId);
     if (!existing) {
       return c.json({ error: 'Production ledger item not found' }, 404);
@@ -5328,7 +5334,8 @@ app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const allItems = await kv.getByPrefix('production-ledger-item:');
+    // Paginated - the plain prefix read stops at 1000 rows, so items past that were "not found".
+    const allItems = await getAllByPrefixWithRetry('production-ledger-item:');
     const existing = allItems.find((i: any) => i.id === itemId);
     if (!existing) {
       return c.json({ error: 'Production ledger item not found' }, 404);
@@ -5373,12 +5380,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId && i.date === date);
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
 
     const existing = houseRecords.find((r: any) => r.date === date);
     const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
