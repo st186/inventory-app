@@ -8,6 +8,7 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerProfileRoutes } from './profile.ts';
+import { registerPasswordRoutes, passwordGate } from './passwords.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -267,6 +268,7 @@ const LEADS = ['cluster_head', 'manager'];
 const WRITES = ['POST', 'PUT', 'DELETE'];
 const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/unified-employees\/[^/]+\/reset-password$/, roles: OWNER_ONLY },
+  { test: /^\/admin\/employees\/[^/]+\/force-password-reset$/, roles: OWNER_ONLY },
   { test: /^\/cluster-heads(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
   { test: /^\/item-sales(\/|$)/, methods: ['DELETE'], roles: OWNER_ONLY },
   { test: /^\/investors(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
@@ -293,6 +295,10 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
 
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  // Password rotation (passwords.ts): a password past 90 days, or one the owner force-reset, only
+  // opens the password routes until it is changed; the app then shows its change-password screen.
+  const passwordBlock = await passwordGate(path, auth.user);
+  if (passwordBlock) return c.json(passwordBlock, 403);
   const role = auth.user.user_metadata?.role;
   const gate = ROLE_GATES.find((g) => g.test.test(path) && (!g.methods || g.methods.includes(c.req.method)));
   if (gate && !gate.roles.includes(role)) return c.json({ error: 'You are not allowed to do this' }, 403);
@@ -16380,6 +16386,8 @@ registerInsightsRoutes(app, {
     return sent;
   },
 });
+// Password rotation: status, self-service change, owner force reset, daily reminders (passwords.ts).
+registerPasswordRoutes(app, { supabase, verifyUser, kv: kvWithRetry, notifyUser, forgetVerifiedTokens: () => verifiedTokens.clear() });
 
 console.log('✅ Server initialization complete - all routes registered successfully');
 console.log('🚀 Starting Deno server...');

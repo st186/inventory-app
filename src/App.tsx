@@ -32,6 +32,7 @@ import { Notifications } from './components/Notifications';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { BunnyChat } from './components/BunnyChat';
 import { ProfileCompletionCard } from './components/ProfileCompletionCard';
+import { usePasswordPolicy, ChangePasswordDialog, PasswordExpiryBanner } from './components/PasswordSecurity';
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreSelector } from './components/StoreSelector';
@@ -43,7 +44,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX } from 'lucide-react';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, KeyRound } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -1763,6 +1764,10 @@ export default function App() {
  }
  }, [user, activeView]);
 
+ // Password rotation: status, the blocking change-password screen and the expiry banner
+ // (components/PasswordSecurity.tsx). A hook, so it sits above the conditional returns too.
+ const passwordPolicy = usePasswordPolicy(user);
+
  // Show loading state while checking auth
  if (isCheckingAuth) {
  const momoCount = 6;
@@ -1804,6 +1809,14 @@ export default function App() {
  />
  );
  }
+
+ // Password expired or reset by the owner: nothing else works until a new one is set (the server
+ // refuses every other route with PASSWORD_EXPIRED), so this screen replaces the whole app.
+ if (passwordPolicy.blocking) {
+ return <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />;
+ }
+ // The same form as a sheet, opened from "Change password" in the menu or the banner.
+ const passwordDialog = <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />;
 
  // Floating button + panel to let any logged-in user enable/check push notifications
  // The floating bell is for the website: it lets a browser user switch web push on and check it.
@@ -1887,6 +1900,8 @@ export default function App() {
  return (
  <>
  {pushNotificationWidget}
+ {passwordDialog}
+ <PasswordExpiryBanner policy={passwordPolicy} />
  <AuditDashboard
  user={user}
  inventory={inventory}
@@ -1902,6 +1917,7 @@ export default function App() {
  stores={stores}
  inventoryItems={inventoryItems}
  onLogout={handleLogout}
+ onChangePassword={passwordPolicy.openDialog}
  onDataUpdate={loadData}
  />
  </>
@@ -1913,6 +1929,7 @@ export default function App() {
  return (
  <>
  {pushNotificationWidget}
+ {passwordDialog}
  <UpdateAvailableBanner />
 
  <div className="min-h-screen bg-gray-50">
@@ -2137,6 +2154,13 @@ export default function App() {
  {/* Notification bell and Refresh moved to the always-visible bar next to the
  hamburger menu button above, reachable without opening the desktop nav or
  the mobile menu. */}
+ <button
+ onClick={passwordPolicy.openDialog}
+ className="flex items-center gap-2 px-4 py-2 bg-white/20 text-white rounded-xl hover:bg-white/30 transition-all border-2 border-white/30"
+ >
+ <KeyRound className="w-4 h-4" />
+ <span>Change password</span>
+ </button>
  <button
  onClick={handleLogout}
  className="flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white rounded-xl hover:bg-red-600 transition-all border-2 border-white/30"
@@ -2368,6 +2392,16 @@ export default function App() {
  </button>
  )}
  <button
+ onClick={() => {
+ passwordPolicy.openDialog();
+ setIsMobileMenuOpen(false);
+ }}
+ className="w-full flex items-center gap-3 px-4 py-3 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all"
+ >
+ <KeyRound className="w-5 h-5" />
+ <span>Change password · পাসওয়ার্ড বদলান</span>
+ </button>
+ <button
  onClick={handleLogout}
  className="w-full flex items-center gap-3 px-4 py-3 bg-red-500/90 text-white rounded-lg hover:bg-red-600 transition-all"
  >
@@ -2378,6 +2412,9 @@ export default function App() {
  )}
  </div>
  </nav>
+ {/* Under the top bar rather than on one screen: plain employees and riders have no shared
+ home screen, and a reminder push lands wherever their first screen is. */}
+ <PasswordExpiryBanner policy={passwordPolicy} />
 
  {/* Employee Main Content */}
  <main className="pb-6" data-ai-screen>
@@ -2485,6 +2522,7 @@ export default function App() {
  return (
  <>
  {pushNotificationWidget}
+ {passwordDialog}
  {canAskBunny && <BunnyChat accessToken={user.accessToken || ''} storeId={askBunnyStoreId} raised={!!pushNotificationWidget} />}
  <UpdateAvailableBanner />
 
@@ -2721,6 +2759,14 @@ export default function App() {
  )}
  {/* Refresh moved to the always-visible bar next to the notification bell above. */}
  <button
+ onClick={passwordPolicy.openDialog}
+ className="flex items-center gap-2 px-4 py-2 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-all duration-300 transform hover:scale-105 border border-white/20"
+ title="Change password"
+ >
+ <KeyRound className="w-4 h-4" />
+ <span className="hidden xl:inline">Password</span>
+ </button>
+ <button
  onClick={handleLogout}
  className="flex items-center gap-2 px-4 py-2 bg-white/10 text-white rounded-xl hover:bg-red-500 transition-all duration-300 transform hover:scale-105 border border-white/20"
  >
@@ -2955,6 +3001,16 @@ export default function App() {
                   </>
  )}
  <button
+ onClick={() => {
+ passwordPolicy.openDialog();
+ setIsMobileMenuOpen(false);
+ }}
+ className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 text-gray-700 rounded-lg hover:bg-[#E6F2FF] transition-colors"
+ >
+ <KeyRound className="w-5 h-5" />
+ <span>Change password · পাসওয়ার্ড বদলান</span>
+ </button>
+ <button
  onClick={handleLogout}
  className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
  >
@@ -2965,6 +3021,8 @@ export default function App() {
  )}
  </div>
  </nav>
+ {/* Under the top bar so it is the first thing on Home (and any screen a reminder opens). */}
+ <PasswordExpiryBanner policy={passwordPolicy} />
 
  {/* Store Selector for Cluster Heads */}
  {isClusterHead && stores.length > 0 && (

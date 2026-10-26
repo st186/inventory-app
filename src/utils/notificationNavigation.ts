@@ -60,6 +60,9 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' },
+  // Home: the expiry banner with "Change now" is there. Plain employees and riders are moved on to
+  // their own first screen by App.tsx, which shows the same banner.
+  password_expiring: { view: 'analytics' },
 };
 
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {

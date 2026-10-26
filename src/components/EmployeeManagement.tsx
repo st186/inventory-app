@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Users, UserPlus, Search, Edit2, Trash2, Calendar, DollarSign, FileText, Upload, KeyRound, RefreshCw, UserCog, AlertCircle, Store, Key, Clock, Building2 } from 'lucide-react';
 import * as api from '../utils/api';
 import { EmployeeAccountSetup } from './EmployeeAccountSetup';
+import { ForcePasswordResetButton } from './ForcePasswordResetButton';
 import { HierarchyManagement } from './HierarchyManagement';
 import { EmployeeDetailsModal } from './EmployeeDetailsModal';
 import { PayrollManagement } from './PayrollManagement';
@@ -1527,6 +1528,7 @@ New Password: ${result.credentials.password}
                           >
                             <Key className="w-5 h-5" />
                           </button>
+                          {isClusterHead && emp.employeeId !== user.employeeId && <ForcePasswordResetButton employee={emp} />}
                           {isClusterHead && emp.role === 'employee' && (
                             <button
                               onClick={() => handleOpenAssignManager(emp)}
