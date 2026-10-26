@@ -320,7 +320,7 @@ The employee can now login with their email and password.`);
       setLoading(true);
       const result = await api.deleteUnifiedEmployee(employeeId);
       alert(result?.loginRevoked === false
-        ? 'Employee moved to Past Employees, but their login could not be switched off - please try again or reset their password.'
+        ? 'Employee moved to Past Employees. (Their login could not be banned just now; the app refuses it anyway.)'
         : 'Employee moved to Past Employees and their login is switched off.');
       await loadEmployees();
     } catch (error) {

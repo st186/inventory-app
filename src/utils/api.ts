@@ -1423,7 +1423,7 @@ export async function deleteUnifiedEmployee(employeeId: string) {
 }
 
 // Owner only: brings a past employee back and switches their login back on.
-export async function restoreArchivedEmployee(employeeId: string): Promise<{ success: boolean; loginRestored: boolean }> {
+export async function restoreArchivedEmployee(employeeId: string): Promise<{ success: boolean; loginRestored: boolean | null }> {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 

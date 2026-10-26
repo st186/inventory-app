@@ -621,7 +621,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       if (result?.archived) {
         setArchivedEmployees([...archivedEmployees, result.archived]);
       }
-      alert('Employee archived - their past payout records are kept.');
+      alert(result?.loginRevoked === false
+        ? 'Employee archived - their past payout records are kept. (Their login could not be banned just now; the app refuses it anyway.)'
+        : 'Employee archived and their login switched off - their past payout records are kept.');
     } catch (error) {
       console.error('Error deleting employee:', error);
       alert('Failed to archive employee');

@@ -509,8 +509,9 @@ async function isArchivedLogin(employeeId: string | undefined, authUserId: strin
   }
 }
 
-async function setEmployeeLoginBlocked(authUserId: string | undefined, blocked: boolean): Promise<boolean> {
-  if (!authUserId) return false;
+// true = done, false = the auth call failed, null = this record has no login to change.
+async function setEmployeeLoginBlocked(authUserId: string | undefined, blocked: boolean): Promise<boolean | null> {
+  if (!authUserId) return null;
   try {
     const { error } = await supabase.auth.admin.updateUserById(authUserId, {
       ban_duration: blocked ? ARCHIVED_BAN_DURATION : 'none',
