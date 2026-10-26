@@ -1,3 +1,5 @@
+import { countedCashInHand } from './paytmRules';
+
 // Which till an expense's cash actually came out of. The cost always belongs to the
 // expense's own store or production house; the cash doesn't have to:
 // - paymentMethod 'owner': the cluster head's own money, no till at all
@@ -36,16 +38,19 @@ export type CashCover = {
 // A store's own cash on a date. The previous night's cash goes to production each morning, so
 // nothing carries over: it's the counted cash once the day is reconciled, otherwise top-ups +
 // cash collected so far - cash spent so far. Same figure the Sales page shows for the store.
+// The POS sync's placeholder row isn't a count: its blank (or, on older rows, 0) cash in hand
+// used to read as "store cash is ₹0" and offered production's cash for every bill.
 export function storeCashOnHand(params: {
   storeId: string;
   date: string;
-  salesData: { storeId?: string; date: string; actualCashInHand?: number | null; usedOnlineMoney?: number; cashAmount?: number }[];
+  salesData: { storeId?: string; date: string; actualCashInHand?: number | null; usedOnlineMoney?: number; cashAmount?: number; createdBy?: string; updatedBy?: string }[];
   expenses: (ExpenseCash & { date: string; storeId?: string | null; entityType?: string })[];
   topups: { storeId?: string | null; date: string; status: string; reason?: string; requestedAmount: number }[];
 }): { cash: number; counted: boolean } {
   const { storeId, date } = params;
   const entry = params.salesData.find((s) => s.storeId === storeId && s.date === date);
-  if (typeof entry?.actualCashInHand === 'number') return { cash: entry.actualCashInHand, counted: true };
+  const counted = countedCashInHand(entry);
+  if (counted !== null) return { cash: counted, counted: true };
   const toppedUp = entry
     ? entry.usedOnlineMoney ?? 0
     : params.topups

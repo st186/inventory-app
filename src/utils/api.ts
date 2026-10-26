@@ -384,6 +384,9 @@ export interface CashTopupRequest {
   requestDate: string;
   approvedBy: string | null;
   approvedAt: string | null;
+  // true = approvedAt is real UTC. Older approvals stored IST wall-clock time with a 'Z'
+  // suffix instead (see topupApprovedAtMs in utils/paytmRules.ts).
+  approvedAtIsUtc?: boolean;
   rejectedBy: string | null;
   rejectedAt: string | null;
   rejectionReason: string | null;
@@ -3255,20 +3258,6 @@ export async function fetchOnlineCashRecalibrations(accessToken: string): Promis
   return response?.data || [];
 }
 
-// Convert offline cash to online cash (Paytm)
-export async function convertCashToOnline(
-  accessToken: string,
-  storeId: string,
-  date: string,
-  amount: number,
-  performedBy: string
-): Promise<void> {
-  await fetchWithAuth(`${API_BASE}/cash-conversion`, accessToken, {
-    method: 'POST',
-    body: JSON.stringify({ storeId, date, amount, performedBy }),
-  });
-}
-
 // ============================================
 // ONLINE LOANS (Paytm/Online Cash Loans)
 // ============================================
@@ -3284,6 +3273,10 @@ export type OnlineLoan = {
   status: 'pending' | 'active' | 'repaid' | 'rejected';
   repaidAmount: number;
   repaymentDate: string | null; // Date when fully repaid
+  // Each repayment on its own date, partial ones included, so Paytm moves on the day the money
+  // went out. Missing on loans not repaid since this was added (see loanRepayments in
+  // utils/paytmRules.ts for how those are read).
+  repayments?: { date: string; amount: number; recordedAt?: string }[];
   notes: string;
   createdBy: string;
   createdAt: string;

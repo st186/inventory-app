@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryContextType, SalesData } from '../App';
 import { DateSelector } from './DateSelector';
 import { DatePicker } from './DatePicker';
@@ -7,12 +7,13 @@ import { OnlineCashRecalibration } from './OnlineCashRecalibration';
 import { LoanManagementSection } from './LoanManagementSection';
 import { OnlineSalesTab } from './OnlineSalesTab';
 import { CashTopupHistory } from './CashTopupHistory';
-import { DollarSign, Wallet, ShoppingBag, CheckCircle, Smartphone, AlertTriangle, CheckSquare, X, Loader2, Calendar, CreditCard, ArrowRightLeft, IndianRupee, PlusCircle, Clock, RefreshCw, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
+import { DollarSign, Wallet, ShoppingBag, CheckCircle, Smartphone, AlertTriangle, CheckSquare, X, Loader2, Calendar, CreditCard, IndianRupee, PlusCircle, Clock, RefreshCw, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import * as api from '../utils/api';
 import { addDays, getTodayIST, formatDateIST, formatDateTimeIST } from '../utils/timezone';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
-import { paidOutsideStoreTill } from '../utils/cashSource';
+import { paidOutsideStoreTill, storeCashPortion } from '../utils/cashSource';
+import { countedCashInHand, loanRepayments } from '../utils/paytmRules';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
 import { VoiceButton } from './VoiceButton';
@@ -78,12 +79,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const [confirmationChecked, setConfirmationChecked] = useState(false);
  const [pendingSubmitEvent, setPendingSubmitEvent] = useState<React.FormEvent | null>(null);
  const [showPaytmBreakdown, setShowPaytmBreakdown] = useState(false);
- 
- // Cash Conversion Modal State
- const [showCashConversion, setShowCashConversion] = useState(false);
- const [conversionAmount, setConversionAmount] = useState('');
- const [isConverting, setIsConverting] = useState(false);
- 
  // Load last online cash recalibration for the current month (kept for backward compatibility with old data)
  const [lastOnlineRecalibration, setLastOnlineRecalibration] = useState<any>(null);
  
@@ -181,33 +176,11 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  setIsLoadingPayouts(true);
  try {
- // Legacy daily-typed-in payouts (kept for historical months) plus the new
- // document-upload aggregator settlements, merged into the same shape so every
- // existing calculatePaytmBalance/paytmDailyBreakdown call site downstream keeps
- // working unchanged. Multiple settlements can land on the same date (e.g. a
- // Zomato and a Swiggy payout both settling that day), so settlements are summed
- // per date first.
- const [payouts, settlements] = await Promise.all([
- api.getOnlinePayoutData(context.user.accessToken),
- api.getAggregatorSettlements(context.user.accessToken),
- ]);
- const byDateAndStore = new Map<string, { date: string; storeId?: string; swiggyPayout: number; zomatoPayout: number }>();
- for (const s of settlements) {
- const key = `${s.storeId || ''}|${s.settlementDate}`;
- const existing = byDateAndStore.get(key) || { date: s.settlementDate, storeId: s.storeId, swiggyPayout: 0, zomatoPayout: 0 };
- if (s.aggregator === 'swiggy') existing.swiggyPayout += s.netPayout;
- else existing.zomatoPayout += s.netPayout;
- byDateAndStore.set(key, existing);
- }
- const settlementDerived: api.OnlinePayoutEntry[] = Array.from(byDateAndStore.values()).map((v, i) => ({
- id: `SETTLEMENT-DERIVED-${i}`,
- date: v.date,
- storeId: v.storeId,
- swiggyPayout: v.swiggyPayout,
- zomatoPayout: v.zomatoPayout,
- createdAt: '',
- }));
- setOnlinePayoutData([...payouts, ...settlementDerived]);
+ // Legacy daily-typed-in payouts only (kept for historical months). Uploaded
+ // aggregator settlements reach the Paytm balance through context.aggregatorSettlements;
+ // they used to be copied in here as well, which counted every settlement twice.
+ const payouts = await api.getOnlinePayoutData(context.user.accessToken);
+ setOnlinePayoutData(payouts);
  } catch (error) {
  console.error('Error loading online payout data:', error);
  } finally {
@@ -389,31 +362,10 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  // Get sales data for selected date (filtered by selected store, not user's store)
  const salesForDate = useMemo(() => {
- console.log('🏪 SalesManagement - effectiveStoreId:', effectiveStoreId);
- console.log('🏪 SalesManagement - selectedStoreId prop:', selectedStoreId);
- console.log('🏪 SalesManagement - user storeId:', context.user?.storeId);
- console.log('🏪 SalesManagement - selectedDate:', selectedDate);
- console.log('🏪 SalesManagement - all sales data:', context.salesData.map(s => ({ 
- id: s.id.substring(0, 8), 
- date: s.date, 
- storeId: s.storeId,
- offlineSales: s.offlineSales
- })));
- const filteredSales = effectiveStoreId 
+ const filteredSales = effectiveStoreId
  ? context.salesData.filter(s => s.storeId === effectiveStoreId)
  : context.salesData;
- console.log('🏪 SalesManagement - filtered sales:', filteredSales.map(s => ({ 
- id: s.id.substring(0, 8), 
- date: s.date, 
- storeId: s.storeId 
- })));
- const result = filteredSales.find(s => s.date === selectedDate);
- console.log('🏪 SalesManagement - salesForDate result:', result ? { 
- id: result.id.substring(0, 8), 
- date: result.date, 
- storeId: result.storeId 
- } : 'NOT FOUND');
- return result;
+ return filteredSales.find(s => s.date === selectedDate);
  }, [context.salesData, selectedDate, selectedStoreId, context.user?.storeId]);
 
  // Check if this is day 1 (first sales entry ever)
@@ -457,8 +409,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const storeFilteredSales = effectiveStoreId
  ? context.salesData.filter(s => s.storeId === effectiveStoreId)
  : context.salesData;
+ // Skips POS-sync/top-up placeholder rows: their blank (or old 0) count isn't a count.
  return [...storeFilteredSales]
- .filter(s => s.date < selectedDate && s.actualCashInHand !== undefined && s.actualCashInHand !== null)
+ .filter(s => s.date < selectedDate && countedCashInHand(s) !== null)
  .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
  }, [context.salesData, selectedDate, effectiveStoreId]);
 
@@ -487,6 +440,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // never out of this store's own cash.
  const fromStoreMoney = (item: { paymentMethod?: string; paidFromProductionHouseId?: string | null }) => !paidOutsideStoreTill(item);
 
+ // Only the cash part of each bill comes out of the till: an online-paid bill none of it,
+ // a "both" bill just its cashAmount (storeCashPortion - same as SalesView's expected cash
+ // and the bill form's store-cash check).
  const inventoryCost = context.inventory
  .filter(item => {
  if (!fromStoreMoney(item)) return false;
@@ -495,9 +451,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
- .reduce((sum, item) => sum + item.totalCost, 0);
+ .reduce((sum, item) => sum + storeCashPortion(item), 0);
 
- // Include ALL overhead costs (both cash and online/paytm) for the current store
  const allOverheadCosts = context.overheads
  .filter(item => {
  if (!fromStoreMoney(item)) return false;
@@ -506,9 +461,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
- .reduce((sum, item) => sum + item.amount, 0);
+ .reduce((sum, item) => sum + storeCashPortion(item), 0);
 
- // Include ALL fixed costs (both cash and online/paytm) for the current store
  const allFixedCosts = context.fixedCosts
  .filter(item => {
  if (!fromStoreMoney(item)) return false;
@@ -517,7 +471,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
  return dateMatch && storeMatch;
  })
- .reduce((sum, item) => sum + item.amount, 0);
+ .reduce((sum, item) => sum + storeCashPortion(item), 0);
 
  return inventoryCost + allOverheadCosts + allFixedCosts;
  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
@@ -534,20 +488,20 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const belongsToday = (item: { date: string; storeId?: string; paymentMethod?: string; entityType?: string; productionHouseId?: string; paidFromProductionHouseId?: string | null }) =>
  !paidOutsideStoreTill(item) && item.date === selectedDate && (effectiveStoreId ? (item.storeId === effectiveStoreId || isProdHouseSpend(item)) : true);
 
- const split = (list: any[], amountKey: 'totalCost' | 'amount') => {
+ const split = (list: any[]) => {
  let store = 0;
  let production = 0;
  list.forEach((item) => {
  if (!belongsToday(item)) return;
- const amt = item[amountKey] || 0;
+ const amt = storeCashPortion(item);
  if (isProdHouseSpend(item)) production += amt; else store += amt;
  });
  return { store, production };
  };
 
- const inventory = split(context.inventory, 'totalCost');
- const overhead = split(context.overheads, 'amount');
- const fixed = split(context.fixedCosts, 'amount');
+ const inventory = split(context.inventory);
+ const overhead = split(context.overheads);
+ const fixed = split(context.fixedCosts);
 
  return {
  rows: [
@@ -616,9 +570,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  effectiveStoreId,
  todaysPaytmReceived: parseFloat(formData.paytmAmount) || 0,
  todaysUsedOnlineMoney: parseFloat(formData.usedOnlineMoney) || 0,
- lastOnlineRecalibration,
  }).balance;
- }, [context.salesData, context.overheads, context.aggregatorSettlements, context.onlineCashRecalibrations, onlinePayoutData, onlineLoans, employeePayouts, topupRequests, selectedDate, effectiveStoreId, lastOnlineRecalibration, formData.paytmAmount, formData.usedOnlineMoney]);
+ }, [context.salesData, context.overheads, context.aggregatorSettlements, context.onlineCashRecalibrations, onlinePayoutData, onlineLoans, employeePayouts, topupRequests, selectedDate, effectiveStoreId, formData.paytmAmount, formData.usedOnlineMoney]);
 
  // Paytm balance only ever moves through tracked mechanisms (cash top-ups drawn from
  // it, salary/rent payouts drawn from it) - unlike physical cash, there's no way for it
@@ -626,12 +579,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // of asking the store incharge to manually "count" and enter it (which used to also
  // produce a meaningless discrepancy warning whenever they typed a slightly different
  // number than what was already fully determined by logged transactions).
+ // Watches the field too, not just the computed figure: the load effect below runs after
+ // this one and puts the day's SAVED balance back into the form, and when reopening a saved
+ // day leaves the computed figure unchanged nothing re-synced it - a stale saved balance then
+ // showed as a Paytm shortage needing approval.
  useEffect(() => {
  const computed = calculatePaytmBalance.toFixed(2);
  if (formData.actualPaytmBalance !== computed) {
  setFormData((prev) => ({ ...prev, actualPaytmBalance: computed }));
  }
- }, [calculatePaytmBalance]);
+ }, [calculatePaytmBalance, formData.actualPaytmBalance]);
 
  // Always 0 now that actualPaytmBalance is auto-synced above - kept as a real
  // computation (not hardcoded) so nothing downstream needs special-casing.
@@ -643,16 +600,30 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  const needsPaytmApproval = Math.abs(paytmDiscrepancy) > 200;
 
+ // Display only (the daily breakdown below): Swiggy/Zomato money in per day - the old
+ // hand-typed payouts plus uploaded settlements. Never fed into calculatePaytmBalance,
+ // which takes settlements from context.aggregatorSettlements itself.
+ const payoutsForDisplay = useMemo(() => {
+ const settlementPayouts: api.OnlinePayoutEntry[] = (context.aggregatorSettlements || []).map((s) => ({
+ id: `SETTLEMENT-${s.id}`,
+ date: s.settlementDate,
+ storeId: s.storeId,
+ swiggyPayout: s.aggregator === 'swiggy' ? (s.netPayout || 0) : 0,
+ zomatoPayout: s.aggregator === 'swiggy' ? 0 : (s.netPayout || 0),
+ createdAt: '',
+ }));
+ return [...onlinePayoutData, ...settlementPayouts];
+ }, [onlinePayoutData, context.aggregatorSettlements]);
+
  // Calculate today's actual online payout (Swiggy + Zomato)
  const todaysActualOnlinePayout = useMemo(() => {
- const storeFilteredPayouts = effectiveStoreId 
- ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
- : onlinePayoutData;
- const todaysPayoutData = storeFilteredPayouts.find(p => p.date === selectedDate);
- return todaysPayoutData 
- ? (todaysPayoutData.swiggyPayout ?? 0) + (todaysPayoutData.zomatoPayout ?? 0)
- : 0;
- }, [onlinePayoutData, selectedDate, effectiveStoreId]);
+ const storeFilteredPayouts = effectiveStoreId
+ ? payoutsForDisplay.filter(p => p.storeId === effectiveStoreId)
+ : payoutsForDisplay;
+ return storeFilteredPayouts
+ .filter(p => p.date === selectedDate)
+ .reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
+ }, [payoutsForDisplay, selectedDate, effectiveStoreId]);
 
  // Calculate daily breakdown for Paytm/Online Cash
  const paytmDailyBreakdown = useMemo(() => {
@@ -712,10 +683,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  .filter(l => l.loanDate >= displayStartDate && l.loanDate <= selectedDate)
  .forEach(l => allDates.add(l.loanDate));
  
- // Add loan repayment dates (repayments deduct money from Paytm)
+ // Add loan repayment dates (repayments deduct money from Paytm) - each repayment on its
+ // own date, partial ones included
  storeFilteredLoans
- .filter(l => l.repaymentDate && l.repaymentDate >= displayStartDate && l.repaymentDate <= selectedDate)
- .forEach(l => allDates.add(l.repaymentDate!));
+ .forEach(l => loanRepayments(l)
+ .filter(r => r.date >= displayStartDate && r.date <= selectedDate)
+ .forEach(r => allDates.add(r.date)));
  
  // Sort dates chronologically
  const sortedDates = Array.from(allDates).sort();
@@ -761,13 +734,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  
  // Get online payouts for the day (what Swiggy/Zomato actually pay us)
  const storeFilteredPayouts = effectiveStoreId
- ? onlinePayoutData.filter(p => p.storeId === effectiveStoreId)
- : onlinePayoutData;
- 
- const payoutForDay = storeFilteredPayouts.find(p => p.date === date);
- const onlinePayouts = payoutForDay 
- ? (payoutForDay.swiggyPayout ?? 0) + (payoutForDay.zomatoPayout ?? 0)
- : 0;
+ ? payoutsForDisplay.filter(p => p.storeId === effectiveStoreId)
+ : payoutsForDisplay;
+
+ const onlinePayouts = storeFilteredPayouts
+ .filter(p => p.date === date)
+ .reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
  
  // Get employee payouts for the day (paid from Online Cash in Hand)
  const storeFilteredEmployeePayouts = effectiveStoreId
@@ -784,11 +756,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  .reduce((sum, l) => sum + l.loanAmount, 0);
  
  // Get loan repayments made on this day (reduces money from Paytm)
- // Note: Currently loans only store the total repaidAmount and last repaymentDate
- // So we show the full repaidAmount on the repaymentDate
  const repaymentForDay = storeFilteredLoans
- .filter(l => l.repaymentDate === date && l.repaidAmount > 0)
- .reduce((sum, l) => sum + l.repaidAmount, 0);
+ .reduce((sum, l) => sum + loanRepayments(l).filter(r => r.date === date).reduce((s, r) => s + r.amount, 0), 0);
  
  // Net change = Paytm Received + Online Payouts + Loans Taken - Used - Commission - Employee Payouts - Loan Repayments
  // Commission, Employee Payouts, Loans, and Repayments are shown in their own columns
@@ -870,14 +839,38 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  console.log('💰 ===== END RUNNING BALANCE CALCULATION =====\n');
  
  return dailyData;
- }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, onlinePayoutData, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
+ }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, payoutsForDisplay, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
 
- // Note: inventory/overhead/fixed-cost "payment method" (cash/online) splits no longer
- // drive any calculation here - "Used Online Money" is now sourced entirely from
- // approved cash top-ups (see calculatePaytmBalance and the usedOnlineMoney field).
+ // Note: inventory/overhead/fixed-cost "payment method" (cash/online) splits don't drive
+ // the Paytm figure - "Used Online Money" is sourced entirely from approved cash top-ups
+ // (see calculatePaytmBalance and the usedOnlineMoney field). They do decide how much of a
+ // bill came out of the till (totalExpenses above).
+
+ // What the load below last put into the form, and for which store+date. The 5-minute
+ // background refresh (App.tsx) hands this page fresh salesData, which re-runs the load;
+ // for the same day it now only refreshes the fields nobody has changed since the last
+ // load, instead of wiping a half-typed count.
+ const lastLoadedRef = useRef<{ key: string; values: typeof formData } | null>(null);
+ const formKey = `${effectiveStoreId || ''}|${selectedDate}`;
 
  // Load existing data when date changes
  useEffect(() => {
+ const applyLoaded = (loaded: typeof formData) => {
+ const last = lastLoadedRef.current;
+ lastLoadedRef.current = { key: formKey, values: loaded };
+ setFormData((prev) => {
+ if (!last || last.key !== formKey) return loaded;
+ const merged = { ...loaded };
+ (Object.keys(loaded) as (keyof typeof loaded)[]).forEach((field) => {
+ // actualPaytmBalance is never typed - the auto-sync effect above owns it.
+ if (field !== 'actualPaytmBalance' && prev[field] !== last.values[field]) {
+ (merged as Record<string, unknown>)[field] = prev[field];
+ }
+ });
+ return merged;
+ });
+ };
+
  if (salesForDate) {
  // A record can exist for this date without ever having gotten a
  // previousCashInHand (e.g. the nightly POS auto-sync creates it with just
@@ -885,17 +878,15 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // that case previousCashInHand sits at null/undefined and used to silently
  // default to 0 instead of carrying yesterday's real closing balance forward.
  // Only trust that blank field as "really zero" once the day has actually been
- // reconciled (actualCashInHand set) - before that, recompute it live the same
+ // reconciled (a real count saved) - before that, recompute it live the same
  // way a brand-new entry below does, so today's card is never a stale zero.
- const isReconciled = salesForDate.actualCashInHand !== undefined && salesForDate.actualCashInHand !== null;
+ // A POS-sync/top-up placeholder's blank (or old 0) count is not a count.
+ const countedToday = countedCashInHand(salesForDate);
+ const isReconciled = countedToday !== null;
  const hasStoredPrevCash = salesForDate.previousCashInHand !== undefined && salesForDate.previousCashInHand !== null;
  let prevCashForExisting = salesForDate.previousCashInHand ?? 0;
  if (!isReconciled && !hasStoredPrevCash) {
- if (previousDateSales) {
- prevCashForExisting = previousDateSales.actualCashInHand ?? 0;
- } else if (latestPriorCashSales) {
- prevCashForExisting = latestPriorCashSales.actualCashInHand ?? 0;
- }
+ prevCashForExisting = countedCashInHand(previousDateSales) ?? countedCashInHand(latestPriorCashSales) ?? 0;
  }
  // From PRODUCTION_CASH_GO_LIVE_DATE onward, the store's leftover cash is assumed fully
  // handed over each night (it becomes production's opening balance instead - see
@@ -905,7 +896,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  prevCashForExisting = 0;
  }
 
- setFormData({
+ applyLoaded({
  offlineSales: (salesForDate.offlineSales ?? 0).toString(),
  paytmAmount: (salesForDate.paytmAmount ?? 0).toString(),
  cashAmount: (salesForDate.cashAmount ?? 0).toString(),
@@ -914,7 +905,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Driven entirely by approved cash top-ups now, not manually entered or
  // auto-calculated from inventory/overhead/fixed-cost payment method splits.
  usedOnlineMoney: (salesForDate.usedOnlineMoney ?? 0).toString(),
- actualCashInHand: (salesForDate.actualCashInHand ?? 0).toString(),
+ // Left blank until someone has really counted - a placeholder's 0 used to pre-fill
+ // the required box and could be saved as a real "₹0 in hand".
+ actualCashInHand: countedToday !== null ? countedToday.toString() : '',
  actualPaytmBalance: (salesForDate.actualPaytmBalance ?? 0).toString(),
  cashOverShortReason: salesForDate.cashOverShortReason ?? '',
  cashOverShortNote: salesForDate.cashOverShortNote ?? ''
@@ -926,19 +919,14 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  let prevCash = 0;
 
  if (selectedDate < PRODUCTION_CASH_GO_LIVE_DATE) {
- if (previousDateSales) {
- // Use the actual cash in hand from previous day (which includes any offset)
- prevCash = previousDateSales.actualCashInHand ?? 0;
- } else if (latestPriorCashSales) {
- // If yesterday has not been reconciled yet, keep carrying the last known close
- // instead of resetting the next day to zero.
- prevCash = latestPriorCashSales.actualCashInHand ?? 0;
- }
+ // Yesterday's real count (which includes any offset); if yesterday hasn't been
+ // reconciled yet, keep carrying the last known close instead of resetting to zero.
+ prevCash = countedCashInHand(previousDateSales) ?? countedCashInHand(latestPriorCashSales) ?? 0;
  }
  // Else (on/after go-live): stays 0 - see the comment on the "existing record" branch
  // above for why the store's carry-forward chain stops at PRODUCTION_CASH_GO_LIVE_DATE.
 
- setFormData({
+ applyLoaded({
  offlineSales: '',
  paytmAmount: '',
  cashAmount: '',
@@ -969,7 +957,31 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  }));
  }
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [selectedDate, salesForDate, previousDateSales, latestPriorCashSales]);
+ }, [formKey, salesForDate, previousDateSales, latestPriorCashSales]);
+
+ // Keeps the draft up to date on every change to the count fields (typed or voice-filled),
+ // not only when "Save Progress" is pressed: just the fields that differ from what was
+ // loaded, so a field changed back to the saved figure stops overriding it. Skips the run
+ // where the day changes - the form still holds the previous day's figures at that point.
+ const draftForKeyRef = useRef<string | null>(null);
+ useEffect(() => {
+ const last = lastLoadedRef.current;
+ const dayChanged = draftForKeyRef.current !== formKey;
+ draftForKeyRef.current = formKey;
+ if (dayChanged || !draftKey || !last || last.key !== formKey) return;
+ const edited = (['paytmAmount', 'cashAmount', 'actualCashInHand', 'cashOverShortReason', 'cashOverShortNote'] as const)
+ .filter((field) => formData[field] !== last.values[field]);
+ try {
+ if (edited.length === 0) {
+ localStorage.removeItem(draftKey);
+ } else {
+ localStorage.setItem(draftKey, JSON.stringify(Object.fromEntries(edited.map((field) => [field, formData[field]]))));
+ }
+ } catch {
+ // Storage blocked or full - the form still works, the draft just isn't kept.
+ }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [formKey, formData.paytmAmount, formData.cashAmount, formData.actualCashInHand, formData.cashOverShortReason, formData.cashOverShortNote]);
 
  // Explicit "save my progress" action for the Cash Count fields - counting a till takes
  // a while, and this doesn't submit the form or trigger any discrepancy/approval checks,
@@ -1052,13 +1064,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  userStoreId: context.user?.storeId,
  userRole: context.user?.role
  });
- 
- console.log('👤 User Info:', {
- userEmail: context.user?.email,
- employeeId: context.user?.employeeId,
- role: context.user?.role
- });
- 
  // Check if form is complete
  const isFormComplete = formData.offlineSales && formData.actualCashInHand && formData.actualPaytmBalance;
  console.log('📝 Form Completeness:', {
@@ -1294,44 +1299,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  alert('Discrepancy rejected. Manager must pay the difference.');
  } catch (error) {
  alert('Failed to reject discrepancy. Please try again.');
- }
- };
-
- const handleCashConversion = async () => {
- const amount = parseFloat(conversionAmount);
- if (!amount || amount <= 0) {
- alert('Please enter a valid amount to convert');
- return;
- }
-
- const maxConvertible = expectedCashInHand;
- if (amount > maxConvertible) {
- alert(`Cannot convert more than ₹${maxConvertible.toFixed(2)} (your current expected cash in hand)`);
- return;
- }
-
- if (!confirm(`Convert ₹${amount.toFixed(2)} from Offline Cash to Online Cash (Paytm)?\n\nExpected Cash: ₹${expectedCashInHand.toFixed(2)} → ₹${(expectedCashInHand - amount).toFixed(2)}\nOnline Cash: ₹${calculatePaytmBalance.toFixed(2)} → ₹${(calculatePaytmBalance + amount).toFixed(2)}`)) {
- return;
- }
-
- setIsConverting(true);
- try {
- await api.convertCashToOnline(
- context.user!.accessToken,
- effectiveStoreId!,
- selectedDate,
- amount,
- context.user?.name || context.user?.email || 'Unknown User'
- );
- 
- setShowCashConversion(false);
- setConversionAmount('');
- alert('Cash converted successfully!');
- } catch (error: any) {
- console.error('Error converting cash:', error);
- alert(error.message || 'Failed to convert cash. Please try again.');
- } finally {
- setIsConverting(false);
  }
  };
 
@@ -1596,13 +1563,13 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  {formatDateIST(sale.date)}
  </p>
  <p className="text-xs text-gray-600 mt-1">
- Expected Cash: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)}
+ Expected Cash: ₹{((sale.actualCashInHand ?? 0) - sale.cashOffset).toFixed(2)}
  </p>
  <p className="text-xs text-gray-600">
  Actual Cash: ₹{sale.requestedCashInHand?.toFixed(2)}
  </p>
  <p className="text-xs font-semibold text-orange-600 mt-1">
- Discrepancy: ₹{((sale.requestedCashInHand || 0) - (sale.actualCashInHand - sale.cashOffset)).toFixed(2)}
+ Discrepancy: ₹{((sale.requestedCashInHand || 0) - ((sale.actualCashInHand ?? 0) - sale.cashOffset)).toFixed(2)}
  </p>
  </div>
  <div className="flex gap-2">
@@ -1648,8 +1615,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </span>
  </p>
  <p className="text-xs text-gray-500">
- Expected: ₹{(sale.actualCashInHand - sale.cashOffset).toFixed(2)} | 
- Actual: ₹{sale.actualCashInHand.toFixed(2)}
+ Expected: ₹{((sale.actualCashInHand ?? 0) - sale.cashOffset).toFixed(2)} |
+ Actual: ₹{(sale.actualCashInHand ?? 0).toFixed(2)}
  </p>
  </div>
  <button
@@ -1876,17 +1843,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ${cashDiscrepancy > 0 ? 'text-green-700 bg-green-100/80' : 'text-red-700 bg-red-100/80'}`}>
  <AlertTriangle className="w-3 h-3" /> {cashDiscrepancy > 0 ? 'excess' : 'short'} ₹{Math.abs(cashDiscrepancy).toFixed(2)}
  </span>
- )}
- {expectedCashInHand > 0 && (
- <button
- type="button"
- onClick={() => setShowCashConversion(true)}
- className="flex items-center gap-1 px-2.5 py-1 bg-teal-600/10 hover:bg-teal-600/20 rounded-lg text-xs font-semibold transition-colors text-teal-700"
- title="Convert Offline Cash to Online Cash (Paytm)"
- >
- <ArrowRightLeft className="w-3 h-3" />
- Convert to Online
- </button>
  )}
  </div>
  </div>
@@ -2390,7 +2346,8 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  <div>
  <span className="text-gray-600">Cash in Hand:</span>
- <span className="ml-1 font-medium">₹{sale.actualCashInHand.toFixed(2)}</span>
+ {/* POS-sync placeholders sit in this list too, and their count is blank until someone counts. */}
+ <span className="ml-1 font-medium">{countedCashInHand(sale) !== null ? `₹${(sale.actualCashInHand ?? 0).toFixed(2)}` : 'Not counted yet'}</span>
  </div>
  </div>
  </div>
@@ -2438,119 +2395,6 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  <p className="text-gray-600">No pending sales at the moment.</p>
  </div>
  )}
- </div>
- )}
-
- {/* Cash Conversion Modal */}
- {showCashConversion && (
- <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
- <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
- <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 rounded-t-2xl">
- <div className="flex items-center justify-between text-white">
- <div className="flex items-center gap-3">
- <ArrowRightLeft className="w-6 h-6" />
- <h2 className="text-xl font-bold">Convert Cash to Online</h2>
- </div>
- <button
- onClick={() => {
- setShowCashConversion(false);
- setConversionAmount('');
- }}
- className="p-1 hover:bg-white/20 rounded-lg transition-colors"
- >
- <X className="w-5 h-5" />
- </button>
- </div>
- </div>
- 
- <div className="p-6 space-y-6">
- <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-4 border border-orange-200">
- <p className="text-sm text-gray-700 mb-3">
- Convert offline cash in hand to online cash (Paytm). This is useful when you transfer physical cash to your Paytm account.
- </p>
- <div className="grid grid-cols-2 gap-3 text-sm">
- <div className="bg-white rounded-lg p-3">
- <p className="text-xs text-gray-500 mb-1">Current Expected Cash</p>
- <p className="text-lg font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
- </div>
- <div className="bg-white rounded-lg p-3">
- <p className="text-xs text-gray-500 mb-1">Current Online Cash</p>
- <p className="text-lg font-bold text-orange-600">₹{calculatePaytmBalance.toFixed(2)}</p>
- </div>
- </div>
- </div>
-
- <div>
- <label className="block text-sm font-semibold text-gray-700 mb-2">
- Amount to Convert (₹)
- </label>
- <input
- type="number"
- value={conversionAmount}
- onChange={(e) => setConversionAmount(e.target.value)}
- placeholder="Enter amount"
- step="0.01"
- min="0"
- max={expectedCashInHand}
- className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-lg"
- disabled={isConverting}
- />
- <p className="text-xs text-gray-500 mt-1">
- Max: ₹{expectedCashInHand.toFixed(2)}
- </p>
- </div>
-
- {parseFloat(conversionAmount) > 0 && (
- <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200">
- <p className="text-sm font-semibold text-gray-700 mb-2">After Conversion:</p>
- <div className="space-y-2 text-sm">
- <div className="flex justify-between">
- <span className="text-gray-600">Expected Cash:</span>
- <span className="font-bold text-gray-900">
- ₹{expectedCashInHand.toFixed(2)} → ₹{(expectedCashInHand - parseFloat(conversionAmount)).toFixed(2)}
- </span>
- </div>
- <div className="flex justify-between">
- <span className="text-gray-600">Online Cash:</span>
- <span className="font-bold text-orange-600">
- ₹{calculatePaytmBalance.toFixed(2)} → ₹{(calculatePaytmBalance + parseFloat(conversionAmount)).toFixed(2)}
- </span>
- </div>
- </div>
- </div>
- )}
-
- <div className="flex gap-3">
- <button
- onClick={() => {
- setShowCashConversion(false);
- setConversionAmount('');
- }}
- className="flex-1 px-4 py-3 bg-gray-200 hover:bg-gray-300 rounded-lg font-semibold transition-colors"
- disabled={isConverting}
- >
- Cancel
- </button>
- <button
- onClick={handleCashConversion}
- disabled={!conversionAmount || parseFloat(conversionAmount) <= 0 || isConverting}
- className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-rose-600 text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
- >
- {isConverting ? (
- <>
- <Loader2 className="w-4 h-4 animate-spin" />
- Converting...
- </>
- ) : (
- <>
- <ArrowRightLeft className="w-4 h-4" />
- Convert
- </>
- )}
- </button>
- </div>
- </div>
- </div>
  </div>
  )}
 
