@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, MessageCircleQuestion, RotateCcw, Send, Sparkles, Square, Volume2, X } from 'lucide-react';
+import { Loader2, RotateCcw, Send, Sparkles, Square, Volume2, X } from 'lucide-react';
 import * as api from '../utils/api';
 import { VoiceButton } from './VoiceButton';
 import { BUNNY_LANGUAGES, speechLocale, useBunnyLanguage, type BunnyLanguage } from '../utils/bunnyLanguage';
@@ -127,11 +127,11 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className={`fixed ${raised ? 'bottom-20' : 'bottom-6'} right-5 z-40 w-14 h-14 rounded-full bg-violet-600 text-white shadow-lg shadow-violet-600/30 hover:bg-violet-700 flex items-center justify-center`}
+          className={`fixed ${raised ? 'bottom-20' : 'bottom-6'} right-5 z-40 w-16 h-16 rounded-full bg-white border-[3px] border-violet-500 shadow-lg shadow-violet-600/30 hover:scale-105 active:scale-95 transition-transform flex items-center justify-center`}
           aria-label={say(T.title, lang)}
           title={say(T.title, lang)}
         >
-          <MessageCircleQuestion className="w-6 h-6" />
+          <img src="/bunny-logo.png" alt="" className="w-12 h-12 object-contain" draggable={false} />
         </button>
       )}
 
@@ -143,7 +143,7 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
           data-ai-private
         >
           <div className="flex items-start gap-3 p-4 border-b border-gray-200 bg-white rounded-t-2xl">
-            <div className="w-9 h-9 rounded-xl bg-violet-600 text-white flex items-center justify-center flex-shrink-0"><MessageCircleQuestion className="w-5 h-5" /></div>
+            <div className="w-10 h-10 rounded-full bg-white border-2 border-violet-500 flex items-center justify-center flex-shrink-0"><img src="/bunny-logo.png" alt="" className="w-8 h-8 object-contain" /></div>
             <div className="flex-1 min-w-0">
               <p className="font-bold text-gray-900">{say(T.title, lang)}</p>
               <p className="text-[11px] text-gray-500 truncate">{say(T.about, lang)}: {screenName}</p>
