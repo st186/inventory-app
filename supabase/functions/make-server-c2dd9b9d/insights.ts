@@ -7,7 +7,7 @@
 // phone numbers or other personal details.
 //
 // Needs the ANTHROPIC_API_KEY secret. AI_MODEL (default claude-haiku-5-5, the cheapest) and
-// AI_MONTHLY_CAP_USD (default 30) are optional secrets.
+// AI_MONTHLY_CAP_INR (default 1000) are optional secrets.
 
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import {
@@ -26,7 +26,11 @@ type Deps = { kv: Kv; verifyUser: (authHeader: string | null) => Promise<any>; g
 // Haiku by default (owner, 27 Oct 2026): about 40x cheaper than Opus. Set the AI_MODEL secret
 // to claude-sonnet-5-5 or claude-opus-5-5 for better writing at higher cost.
 const AI_MODEL = Deno.env.get('AI_MODEL') || 'claude-haiku-5-5';
-const AI_MONTHLY_CAP_USD = Number(Deno.env.get('AI_MONTHLY_CAP_USD') || '30');
+// Monthly AI spend limit: ₹1,000 (owner, 27 Oct 2026). Spend is logged in dollars, so the
+// limit is converted at about ₹88 to the dollar. The AI_MONTHLY_CAP_INR secret overrides it.
+const USD_TO_INR = 88;
+const AI_MONTHLY_CAP_INR = Number(Deno.env.get('AI_MONTHLY_CAP_INR') || '1000');
+const AI_MONTHLY_CAP_USD = AI_MONTHLY_CAP_INR / USD_TO_INR;
 // $ per million tokens: input, output, cache read. Cache writes cost 1.25x input.
 const PRICES: Record<string, [number, number, number]> = {
   'claude-opus-5-5': [4, 20, 0.2],
@@ -200,7 +204,7 @@ async function callClaude(deps: Deps, opts: {
 }) {
   if (!aiConfigured()) throw new AiError('AI is not set up yet: add the ANTHROPIC_API_KEY secret in Supabase.', 503);
   const spent = await spentThisMonth(deps.kv);
-  if (spent >= AI_MONTHLY_CAP_USD) throw new AiError(`This month's AI budget ($${AI_MONTHLY_CAP_USD}) is used up. Raise AI_MONTHLY_CAP_USD to continue.`, 429);
+  if (spent >= AI_MONTHLY_CAP_USD) throw new AiError(`This month's AI budget (₹${AI_MONTHLY_CAP_INR.toLocaleString('en-IN')}) is used up. It resets on the 1st, or raise the AI_MONTHLY_CAP_INR secret to continue.`, 429);
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
   const body: any = {
     model: AI_MODEL,
@@ -414,7 +418,7 @@ export function registerInsightsRoutes(app: any, deps: Deps) {
 
   app.get(`${P}/ai/status`, async (c: any) => {
     const g = await guard(c, 'view'); if (g.error) return g.error;
-    return c.json({ configured: aiConfigured(), model: AI_MODEL, spentThisMonthUsd: await spentThisMonth(deps.kv), capUsd: AI_MONTHLY_CAP_USD, canManage: g.actor!.canManage, invoiceScan: INVOICE_SCAN_ON });
+    return c.json({ configured: aiConfigured(), model: AI_MODEL, spentThisMonthUsd: await spentThisMonth(deps.kv), capUsd: AI_MONTHLY_CAP_USD, capInr: AI_MONTHLY_CAP_INR, canManage: g.actor!.canManage, invoiceScan: INVOICE_SCAN_ON });
   });
 
   // Daily brief: written once per store per day (owner side can ask for a fresh one).
