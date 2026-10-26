@@ -4,17 +4,18 @@ import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, BUILT
 import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle, Banknote, Smartphone, Coins } from 'lucide-react';
 import * as api from '../utils/api';
 import type { PriceFlag } from '../utils/expenseChecks';
+import { toast } from 'sonner';
 
 type Props = {
   inventory: InventoryItem[];
   overheads: OverheadItem[];
   fixedCosts: FixedCostItem[];
   onEditInventory: (item: InventoryItem) => void;
-  onDeleteInventory: (id: string) => void;
+  onDeleteInventory: (id: string) => void | Promise<void>;
   onEditOverhead: (item: OverheadItem) => void;
-  onDeleteOverhead: (id: string) => void;
+  onDeleteOverhead: (id: string) => void | Promise<void>;
   onEditFixedCost: (item: FixedCostItem) => void;
-  onDeleteFixedCost: (id: string) => void;
+  onDeleteFixedCost: (id: string) => void | Promise<void>;
   isManager?: boolean;
   // Entries whose price looks like a unit slip (utils/expenseChecks.ts), by id.
   priceFlags?: Map<string, PriceFlag>;
@@ -154,17 +155,24 @@ export function InventoryList({
     return acc;
   }, {} as Record<string, InventoryItem[]>);
 
-  const handleDelete = (type: 'inventory' | 'overhead' | 'fixedcost', id: string) => {
+  // Waits for the delete, so a failed one says so instead of the dialog just closing.
+  const handleDelete = async (type: 'inventory' | 'overhead' | 'fixedcost', id: string) => {
     setIsDeleting(true);
-    if (type === 'inventory') {
-      onDeleteInventory(id);
-    } else if (type === 'overhead') {
-      onDeleteOverhead(id);
-    } else {
-      onDeleteFixedCost(id);
+    try {
+      if (type === 'inventory') {
+        await onDeleteInventory(id);
+      } else if (type === 'overhead') {
+        await onDeleteOverhead(id);
+      } else {
+        await onDeleteFixedCost(id);
+      }
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Error deleting entry:', error);
+      toast.error(error instanceof Error && error.message ? `Couldn't delete: ${error.message}` : "Couldn't delete this entry. Please try again.");
+    } finally {
+      setIsDeleting(false);
     }
-    setDeleteConfirm(null);
-    setIsDeleting(false);
   };
 
   return (
