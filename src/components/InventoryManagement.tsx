@@ -16,6 +16,8 @@ import { getTodayIST, formatDateIST } from '../utils/timezone';
 import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { CategoryManagerModal } from './CategoryManagerModal';
 import { InvoiceScanner } from './insights/InvoiceScanner';
+import { PriceCheckPanel } from './PriceCheck';
+import { buildPriceGuide, checkPurchase, type PriceFlag } from '../utils/expenseChecks';
 
 // Invoice scanning is switched off (about ₹3 a bill on the AI model). The server refuses it
 // too, unless its AI_INVOICE_SCAN secret is "on" (see insights.ts).
@@ -211,6 +213,31 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  };
  return { store: forEntity('store'), production: forEntity('production_house') };
  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, targetProductionHouseId]);
+
+ // What each item usually costs, from every purchase on record - powers the price warnings
+ // while adding and the "purchases look wrong" list (utils/expenseChecks.ts).
+ const priceGuide = useMemo(() => buildPriceGuide(context.inventory), [context.inventory]);
+ const priceCheckEntries = useMemo(
+ () => context.inventory.filter((item) => matchesEffectiveScope(item) && belongsToTab(item, activeTab)),
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ [context.inventory, effectiveStoreId, targetProductionHouseId, activeTab]
+ );
+ const dayPriceFlags = useMemo(() => {
+ const flags = new Map<string, PriceFlag>();
+ for (const item of filteredInventory) {
+ const flag = checkPurchase(item, priceGuide);
+ if (flag) flags.set(item.id, flag);
+ }
+ return flags;
+ }, [filteredInventory, priceGuide]);
+ // Only the entry's quantity/unit (or the "it's right" mark) changes - never the amount paid.
+ const savePriceFix = async (item: InventoryItem, changes: { quantity: number; unit: string } | { priceCheckOk: true }) => {
+ const { id, ...rest } = item;
+ const next = { ...rest, ...changes };
+ if ('quantity' in changes) next.costPerUnit = Math.round((next.totalCost / changes.quantity) * 100) / 100;
+ await context.updateInventoryItem(id, next);
+ toast.success('priceCheckOk' in changes ? `${item.itemName} marked as right` : `${item.itemName} changed to ${changes.quantity} ${changes.unit}`);
+ };
 
  // Search results across ALL inventory (not date-filtered)
  const searchResults = useMemo(() => {
@@ -422,6 +449,18 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  )}
  </div>
 
+ {canAddOnActiveTab && (
+ <PriceCheckPanel
+ entries={priceCheckEntries}
+ guide={priceGuide}
+ onSave={savePriceFix}
+ onEdit={(item) => {
+ setEditingInventory(item);
+ setShowInventoryForm(true);
+ }}
+ />
+ )}
+
  {/* Lists */}
  <InventoryList
  inventory={filteredInventory}
@@ -443,6 +482,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  }}
  onDeleteFixedCost={context.deleteFixedCostItem}
  isManager={canAddOnActiveTab}
+ priceFlags={dayPriceFlags}
  />
  </>
  )}
@@ -584,6 +624,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  storeOptions={!effectiveStoreId ? clusterStoreOptions : undefined}
  productionHouseForStore={productionHouseForStore}
  loadCashCover={loadCashCover}
+ priceGuide={priceGuide}
  onClose={() => setShowQuickAdd(false)}
  onSubmitInventory={async (item) => {
  await context.addInventoryItem(item);
@@ -603,13 +644,15 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  {/* Forms Modal */}
  {showInventoryForm && (
  <InventoryForm
- selectedDate={selectedDate}
+ // An entry opened from the price-check list can be from another day - keep its own date.
+ selectedDate={editingInventory?.date || selectedDate}
  editingItem={editingInventory}
  entityType={activeTab === 'production' ? 'production_house' : 'store'}
  canCreateNewItems={context.user?.role === 'cluster_head'}
  allowOwnerPayment={isClusterHead}
  productionCashHouseId={productionCashHouseFor(editingInventory)}
  productionCashCover={editCashCover}
+ priceGuide={priceGuide}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields(editingInventory) };

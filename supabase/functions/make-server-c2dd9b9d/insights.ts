@@ -12,7 +12,8 @@
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
-  type CalendarEvent, type DayEffect, type DayRecord, type MomoKey,
+  backtest, summarizeAccuracy, tuneSettings,
+  type CalendarEvent, type DayEffect, type DayRecord, type MomoKey, type ForecastSettings,
 } from './forecast.ts';
 
 type Kv = {
@@ -132,24 +133,57 @@ async function loadDays(kv: Kv, storeId: string | null, from: string, to: string
   return [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// How well the forecast has done, and the settings it tuned itself to (forecast.ts backtest /
+// tuneSettings). Worked out once a day per store - it replays about 1,000 forecasts - and again
+// when the calendar changes, since marking a festival changes what the replay expects.
+const HISTORY_DAYS = 200; // 8 weeks replayed + 8 weeks tuned + the 10 weeks each forecast looks back
+const mondayOf = (date: string) => addDaysISO(date, -((weekdayOf(date) + 6) % 7));
+
+async function forecastCheck(deps: Deps, storeId: string | null, days: DayRecord[], events: CalendarEvent[], today: string) {
+  const sig = events.map((e) => `${e.date}:${e.effect}`).sort().join(',');
+  const key = `forecast-check:${storeId || 'all'}:${today}`;
+  const cached = await deps.kv.get<any>(key);
+  if (cached?.sig === sig) return cached;
+  const tune = tuneSettings(days, events, today);
+  const rows = backtest(days, events, addDaysISO(today, -56), addDaysISO(today, -1), tune.settings);
+  const last28 = rows.filter((r) => r.date >= addDaysISO(today, -28));
+  const weeks = [...new Set(rows.map((r) => mondayOf(r.date)))].sort().map((week) => ({
+    week, ...summarizeAccuracy(rows.filter((r) => mondayOf(r.date) === week)),
+  }));
+  const check = {
+    sig,
+    date: today,
+    settings: tune.settings as ForecastSettings,
+    tuned: tune.tuned,
+    tuningGain: tune.tuned && tune.before !== null && tune.after !== null ? tune.before - tune.after : 0,
+    last28: summarizeAccuracy(last28),
+    weeks,
+    // Biggest misses of the last 4 weeks - often a festival or rain day not in the calendar yet.
+    misses: [...last28].filter((r) => Math.abs(r.error) >= 0.25).sort((a, b) => Math.abs(b.error) - Math.abs(a.error)).slice(0, 6),
+  };
+  await deps.kv.set(key, check);
+  return check;
+}
+
 async function overview(deps: Deps, storeId: string | null) {
   const today = deps.getTodayIST();
-  const from = addDaysISO(today, -84);
-  const [days, events] = await Promise.all([loadDays(deps.kv, storeId, from, addDaysISO(today, -1)), loadEvents(deps.kv)]);
+  const [days, events] = await Promise.all([loadDays(deps.kv, storeId, addDaysISO(today, -HISTORY_DAYS), addDaysISO(today, -1)), loadEvents(deps.kv)]);
   const eventMap = new Map(events.map((e) => [e.date, e]));
-  const forecast = forecastDays(days, events, today, 7, today);
+  const accuracy = await forecastCheck(deps, storeId, days, events, today);
+  const forecast = forecastDays(days, events, today, 7, today, accuracy.settings);
   const yesterday = addDaysISO(today, -1);
   const yActual = days.find((d) => d.date === yesterday);
-  const yExpected = forecastDays(days, events, yesterday, 1, yesterday)[0];
+  const yExpected = forecastDays(days, events, yesterday, 1, yesterday, accuracy.settings)[0];
   const learned = learnEffects(prepareHistory(days, eventMap), eventMap, today);
   return {
     today,
     storeId,
-    history: days,
+    history: days.filter((d) => d.date >= addDaysISO(today, -84)),
     events: events.filter((e) => e.date >= addDaysISO(today, -120) && e.date <= addDaysISO(today, 90)),
     forecast,
     yesterday: { date: yesterday, actual: yActual?.revenue ?? null, actualPieces: yActual?.pieces ?? null, expected: yExpected },
     learned,
+    accuracy,
   };
 }
 
@@ -290,6 +324,11 @@ async function briefData(deps: Deps, storeId: string | null) {
       chicken: f.pieces.chicken, nonVegPieces: f.nonVegPieces, vegPieces: f.vegPieces,
       event: f.event ? `${f.event.name} (${f.event.effect}${f.event.confirmed === false ? ', not confirmed' : ''})` : undefined,
     })),
+    // How far off the forecast has been (each past day re-forecast from earlier data only).
+    forecastAccuracyLast4Weeks: {
+      typicalMissPct: ov.accuracy.last28.typicalMiss === null ? null : Math.round(ov.accuracy.last28.typicalMiss * 100),
+      tendsToRunPct: ov.accuracy.last28.bias === null ? null : Math.round(ov.accuracy.last28.bias * 100),
+    },
     upcomingEvents: ov.events.filter((e) => e.date >= ov.today && e.date <= addDaysISO(ov.today, 30)),
     pastFestivalEffects: Object.values(ov.learned).filter((l) => l.samples.length > 0).map((l) => ({
       effect: l.effect,
@@ -328,8 +367,9 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
     case 'get_daily_sales':
       return (await loadDays(deps.kv, storeId, from, to)).map((d) => compactDay(d, eventMap));
     case 'get_forecast': {
-      const days = await loadDays(deps.kv, storeId, addDaysISO(today, -84), addDaysISO(today, -1));
-      return forecastDays(days, events, today, Math.min(14, Math.max(1, Number(input?.days) || 7)), today);
+      const days = await loadDays(deps.kv, storeId, addDaysISO(today, -HISTORY_DAYS), addDaysISO(today, -1));
+      const { settings, last28 } = await forecastCheck(deps, storeId, days, events, today);
+      return { accuracyLast4Weeks: last28, days: forecastDays(days, events, today, Math.min(14, Math.max(1, Number(input?.days) || 7)), today, settings) };
     }
     case 'get_calendar':
       return events.filter((e) => e.date >= from && e.date <= to);

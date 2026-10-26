@@ -3,7 +3,7 @@ import { getSupabaseClient } from './supabase/client';
 import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData } from '../App';
 import type { DispatchInfo, DeliveryReceipt } from './batches';
 import type { StockOutEntry } from './stockOuts';
-import type { CalendarEvent, DayRecord, EffectLearning, ForecastDay } from './forecast';
+import type { AccuracySummary, BacktestDay, CalendarEvent, DayRecord, EffectLearning, ForecastDay, ForecastSettings } from './forecast';
 
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
@@ -553,6 +553,18 @@ export interface InsightsOverview {
   forecast: ForecastDay[];
   yesterday: { date: string; actual: number | null; actualPieces: DayRecord['pieces']; expected: ForecastDay };
   learned: Record<string, EffectLearning>;
+  accuracy?: ForecastAccuracy; // missing until the server is redeployed
+}
+
+// How the forecast has done: each past day forecast again from earlier data only (forecast.ts backtest).
+export interface ForecastAccuracy {
+  date: string;
+  settings: ForecastSettings;
+  tuned: boolean;
+  tuningGain: number;
+  last28: AccuracySummary;
+  weeks: (AccuracySummary & { week: string })[];
+  misses: BacktestDay[];
 }
 
 export async function getInsightsOverview(accessToken: string, storeId?: string | null): Promise<InsightsOverview> {

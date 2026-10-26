@@ -76,6 +76,7 @@ export type InventoryItem = {
  cashAmount?: number; // Amount paid via cash (for 'both' option)
  onlineAmount?: number; // Amount paid via online (for 'both' option)
  paidFromProductionHouseId?: string | null; // store bill paid from this production house's cash (utils/cashSource.ts)
+ priceCheckOk?: boolean; // an unusual price someone confirmed is right (utils/expenseChecks.ts)
  // Beverage packaging detail (category === 'beverages') - lets Utilities stock status
  // convert a purchase into a real piece count regardless of whether it was bought by
  // the carton or loose. quantity/unit above are still set to the resulting total pieces

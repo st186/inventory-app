@@ -22,6 +22,8 @@ import {
 import { productionShouldCover } from '../utils/cashSource';
 import { useCashCover, type LoadCashCover } from './useCashCover';
 import { ProductionCashChoice } from './ProductionCashChoice';
+import { PriceWarning } from './PriceCheck';
+import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
   selectedDate: string;
@@ -49,6 +51,8 @@ type Props = {
   // a store bill the store's cash can't cover is paid from production's cash instead.
   productionHouseForStore?: (storeId: string) => string | null;
   loadCashCover?: LoadCashCover;
+  // What each item usually costs and the unit it's usually bought in (utils/expenseChecks.ts).
+  priceGuide?: PriceGuide;
 };
 
 const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
@@ -71,6 +75,7 @@ export function QuickAddExpense({
   storeOptions,
   productionHouseForStore,
   loadCashCover,
+  priceGuide,
 }: Props) {
   const [amount, setAmount] = useState('');
   // Default: the expense's own cash (store cash for a store bill, production cash for production).
@@ -154,8 +159,11 @@ export function QuickAddExpense({
     // normally a store item) overrode a deliberate Production House selection without
     // the user noticing, so the item saved under the wrong entity. The informational
     // "Filed under X" hint below is enough - it shouldn't also force the choice.
+    // Start from the unit this item is usually bought in - always starting at "pcs" is how
+    // a carrot came to be saved as "1 pcs ₹60" and a Coke crate as "1 pcs ₹470".
     if (s.entryType === 'inventory') {
-      setUnit('pcs');
+      const usual = priceGuide?.usualUnit.get(priceItemKey(s.label));
+      setUnit(usual && ['kg', 'g', 'L', 'mL', 'pcs', 'units'].includes(usual) ? usual : 'pcs');
       setQuantity('1');
     }
   };
@@ -208,6 +216,28 @@ export function QuickAddExpense({
   // isBeverage before it existed, throwing "Cannot access 'isBeverage' before
   // initialization" on every render (a real TDZ crash, not conditional on role/user).
   const isBundlePurchase = !isBeverage && isBundleMode && (unit === 'pcs' || unit === 'units');
+
+  // Price check on what's typed so far: a price several times off the item's usual one is
+  // almost always a unit slip (grams for kg, a crate as 1 piece).
+  const priceFlag = priceGuide && currentEntryType === 'inventory' && query.trim() && enteredAmount > 0
+    ? checkPurchase({
+        itemName: query,
+        quantity: isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 0)),
+        unit: isBeverage || isBundlePurchase ? 'pcs' : unit,
+        totalCost: enteredAmount,
+        packageType: isBundlePurchase || (isBeverage && packageType === 'carton') ? 'carton' : undefined,
+      }, priceGuide)
+    : null;
+  const applyPriceFix = (fix: PriceFix) => {
+    if (isBeverage) {
+      setPackageType('pieces');
+      setPieceCount(String(fix.quantity));
+      return;
+    }
+    setIsBundleMode(false);
+    setUnit(fix.unit);
+    setQuantity(String(fix.quantity));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -562,6 +592,7 @@ export function QuickAddExpense({
                     Total: {beverageTotalPieces} pcs{volumeMl ? ` × ${volumeMl}${volumeUnit}` : ''}
                   </p>
                 )}
+                <PriceWarning flag={priceFlag} onFix={packageType === 'carton' ? undefined : applyPriceFix} />
               </div>
             ) : (
               <div className="space-y-3">
@@ -698,6 +729,7 @@ export function QuickAddExpense({
                     )}
                   </div>
                 )}
+                <PriceWarning flag={priceFlag} onFix={isBundlePurchase ? undefined : applyPriceFix} />
               </div>
             )
           )}

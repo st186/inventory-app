@@ -3,6 +3,7 @@ import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, BUILT_IN_ITEM_BENGALI, expenseCategoryLabel } from '../utils/inventoryData';
 import { Package, Receipt, Wallet, Edit2, Trash2, Loader2, AlertTriangle, Banknote, Smartphone, Coins } from 'lucide-react';
 import * as api from '../utils/api';
+import type { PriceFlag } from '../utils/expenseChecks';
 
 type Props = {
   inventory: InventoryItem[];
@@ -15,6 +16,8 @@ type Props = {
   onEditFixedCost: (item: FixedCostItem) => void;
   onDeleteFixedCost: (id: string) => void;
   isManager?: boolean;
+  // Entries whose price looks like a unit slip (utils/expenseChecks.ts), by id.
+  priceFlags?: Map<string, PriceFlag>;
 };
 
 // Shared payment-method pill used across all three lists below.
@@ -102,7 +105,8 @@ export function InventoryList({
   onDeleteOverhead,
   onEditFixedCost,
   onDeleteFixedCost,
-  isManager = true
+  isManager = true,
+  priceFlags,
 }: Props) {
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'inventory' | 'overhead' | 'fixedcost', id: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -215,6 +219,12 @@ export function InventoryList({
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-200 text-amber-800 text-[10px] rounded-full flex-shrink-0">
                                     <AlertTriangle className="w-2.5 h-2.5" />
                                     Duplicate?
+                                  </span>
+                                )}
+                                {priceFlags?.has(item.id) && (
+                                  <span title={priceFlags.get(item.id)!.message} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-200 text-amber-800 text-[10px] rounded-full flex-shrink-0">
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    Check unit
                                   </span>
                                 )}
                               </div>

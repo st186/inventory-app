@@ -14,6 +14,11 @@
 //    rising or falling month is caught up (recentLevel).
 // 4. A day whose per-type counts exactly repeat the day before is treated as a stale POS sync
 //    and its counts are ignored (its revenue still counts).
+//
+// Checking and tuning (backtest, tuneSettings): every past day is forecast again using only
+// what was known before it and compared with what actually sold. The weight on the last 4
+// weeks (step 1) and how strongly the recent level is followed (step 3) are then picked from a
+// small grid by which would have missed least over the last 8 weeks.
 
 export type MomoKey = 'chicken' | 'chickenCheese' | 'veg' | 'cheeseCorn' | 'paneer' | 'vegKurkure' | 'chickenKurkure';
 
@@ -107,13 +112,20 @@ export function prepareHistory(days: DayRecord[], events: Map<string, CalendarEv
 
 type Metric = (d: PreparedDay) => number | null;
 
+// The two knobs the self-check tunes (see backtest / tuneSettings below).
+export interface ForecastSettings {
+  recentWeight: number; // weight on the last 4 same weekdays against the last 8
+  levelStrength: number; // how much of the recent above/below-normal level is followed
+}
+export const DEFAULT_SETTINGS: ForecastSettings = { recentWeight: 0.6, levelStrength: 0.7 };
+
 // Same-weekday baseline for one metric as of `asOf` (only days before it count).
-function baseline(hist: Map<string, PreparedDay>, target: string, asOf: string, metric: Metric) {
-  const wd = weekdayOf(target);
+function baseline(hist: Map<string, PreparedDay>, target: string, asOf: string, metric: Metric, recentWeight = DEFAULT_SETTINGS.recentWeight) {
   const values: number[] = [];
-  for (let back = 1; back <= 70 && values.length < 8; back++) {
+  // Same weekdays only: the latest one before asOf, then a week at a time (10 weeks back).
+  const first = ((weekdayOf(asOf) - weekdayOf(target) + 7) % 7) || 7;
+  for (let back = first; back <= 70 && values.length < 8; back += 7) {
     const date = addDaysISO(asOf, -back);
-    if (weekdayOf(date) !== wd) continue;
     const d = hist.get(date);
     if (!d || d.closed || d.effect !== 'normal') continue;
     const v = metric(d);
@@ -123,7 +135,7 @@ function baseline(hist: Map<string, PreparedDay>, target: string, asOf: string, 
   if (values.length === 0) return null;
   const recent = median(values.slice(0, 4))!;
   const long = median(values)!;
-  const value = values.length >= 4 ? 0.6 * recent + 0.4 * long : recent;
+  const value = values.length >= 4 ? recentWeight * recent + (1 - recentWeight) * long : recent;
   const spread = long > 0 ? median(values.map((v) => Math.abs(v - long)))! / long : 0.25;
   return { value, spread, samples: values.length };
 }
@@ -178,8 +190,8 @@ export function learnEffects(hist: Map<string, PreparedDay>, events: Map<string,
 
 // How far recent days have run above or below their own weekday baselines (last 14 open,
 // normal days): the weekday medians lag a rising or falling month, this catches them up.
-// Dampened by 30% and kept between 0.8 and 1.3.
-export function recentLevel(hist: Map<string, PreparedDay>, asOf: string): number {
+// Followed at `strength` (70% by default) and kept between 0.8 and 1.3.
+export function recentLevel(hist: Map<string, PreparedDay>, asOf: string, strength = DEFAULT_SETTINGS.levelStrength): number {
   let actual = 0;
   let expected = 0;
   for (let back = 1; back <= 14; back++) {
@@ -193,52 +205,145 @@ export function recentLevel(hist: Map<string, PreparedDay>, asOf: string): numbe
   }
   if (expected <= 0) return 1;
   const raw = Math.min(1.3, Math.max(0.8, actual / expected));
-  return 1 + 0.7 * (raw - 1);
+  return 1 + strength * (raw - 1);
+}
+
+function forecastOne(
+  hist: Map<string, PreparedDay>, events: Map<string, CalendarEvent>, learned: Record<string, EffectLearning>,
+  level: number, date: string, asOf: string, settings: ForecastSettings,
+): ForecastDay {
+  const event = events.get(date);
+  const effect = event?.effect || 'normal';
+  const mult = effect === 'closed' ? { revenue: 0, veg: 0, nonVeg: 0 }
+    : effect === 'normal' ? { revenue: 1, veg: 1, nonVeg: 1 }
+    : learned[effect].multiplier;
+  const rev = baseline(hist, date, asOf, revenueMetric, settings.recentWeight);
+  const pieces = {} as Record<MomoKey, number>;
+  let veg = 0;
+  let nonVeg = 0;
+  for (const t of FORECAST_TYPES) {
+    const b = baseline(hist, date, asOf, pieceMetric(t.key), settings.recentWeight);
+    const n = Math.round((b?.value || 0) * level * (t.veg ? mult.veg : mult.nonVeg));
+    pieces[t.key] = n;
+    if (t.veg) veg += n; else nonVeg += n;
+  }
+  const revenue = Math.round((rev?.value || 0) * level * mult.revenue);
+  const spread = Math.min(0.4, Math.max(0.1, rev?.spread ?? 0.25));
+  const basis = effect === 'closed'
+    ? 'Marked closed'
+    : `${rev?.samples || 0} recent ${WEEKDAY_SHORT[weekdayOf(date)]}s${Math.abs(level - 1) >= 0.03 ? `, recent sales ${level > 1 ? '+' : ''}${Math.round((level - 1) * 100)}%` : ''}${event && effect !== 'normal' ? `, adjusted for ${event.name}` : ''}`;
+  return {
+    date,
+    weekday: WEEKDAY_SHORT[weekdayOf(date)],
+    event,
+    revenue,
+    revenueLow: Math.round(revenue * (1 - spread)),
+    revenueHigh: Math.round(revenue * (1 + spread)),
+    pieces,
+    vegPieces: veg,
+    nonVegPieces: nonVeg,
+    basis,
+  };
 }
 
 // Forecast `count` days from `start`, using history before `asOf` (normally today).
-export function forecastDays(days: DayRecord[], eventList: CalendarEvent[], start: string, count: number, asOf: string): ForecastDay[] {
+export function forecastDays(days: DayRecord[], eventList: CalendarEvent[], start: string, count: number, asOf: string, settings: ForecastSettings = DEFAULT_SETTINGS): ForecastDay[] {
   const events = new Map(eventList.map((e) => [e.date, e]));
   const hist = prepareHistory(days, events);
   const learned = learnEffects(hist, events, asOf);
-  const level = recentLevel(hist, asOf);
+  const level = recentLevel(hist, asOf, settings.levelStrength);
   const result: ForecastDay[] = [];
-  for (let i = 0; i < count; i++) {
-    const date = addDaysISO(start, i);
-    const event = events.get(date);
-    const effect = event?.effect || 'normal';
-    const mult = effect === 'closed' ? { revenue: 0, veg: 0, nonVeg: 0 }
-      : effect === 'normal' ? { revenue: 1, veg: 1, nonVeg: 1 }
-      : learned[effect].multiplier;
-    const rev = baseline(hist, date, asOf, revenueMetric);
-    const pieces = {} as Record<MomoKey, number>;
-    let veg = 0;
-    let nonVeg = 0;
-    for (const t of FORECAST_TYPES) {
-      const b = baseline(hist, date, asOf, pieceMetric(t.key));
-      const n = Math.round((b?.value || 0) * level * (t.veg ? mult.veg : mult.nonVeg));
-      pieces[t.key] = n;
-      if (t.veg) veg += n; else nonVeg += n;
-    }
-    const revenue = Math.round((rev?.value || 0) * level * mult.revenue);
-    const spread = Math.min(0.4, Math.max(0.1, rev?.spread ?? 0.25));
-    const basis = effect === 'closed'
-      ? 'Marked closed'
-      : `${rev?.samples || 0} recent ${WEEKDAY_SHORT[weekdayOf(date)]}s${Math.abs(level - 1) >= 0.03 ? `, recent sales ${level > 1 ? '+' : ''}${Math.round((level - 1) * 100)}%` : ''}${event && effect !== 'normal' ? `, adjusted for ${event.name}` : ''}`;
-    result.push({
+  for (let i = 0; i < count; i++) result.push(forecastOne(hist, events, learned, level, addDaysISO(start, i), asOf, settings));
+  return result;
+}
+
+// ---------------- How good the forecast is ----------------
+
+export interface BacktestDay {
+  date: string;
+  weekday: string;
+  eventName?: string;
+  effect: DayEffect;
+  forecast: number;
+  actual: number;
+  error: number; // (forecast - actual) / actual: +0.2 = forecast 20% too high
+  forecastPieces: number;
+  actualPieces: number | null;
+  piecesError: number | null;
+  stockedOut: boolean;
+}
+
+// Forecast each open day from `from` to `to` again, as it would have been made the morning
+// before that day (only earlier days count), and compare with what actually sold.
+export function backtest(days: DayRecord[], eventList: CalendarEvent[], from: string, to: string, settings: ForecastSettings = DEFAULT_SETTINGS): BacktestDay[] {
+  const events = new Map(eventList.map((e) => [e.date, e]));
+  const hist = prepareHistory(days, events);
+  const out: BacktestDay[] = [];
+  for (let date = from; date <= to; date = addDaysISO(date, 1)) {
+    const d = hist.get(date);
+    if (!d || d.closed || !d.revenue || d.revenue <= 0) continue;
+    const f = forecastOne(hist, events, learnEffects(hist, events, date), recentLevel(hist, date, settings.levelStrength), date, date, settings);
+    if (f.revenue <= 0) continue;
+    const forecastPieces = f.vegPieces + f.nonVegPieces;
+    const actualPieces = d.pieces ? totalPieces(d.pieces) : null;
+    out.push({
       date,
-      weekday: WEEKDAY_SHORT[weekdayOf(date)],
-      event,
-      revenue,
-      revenueLow: Math.round(revenue * (1 - spread)),
-      revenueHigh: Math.round(revenue * (1 + spread)),
-      pieces,
-      vegPieces: veg,
-      nonVegPieces: nonVeg,
-      basis,
+      weekday: f.weekday,
+      eventName: events.get(date)?.name,
+      effect: d.effect,
+      forecast: f.revenue,
+      actual: d.revenue,
+      error: (f.revenue - d.revenue) / d.revenue,
+      forecastPieces,
+      actualPieces,
+      piecesError: actualPieces && forecastPieces ? (forecastPieces - actualPieces) / actualPieces : null,
+      stockedOut: !!d.stockedOut?.length,
     });
   }
-  return result;
+  return out;
+}
+
+export interface AccuracySummary {
+  days: number;
+  typicalMiss: number | null; // median |error|: half the days missed by less than this
+  within15: number | null; // share of days within ±15%
+  bias: number | null; // median error: + means the forecast tends to run high
+  piecesTypicalMiss: number | null;
+}
+
+export function summarizeAccuracy(rows: BacktestDay[]): AccuracySummary {
+  const abs = rows.map((r) => Math.abs(r.error));
+  const pieces = rows.map((r) => r.piecesError).filter((x): x is number => x !== null).map(Math.abs);
+  return {
+    days: rows.length,
+    typicalMiss: median(abs),
+    within15: rows.length ? abs.filter((x) => x <= 0.15).length / rows.length : null,
+    bias: median(rows.map((r) => r.error)),
+    piecesTypicalMiss: median(pieces),
+  };
+}
+
+// Pick the settings that would have missed least over the 8 weeks before `asOf`. Stays on the
+// defaults unless another setting is clearly better (by 1.5 points), so one odd week can't
+// swing it. Festival days are left out: they're the calendar's job, not these knobs'.
+export function tuneSettings(days: DayRecord[], eventList: CalendarEvent[], asOf: string) {
+  const from = addDaysISO(asOf, -56);
+  const to = addDaysISO(asOf, -1);
+  const score = (s: ForecastSettings) => {
+    const rows = backtest(days, eventList, from, to, s).filter((r) => r.effect === 'normal');
+    return rows.length ? rows.reduce((t, r) => t + Math.min(1, Math.abs(r.error)), 0) / rows.length : null;
+  };
+  const before = score(DEFAULT_SETTINGS);
+  let best = { settings: DEFAULT_SETTINGS, score: before };
+  for (const recentWeight of [0.4, 0.6, 0.8, 1]) {
+    for (const levelStrength of [0, 0.35, 0.7, 1]) {
+      const s = { recentWeight, levelStrength };
+      const v = score(s);
+      if (v !== null && (best.score === null || v < best.score)) best = { settings: s, score: v };
+    }
+  }
+  const tuned = before !== null && best.score !== null && before - best.score >= 0.015;
+  return { settings: tuned ? best.settings : DEFAULT_SETTINGS, tuned, before, after: tuned ? best.score : before };
 }
 
 export const roundUpToBag = (pieces: number, bag: number) => (pieces <= 0 ? 0 : Math.ceil(pieces / bag) * bag);

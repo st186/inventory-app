@@ -3,13 +3,14 @@ import { BarChart3, Leaf, PartyPopper, Loader2 } from 'lucide-react';
 import { FORECAST_TYPES, WEEKDAY_SHORT, addDaysISO, weekdayOf } from '../../utils/forecast';
 import { EFFECT_CHIP, effectLabel } from './ForecastCard';
 import { FestivalCalendar } from './FestivalCalendar';
+import { ForecastAccuracy } from './ForecastAccuracy';
 import { GrowthIdeas } from './GrowthIdeas';
 import { useInsightsOverview, fmtDay, rupees } from './useInsightsOverview';
 
 const pct = (x: number | null) => (x === null ? '—' : `${Math.round(x * 100)}%`);
 
 // "Trends & Growth" Analytics tab: weekday pattern, veg vs non-veg by week, item mix change,
-// how festival days went, the festival calendar, and AI growth ideas.
+// how festival days went, how good the forecast has been, the festival calendar, and AI growth ideas.
 export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken: string; storeId: string | null; canManage: boolean }) {
   const { data, loading, error, reload } = useInsightsOverview(accessToken, storeId);
 
@@ -138,6 +139,7 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
         </div>
       </div>
 
+      <ForecastAccuracy accuracy={data.accuracy} />
       <FestivalCalendar accessToken={accessToken} events={data.events} canManage={canManage} onChanged={reload} />
       <GrowthIdeas accessToken={accessToken} storeId={storeId} canManage={canManage} />
     </div>

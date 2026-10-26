@@ -6,6 +6,8 @@ import * as api from '../utils/api';
 import { findSimilarItem } from '../utils/stringSimilarity';
 import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
 import type { CashCover } from '../utils/cashSource';
+import { PriceWarning } from './PriceCheck';
+import { checkPurchase, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
   selectedDate: string;
@@ -24,9 +26,11 @@ type Props = {
   // day - production's cash is offered only when the store's can't cover the bill.
   productionCashHouseId?: string | null;
   productionCashCover?: CashCover | null;
+  // What each item usually costs - warns when the price looks like a unit slip (utils/expenseChecks.ts).
+  priceGuide?: PriceGuide;
 };
 
-export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit, onClose, onSuccess, canCreateNewItems = true, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null }: Props) {
+export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit, onClose, onSuccess, canCreateNewItems = true, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null, priceGuide }: Props) {
   const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   // Store purchases are a small curated subset (see STORE_CATEGORY_ITEMS) - the
   // production house still needs the full fresh-produce/spices/meat lists.
@@ -78,6 +82,15 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
   const [isBundleMode, setIsBundleMode] = useState(!isBeverage && editingItem?.packageType === 'carton');
   const bundleTotalPieces = (parseFloat(formData.cartonCount) || 0) * (parseFloat(formData.piecesPerCarton) || 0);
   const isBundlePurchase = !isBeverage && isBundleMode && (formData.unit === 'pcs' || formData.unit === 'units');
+  const priceFlag = priceGuide && formData.itemName.trim() && parseFloat(formData.totalCost) > 0
+    ? checkPurchase({
+        itemName: formData.itemName,
+        quantity: isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : (parseFloat(formData.quantity) || 0)),
+        unit: isBeverage || isBundlePurchase ? 'pcs' : formData.unit,
+        totalCost: parseFloat(formData.totalCost),
+        packageType: isBundlePurchase || (isBeverage && formData.packageType === 'carton') ? 'carton' : undefined,
+      }, priceGuide)
+    : null;
 
   const [customItems, setCustomItems] = useState<Record<string, string[]>>({});
   const [allCustomItems, setAllCustomItems] = useState<api.CustomItem[]>([]);
@@ -752,6 +765,14 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
               required
             />
           </div>
+
+          <PriceWarning
+            flag={priceFlag}
+            onFix={isBeverage || isBundlePurchase ? undefined : (fix) => {
+              const u = ['kg', 'g', 'L', 'mL', 'pcs', 'units'].includes(fix.unit) ? fix.unit : 'pcs';
+              setFormData({ ...formData, quantity: String(fix.quantity), unit: u });
+            }}
+          />
 
           {/* Payment Method Selection */}
           <div>
