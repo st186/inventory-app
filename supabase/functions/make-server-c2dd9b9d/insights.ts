@@ -33,6 +33,9 @@ const PRICES: Record<string, [number, number, number]> = {
 };
 // Server-side refusal fallback: Opus and Sonnet only (Haiku has none).
 const SUPPORTS_FALLBACK = /opus|sonnet|fable/.test(AI_MODEL);
+// Invoice scanning is switched off: it came to about ₹3 a bill, too much for what it saves
+// (owner, 27 Oct 2026). Set the AI_INVOICE_SCAN secret to "on" to bring it back.
+const INVOICE_SCAN_ON = Deno.env.get('AI_INVOICE_SCAN') === 'on';
 
 const EFFECTS: DayEffect[] = ['normal', 'closed', 'low_nonveg', 'busy', 'quiet'];
 const PRODUCTION_KEYS: Record<string, MomoKey> = {
@@ -407,7 +410,7 @@ export function registerInsightsRoutes(app: any, deps: Deps) {
 
   app.get(`${P}/ai/status`, async (c: any) => {
     const g = await guard(c, 'view'); if (g.error) return g.error;
-    return c.json({ configured: aiConfigured(), model: AI_MODEL, spentThisMonthUsd: await spentThisMonth(deps.kv), capUsd: AI_MONTHLY_CAP_USD, canManage: g.actor!.canManage });
+    return c.json({ configured: aiConfigured(), model: AI_MODEL, spentThisMonthUsd: await spentThisMonth(deps.kv), capUsd: AI_MONTHLY_CAP_USD, canManage: g.actor!.canManage, invoiceScan: INVOICE_SCAN_ON });
   });
 
   // Daily brief: written once per store per day (owner side can ask for a fresh one).
@@ -582,6 +585,7 @@ Answer with only a JSON array, no other text.`,
     if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
     const role = authResult.user.user_metadata?.role;
     if (role !== 'manager' && role !== 'cluster_head') return c.json({ error: 'Only people who add expenses can scan invoices' }, 403);
+    if (!INVOICE_SCAN_ON) return c.json({ error: 'Invoice scanning is switched off for now. Add the bill with Add Expense instead.' }, 403);
     try {
       const { dataUrl } = await c.req.json();
       const m = typeof dataUrl === 'string' ? dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/) : null;

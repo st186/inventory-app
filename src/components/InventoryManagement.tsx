@@ -17,6 +17,10 @@ import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryDa
 import { CategoryManagerModal } from './CategoryManagerModal';
 import { InvoiceScanner } from './insights/InvoiceScanner';
 
+// Invoice scanning is switched off (about ₹3 a bill on the AI model). The server refuses it
+// too, unless its AI_INVOICE_SCAN secret is "on" (see insights.ts).
+const INVOICE_SCAN_ENABLED = false;
+
 type Props = {
  context: InventoryContextType;
  selectedStoreId?: string | null;
@@ -397,6 +401,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <Plus className="w-4 h-4" />
  Add Expense
  </button>
+ {INVOICE_SCAN_ENABLED && (
  <button
  onClick={() => setShowInvoiceScan(true)}
  disabled={!canAddOnActiveTab}
@@ -405,6 +410,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <ScanText className="w-4 h-4" />
  Scan Invoice
  </button>
+ )}
  {context.user?.role === 'cluster_head' && (
  <button
  onClick={() => setShowCategoryManager(true)}
