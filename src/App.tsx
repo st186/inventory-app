@@ -1,7 +1,7 @@
 // Bhandar-IMS - Performance optimized with lazy loading
 import { isPhase1Live, type ProductionBatch } from './utils/batches';
 import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
-import { InventoryView } from './components/InventoryView';
+const InventoryView = lazy(() => import('./components/InventoryView').then(module => ({ default: module.InventoryView })));
 const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
 const SalesView = lazy(() => import('./components/SalesView').then(module => ({ default: module.SalesView })));
 const ClusterDashboard = lazy(() => import('./components/ClusterDashboard').then(module => ({ default: module.ClusterDashboard })));
@@ -24,11 +24,8 @@ const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInve
 const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
 const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
 import { AuthPage } from './components/AuthPage';
-import { EmployeeTimesheet } from './components/EmployeeTimesheet';
-import { EmployeeLeave } from './components/EmployeeLeave';
-import { ApproveTimesheets } from './components/ApproveTimesheets';
-import { ApproveLeaves } from './components/ApproveLeaves';
-import { EmployeeHierarchy } from './components/EmployeeHierarchy';
+// The attendance and store screens are rendered by AttendancePortal / AssetsManagement (both
+// lazy), so App doesn't import them itself - unused imports here kept them in the first-load bundle.
 const AttendancePortal = lazy(() => import('./components/AttendancePortal').then(module => ({ default: module.AttendancePortal })));
 const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').then(module => ({ default: module.EmployeeManagement })));
 import { Notifications } from './components/Notifications';
@@ -36,7 +33,6 @@ import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { BunnyChat } from './components/BunnyChat';
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
-import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
