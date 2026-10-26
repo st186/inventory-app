@@ -269,7 +269,8 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/(unified-employees|employees|archived-employees)(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/payouts(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/salary-advances\/.+/, methods: ['PUT', 'DELETE'], roles: LEADS },
-  { test: /^\/(timesheets|leaves)\/[^/]+\/(approve|reject)$/, roles: LEADS },
+  // Store/production incharges (role employee) approve their own staff; the routes check who (canApproveFor).
+  { test: /^\/(timesheets|leaves)\/[^/]+\/(approve|reject)$/, roles: [...LEADS, 'employee'] },
   { test: /^\/push\/send$/, roles: LEADS },
   // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
   { test: /^\/send-/, roles: LEADS },
@@ -432,6 +433,14 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
     try {
       const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
       if (!userError && userData?.user) {
+        // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
+        // token issued before that stays valid until it expires - refuse it here so leaving
+        // takes effect at once. 401 makes the app sign them out.
+        if (isLoginBlocked(userData.user)) {
+          const result = { error: 'This login has been switched off', status: 401 };
+          verifiedTokens.set(accessToken, { at: Date.now(), result });
+          return result;
+        }
         // Fresh metadata, with roles from app_metadata only (see withTrustedRoles).
         const result = { user: withTrustedRoles({ ...user, user_metadata: userData.user.user_metadata, app_metadata: userData.user.app_metadata }) };
         if (verifiedTokens.size > 500) verifiedTokens.clear();
@@ -442,6 +451,7 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
       console.log('Error fetching fresh user data:', e);
     }
 
+    if (isLoginBlocked(user)) return { error: 'This login has been switched off', status: 401 };
     return { user: withTrustedRoles(user) };
   } catch (error: any) {
     // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
@@ -461,6 +471,41 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
 
     console.error('❌ Error in verifyUser after retries:', error);
     return { error: 'Service temporarily unavailable, please retry', status: 503 };
+  }
+}
+
+// ---- Leaving staff lose their login ----
+// Archiving used to only flag isActive in user_metadata, which nothing checked, so a former
+// employee kept full access. Now the login is banned (no sign-in, no token refresh) and
+// app_metadata.archived is set; verifyUser refuses both, which also cuts off a session that
+// was already open. Restoring the employee lifts the ban.
+const ARCHIVED_BAN_DURATION = '876000h'; // ~100 years: GoTrue has no "forever"
+
+function isLoginBlocked(user: any): boolean {
+  if (user?.app_metadata?.archived === true) return true;
+  const until = user?.banned_until ? new Date(user.banned_until).getTime() : 0;
+  return until > Date.now();
+}
+
+async function setEmployeeLoginBlocked(authUserId: string | undefined, blocked: boolean): Promise<boolean> {
+  if (!authUserId) return false;
+  try {
+    const { error } = await supabase.auth.admin.updateUserById(authUserId, {
+      ban_duration: blocked ? ARCHIVED_BAN_DURATION : 'none',
+      app_metadata: { archived: blocked },
+      user_metadata: blocked
+        ? { isActive: false, archivedAt: new Date().toISOString() }
+        : { isActive: true, archivedAt: null },
+    });
+    if (error) throw error;
+    // Drop any cached "verified" answer for this person so the change applies immediately.
+    for (const [token, entry] of verifiedTokens) {
+      if (entry.result?.user?.id === authUserId) verifiedTokens.delete(token);
+    }
+    return true;
+  } catch (error) {
+    console.log(`Could not ${blocked ? 'block' : 'restore'} a login:`, error instanceof Error ? error.message : String(error));
+    return false;
   }
 }
 
@@ -3356,11 +3401,15 @@ app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
       return c.json({ error: 'Employee not found' }, 404);
     }
     
-    // Calculate total earnings from payouts
-    const payouts = await kv.getByPrefix('payout:');
+    // Calculate total earnings from payouts (paginated: payouts pass 1000 rows)
+    const payouts = await getAllByPrefixWithRetry('payout:');
     const employeePayouts = payouts.filter((p: any) => p.employeeId === employeeId);
     const totalEarnings = employeePayouts.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-    
+
+    // Payroll's delete button archives through this route too - switch the login off here
+    // as well, or a released employee could keep using the app.
+    const loginRevoked = await setEmployeeLoginBlocked(existingEmployee.authUserId, true);
+
     // Archive the employee with release information
     const archivedEmployee = {
       ...existingEmployee,
@@ -3369,17 +3418,17 @@ app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
       totalEarnings,
       archivedFrom: key,
     };
-    
+
     // Save to archived employees
     const archiveKey = `archived-employee:${employeeId}`;
     await kv.set(archiveKey, archivedEmployee);
-    
+
     // Remove from active employees
     await kv.del(key);
-    
+
     console.log('Employee archived successfully. Total earnings:', totalEarnings);
-    
-    return c.json({ success: true, archived: archivedEmployee });
+
+    return c.json({ success: true, archived: archivedEmployee, loginRevoked });
   } catch (error) {
     console.log('Error archiving employee:', error);
     return c.json({ error: 'Failed to archive employee' }, 500);
@@ -3408,6 +3457,43 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
   } catch (error) {
     console.log('Error fetching archived employees:', error);
     return c.json({ error: 'Failed to fetch archived employees' }, 500);
+  }
+});
+
+// Bring a past employee back (owner only): moves the record back to where it was archived
+// from and lifts the login ban that archiving put on.
+app.post('/make-server-c2dd9b9d/archived-employees/:employeeId/restore', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+  if (authResult.user.user_metadata?.role !== 'cluster_head') {
+    return c.json({ error: 'Only the owner can restore a past employee' }, 403);
+  }
+
+  try {
+    const employeeId = c.req.param('employeeId');
+    const archived = await kv.get(`archived-employee:${employeeId}`);
+    if (!archived) {
+      return c.json({ error: 'Past employee not found' }, 404);
+    }
+
+    const { isActive: _isActive, releasedAt: _releasedAt, totalEarnings: _totalEarnings, archivedFrom, ...record } = archived;
+    const restoreKey = typeof archivedFrom === 'string' && /^(unified-employee|employee):/.test(archivedFrom)
+      ? archivedFrom
+      : `unified-employee:${employeeId}`;
+    if (await kv.get(restoreKey)) {
+      return c.json({ error: 'An active employee already uses this id' }, 409);
+    }
+
+    await kv.set(restoreKey, { ...record, restoredAt: new Date().toISOString() });
+    await kv.del(`archived-employee:${employeeId}`);
+    const loginRestored = await setEmployeeLoginBlocked(record.authUserId, false);
+
+    return c.json({ success: true, loginRestored });
+  } catch (error) {
+    console.log('Error restoring employee:', error);
+    return c.json({ error: 'Failed to restore employee' }, 500);
   }
 });
 
@@ -6070,52 +6156,60 @@ app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
 const LEAVE_POLICY_RESET_DATE = '2026-08-01';
 const LEAVES_PER_MONTH = 4;
 
+// The leave year (IST): 2026's runs from the 1 Aug 2026 reset (nobody applied for leave in
+// the app before then); from 2027 it is the calendar year, starting fresh every 1 January.
+// Leave usage used to be counted from 1 Aug 2026 with no end, so from 2027 every past
+// year's leave would have kept eating into the new year's credit.
+function leaveYearIST(today = getTodayIST()): { start: string; end: string } {
+  const year = today.slice(0, 4);
+  const yearStart = `${year}-01-01`;
+  return { start: yearStart < LEAVE_POLICY_RESET_DATE ? LEAVE_POLICY_RESET_DATE : yearStart, end: `${year}-12-31` };
+}
+
 // Helper function to calculate leave balance
 // usedLeaves can be a decimal (e.g., 1.5 for one full day + one half day)
 function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number {
-  const policyReset = new Date(LEAVE_POLICY_RESET_DATE);
-  const actualJoining = new Date(joiningDate);
-  // Nobody accrues leave for time before the Aug 1, 2026 policy reset
-  const joining = actualJoining < policyReset ? policyReset : actualJoining;
-  const now = new Date();
+  const today = getTodayIST();
+  const { start } = leaveYearIST(today);
+  // Credit starts at the leave year's start, or the joining date if that is later.
+  const joined = /^\d{4}-\d{2}-\d{2}/.test(joiningDate || '') ? joiningDate.slice(0, 10) : start;
+  const creditFrom = joined > start ? joined : start;
 
-  // Normalize dates to start of month for accurate comparison
-  const joiningMonthStart = new Date(joining.getFullYear(), joining.getMonth(), 1);
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  // If joining date is in the future, no leaves yet
-  if (joining > now) {
-    return 0;
+  // Joining date still in the future: nothing credited yet
+  if (creditFrom > today) {
+    return -usedLeaves;
   }
 
-  // Calculate months in current year only (leaves reset on Jan 1st each year)
-  const startYear = joiningMonthStart.getFullYear();
-  const startMonth = joiningMonthStart.getMonth();
-  const currentYear = currentMonthStart.getFullYear();
-  const currentMonth = currentMonthStart.getMonth();
-
-  // Current year start date
-  const currentYearStart = new Date(now.getFullYear(), 0, 1);
-
-  let monthsToCount = 0;
-
-  if (joining.getFullYear() === now.getFullYear()) {
-    // Joined (or policy-reset) this year - count from that month to current month (within this year)
-    monthsToCount = (currentMonth - startMonth) + 1;
-  } else if (joining < currentYearStart) {
-    // Joined in previous years - only count months from Jan 1 of current year to now
-    monthsToCount = currentMonth + 1; // Jan = 0, so add 1 (Jan=1, Feb=2, etc.)
-  } else {
-    // This shouldn't happen but just in case
-    monthsToCount = 1;
-  }
-
-  // Total credited leaves = 4 leaves per month (within current year, carries forward monthly, resets yearly)
+  // 4 leaves credited on the 1st of each month from the credit month to this month, carried
+  // forward within the leave year. Both dates are in this year, so the month gap is enough.
+  const monthsToCount = parseInt(today.slice(5, 7), 10) - parseInt(creditFrom.slice(5, 7), 10) + 1;
   const totalCredited = monthsToCount * LEAVES_PER_MONTH;
 
   // Available balance (can be negative if advance leaves are taken)
   // Negative balance will be carried forward and deducted from next month's allocation
   return totalCredited - usedLeaves;
+}
+
+function leaveDays(leaves: any[]): number {
+  // Old leaves without leaveType count as full days
+  return leaves.reduce((total: number, leave: any) => total + ((leave.leaveType || 'full') === 'half' ? 0.5 : 1), 0);
+}
+
+// One person's leave position for this leave year. The joining date comes from their own
+// employee record (the app had no joining date to send and fell back to 2024-01-01).
+// pendingDays is reported separately so applying can count it against the balance.
+async function leaveBalanceFor(employeeId: string, joiningDateHint?: string): Promise<{ balance: number; pendingDays: number; joiningDate: string; leaveYearStart: string }> {
+  const employee = (await kv.get(`unified-employee:${employeeId}`)) || (await kv.get(`archived-employee:${employeeId}`));
+  const joiningDate = String(employee?.joiningDate || employee?.createdAt || joiningDateHint || getTodayIST()).slice(0, 10);
+  const { start, end } = leaveYearIST();
+  const thisYear = (await getAllByPrefixWithRetry(`leave:${employeeId}:`))
+    .filter((l: any) => l.leaveDate >= start && l.leaveDate <= end);
+  return {
+    balance: calculateLeaveBalance(joiningDate, leaveDays(thisYear.filter((l: any) => l.status === 'approved'))),
+    pendingDays: leaveDays(thisYear.filter((l: any) => l.status === 'pending')),
+    joiningDate,
+    leaveYearStart: start,
+  };
 }
 
 // Create employee account (by manager)
@@ -6251,6 +6345,57 @@ app.get('/make-server-c2dd9b9d/attendance/managers/cluster/:clusterHeadId', asyn
 
 // ===== Timesheet Management =====
 
+// Who approves a person's timesheets and leave: their incharge when they have one (assigning
+// an incharge clears managerId, which used to send these to every owner instead), else their
+// manager, else the owner(s) so nothing is stranded.
+async function approversFor(employee: any): Promise<any[]> {
+  if (employee?.inchargeId) {
+    const incharge = await kv.get(`unified-employee:${employee.inchargeId}`);
+    // Only while they still hold an incharge designation - otherwise they can't approve.
+    if (incharge && (incharge.designation === 'store_incharge' || incharge.designation === 'production_incharge')) return [incharge];
+  }
+  if (employee?.managerId) {
+    const manager = await kv.get(`unified-employee:${employee.managerId}`);
+    if (manager) return [manager];
+  }
+  return getAllClusterHeads();
+}
+
+// May this signed-in person approve/reject a record belonging to employeeId? The owner and
+// managers can (as before); a store/production incharge only for staff assigned to them.
+async function canApproveFor(authUser: any, employeeId: string): Promise<boolean> {
+  const role = authUser?.user_metadata?.role;
+  if (role === 'cluster_head' || role === 'manager') return true;
+  const designation = authUser?.user_metadata?.designation;
+  if (designation !== 'store_incharge' && designation !== 'production_incharge') return false;
+  const employee = await kv.get(`unified-employee:${employeeId}`);
+  return !!employee && !!employee.inchargeId && employee.inchargeId === authUser?.user_metadata?.employeeId;
+}
+
+// One timesheet/leave by its id, read straight from the table. Scanning the whole
+// collection with kv.getByPrefix stopped at 1000 rows, so approving anything past that
+// answered "not found".
+async function findKvRecordById(prefix: string, id: string): Promise<{ key: string; value: any } | null> {
+  return retryWithBackoff(async () => {
+    const { data, error } = await supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value')
+      .like('key', `${prefix}%`)
+      .eq('value->>id', id)
+      .limit(1);
+    if (error) throw new Error(error.message);
+    return data?.[0] || null;
+  }, `findKvRecordById(${prefix})`);
+}
+
+// A new timesheet/leave always starts as pending: the app used to be trusted with the status,
+// so a crafted request could save itself as approved. Approval only happens through the
+// approve routes, the notification quick action or the server's own auto-approve.
+function asNewSubmission(entry: any) {
+  const { approvedBy: _a, approvedAt: _b, rejectedBy: _c, rejectedAt: _d, rejectionReason: _e, ...rest } = entry || {};
+  return { ...rest, status: 'pending' };
+}
+
 // NOTE: must stay registered BEFORE '/timesheets/:employeeId' below - otherwise Hono matches
 // 'all' as an employeeId and returns an empty list (the Attendance Compliance section
 // showed every employee as missing every day because of exactly that).
@@ -6279,7 +6424,8 @@ app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
 app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
   try {
     const employeeId = c.req.param('employeeId');
-    const allTimesheets = await kv.getByPrefix(`timesheet:${employeeId}:`);
+    // Paginated: a year of daily timesheets is ~365 rows, so one person passes 1000 in time.
+    const allTimesheets = await getAllByPrefixWithRetry(`timesheet:${employeeId}:`);
     return c.json({ timesheets: allTimesheets });
   } catch (error) {
     console.log('Error fetching timesheets:', error);
@@ -6290,38 +6436,28 @@ app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
 // Save single timesheet
 app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
   try {
-    const timesheet = await c.req.json();
+    const timesheet = asNewSubmission(await c.req.json());
     const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
     const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
-    
+
     const savedTimesheet = {
       ...timesheet,
       id,
       submittedAt: new Date().toISOString()
     };
-    
+
     await kv.set(key, savedTimesheet);
 
-    // Route the approval notification to the employee's own manager (Rohan -> Aniket,
-    // Vijay -> Aniket, Saniya/Nabendu -> Rohan, Akash -> Vijay) - same pattern the leave
-    // flow already uses. Cluster heads are only a fallback for someone with no manager
-    // on file, not the default recipient - this route used to hardcode cluster heads
-    // unconditionally, which is why every timesheet approval was landing on the cluster
-    // head instead of the actual manager.
+    // Route the approval notification to the employee's own approver - their incharge or
+    // manager (see approversFor). Cluster heads are only a fallback for someone with
+    // neither on file - this route used to hardcode cluster heads unconditionally.
     if (timesheet.status === 'pending') {
       // attendance-employee: is an empty/legacy collection - real employee records
       // (with the actual name and authUserId) live under unified-employee:.
       const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
       const employeeName = employee?.name || timesheet.employeeId;
 
-      let recipients: any[] = [];
-      if (employee?.managerId) {
-        const manager = await kv.get(`unified-employee:${employee.managerId}`);
-        if (manager) recipients = [manager];
-      }
-      if (recipients.length === 0) {
-        recipients = await getAllClusterHeads();
-      }
+      const recipients = await approversFor(employee);
 
       const timeSummary = formatTimesheetSummary(savedTimesheet);
       for (const recipient of recipients) {
@@ -6362,7 +6498,7 @@ app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
       const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
       keys.push(key);
       values.push({
-        ...timesheet,
+        ...asNewSubmission(timesheet),
         id,
         submittedAt: new Date().toISOString()
       });
@@ -6382,14 +6518,7 @@ app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
         const employee = await kv.get(`unified-employee:${employeeId}`);
         const employeeName = employee?.name || employeeId;
 
-        let recipients: any[] = [];
-        if (employee?.managerId) {
-          const manager = await kv.get(`unified-employee:${employee.managerId}`);
-          if (manager) recipients = [manager];
-        }
-        if (recipients.length === 0) {
-          recipients = await getAllClusterHeads();
-        }
+        const recipients = await approversFor(employee);
 
         const sortedDates = entries.map((t: any) => t.date).sort();
         const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
@@ -6423,16 +6552,21 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/approve', async (c) => {
   try {
     const timesheetId = c.req.param('timesheetId');
     const { managerId } = await c.req.json();
-    
+
     // Find the timesheet
-    const allTimesheets = await kv.getByPrefix('timesheet:');
-    const timesheet = allTimesheets.find((t: any) => t.id === timesheetId);
-    
+    const found = await findKvRecordById('timesheet:', timesheetId);
+    const timesheet = found?.value;
+
     if (!timesheet) {
       return c.json({ error: 'Timesheet not found' }, 404);
     }
-    
-    const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
+    const auth = await verifyUser(c.req.header('Authorization'));
+    if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+    if (!(await canApproveFor(auth.user, timesheet.employeeId))) {
+      return c.json({ error: 'You can only approve timesheets of your own staff' }, 403);
+    }
+
+    const key = found!.key;
     const approvedTimesheet = {
       ...timesheet,
       status: 'approved',
@@ -6467,16 +6601,21 @@ app.post('/make-server-c2dd9b9d/timesheets/:timesheetId/reject', async (c) => {
   try {
     const timesheetId = c.req.param('timesheetId');
     const { managerId, reason } = await c.req.json();
-    
+
     // Find the timesheet
-    const allTimesheets = await kv.getByPrefix('timesheet:');
-    const timesheet = allTimesheets.find((t: any) => t.id === timesheetId);
-    
+    const found = await findKvRecordById('timesheet:', timesheetId);
+    const timesheet = found?.value;
+
     if (!timesheet) {
       return c.json({ error: 'Timesheet not found' }, 404);
     }
-    
-    const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
+    const auth = await verifyUser(c.req.header('Authorization'));
+    if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+    if (!(await canApproveFor(auth.user, timesheet.employeeId))) {
+      return c.json({ error: 'You can only reject timesheets of your own staff' }, 403);
+    }
+
+    const key = found!.key;
     const rejectedTimesheet = {
       ...timesheet,
       status: 'rejected',
@@ -6580,7 +6719,8 @@ app.post('/make-server-c2dd9b9d/timesheets/auto-approve-stale', async (c) => {
 // Get all leaves (for cluster heads/managers)
 app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
   try {
-    const allLeaves = await kv.getByPrefix('leave:');
+    // Paginated - plain getByPrefix stopped at 1000 rows and hid newer applications.
+    const allLeaves = await getAllByPrefixWithRetry('leave:');
     return c.json({ leaves: allLeaves });
   } catch (error) {
     console.log('Error fetching all leaves:', error);
@@ -6592,7 +6732,7 @@ app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
 app.get('/make-server-c2dd9b9d/leaves/:employeeId', async (c) => {
   try {
     const employeeId = c.req.param('employeeId');
-    const allLeaves = await kv.getByPrefix(`leave:${employeeId}:`);
+    const allLeaves = await getAllByPrefixWithRetry(`leave:${employeeId}:`);
     return c.json({ leaves: allLeaves });
   } catch (error) {
     console.log('Error fetching leaves:', error);
@@ -6600,27 +6740,13 @@ app.get('/make-server-c2dd9b9d/leaves/:employeeId', async (c) => {
   }
 });
 
-// Get leave balance
+// Get leave balance - this leave year only, credited from the joining date on the
+// employee's own record (see leaveBalanceFor). The joiningDate query is only a fallback
+// for someone with no employee record.
 app.get('/make-server-c2dd9b9d/leaves/:employeeId/balance', async (c) => {
   try {
     const employeeId = c.req.param('employeeId');
-    const joiningDate = c.req.query('joiningDate') || new Date().toISOString().split('T')[0];
-    
-    // Get all approved leaves
-    const allLeaves = await kv.getByPrefix(`leave:${employeeId}:`);
-    // Only leaves from the Aug 1, 2026 policy reset onward count against the balance
-    const approvedLeaves = allLeaves.filter((l: any) => l.status === 'approved' && l.leaveDate >= LEAVE_POLICY_RESET_DATE);
-
-    // Calculate total leave days used (full day = 1, half day = 0.5)
-    // Old leaves without leaveType default to 'full' for backward compatibility
-    const totalLeaveDaysUsed = approvedLeaves.reduce((total: number, leave: any) => {
-      const leaveType = leave.leaveType || 'full'; // Default to full day for old leaves
-      return total + (leaveType === 'half' ? 0.5 : 1);
-    }, 0);
-    
-    const balance = calculateLeaveBalance(joiningDate, totalLeaveDaysUsed);
-    
-    return c.json({ balance });
+    return c.json(await leaveBalanceFor(employeeId, c.req.query('joiningDate')));
   } catch (error) {
     console.log('Error calculating leave balance:', error);
     return c.json({ error: 'Failed to calculate leave balance' }, 500);
@@ -6630,23 +6756,22 @@ app.get('/make-server-c2dd9b9d/leaves/:employeeId/balance', async (c) => {
 // Apply for leave
 app.post('/make-server-c2dd9b9d/leaves', async (c) => {
   try {
-    const leave = await c.req.json();
+    const leave = asNewSubmission(await c.req.json());
     const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
     const key = `leave:${leave.employeeId}:${id}`;
-    
+
     const savedLeave = {
       ...leave,
       id,
       appliedAt: new Date().toISOString()
     };
-    
+
     await kv.set(key, savedLeave);
-    
+
     // Route the approval notification: regular leave (and advance leave up to the
-    // escalation threshold) goes to the employee's own manager - matching who can
-    // actually act on it in the Approve Leaves screen (manager sees their own
-    // employees' leaves, cluster head sees their managers' leaves). Advance leave
-    // past the threshold is escalated straight to the cluster head instead.
+    // escalation threshold) goes to the employee's own approver - incharge or manager
+    // (approversFor), matching who can act on it in the Approve Leaves screen. Advance
+    // leave past the threshold is escalated straight to the cluster head instead.
     if (leave.status === 'pending') {
       // attendance-employee: is a legacy/unused collection - real employee records
       // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
@@ -6659,17 +6784,7 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
         ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
         : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
 
-      let recipients: any[] = [];
-      if (escalateToClusterHead) {
-        recipients = await getAllClusterHeads();
-      } else if (applicant?.managerId) {
-        const manager = await kv.get(`unified-employee:${applicant.managerId}`);
-        if (manager) recipients = [manager];
-      }
-      // No manager on file - fall back to cluster heads so the request isn't stranded
-      if (recipients.length === 0) {
-        recipients = await getAllClusterHeads();
-      }
+      const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
 
       for (const recipient of recipients) {
         if (recipient.authUserId) {
@@ -6692,9 +6807,38 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
 // multi-day application that loops it floods the approver with a notification per day.
 app.post('/make-server-c2dd9b9d/leaves/bulk', async (c) => {
   try {
-    const { leaves } = await c.req.json();
-    if (!Array.isArray(leaves) || leaves.length === 0) {
+    const { leaves: requested } = await c.req.json();
+    if (!Array.isArray(requested) || requested.length === 0) {
       return c.json({ error: 'No leave applications provided' }, 400);
+    }
+    const employeeId = requested[0]?.employeeId;
+    if (!employeeId || requested.some((l: any) => l?.employeeId !== employeeId || !l?.leaveDate)) {
+      return c.json({ error: 'An application must be for one person, with a date on every day' }, 400);
+    }
+
+    // Idempotent: the app retries a POST that got a 5xx, and this route used to mint new ids
+    // on every call, so a retry after a slow first attempt saved every day twice. A day that
+    // already has a pending or approved leave for this person is not saved again - its
+    // existing id is returned instead.
+    const existingByDate = new Map<string, any>();
+    for (const l of await getAllByPrefixWithRetry(`leave:${employeeId}:`)) {
+      if (l.status !== 'rejected') existingByDate.set(l.leaveDate, l);
+    }
+    const leaves: any[] = [];
+    for (const leave of requested) {
+      if (!existingByDate.has(leave.leaveDate) && !leaves.some((l) => l.leaveDate === leave.leaveDate)) {
+        leaves.push(asNewSubmission(leave));
+      }
+    }
+
+    // Regular leave can't go past the balance, counting applications still waiting
+    // (advance leave is how someone borrows ahead, so it isn't capped here).
+    if (leaves.length > 0 && !leaves[0].isAdvanceLeave) {
+      const { balance, pendingDays } = await leaveBalanceFor(employeeId);
+      const available = balance - pendingDays;
+      if (leaveDays(leaves) > available) {
+        return c.json({ error: `Not enough leave balance: ${available} day(s) left after applications still waiting. Apply as Advance Leave instead.` }, 400);
+      }
     }
 
     const ids: string[] = [];
@@ -6705,9 +6849,11 @@ app.post('/make-server-c2dd9b9d/leaves/bulk', async (c) => {
       await kv.set(key, savedLeave);
       ids.push(id);
     }
+    // Every requested day's id in the order asked, whether saved now or already on file.
+    const allIds = requested.map((l: any) => existingByDate.get(l.leaveDate)?.id || ids[leaves.findIndex((n) => n.leaveDate === l.leaveDate)]);
 
     const first = leaves[0];
-    if (first.status === 'pending') {
+    if (first && first.status === 'pending') {
       const sortedDates = leaves.map((l: any) => l.leaveDate).sort();
       const startDate = sortedDates[0];
       const endDate = sortedDates[sortedDates.length - 1];
@@ -6724,16 +6870,7 @@ app.post('/make-server-c2dd9b9d/leaves/bulk', async (c) => {
         ? `${employeeLabel} requested ${first.advanceDaysRequested || leaves.length} day(s) of advance leave: ${dateRangeLabel} - escalated for cluster head approval`
         : `${employeeLabel} applied for leave: ${dateRangeLabel}`;
 
-      let recipients: any[] = [];
-      if (escalateToClusterHead) {
-        recipients = await getAllClusterHeads();
-      } else if (applicant?.managerId) {
-        const manager = await kv.get(`unified-employee:${applicant.managerId}`);
-        if (manager) recipients = [manager];
-      }
-      if (recipients.length === 0) {
-        recipients = await getAllClusterHeads();
-      }
+      const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
 
       for (const recipient of recipients) {
         if (recipient.authUserId) {
@@ -6745,7 +6882,7 @@ app.post('/make-server-c2dd9b9d/leaves/bulk', async (c) => {
       }
     }
 
-    return c.json({ success: true, ids });
+    return c.json({ success: true, ids: allIds });
   } catch (error) {
     console.log('Error applying bulk leave:', error);
     return c.json({ error: 'Failed to apply leave' }, 500);
@@ -6786,20 +6923,26 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
 
     const approverEmployeeId = await getEmployeeIdByAuthUserId(tokenRecord.approverUserId);
     const approver = approverEmployeeId ? await kv.get(`unified-employee:${approverEmployeeId}`) : null;
+    // Tokens are minted only for active staff, so no active record now means the person was
+    // archived since - their notification buttons must stop working along with their login.
+    if (!approver) {
+      return c.json({ error: 'This action is no longer available' }, 403);
+    }
     const approverName = approver?.name || 'a manager';
     const approve = tokenRecord.action === 'approve';
 
     if (tokenRecord.recordType === 'leave') {
       const leaveIds: string[] = String(tokenRecord.recordId).split(',');
-      const allLeaves = await kv.getByPrefix('leave:');
       let employeeAuthUserId: string | null = null;
       let sampleDate = '';
 
       for (const leaveId of leaveIds) {
-        const leave = allLeaves.find((l: any) => l.id === leaveId);
+        // Read each day directly - scanning every leave stopped at 1000 rows.
+        const found = await findKvRecordById('leave:', leaveId);
+        const leave = found?.value;
         if (!leave || leave.status !== 'pending') continue;
 
-        const key = `leave:${leave.employeeId}:${leaveId}`;
+        const key = found!.key;
         const updated = approve
           ? { ...leave, status: 'approved', approvedBy: approverName, approvedAt: getNowIST() }
           : { ...leave, status: 'rejected', rejectedBy: approverName, rejectedAt: getNowIST(), rejectionReason: 'Rejected via notification quick action' };
@@ -6828,8 +6971,8 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
     }
 
     if (tokenRecord.recordType === 'timesheet') {
-      const allTimesheets = await kv.getByPrefix('timesheet:');
-      const timesheet = allTimesheets.find((t: any) => t.id === tokenRecord.recordId);
+      const found = await findKvRecordById('timesheet:', String(tokenRecord.recordId));
+      const timesheet = found?.value;
       if (!timesheet) {
         return c.json({ error: 'Timesheet not found' }, 404);
       }
@@ -6837,7 +6980,7 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
         return c.json({ success: true, title: 'Already resolved', message: 'This timesheet was already actioned' });
       }
 
-      const key = `timesheet:${timesheet.employeeId}:${timesheet.date}`;
+      const key = found!.key;
       const updated = approve
         ? { ...timesheet, status: 'approved', approvedBy: approverName, approvedAt: getNowIST() }
         : { ...timesheet, status: 'rejected', rejectedBy: approverName, rejectedAt: new Date().toISOString(), rejectionReason: 'Rejected via notification quick action' };
@@ -6911,14 +7054,19 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/approve', async (c) => {
     const { managerId, managerName } = await c.req.json();
     
     // Find the leave
-    const allLeaves = await kv.getByPrefix('leave:');
-    const leave = allLeaves.find((l: any) => l.id === leaveId);
-    
+    const found = await findKvRecordById('leave:', leaveId);
+    const leave = found?.value;
+
     if (!leave) {
       return c.json({ error: 'Leave not found' }, 404);
     }
-    
-    const key = `leave:${leave.employeeId}:${leaveId}`;
+    const auth = await verifyUser(c.req.header('Authorization'));
+    if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+    if (!(await canApproveFor(auth.user, leave.employeeId))) {
+      return c.json({ error: 'You can only approve leave of your own staff' }, 403);
+    }
+
+    const key = found!.key;
     const approvedLeave = {
       ...leave,
       status: 'approved',
@@ -6954,14 +7102,19 @@ app.post('/make-server-c2dd9b9d/leaves/:leaveId/reject', async (c) => {
     const { managerId, managerName, reason } = await c.req.json();
     
     // Find the leave
-    const allLeaves = await kv.getByPrefix('leave:');
-    const leave = allLeaves.find((l: any) => l.id === leaveId);
-    
+    const found = await findKvRecordById('leave:', leaveId);
+    const leave = found?.value;
+
     if (!leave) {
       return c.json({ error: 'Leave not found' }, 404);
     }
-    
-    const key = `leave:${leave.employeeId}:${leaveId}`;
+    const auth = await verifyUser(c.req.header('Authorization'));
+    if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+    if (!(await canApproveFor(auth.user, leave.employeeId))) {
+      return c.json({ error: 'You can only reject leave of your own staff' }, 403);
+    }
+
+    const key = found!.key;
     const rejectedLeave = {
       ...leave,
       status: 'rejected',
@@ -7000,8 +7153,8 @@ app.delete('/make-server-c2dd9b9d/leaves/:leaveId', async (c) => {
   try {
     const leaveId = c.req.param('leaveId');
 
-    const allLeaves = await kv.getByPrefix('leave:');
-    const leave = allLeaves.find((l: any) => l.id === leaveId);
+    const found = await findKvRecordById('leave:', leaveId);
+    const leave = found?.value;
 
     if (!leave) {
       return c.json({ error: 'Leave not found' }, 404);
@@ -7010,7 +7163,7 @@ app.delete('/make-server-c2dd9b9d/leaves/:leaveId', async (c) => {
       return c.json({ error: `Cannot delete a leave that has already been ${leave.status}` }, 400);
     }
 
-    const key = `leave:${leave.employeeId}:${leaveId}`;
+    const key = found!.key;
     await kv.del(key);
 
     return c.json({ success: true });
@@ -7047,13 +7200,14 @@ app.get('/make-server-c2dd9b9d/unified-employees/manager/:managerId', async (c) 
     
     const allEmployees = await kv.getByPrefix('unified-employee:');
     console.log('Total unified employees found:', allEmployees.length);
-    console.log('All employees:', JSON.stringify(allEmployees, null, 2));
-    
+
     const employees = allEmployees.filter((emp: any) => emp.managerId === managerId);
     console.log('Filtered employees for manager:', employees.length);
-    console.log('Filtered employees:', employees.length);
-    
-    return c.json({ employees });
+
+    // Same who-sees-what as the other employee lists - this one used to hand managers
+    // everyone's Aadhaar images.
+    const viewer = await viewerOf(c);
+    return c.json({ employees: employees.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
     console.log('Error fetching employees by manager:', error);
     return c.json({ error: 'Failed to fetch employees' }, 500);
@@ -7086,29 +7240,60 @@ app.get('/make-server-c2dd9b9d/unified-employees/cluster-head/:clusterHeadId', a
       name: m.name,
       clusterHeadId: m.clusterHeadId
     })));
-    
-    return c.json({ managers });
+
+    const viewer = await viewerOf(c);
+    return c.json({ managers: managers.map((m: any) => employeeForViewer(m, viewer)) });
   } catch (error) {
     console.log('Error fetching managers by cluster head:', error);
     return c.json({ error: 'Failed to fetch managers' }, 500);
   }
 });
 
+// Employee ids are never reused. Timesheets, leave, payouts and advances are all keyed by
+// employee id, so a new hire handed a former employee's id (the app used to pick "highest
+// active id + 1", ignoring archived staff) inherited their whole history. The next number is
+// one past the highest ever issued: a stored counter, plus a scan of active, archived and old
+// employee: records for ids issued before the counter existed.
+const EMPLOYEE_ID_COUNTER_KEY = 'counter:employee-id';
+
+async function issueNextEmployeeId(): Promise<string> {
+  const [active, archived, legacy, counter] = await Promise.all([
+    getAllByPrefixWithRetry('unified-employee:'),
+    getAllByPrefixWithRetry('archived-employee:'),
+    getAllByPrefixWithRetry('employee:'),
+    kv.get(EMPLOYEE_ID_COUNTER_KEY),
+  ]);
+  let highest = Number(counter?.last) || 0;
+  for (const emp of [...active, ...archived, ...legacy]) {
+    for (const id of [emp?.employeeId, emp?.id]) {
+      const match = typeof id === 'string' ? id.match(/^BM(\d+)$/i) : null;
+      if (match) highest = Math.max(highest, parseInt(match[1], 10));
+    }
+  }
+  // Skip past any id still taken (e.g. two hires created at the same moment).
+  let next = highest + 1;
+  const idFor = (n: number) => `BM${n.toString().padStart(3, '0')}`;
+  while (
+    (await kv.get(`unified-employee:${idFor(next)}`)) ||
+    (await kv.get(`archived-employee:${idFor(next)}`)) ||
+    (await kv.get(`employee:${idFor(next)}`))
+  ) next++;
+  await kv.set(EMPLOYEE_ID_COUNTER_KEY, { last: next, updatedAt: new Date().toISOString() });
+  return idFor(next);
+}
+
 // Create unified employee (Manager or Employee with unique ID BM001, BM002, etc.)
 app.post('/make-server-c2dd9b9d/unified-employees', async (c) => {
   try {
     const employeeData = await c.req.json();
-    
-    if (!employeeData.employeeId || !employeeData.name || !employeeData.email || !employeeData.password) {
+
+    if (!employeeData.name || !employeeData.email || !employeeData.password) {
       return c.json({ error: 'Missing required fields' }, 400);
     }
-    
-    // Check if employee ID already exists
-    const existing = await kv.get(`unified-employee:${employeeData.employeeId}`);
-    if (existing) {
-      return c.json({ error: 'Employee ID already exists' }, 400);
-    }
-    
+
+    // The id is always issued here (any id the app sent is ignored) - see issueNextEmployeeId.
+    employeeData.employeeId = await issueNextEmployeeId();
+
     // Create Supabase auth account
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email: employeeData.email,
@@ -7159,26 +7344,14 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
       return c.json({ error: 'Employee not found' }, 404);
     }
     
-    // Calculate total earnings from payouts
-    const payouts = await kv.getByPrefix('payout:');
+    // Calculate total earnings from payouts (paginated: payouts pass 1000 rows)
+    const payouts = await getAllByPrefixWithRetry('payout:');
     const employeePayouts = payouts.filter((p: any) => p.employeeId === employeeId);
     const totalEarnings = employeePayouts.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-    
-    // Disable auth account instead of deleting
-    if (employee.authUserId) {
-      try {
-        await supabase.auth.admin.updateUserById(employee.authUserId, {
-          user_metadata: { 
-            ...employee.user_metadata,
-            isActive: false,
-            archivedAt: new Date().toISOString()
-          }
-        });
-      } catch (authError) {
-        console.log('Warning: Could not update auth user metadata:', authError);
-      }
-    }
-    
+
+    // Disable the login (kept, not deleted, so a restore can switch it back on)
+    const loginRevoked = await setEmployeeLoginBlocked(employee.authUserId, true);
+
     // Archive the employee with release information
     const archivedEmployee = {
       ...employee,
@@ -7186,6 +7359,7 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
       releasedAt: new Date().toISOString(),
       totalEarnings,
       joiningDate: employee.joiningDate || employee.createdAt,
+      archivedFrom: `unified-employee:${employeeId}`,
     };
     
     // Save to archived employees
@@ -7195,8 +7369,8 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
     await kv.del(`unified-employee:${employeeId}`);
     
     console.log('Employee archived successfully. Total earnings:', totalEarnings);
-    
-    return c.json({ success: true, archived: archivedEmployee });
+
+    return c.json({ success: true, archived: archivedEmployee, loginRevoked });
   } catch (error) {
     console.log('Error deleting unified employee:', error);
     return c.json({ error: 'Failed to delete employee' }, 500);
@@ -7835,6 +8009,9 @@ app.post('/make-server-c2dd9b9d/assign-manager-to-employee', async (c) => {
 
     // Update employee's managerId and storeId to match manager's store
     employee.managerId = managerId;
+    // The mirror of assign-incharge clearing managerId: an old incharge would otherwise stay
+    // this person's approver (approversFor tries the incharge first).
+    delete employee.inchargeId;
     if (manager.storeId) {
       employee.storeId = manager.storeId;
     }
@@ -7889,15 +8066,13 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/role', async (c) => {
     // Update in KV store
     await kv.set(`unified-employee:${employeeId}`, employee);
 
-    // Update in Supabase Auth metadata - the employee's own, with the new role. (It used to
-    // spread the owner's metadata here, giving the employee the owner's employee id and store.)
+    // Update in Supabase Auth metadata - only the role. (It used to spread the owner's
+    // metadata, then the person's own; but user_metadata is self-editable and every trusted
+    // key in it is copied into app_metadata, so copying it let a self-set designation, store
+    // or employee id become trusted. GoTrue merges metadata, so sending just the role is enough.)
     if (employee.authUserId) {
-      const { data: target } = await supabase.auth.admin.getUserById(employee.authUserId);
       await supabase.auth.admin.updateUserById(employee.authUserId, {
-        user_metadata: {
-          ...(target?.user?.user_metadata || {}),
-          role: newRole
-        }
+        user_metadata: { role: newRole }
       });
     }
 
@@ -8283,7 +8458,9 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/assign-incharge', async (c) 
 
     // Assign to incharge
     employee.inchargeId = inchargeId;
-    // Clear direct manager assignment when assigning to incharge
+    // Clear direct manager assignment when assigning to incharge - the incharge is now this
+    // person's approver: timesheet/leave notifications go to them (approversFor) and they
+    // approve in their Approve screens (canApproveFor), not every cluster head.
     employee.managerId = undefined;
     // Inherit department from incharge
     employee.department = incharge.department;
