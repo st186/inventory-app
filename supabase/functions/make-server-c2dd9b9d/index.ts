@@ -254,6 +254,9 @@ console.log('✅ Logger middleware configured');
 // routes are limited by role here as well; routes still do their own finer checks.
 const API_PREFIX = '/make-server-c2dd9b9d';
 const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action'];
+// Read-only item catalog lists that app builds up to 1.15.18 (and the website before PR #4)
+// fetch with the public key. Nothing private in them; drop this once every phone is on 1.15.19+.
+const LEGACY_PUBLIC_READS = ['/inventory-items', '/custom-items', '/custom-categories'];
 const DISABLED_ROUTES = [
   '/auth/signup', '/auth/setup-test-cluster-head', '/auth/admin-login', '/auth/reset-all-accounts', '/auth/fix-role',
   '/auth/create-employee-accounts', '/setup-cluster-head', '/debug/', '/diagnostic/', '/attendance/employees', '/attendance/managers',
@@ -283,6 +286,7 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
     return c.json({ error: 'This feature has been switched off' }, 410);
   }
   if (PUBLIC_ROUTES.some((p) => path === p || path.startsWith(`${p}/`))) return next();
+  if (c.req.method === 'GET' && LEGACY_PUBLIC_READS.includes(path)) return next();
   const cronSecret = Deno.env.get('CRON_SYNC_SECRET');
   if (cronSecret && c.req.header('X-Cron-Secret') === cronSecret) return next();
 
