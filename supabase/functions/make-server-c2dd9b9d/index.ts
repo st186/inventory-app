@@ -3524,7 +3524,9 @@ app.post('/make-server-c2dd9b9d/archived-employees/:employeeId/restore', async (
 // Get all payouts
 app.get('/make-server-c2dd9b9d/payouts', async (c) => {
   try {
-    const payouts = await kvWithRetry.getByPrefix('payout:');
+    // Paginated: every salary and daily wage is a row, so this passes 1000 and payslips,
+    // My Payouts and advance recovery would silently miss the rest.
+    const payouts = await getAllByPrefixWithRetry('payout:');
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching payouts:', error);
@@ -13768,10 +13770,12 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
       const relevantDates = windowDates.filter(d => d >= joiningDate);
       if (relevantDates.length === 0) continue;
 
-      const timesheets = await kv.getByPrefix(`timesheet:${employee.employeeId}:`);
+      // Paginated: one person's daily timesheets pass 1000 rows in under three years, and
+      // a cut-off list would remind them about days they did fill in.
+      const timesheets = await getAllByPrefixWithRetry(`timesheet:${employee.employeeId}:`);
       const filledDates = new Set(timesheets.map((t: any) => t.date));
 
-      const leaves = await kv.getByPrefix(`leave:${employee.employeeId}:`);
+      const leaves = await getAllByPrefixWithRetry(`leave:${employee.employeeId}:`);
       const leaveDates = new Set(
         leaves.filter((l: any) => l.status === 'approved').map((l: any) => l.leaveDate)
       );
