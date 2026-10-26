@@ -276,6 +276,10 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/push\/send$/, roles: LEADS },
   // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
   { test: /^\/send-/, roles: LEADS },
+  // Item catalog edits: renaming, merging or deleting expense items and changing the momo
+  // item list (inventory-items.tsx has no checks of its own).
+  { test: /^\/custom-items\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: LEADS },
+  { test: /^\/inventory-items(\/|$)/, methods: WRITES, roles: LEADS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 
@@ -10944,7 +10948,31 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     if (!existingRequest) {
       return c.json({ error: 'Production request not found' }, 404);
     }
-    
+
+    // Accept .. ship are production steps: production incharge, operations managers, cluster
+    // head. Confirming delivery is also open to the receiving store's own people (the store
+    // incharge's "Confirm Delivery" before receive-and-count goes live), and only from shipped.
+    // A delivered request can't be moved again - moving it back and confirming again credited
+    // the store's stock twice.
+    const meta = auth.user.user_metadata || {};
+    const isProductionSide = meta.designation === 'production_incharge' || isClusterHeadOrOps(auth.user);
+    if (REQUEST_DONE.includes(existingRequest.status)) {
+      return c.json({ error: `This delivery is already marked ${existingRequest.status}` }, 409);
+    }
+    if (status === 'delivered' || status === 'partially-delivered') {
+      const isOwnStore = !!existingRequest.storeId && (meta.storeId === existingRequest.storeId || (meta.assignedStoreIds || []).includes(existingRequest.storeId));
+      if (!isOwnStore && !isProductionSide) {
+        return c.json({ error: 'Only the receiving store or the production side can confirm this delivery' }, 403);
+      }
+      if (existingRequest.status !== 'shipped' && existingRequest.status !== 'partially-shipped') {
+        return c.json({ error: 'This request has not been shipped yet' }, 409);
+      }
+    } else if (!['accepted', 'in-preparation', 'prepared', 'shipped', 'partially-shipped'].includes(status)) {
+      return c.json({ error: `Unknown status: ${status}` }, 400);
+    } else if (!isProductionSide) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can update a request' }, 403);
+    }
+
     const now = new Date().toISOString();
     const updates: any = {
       status,
@@ -11073,13 +11101,22 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
     const id = c.req.param('id');
     const { shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch } = await c.req.json();
 
+    if (auth.user.user_metadata?.designation !== 'production_incharge' && !isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can ship a request' }, 403);
+    }
+
     const existingRequest = await kv.get(`production_request_${id}`);
     if (!existingRequest) {
       return c.json({ error: 'Production request not found' }, 404);
     }
-    
+    // Shipping again would set it back to shipped, and the store's confirmation would then
+    // credit its stock a second time.
+    if (REQUEST_DONE.includes(existingRequest.status)) {
+      return c.json({ error: `This delivery is already marked ${existingRequest.status}` }, 409);
+    }
+
     const now = new Date().toISOString();
-    
+
     // Determine if this is a partial shipment
     let isPartialShipment = false;
 
@@ -11761,6 +11798,11 @@ app.post('/make-server-c2dd9b9d/production-houses', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const body = await c.req.json();
@@ -11806,6 +11848,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const id = c.req.param('id');
@@ -11838,6 +11885,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id/inventory', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -11874,6 +11926,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id/assign-head', async (c) => 
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -11924,6 +11981,11 @@ app.post('/make-server-c2dd9b9d/production-houses/:id/fix-records', async (c) =>
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -11984,6 +12046,11 @@ app.delete('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const id = c.req.param('id');
@@ -12023,6 +12090,11 @@ app.post('/make-server-c2dd9b9d/production-houses/transfer-inventory', async (c)
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -12853,12 +12925,23 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/approve', async (c) => {
   }
 
   try {
+    // Approvers are the cluster head and operations managers (as on the Recalibration screen),
+    // and never the person who did the count: anyone could approve, their own count included.
+    if (!isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the cluster head and operations managers can approve a stock count' }, 403);
+    }
     const recalibrationId = c.req.param('id');
-    
+
     // Get the recalibration record
     const recalibration = await kv.get(`recalibration_${recalibrationId}`);
     if (!recalibration) {
       return c.json({ error: 'Recalibration not found' }, 404);
+    }
+    if (recalibration.performedBy === auth.user.id) {
+      return c.json({ error: 'Someone other than the person who did the count has to approve it' }, 403);
+    }
+    if (recalibration.status && recalibration.status !== 'pending') {
+      return c.json({ error: `This stock count is already ${recalibration.status}` }, 409);
     }
 
     // Update the record with approval
@@ -12894,9 +12977,12 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/reject', async (c) => {
   }
 
   try {
+    if (!isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the cluster head and operations managers can reject a stock count' }, 403);
+    }
     const recalibrationId = c.req.param('id');
     const { reason } = await c.req.json();
-    
+
     if (!reason) {
       return c.json({ error: 'Rejection reason is required' }, 400);
     }
