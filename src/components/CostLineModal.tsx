@@ -89,7 +89,7 @@ export function CostLineModal({
                           <li key={e.id} className="pl-11 pr-5 py-2 flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-sm text-gray-800 break-words">{e.name}</p>
-                              <p className="text-[11px] text-gray-500">{[shortDate(e.date), e.detail].filter(Boolean).join(' · ')}</p>
+                              <p className="text-[11px] text-gray-500" data-ai-private={e.detail ? '' : undefined}>{[shortDate(e.date), e.detail].filter(Boolean).join(' · ')}</p>
                             </div>
                             <p className="text-sm tabular-nums text-gray-900 flex-shrink-0">{inr(e.amount)}</p>
                           </li>

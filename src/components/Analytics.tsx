@@ -7,6 +7,8 @@ import { formatDateTimeIST, formatDateIST, getTodayIST, addDays } from '../utils
 import { InventoryContextType } from '../App';
 import { employeeBelongsToStore } from '../utils/entityAccess';
 import { SalaryBreakdownModal } from './SalaryBreakdownModal';
+import { BunnyLanguagePicker } from './BunnyLanguagePicker';
+import { setScreenTab } from '../utils/screenContext';
 import { CommissionBreakdownModal, InterestBreakdownModal } from './CostBreakdownModals';
 import { buildSmoothedCosts } from '../utils/dailyCostSmoothing';
 import { buildSalaryBreakdown, monthAdd, monthLabel } from '../utils/salaryBreakdown';
@@ -1804,6 +1806,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  setActiveView('production-requests');
  }
  }, [highlightRequestId]);
+
+ // The Bunny chat explains whichever tab is open.
+ useEffect(() => {
+ setScreenTab(analyticsMode === 'production' ? 'production' : activeView);
+ return () => setScreenTab(undefined);
+ }, [activeView, analyticsMode]);
 
  // Same for a tab opened from a notification while Analytics is already on screen.
  useEffect(() => {
@@ -4210,6 +4218,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </div>
  )}
  </div>
+
+ {/* Bunny's language for this person - voice, AI answers and read-aloud (utils/bunnyLanguage.ts). */}
+ <BunnyLanguagePicker />
 
  {/* Leave Alert Bar - covers the rest of the month (today through month-end), not just
  today and not days that have already passed, so a cluster head/manager sees what's
@@ -9531,7 +9542,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {/* Leave Details Modal - grouped by day (today through the end of the current month),
  past days already dropped by monthLeaveSummary itself. */}
  {showLeaveModal && (
- <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+ <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" data-ai-private>
  <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
  {/* Modal Header */}
  <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between flex-shrink-0">

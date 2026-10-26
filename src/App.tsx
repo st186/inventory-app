@@ -16,7 +16,6 @@ const ProductionManagement = lazy(() => import('./components/ProductionManagemen
 const ProductionHouseManagement = lazy(() => import('./components/ProductionHouseManagement').then(module => ({ default: module.ProductionHouseManagement })));
 const AssetsManagement = lazy(() => import('./components/AssetsManagement').then(module => ({ default: module.AssetsManagement })));
 const RiderProfile = lazy(() => import('./components/RiderProfile').then(module => ({ default: module.RiderProfile })));
-const AskBunny = lazy(() => import('./components/insights/AskBunny').then(module => ({ default: module.AskBunny })));
 const StockOutLog = lazy(() => import('./components/StockOutLog').then(module => ({ default: module.StockOutLog })));
 const IncomingDeliveries = lazy(() => import('./components/dispatch/IncomingDeliveries').then(module => ({ default: module.IncomingDeliveries })));
 const RiderTrips = lazy(() => import('./components/RiderTrips').then(module => ({ default: module.RiderTrips })));
@@ -34,6 +33,9 @@ const AttendancePortal = lazy(() => import('./components/AttendancePortal').then
 const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').then(module => ({ default: module.EmployeeManagement })));
 import { Notifications } from './components/Notifications';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
+import { BunnyChat } from './components/BunnyChat';
+import { setLanguageOwner } from './utils/bunnyLanguage';
+import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { SetupClusterHead } from './components/SetupClusterHead';
@@ -45,7 +47,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // is ever needed again.
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, MessageCircleQuestion } from 'lucide-react';
+import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -363,7 +365,7 @@ export type InventoryContextType = {
 
 export default function App() {
  // All useState hooks must be at the top, before any conditional returns
- const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs' | 'ask-bunny'>('analytics');
+ const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs'>('analytics');
  // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
  const setActiveView = useCallback((view: typeof activeView) => {
  startTransition(() => { setActiveViewRaw(view); });
@@ -376,6 +378,9 @@ export default function App() {
  // sent the user here (CONFIRMED bug, found 2026-09-05).
  const [preProductionManagementView, setPreProductionManagementView] = useState<typeof activeView>('analytics');
  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null>(null);
+ // Bunny chat: which screen is open (so it can explain it) and whose language choice applies.
+ useEffect(() => { setScreenPage(activeView); }, [activeView]);
+ useEffect(() => { setLanguageOwner(user?.employeeId || user?.email || null); }, [user?.employeeId, user?.email]);
  const [authError, setAuthError] = useState<string | null>(null);
  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
  const [highlightRequestId, setHighlightRequestId] = useState<string | null>(null);
@@ -1269,9 +1274,9 @@ export default function App() {
  itemName: newItem.itemName
  });
  
- const updatedInventory = [...inventory, newItem];
- console.log('📊 [ADD INVENTORY] Setting inventory state, new count:', updatedInventory.length);
- setInventory(updatedInventory);
+ // Built from the latest list, not the one captured at render: the invoice scanner adds
+ // several lines in a row, and only the last one used to stay on screen.
+ setInventory((prev) => [...prev, newItem]);
  
  console.log('🗑️ [ADD INVENTORY] Invalidating inventory cache');
  dataCache.invalidateCache('inventory'); // Invalidate cache on data change
@@ -1295,7 +1300,7 @@ export default function App() {
  ? item
  : { ...item, storeId: user.storeId || item.storeId };
  const newItem = await api.addOverhead(user.accessToken, itemWithStore);
- setOverheads([...overheads, newItem]);
+ setOverheads((prev) => [...prev, newItem]);
  dataCache.invalidateCache('overheads');
  console.log('✅ Expense/Overhead item added successfully');
  } catch (error) {
@@ -1314,7 +1319,7 @@ export default function App() {
  ? item
  : { ...item, storeId: user.storeId || item.storeId };
  const newItem = await api.addFixedCost(user.accessToken, itemWithStore);
- setFixedCosts([...fixedCosts, newItem]);
+ setFixedCosts((prev) => [...prev, newItem]);
  dataCache.invalidateCache('fixedCosts');
  } catch (error) {
  console.error('Error adding fixed cost item:', error);
@@ -1331,7 +1336,7 @@ export default function App() {
  ? item
  : { ...item, storeId: user.storeId || item.storeId };
  const updatedItem = await api.updateInventory(user.accessToken, id, itemWithStore);
- setInventory(inventory.map(inv => inv.id === id ? updatedItem : inv));
+ setInventory((prev) => prev.map(inv => inv.id === id ? updatedItem : inv));
  dataCache.invalidateCache('inventory');
  } catch (error) {
  console.error('Error updating inventory item:', error);
@@ -1349,7 +1354,7 @@ export default function App() {
  ? item
  : { ...item, storeId: user.storeId || item.storeId };
  const updatedItem = await api.updateOverhead(user.accessToken, id, itemWithStore);
- setOverheads(overheads.map(ovh => ovh.id === id ? updatedItem : ovh));
+ setOverheads((prev) => prev.map(ovh => ovh.id === id ? updatedItem : ovh));
  dataCache.invalidateCache('overheads');
  console.log('✅ Expense/Overhead item updated successfully');
  } catch (error) {
@@ -1367,7 +1372,7 @@ export default function App() {
  ? item
  : { ...item, storeId: user.storeId || item.storeId };
  const updatedItem = await api.updateFixedCost(user.accessToken, id, itemWithStore);
- setFixedCosts(fixedCosts.map(fc => fc.id === id ? updatedItem : fc));
+ setFixedCosts((prev) => prev.map(fc => fc.id === id ? updatedItem : fc));
  dataCache.invalidateCache('fixedCosts');
  } catch (error) {
  console.error('Error updating fixed cost item:', error);
@@ -1379,14 +1384,14 @@ export default function App() {
  if (!user) return;
  try {
  await api.deleteInventory(user.accessToken, id);
- setInventory(inventory.filter(inv => inv.id !== id));
+ setInventory((prev) => prev.filter(inv => inv.id !== id));
  dataCache.invalidateCache('inventory');
  console.log('✅ Inventory item deleted successfully');
  } catch (error: any) {
  // If item not found, it was already deleted - update UI anyway
  if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
  console.log('⚠️ Item was already deleted, updating UI');
- setInventory(inventory.filter(inv => inv.id !== id));
+ setInventory((prev) => prev.filter(inv => inv.id !== id));
  dataCache.invalidateCache('inventory');
  } else {
  console.error('Error deleting inventory item:', error);
@@ -1400,14 +1405,14 @@ export default function App() {
  try {
  console.log('🗑️ Deleting Expense/Overhead item:', id);
  await api.deleteOverhead(user.accessToken, id);
- setOverheads(overheads.filter(ovh => ovh.id !== id));
+ setOverheads((prev) => prev.filter(ovh => ovh.id !== id));
  dataCache.invalidateCache('overheads');
  console.log('✅ Expense/Overhead item deleted successfully');
  } catch (error: any) {
  // If item not found, it was already deleted - update UI anyway
  if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
  console.log('⚠️ Expense/Overhead item was already deleted, updating UI');
- setOverheads(overheads.filter(ovh => ovh.id !== id));
+ setOverheads((prev) => prev.filter(ovh => ovh.id !== id));
  dataCache.invalidateCache('overheads');
  } else {
  console.error('❌ Error deleting expense/overhead item:', error);
@@ -1420,14 +1425,14 @@ export default function App() {
  if (!user) return;
  try {
  await api.deleteFixedCost(user.accessToken, id);
- setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
+ setFixedCosts((prev) => prev.filter(fc => fc.id !== id));
  dataCache.invalidateCache('fixedCosts');
  console.log('✅ Fixed cost item deleted successfully');
  } catch (error: any) {
  // If item not found, it was already deleted - update UI anyway
  if (error?.message?.includes('not found') || error?.message?.includes('already deleted')) {
  console.log('⚠️ Item was already deleted, updating UI');
- setFixedCosts(fixedCosts.filter(fc => fc.id !== id));
+ setFixedCosts((prev) => prev.filter(fc => fc.id !== id));
  dataCache.invalidateCache('fixedCosts');
  } else {
  console.error('Error deleting fixed cost item:', error);
@@ -1448,7 +1453,7 @@ export default function App() {
  storeId: user.storeId || item.storeId
  };
  const newItem = await api.addSalesData(user.accessToken, itemWithStore);
- setSalesData([...salesData, newItem]);
+ setSalesData((prev) => [...prev, newItem]);
  dataCache.invalidateCache('salesData');
  dataCache.invalidateCache('categorySales');
  } catch (error) {
@@ -1466,7 +1471,7 @@ export default function App() {
  storeId: user.storeId || item.storeId
  };
  const updatedItem = await api.updateSalesData(user.accessToken, id, itemWithStore);
- setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+ setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
  dataCache.invalidateCache('salesData');
  dataCache.invalidateCache('categorySales');
  } catch (error) {
@@ -1479,7 +1484,7 @@ export default function App() {
  if (!user) return;
  try {
  const updatedItem = await api.approveSalesData(user.accessToken, id);
- setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+ setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
  dataCache.invalidateCache('salesData');
  } catch (error) {
  console.error('Error approving sales data:', error);
@@ -1491,7 +1496,7 @@ export default function App() {
  if (!user) return;
  try {
  const updatedItem = await api.requestSalesApproval(user.accessToken, id, requestedCashInHand, requestedOffset);
- setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+ setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
  dataCache.invalidateCache('salesData');
  } catch (error) {
  console.error('Error requesting sales approval:', error);
@@ -1503,7 +1508,7 @@ export default function App() {
  if (!user) return;
  try {
  const updatedItem = await api.approveDiscrepancy(user.accessToken, id);
- setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+ setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
  dataCache.invalidateCache('salesData');
  } catch (error) {
  console.error('Error approving discrepancy:', error);
@@ -1515,7 +1520,7 @@ export default function App() {
  if (!user) return;
  try {
  const updatedItem = await api.rejectDiscrepancy(user.accessToken, id, reason);
- setSalesData(salesData.map(sd => sd.id === id ? updatedItem : sd));
+ setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
  dataCache.invalidateCache('salesData');
  } catch (error) {
  console.error('Error rejecting discrepancy:', error);
@@ -1531,7 +1536,7 @@ export default function App() {
  storeId: user.storeId || item.storeId
  };
  const newItem = await api.addProductionData(itemWithStore);
- setProductionData([...productionData, newItem]);
+ setProductionData((prev) => [...prev, newItem]);
  dataCache.invalidateCache('productionData');
  } catch (error) {
  console.error('Error adding production data:', error);
@@ -1547,7 +1552,7 @@ export default function App() {
  storeId: user.storeId || item.storeId
  };
  const updatedItem = await api.updateProductionData(id, itemWithStore);
- setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+ setProductionData((prev) => prev.map(pd => pd.id === id ? updatedItem : pd));
  dataCache.invalidateCache('productionData');
  } catch (error) {
  console.error('Error updating production data:', error);
@@ -1559,7 +1564,7 @@ export default function App() {
  if (!user) return;
  try {
  const updatedItem = await api.approveProductionData(id);
- setProductionData(productionData.map(pd => pd.id === id ? updatedItem : pd));
+ setProductionData((prev) => prev.map(pd => pd.id === id ? updatedItem : pd));
  dataCache.invalidateCache('productionData');
  } catch (error) {
  console.error('Error approving production data:', error);
@@ -1641,7 +1646,7 @@ export default function App() {
  console.log('📦 Creating stock request:', request);
  const newRequest = await api.createStockRequest(user.accessToken, request);
  console.log('✅ Stock request created successfully:', newRequest);
- setStockRequests([...stockRequests, newRequest]);
+ setStockRequests((prev) => [...prev, newRequest]);
  console.log('📦 Updated stock requests count:', stockRequests.length + 1);
  dataCache.invalidateCache('stockRequests');
  } catch (error) {
@@ -1654,7 +1659,7 @@ export default function App() {
  if (!user) return;
  try {
  const updated = await api.fulfillStockRequest(user.accessToken, id, fulfilledQuantities, fulfilledBy, fulfilledByName, notes);
- setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
+ setStockRequests((prev) => prev.map(r => r.id === id ? updated : r));
  // Reload production houses to get updated inventory
  const houses = await api.getProductionHouses();
  setProductionHouses(houses);
@@ -1670,7 +1675,7 @@ export default function App() {
  if (!user) return;
  try {
  const updated = await api.cancelStockRequest(user.accessToken, id);
- setStockRequests(stockRequests.map(r => r.id === id ? updated : r));
+ setStockRequests((prev) => prev.map(r => r.id === id ? updated : r));
  dataCache.invalidateCache('stockRequests');
  } catch (error) {
  console.error('Error cancelling stock request:', error);
@@ -1853,8 +1858,9 @@ export default function App() {
  ? [{ id: user.storeId, name: stores.find((st) => st.id === user.storeId)?.name || 'My store' }]
  : (stores || []).map((st) => ({ id: st.id, name: st.name }));
  const stockOutDefaultStore = user.storeId && String(user.storeId).startsWith('STORE-') ? user.storeId : (stores[0]?.id || null);
- // Ask Bunny (AI questions about the business): cluster head and operations manager.
- const canAskBunny = isClusterHead || isOperationsManager;
+ // The floating Bunny chat (AI explanations of any screen): the cluster head and every manager
+ // (store, production, operations). Audit and employee screens don't show it.
+ const canAskBunny = isClusterHead || user.role === 'manager';
  const askBunnyStoreId = selectedStoreId || (stores || []).find((st) => st.productionHouseId)?.id || stores[0]?.id || null;
 
  // Debug: Log user permissions
@@ -2371,7 +2377,7 @@ export default function App() {
  </nav>
 
  {/* Employee Main Content */}
- <main className="pb-6">
+ <main className="pb-6" data-ai-screen>
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
@@ -2474,6 +2480,7 @@ export default function App() {
  return (
  <>
  {pushNotificationWidget}
+ {canAskBunny && <BunnyChat accessToken={user.accessToken || ''} storeId={askBunnyStoreId} raised={!!pushNotificationWidget} />}
  <UpdateAvailableBanner />
 
  <div className="min-h-screen bg-gray-50">
@@ -2543,19 +2550,7 @@ export default function App() {
  <TrendingUp className="w-4 h-4" />
  <span className="hidden xl:inline">Analytics</span>
  </button>
- {canAskBunny && (
- <button
- onClick={() => setActiveView('ask-bunny')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'ask-bunny'
- ? 'bg-white text-violet-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <MessageCircleQuestion className="w-4 h-4" />
- <span className="hidden xl:inline">Ask Bunny</span>
- </button>
- )}
+ 
  <button
  onClick={() => setActiveView('inventory')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2649,19 +2644,6 @@ export default function App() {
  <TrendingUp className="w-4 h-4" />
  <span className="hidden xl:inline">Analytics</span>
  </button>
- {canAskBunny && (
- <button
- onClick={() => setActiveView('ask-bunny')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'ask-bunny'
- ? 'bg-white text-violet-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <MessageCircleQuestion className="w-4 h-4" />
- <span className="hidden xl:inline">Ask Bunny</span>
- </button>
- )}
  <button
  onClick={() => setActiveView('sales')}
  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
@@ -2776,20 +2758,7 @@ export default function App() {
  <TrendingUp className="w-4 h-4" />
  <span>Analytics</span>
  </button>
- <button
- onClick={() => {
- setActiveView('ask-bunny');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
- activeView === 'ask-bunny'
- ? 'bg-white text-orange-600 font-semibold shadow-sm'
- : 'bg-white/10 text-white hover:bg-white/20'
- }`}
- >
- <MessageCircleQuestion className="w-4 h-4" />
- <span>Ask Bunny</span>
- </button>
+ 
  <button
  onClick={() => {
  setActiveView('inventory');
@@ -2891,22 +2860,7 @@ export default function App() {
                     <TrendingUp className="w-5 h-5" />
                     <span>Analytics</span>
                   </button>
-                  {canAskBunny && (
-                    <button
-                      onClick={() => {
-                        setActiveView('ask-bunny');
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                        activeView === 'ask-bunny'
-                          ? 'bg-[#E4D4FF] text-gray-800'
-                          : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
-                      }`}
-                    >
-                      <MessageCircleQuestion className="w-5 h-5" />
-                      <span>Ask Bunny</span>
-                    </button>
-                  )}
+                  
                   <button
                     onClick={() => {
                       setActiveView('sales');
@@ -3048,11 +3002,9 @@ export default function App() {
  )}
 
  {/* Main Content */}
- <main className="pb-6">
+ <main className="pb-6" data-ai-screen>
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'ask-bunny' && canAskBunny ? (
- <AskBunny accessToken={user.accessToken || ''} storeId={askBunnyStoreId} />
- ) : activeView === 'stock-outs' && canViewStockOuts ? (
+ {activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />
  ) : activeView === 'riders' ? (
  <RiderTrips

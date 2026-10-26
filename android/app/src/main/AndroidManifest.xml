@@ -73,10 +73,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Voice buttons: lets the app find the phone's speech-recognition screen (VoicePlugin.java). -->
+    <!-- Voice (VoicePlugin.java): the phone's speech-recognition screen and text-to-speech engine. -->
     <queries>
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <!-- Read-aloud of Bunny's answers: lets text-to-speech find the phone's voice engine. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 </manifest>

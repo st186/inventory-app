@@ -72,6 +72,8 @@ async function actorOf(kv: Kv, authResult: any) {
   return {
     name: employee?.name || meta.name || authResult.user.email,
     id: meta.employeeId || authResult.user.email,
+    userId: authResult.user.id as string,
+    storeId: (meta.storeId as string) || null,
     role,
     designation,
     // Owner side: may run the AI features and edit the calendar.
@@ -79,6 +81,8 @@ async function actorOf(kv: Kv, authResult: any) {
     canView: role === 'cluster_head' || role === 'manager' || role === 'audit',
   };
 }
+
+const aiUser = (actor: { userId: string; role: string }): AiUser => ({ id: actor.userId, isOwner: actor.role === 'cluster_head' });
 
 // ---------------- Data ----------------
 
@@ -220,7 +224,40 @@ async function recordUsage(kv: Kv, purpose: string, usage: any) {
 }
 
 class AiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public extra: Record<string, any> = {}) { super(message); }
+}
+
+// ---------------- Per-person AI allowance ----------------
+// Each person gets a share of AI tokens per hour and per day (owner, 27 Oct 2026), on top of the
+// business's monthly ₹ limit, so one person asking a lot can't use it up for everyone. Tokens
+// counted: everything sent and written (a question that looks up data uses 10-60k on Haiku,
+// under ₹0.01 each). The cluster head gets 3x. AI_USER_HOURLY_TOKENS / AI_USER_DAILY_TOKENS
+// secrets override the defaults.
+const USER_HOURLY_TOKENS = Number(Deno.env.get('AI_USER_HOURLY_TOKENS') || '200000');
+const USER_DAILY_TOKENS = Number(Deno.env.get('AI_USER_DAILY_TOKENS') || '500000');
+type AiUser = { id: string; isOwner?: boolean };
+const istNow = () => new Date(Date.now() + 330 * 60000);
+const userDayKey = (uid: string) => `ai-user-usage:${uid}:${istNow().toISOString().slice(0, 10)}`;
+const userHourKey = (uid: string) => `ai-user-usage:${uid}:${istNow().toISOString().slice(0, 13)}`;
+
+async function checkUserAllowance(kv: Kv, user: AiUser) {
+  const factor = user.isOwner ? 3 : 1;
+  const [day, hour] = await Promise.all([kv.get<any>(userDayKey(user.id)), kv.get<any>(userHourKey(user.id))]);
+  if ((day?.tokens || 0) >= USER_DAILY_TOKENS * factor) {
+    throw new AiError("You've used today's share of Bunny. Try again tomorrow.", 429, { limit: 'day' });
+  }
+  if ((hour?.tokens || 0) >= USER_HOURLY_TOKENS * factor) {
+    const minutes = Math.max(1, 60 - istNow().getUTCMinutes());
+    throw new AiError(`You've asked Bunny a lot in this hour. Try again in ${minutes} minutes.`, 429, { limit: 'hour', retryAfterMinutes: minutes });
+  }
+}
+
+async function recordUserUsage(kv: Kv, user: AiUser, usage: any) {
+  const tokens = (usage?.input_tokens || 0) + (usage?.output_tokens || 0) + (usage?.cache_read_input_tokens || 0) + (usage?.cache_creation_input_tokens || 0);
+  for (const key of [userDayKey(user.id), userHourKey(user.id)]) {
+    const cur = (await kv.get<any>(key)) || { tokens: 0, calls: 0 };
+    await kv.set(key, { tokens: cur.tokens + tokens, calls: cur.calls + 1 });
+  }
 }
 
 const SYSTEM_PROMPT = `You are Bunny, the business analyst built into the Bunny Momos staff app.
@@ -237,7 +274,34 @@ How to answer:
 - Use only the data you are given or fetch with your tools. If something is not in the data, say so instead of guessing.
 - Name dates as "Sun 25 Oct". Today's date is given in each request.
 - Never ask for or discuss individual salaries or personal details.
-- A question asked in Bengali (in Bengali script or written in English letters, often spoken into the phone) gets its answer in simple Bengali; keep numbers in digits.`;
+- Answer in the language each request asks for (English, Bengali or Hindi) with simple everyday words, numbers in digits. Answers may be read aloud, so avoid tables and heavy formatting.
+- When the person is looking at a screen of the app, its visible text comes with the question: explain what the numbers mean, why they might be what they are, and what to do, using that screen first. If the screen doesn't show how a number is worked out, say so rather than guessing.
+- End every answer with one last line exactly like "FOLLOW_UPS: question one | question two | question three" - three short follow-up questions the person might ask next, in the same language.
+
+The app's main screens:
+- Analytics: Overview (sales, costs, profit for the period), Revenue & Channels (counter vs Zomato/Swiggy), Item Performance (momos and items sold), Costs & Margins (spend by category), Unit Economics (cost and profit per plate), Cash & Reconciliation (counted cash vs expected, Paytm), Stock Requests (store requests to production and how they were met), Store-Production SLA (on-time deliveries), Trends & Growth (weekday pattern, item mix, festival effects, forecast accuracy, festival calendar, growth ideas).
+- Sales: the store incharge's daily cash count. Expected cash in hand = yesterday's counted cash + cash collected + cash top-ups from Paytm - expenses paid in cash - contract payouts; the difference from the counted cash is the over/short. Online payouts arrive later (Zomato about 3 working days, Swiggy weekly).
+- Expense: purchases, overheads and fixed costs for the store and the production house, paid from that side's cash, Paytm or the owner's own money.
+- Production, Stock requests, Receive stock, Out of stock: making, shipping and receiving momos; the forecast suggests how much to ask for.`;
+
+const LANGUAGES = { en: 'English', bn: 'Bengali (বাংলা)', hi: 'Hindi (हिन्दी)' };
+
+// Belt and braces on top of the app leaving private parts out: no Aadhaar-like 12-digit numbers,
+// phone numbers or email addresses go to the AI.
+const scrubPrivate = (text: string) => text
+  .replace(/\b\d{4}\s?\d{4}\s?\d{4}\b/g, '[number hidden]')
+  .replace(/(\+91[\s-]?)?\b[6-9]\d{9}\b/g, '[phone hidden]')
+  .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email hidden]');
+
+// The model ends each answer with "FOLLOW_UPS: a | b | c"; split that off for the suggestion chips.
+function splitFollowUps(raw: string) {
+  const m = raw.match(/\s*FOLLOW_UPS:\s*(.+?)\s*$/);
+  if (!m || m.index === undefined) return { answer: raw.trim(), followUps: [] as string[] };
+  return {
+    answer: raw.slice(0, m.index).trim(),
+    followUps: m[1].split('|').map((q) => q.trim()).filter(Boolean).slice(0, 3),
+  };
+}
 
 // Reads one spoken sentence (speech-to-text from the phone, usually Bengali mixed with English
 // words) into form fields. Only what was said - nothing worked out or guessed.
@@ -256,8 +320,10 @@ async function callClaude(deps: Deps, opts: {
   format?: any;
   system?: string; // in place of the analyst prompt, for small jobs like reading voice input
   noThinking?: boolean; // quick extraction: skip thinking (Haiku thinks by default)
+  user?: AiUser; // the person asking - counted against their hourly/daily share
 }) {
   if (!aiConfigured()) throw new AiError('AI is not set up yet: add the ANTHROPIC_API_KEY secret in Supabase.', 503);
+  if (opts.user) await checkUserAllowance(deps.kv, opts.user);
   const spent = await spentThisMonth(deps.kv);
   if (spent >= AI_MONTHLY_CAP_USD) throw new AiError(`This month's AI budget (₹${AI_MONTHLY_CAP_INR.toLocaleString('en-IN')}) is used up. It resets on the 1st, or raise the AI_MONTHLY_CAP_INR secret to continue.`, 429);
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
@@ -284,6 +350,7 @@ async function callClaude(deps: Deps, opts: {
     throw err;
   }
   await recordUsage(deps.kv, opts.purpose, res.usage);
+  if (opts.user) await recordUserUsage(deps.kv, opts.user, res.usage);
   if (res.stop_reason === 'refusal') throw new AiError('Claude declined this request.', 422);
   return res;
 }
@@ -440,7 +507,7 @@ async function pendingSuggestions(kv: Kv, today: string): Promise<CalendarSugges
   return (rows || []).filter((s) => s?.date && s.date >= today).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function draftCalendarDays(deps: Deps, from: string, to: string, drafted: 'weekly' | 'manual') {
+async function draftCalendarDays(deps: Deps, from: string, to: string, drafted: 'weekly' | 'manual', user?: AiUser) {
   const [events, pending, dismissed] = await Promise.all([
     loadEvents(deps.kv),
     deps.kv.getByPrefix<any>('calendar-suggestion:'),
@@ -450,6 +517,7 @@ async function draftCalendarDays(deps: Deps, from: string, to: string, drafted: 
   const known = new Set([...events, ...(pending || []), ...(dismissed || [])].map((e: any) => e?.date).filter((d) => d && d >= from && d <= to));
   const res = await callClaude(deps, {
     purpose: 'calendar',
+    user,
     effort: 'low',
     maxTokens: 8000,
     tools: [{ type: WEB_SEARCH_TOOL, name: 'web_search', max_uses: 3, user_location: { type: 'approximate', country: 'IN', region: 'West Bengal', city: 'Bardhaman', timezone: 'Asia/Kolkata' } }],
@@ -495,7 +563,7 @@ export function registerInsightsRoutes(app: any, deps: Deps) {
     return { actor };
   };
   const fail = (c: any, err: any) => {
-    if (err instanceof AiError) return c.json({ error: err.message }, err.status);
+    if (err instanceof AiError) return c.json({ error: err.message, ...err.extra }, err.status);
     console.error('[insights]', err);
     return c.json({ error: err?.message || 'Something went wrong' }, 500);
   };
@@ -558,6 +626,7 @@ export function registerInsightsRoutes(app: any, deps: Deps) {
       const data = await briefData(deps, storeId);
       const res = await callClaude(deps, {
         purpose: 'brief',
+        user: aiUser(g.actor!),
         effort: 'medium',
         maxTokens: 6000,
         messages: [{
@@ -645,6 +714,7 @@ ${JSON.stringify(data)}`,
       };
       const res = await callClaude(deps, {
         purpose: 'growth',
+        user: aiUser(g.actor!),
         effort: 'high',
         maxTokens: 12000,
         format: { type: 'json_schema', schema: ideaSchema },
@@ -682,7 +752,7 @@ ${JSON.stringify({
       const body = await c.req.json().catch(() => ({}));
       const from = body.from || today;
       const to = body.to || addDaysISO(from, DRAFT_DAYS);
-      const added = await draftCalendarDays(deps, from, to, 'manual');
+      const added = await draftCalendarDays(deps, from, to, 'manual', aiUser(g.actor!));
       return c.json({ added: added.length, suggestions: await pendingSuggestions(deps.kv, today) });
     } catch (err) { return fail(c, err); }
   });
@@ -794,6 +864,7 @@ ${JSON.stringify({
       };
       const res = await callClaude(deps, {
         purpose: 'voice',
+        user: { id: authResult.user.id, isOwner: role === 'cluster_head' },
         system: VOICE_PROMPT,
         effort: 'low',
         noThinking: /haiku/.test(AI_MODEL),
@@ -856,6 +927,7 @@ ${JSON.stringify({
       };
       const res = await callClaude(deps, {
         purpose: 'invoice',
+        user: { id: authResult.user.id, isOwner: role === 'cluster_head' },
         effort: 'low',
         maxTokens: 8000,
         format: { type: 'json_schema', schema: invoiceSchema },
@@ -875,23 +947,41 @@ ${JSON.stringify({
   });
 
   // "Ask Bunny": a question answered from the app's data. Claude can only read, never change.
+  // Ask Bunny - the chat behind the floating Bunny button on every screen. Answers in the person's
+  // chosen language, about the screen they're looking at (its visible text comes with the
+  // question, private parts already left out by the app), and suggests follow-up questions.
   app.post(`${P}/ai/ask`, async (c: any) => {
-    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    const g = await guard(c, 'view'); if (g.error) return g.error;
     try {
+      const actor = g.actor!;
       const body = await c.req.json();
-      const storeId = body.storeId || null;
+      // A store incharge asks about their own store only.
+      const storeId = actor.designation === 'store_incharge' && actor.storeId ? actor.storeId : (body.storeId || null);
+      const language = LANGUAGES[body.language as keyof typeof LANGUAGES] ? body.language as keyof typeof LANGUAGES : 'en';
       const history = (Array.isArray(body.messages) ? body.messages : [])
         .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
         .slice(-12)
         .map((m: any) => ({ role: m.role, content: m.content.slice(0, 4000) }));
       if (!history.length || history[history.length - 1].role !== 'user') return c.json({ error: 'Ask a question' }, 400);
       const today = deps.getTodayIST();
-      history[history.length - 1] = { role: 'user', content: `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}.)\n\n${history[history.length - 1].content}` };
+      const screen = body.screen && typeof body.screen === 'object' ? body.screen : null;
+      const screenText = screen?.text ? scrubPrivate(String(screen.text)).slice(0, 6000) : '';
+      const screenPart = screen
+        ? `The person is on the "${String(screen.page || '').slice(0, 40)}${screen.tab ? ` > ${String(screen.tab).slice(0, 40)}` : ''}" screen of the app.${screenText ? ` What that screen shows right now:\n<screen>\n${screenText}\n</screen>` : ''}\n\n`
+        : '';
+      history[history.length - 1] = {
+        role: 'user',
+        content: `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}. Answer in ${LANGUAGES[language]}.)\n\n${screenPart}Question: ${history[history.length - 1].content}`,
+      };
       const messages: any[] = history;
       const used: string[] = [];
+      const reply = (raw: string) => {
+        const { answer, followUps } = splitFollowUps(raw);
+        return c.json({ answer: answer || 'No answer.', followUps, toolsUsed: used });
+      };
       for (let turn = 0; turn < 6; turn++) {
-        const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools: ASK_TOOLS, messages });
-        if (res.stop_reason !== 'tool_use') return c.json({ answer: textOf(res) || 'No answer.', toolsUsed: used });
+        const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools: ASK_TOOLS, messages, user: aiUser(actor) });
+        if (res.stop_reason !== 'tool_use') return reply(textOf(res));
         messages.push({ role: 'assistant', content: res.content });
         const results = [];
         for (const block of res.content.filter((b: any) => b.type === 'tool_use')) {
@@ -907,7 +997,7 @@ ${JSON.stringify({
         }
         messages.push({ role: 'user', content: results });
       }
-      return c.json({ answer: 'That needed more look-ups than allowed - try a narrower question.', toolsUsed: used });
+      return c.json({ answer: 'That needed more look-ups than allowed - try a narrower question.', followUps: [], toolsUsed: used });
     } catch (err) { return fail(c, err); }
   });
 }

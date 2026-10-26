@@ -77,8 +77,10 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
     if (!response.ok) {
       let errorMessage = 'Request failed';
       let isWarning = false;
+      let errorBody: any = null;
       try {
         const error = await response.json();
+        errorBody = error;
         errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
         // Check if this is a warning (non-critical error)
         isWarning = !!error.warning;
@@ -130,7 +132,8 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
         }
       }
 
-      throw new Error(errorMessage);
+      // status and the error body ride along (e.g. the AI allowance's limit / retryAfterMinutes).
+      throw Object.assign(new Error(errorMessage), { status: response.status, details: errorBody });
     }
 
     const jsonData = await response.json();
@@ -661,8 +664,15 @@ export async function voiceFill(accessToken: string, kind: 'sales' | 'expense', 
   return data.fields;
 }
 
-export async function askBunny(accessToken: string, storeId: string | null, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<{ answer: string; toolsUsed: string[] }> {
-  return fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages }) });
+// Ask Bunny (the floating chat): answers in the person's language about the screen they're on.
+export async function askBunny(
+  accessToken: string,
+  storeId: string | null,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  options: { language: 'en' | 'bn' | 'hi'; screen?: { page: string; tab?: string; text?: string } },
+): Promise<{ answer: string; followUps: string[]; toolsUsed: string[] }> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages, ...options }) });
+  return { answer: data.answer, followUps: data.followUps || [], toolsUsed: data.toolsUsed || [] };
 }
 
 export interface ScannedInvoiceLine { asWritten: string; englishName: string; quantity: number; unit: string; rate: number; amount: number; unsure: boolean }
