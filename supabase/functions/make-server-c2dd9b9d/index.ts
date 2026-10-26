@@ -7,6 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
+import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -1374,30 +1375,13 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
   try {
     const userId = authResult.user.id;
     const userEmail = authResult.user.email;
-    const fullMetadata = authResult.user.user_metadata;
     const role = authResult.user.user_metadata?.role;
     const designation = authResult.user.user_metadata?.designation;
-    
-    // Extensive debug logging
-    console.log('=== ADD SALES DEBUG ===');
-    console.log('User ID:', userId);
-    console.log('User Email:', userEmail);
-    console.log('Full user_metadata:', JSON.stringify(fullMetadata, null, 2));
-    console.log('Role from metadata:', role);
-    console.log('Designation from metadata:', designation);
-    console.log('======================');
 
     // Check if role exists at all
     if (!role) {
       console.log('ERROR: No role found in user metadata. User needs to be assigned a role.');
-      return c.json({ 
-        error: 'User role not configured. Please contact administrator.',
-        debug: {
-          userId,
-          email: userEmail,
-          metadata: fullMetadata
-        }
-      }, 403);
+      return c.json({ error: 'User role not configured. Please contact administrator.' }, 403);
     }
 
     // Store incharge logs/validates the day's sales (POS-reported once live) against
@@ -1420,33 +1404,49 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     console.log('SUCCESS: Role check passed. Adding sales data...');
 
     const item = await c.req.json();
-    const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const key = `sales:${userId}:${itemId}`;
-    
     const storeId = authResult.user.user_metadata?.storeId;
     const userName = authResult.user.user_metadata?.name;
     const employeeId = authResult.user.user_metadata?.employeeId; // Employee ID like BM001
-    // userEmail already declared at line 759
-    
-    const salesItem = {
+
+    // Saves onto the day's existing row when there is one, never beside it. The form only
+    // POSTs when it hadn't seen a row for this store+date, but the 10:30 PM POS sync (or a
+    // top-up approval) can create one in between - this used to add a second row, and the
+    // day then existed twice and every total for it doubled.
+    const existingSale = storeId && item.date
+      ? (await getAllByPrefixWithRetry('sales:')).find((s: any) => s.storeId === storeId && s.date === item.date)
+      : null;
+    const itemId = existingSale?.id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const ownerUserId = existingSale?.userId || userId;
+    const key = `sales:${ownerUserId}:${itemId}`;
+
+    const salesItem: any = {
+      ...(existingSale || {}),
       ...item,
       id: itemId,
-      userId,
+      userId: ownerUserId,
       storeId: storeId || null,
       approvalRequired: true,
       createdBy: employeeId || userId, // Use employeeId if available, fallback to userId
       createdByName: userName,
       createdByEmail: userEmail,
-      // Same reasoning as PUT /sales/:id above: usedOnlineMoney only ever moves via the
-      // cash-topup-approval route or the "Convert to Online" route, never a general sales
-      // save - and by the time either of those has ever touched this date, a record already
-      // exists for the approval route to find (it creates one itself otherwise), so this
-      // POST path only ever legitimately runs for a date with nothing credited yet.
-      usedOnlineMoney: 0
+      // Marks the day as saved by a person rather than a POS-sync/top-up placeholder (see
+      // isPlaceholderSale in paytmRules.ts).
+      updatedBy: employeeId || userId,
+      updatedAt: new Date().toISOString(),
+      // Same reasoning as PUT /sales/:id below: usedOnlineMoney only ever moves via the
+      // cash-topup-approval route, never a general sales save - a new row starts at 0 and an
+      // existing one keeps whatever approved top-ups already credited it.
+      usedOnlineMoney: existingSale?.usedOnlineMoney || 0
     };
+    if (existingSale) {
+      // The form's POS-synced totals were blanks (it hadn't seen this row) - keep the synced ones.
+      for (const field of ['offlineSales', 'posOnlineSales', 'posOfflineSales']) {
+        if (!item[field] && existingSale[field]) salesItem[field] = existingSale[field];
+      }
+    }
 
     await kvWithRetry.set(key, salesItem);
-    console.log('✅ Sales data saved successfully:', itemId);
+    console.log(`✅ Sales data ${existingSale ? 'saved onto the existing row' : 'saved'}:`, itemId);
 
     // CONFIRMED ROOT CAUSE (found 2026-08-30, the 3rd incident from this same underlying
     // gap): this route saves whatever actualPaytmBalance the CLIENT computed, with nothing
@@ -1481,7 +1481,10 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       }
     }
 
-    return c.json({ success: true, item: salesItem });
+    // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
+    // version, not the one from before it ran.
+    const savedItem = (await kvWithRetry.get(key)) || salesItem;
+    return c.json({ success: true, item: savedItem });
   } catch (error) {
     console.log('EXCEPTION in add sales:', error);
     return c.json({ error: 'Failed to add sales data' }, 500);
@@ -1512,7 +1515,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const updates = await c.req.json();
 
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
 
     if (!existingSale) {
@@ -1521,24 +1524,28 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
 
     // Use the key from the existing sale
     const key = `sales:${existingSale.userId}:${itemId}`;
+    const editorId = authResult.user.user_metadata?.employeeId || authResult.user.id;
 
     const salesItem = {
       ...existingSale,
       ...updates,
       id: itemId,
       userId: existingSale.userId,
+      // Marks the day as saved by a person rather than a POS-sync/top-up placeholder (see
+      // isPlaceholderSale in paytmRules.ts).
+      updatedBy: editorId,
+      updatedAt: new Date().toISOString(),
       // CONFIRMED ROOT CAUSE (found 2026-10-16, real case: a ₹540 approved store_inventory
       // cash top-up for Rohan/Bunny Momos 1 on 2026-10-12 showed as ₹0 in the Store Cash in
       // Hand breakdown): usedOnlineMoney is a running ledger only ever meant to move via the
-      // cash-topup-approval route (above) and the "Convert to Online" route (below) - never
-      // via this general sales-data save. The store incharge's form loads it once when the
-      // page opens and echoes that same value back on every save; if a top-up gets approved
-      // (or a conversion happens) *after* the page loaded but *before* the store incharge
-      // clicks Save - entirely plausible, since a save often happens late at night after the
-      // till is counted - this stale echo silently overwrote the just-approved credit with
-      // the old number. Always keep the server's own value; a client-submitted usedOnlineMoney
-      // is never trusted here, exactly like actualPaytmBalance is server-derived rather than
-      // client-trusted for the same reason.
+      // cash-topup-approval route (above) - never via this general sales-data save. The
+      // store incharge's form loads it once when the page opens and echoes that same value
+      // back on every save; if a top-up gets approved *after* the page loaded but *before*
+      // the store incharge clicks Save - entirely plausible, since a save often happens late
+      // at night after the till is counted - this stale echo silently overwrote the
+      // just-approved credit with the old number. Always keep the server's own value; a
+      // client-submitted usedOnlineMoney is never trusted here, exactly like
+      // actualPaytmBalance is server-derived rather than client-trusted for the same reason.
       usedOnlineMoney: existingSale.usedOnlineMoney || 0
     };
 
@@ -1582,7 +1589,10 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
       console.error('Error notifying operations manager of sales update:', notifyError);
     }
 
-    return c.json({ success: true, item: salesItem });
+    // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
+    // version, not the one from before it ran (the form would otherwise show a stale balance).
+    const savedItem = (await kvWithRetry.get(key)) || salesItem;
+    return c.json({ success: true, item: savedItem });
   } catch (error) {
     console.log('Error updating sales data:', error);
     return c.json({ error: 'Failed to update sales data' }, 500);
@@ -1605,7 +1615,7 @@ app.post('/make-server-c2dd9b9d/sales/migrate-discrepancy', async (c) => {
     }
 
     // Get all sales data
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     
     let updated = 0;
     const salesToUpdate = allSales.filter((sale: any) => sale.salesDiscrepancy === undefined);
@@ -1657,7 +1667,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
     const { requestedCashInHand, requestedOffset } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
     
     if (!existingSale) {
@@ -1721,7 +1731,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
     
     if (!existingSale) {
@@ -1788,7 +1798,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
     const { reason } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
     
     if (!existingSale) {
@@ -1853,7 +1863,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const existingSale = allSales.find((s: any) => s.id === itemId);
     
     if (!existingSale) {
@@ -2231,7 +2241,7 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
     // to pre-exist - the store incharge's real end-of-day submission later finds this
     // same record (by storeId+date) via salesForDate and edits it in place, so the
     // top-up's usedOnlineMoney contribution is preserved, not overwritten or duplicated.
-    const allSales = await kv.getByPrefix('sales:');
+    const allSales = await getAllByPrefixWithRetry('sales:');
     const salesRecord = allSales.find((s: any) => s.storeId === existingRequest.storeId && s.date === existingRequest.date);
 
     if (salesRecord) {
@@ -2277,7 +2287,10 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
         employeeSalary: 0,
         usedOnlineMoney: existingRequest.requestedAmount,
         approvalStatus: 'pending',
-        actualCashInHand: 0,
+        // null = nobody has counted yet. These used to be 0, which every carry-forward then
+        // read as a real count (₹0 in the till, ₹0 in Paytm) - see countedCashInHand /
+        // knownPaytmBalance in paytmRules.ts. The cascade below fills actualPaytmBalance in.
+        actualCashInHand: null,
         cashOffset: 0,
         approvalRequired: false,
         approvedBy: null,
@@ -2289,7 +2302,7 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
         rejectedBy: null,
         rejectedAt: null,
         rejectionReason: null,
-        actualPaytmBalance: 0,
+        actualPaytmBalance: null,
         paytmOffset: 0,
         createdBy: 'pos-sync',
         createdByName: 'Ciferon POS Auto-Sync',
@@ -2301,7 +2314,12 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
     ...existingRequest,
     status: 'approved',
     approvedBy: approvedByEmail,
-    approvedAt: getNowIST()
+    // Real UTC now. This used to be getNowIST() - IST wall time with a 'Z' - and was compared
+    // as a string against a recalibration's real-UTC createdAt, so a top-up approved up to
+    // 5h30 before a count looked like it came after it and was taken off Paytm twice. The
+    // flag tells readers which kind they have (topupApprovedAtMs in paytmRules.ts).
+    approvedAt: new Date().toISOString(),
+    approvedAtIsUtc: true
   };
   await kv.set(`cash-topup:${existingRequest.id}`, approvedRequest);
 
@@ -2924,7 +2942,7 @@ app.post('/make-server-c2dd9b9d/fix-orphaned-store-data', async (c) => {
 
     if (dataType === 'sales' || !dataType) {
       // Fix sales data with null storeId
-      const allSales = await kv.getByPrefix('sales:');
+      const allSales = await getAllByPrefixWithRetry('sales:');
       
       for (const sale of allSales) {
         // If recordIds provided, only fix those specific records
@@ -3042,7 +3060,7 @@ app.delete('/make-server-c2dd9b9d/clear-data', async (c) => {
     }
     
     // Get all sales data
-    const salesItems = await kv.getByPrefix(`sales:${userId}:`);
+    const salesItems = await getAllByPrefixWithRetry(`sales:${userId}:`);
     for (const item of salesItems || []) {
       await kv.del(`sales:${userId}:${item.id}`);
     }
@@ -3357,7 +3375,7 @@ app.delete('/make-server-c2dd9b9d/employees/:id', async (c) => {
     }
     
     // Calculate total earnings from payouts
-    const payouts = await kv.getByPrefix('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:');
     const employeePayouts = payouts.filter((p: any) => p.employeeId === employeeId);
     const totalEarnings = employeePayouts.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
     
@@ -3411,11 +3429,42 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
   }
 });
 
+// A salary paid from Paytm moves that store's balance (one with no storeId counts against
+// every store - see paytmSourcesForStore), so saving, editing or deleting a payout re-runs the
+// Paytm cascade from its date. Before this, a payout only reached the stored balances whenever
+// something unrelated happened to sweep through those days later.
+async function cascadePaytmForPayouts(payouts: any[]): Promise<void> {
+  const fromByStore = new Map<string, string>();
+  const note = (storeId: string, date: string) => {
+    const current = fromByStore.get(storeId);
+    if (!current || date < current) fromByStore.set(storeId, date);
+  };
+  let everyStoreFrom: string | null = null;
+  for (const p of payouts) {
+    if (!p || typeof p.date !== 'string' || !payoutHitsPaytm(p)) continue;
+    const date = p.date.substring(0, 10);
+    if (p.storeId) note(p.storeId, date);
+    else if (!everyStoreFrom || date < everyStoreFrom) everyStoreFrom = date;
+  }
+  try {
+    if (everyStoreFrom) {
+      const stores = await kv.getByPrefix('store:');
+      for (const store of stores || []) if (store?.id) note(store.id, everyStoreFrom);
+    }
+    for (const [storeId, fromDate] of fromByStore) {
+      await cascadeRecomputePaytmBalances(storeId, fromDate);
+    }
+  } catch (error) {
+    // Non-fatal, like the cascade itself - the payout is already saved.
+    console.log('Error refreshing Paytm balances after a payout change:', error);
+  }
+}
+
 // Payout Management Routes
 // Get all payouts
 app.get('/make-server-c2dd9b9d/payouts', async (c) => {
   try {
-    const payouts = await kvWithRetry.getByPrefix('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:');
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching payouts:', error);
@@ -3460,6 +3509,7 @@ app.post('/make-server-c2dd9b9d/payouts', async (c) => {
     console.log('Saving payouts to KV store...');
     await kv.mset(keys, values);
     console.log('Payouts saved successfully');
+    await cascadePaytmForPayouts(payouts);
 
     // Notify each employee their salary has been credited - a payout record being created
     // here means the transfer has already happened (this isn't an approval queue), so this
@@ -3520,7 +3570,9 @@ app.put('/make-server-c2dd9b9d/payouts/:id', async (c) => {
     
     await kv.set(key, updatedPayout);
     console.log('Payout updated successfully');
-    
+    // Both versions: a moved date or a switch to/from "paid from Paytm" changes both days.
+    await cascadePaytmForPayouts([existingPayout, updatedPayout]);
+
     return c.json({ success: true, payout: updatedPayout });
   } catch (error) {
     console.log('Error updating payout:', error);
@@ -3535,8 +3587,10 @@ app.delete('/make-server-c2dd9b9d/payouts/:id', async (c) => {
     console.log('Deleting payout:', payoutId);
     
     const key = `payout:${payoutId}`;
+    const existingPayout = await kv.get(key);
     await kv.del(key);
     console.log('Payout deleted successfully');
+    if (existingPayout) await cascadePaytmForPayouts([existingPayout]);
     
     return c.json({ success: true });
   } catch (error) {
@@ -3557,7 +3611,7 @@ app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
   }
 
   try {
-    const sales = await kvWithRetry.getByPrefix('online_sales:');
+    const sales = await getAllByPrefixWithRetry('online_sales:');
     return c.json({ success: true, sales });
   } catch (error: any) {
     console.log('Error fetching online sales:', error);
@@ -3604,7 +3658,7 @@ app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
   }
 
   try {
-    const payouts = await kvWithRetry.getByPrefix('online_payout:');
+    const payouts = await getAllByPrefixWithRetry('online_payout:');
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching online payouts:', error);
@@ -3644,7 +3698,7 @@ app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
     // record server-side (under the operations manager's own authorization) since
     // the sales record itself can otherwise only be edited by the store incharge.
     try {
-      const allOnlineSales = await kv.getByPrefix('online_sales:');
+      const allOnlineSales = await getAllByPrefixWithRetry('online_sales:');
       const salesEntry = (allOnlineSales || []).find((s: any) =>
         s.date === entry.date && (!entry.storeId || s.storeId === entry.storeId)
       );
@@ -3653,7 +3707,7 @@ app.post('/make-server-c2dd9b9d/online-payouts', async (c) => {
       const extraPayout = totalPayout - totalOnlineSales;
 
       if (extraPayout > 0) {
-        const allSales = await kv.getByPrefix('sales:');
+        const allSales = await getAllByPrefixWithRetry('sales:');
         const existingSale = (allSales || []).find((s: any) =>
           s.date === entry.date && (!entry.storeId || s.storeId === entry.storeId)
         );
@@ -3695,7 +3749,7 @@ app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
 
   try {
     const storeId = c.req.query('storeId');
-    let settlements = await kv.getByPrefix('aggregator-settlement:');
+    let settlements = await getAllByPrefixWithRetry('aggregator-settlement:');
     if (storeId) {
       settlements = (settlements || []).filter((s: any) => s.storeId === storeId);
     }
@@ -3714,8 +3768,11 @@ app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
 // calculatePaytmBalance) - a settlement landing after a later day was already reconciled
 // used to leave that day, and every day after it, silently stuck on a stale number until
 // someone manually recomputed it by hand. This closes that gap at the source instead.
-// Mirrors the exact formula the frontend's own live display uses (previous balance +
-// today's Paytm + today's aggregator payout - contract payouts - cash topup).
+// The formula itself lives in paytmRules.ts, the same file the app's own Paytm figures run
+// (src/utils/paytmRules.ts is its byte-for-byte twin), so the balance stored here is the one
+// the store incharge's form and the Sales overview show. This used to be a separate copy
+// that ignored loans and repayments, took bank/cash-paid salaries off Paytm, and dropped a
+// settlement or salary landing on a day with no sales row.
 //
 // A logged Online Cash Recalibration (a human physically checking the real Paytm app
 // balance) is a VERIFIED checkpoint and always wins over whatever this formula would
@@ -3742,144 +3799,51 @@ async function cascadeRecomputePaytmBalances(storeId: string, fromDate: string):
     const today = getTodayIST();
     if (fromDate > today) return;
 
-    const [allSales, allSettlements, allPayouts, allRecalibrations, allTopups] = await Promise.all([
+    const [allSales, allSettlements, allPayouts, allRecalibrations, allTopups, allLoans, allOverheads] = await Promise.all([
       getAllByPrefixWithRetry('sales:'),
       getAllByPrefixWithRetry('aggregator-settlement:'),
       getAllByPrefixWithRetry('payout:'),
       getAllByPrefixWithRetry('online-cash-recalibration:'),
       getAllByPrefixWithRetry('cash-topup:'),
+      getAllByPrefixWithRetry('online-loan:'),
+      // Only the aggregator-commission entries matter here (see isCommissionEntry).
+      getAllByPrefixWithRetry('overhead:'),
     ]);
 
-    const storeSales = (allSales || []).filter((s: any) => s.storeId === storeId && s.date);
-    const storeSettlements = (allSettlements || []).filter((s: any) => s.storeId === storeId);
-    const storePayouts = (allPayouts || []).filter((p: any) => !p.storeId || p.storeId === storeId);
-    // Confirmed with the business owner: BOTH reasons draw from this same Paytm/bank
-    // balance - "store_inventory" hands the converted cash to the store's till,
-    // "production_inventory" hands it to the production house's till instead, but either
-    // way the money leaves Paytm the moment it's approved. Only "store_inventory" ever
-    // gets written into a sales record's usedOnlineMoney field (that field also drives the
-    // store's own cash-in-hand credit, which a production-bound topup must NOT get), so
-    // production-reason topups are tracked here as their own separate list and summed
-    // straight from cash-topup: records rather than through usedOnlineMoney at all.
-    const allApprovedTopups = (allTopups || []).filter((t: any) => t.storeId === storeId && t.status === 'approved');
-    const productionTopups = allApprovedTopups.filter((t: any) => t.reason === 'production_inventory');
-    // Keyed by date -> the whole record (not just the balance) - a same-day cash top-up
-    // approved AFTER this recalibration's own timestamp hasn't happened yet as far as the
-    // recalibration is concerned, and must still reduce the balance; one approved BEFORE it
-    // is already reflected in what the incharge physically counted and must not be
-    // subtracted a second time. Without this, a top-up logged earlier the same day as a
-    // reconciliation gets counted once inside the reconciled figure (correctly, since it
-    // already happened) and then AGAIN by the plain formula on any day computed from this
-    // recalibration - the exact "why didn't my reconciliation account for the top-up I
-    // already made" bug this was built to fix. Covers both reasons now - a late-approved
-    // production topup drains Paytm exactly the same as a late store one.
-    const recalibrationByDate = new Map<string, any>();
-    (allRecalibrations || [])
-      .filter((r: any) => r.storeId === storeId && r.date && typeof r.actualBalance === 'number')
-      .forEach((r: any) => recalibrationByDate.set(r.date, r));
-    const recalTimestamp = (r: any): string | null => r?.createdAt || r?.timestamp || null;
-    const lateTopupsFor = (date: string, recal: any): number => {
-      const ts = recalTimestamp(recal);
-      if (!ts) return 0; // no timestamp on this recalibration (shouldn't happen for new ones, but don't crash on old data) - treat as fully reconciled, no late top-ups split out
-      return allApprovedTopups
-        .filter((t: any) => t.date === date && t.approvedAt && t.approvedAt > ts)
-        .reduce((sum: number, t: any) => sum + (t.requestedAmount || 0), 0);
-    };
-    const productionTopupsOn = (date: string): number =>
-      productionTopups.filter((t: any) => t.date === date).reduce((sum: number, t: any) => sum + (t.requestedAmount || 0), 0);
-    // Effective balance AS OF END OF DAY for a recalibrated date. Confirmed with the
-    // business owner: a recalibration is a point-in-time count, not automatically "the
-    // day's final answer" - a count taken early (e.g. 4 AM, before the day's own Paytm
-    // receipts land) is really an OPENING-balance-style anchor, and that day's own
-    // paytmAmount/aggregator payout/contract payouts still need layering on top of it, same
-    // as any other day. Only cash top-ups get the individual before/after-the-count
-    // treatment (via lateTopupsFor), since they're the one thing with a real timestamp to
-    // compare against the recalibration's own; the day's other totals have no intra-day
-    // timestamp to split by, so they're always added in full - the safer default per the
-    // business owner, since a recalibration done late at night (rather than at day start)
-    // is the rarer case in practice.
-    // Settlements count strictly by settlementDate (the real bank-credit date per the
-    // aggregator's own UTR) vs. the recal date - NOT by when the settlement file was
-    // uploaded into the app. A settlement dated on/before the recal date is already
-    // inside the physical count, however late its file gets uploaded. A prior version
-    // credited settlements based on upload time instead, meant to catch aggregator
-    // money genuinely still in transit at count time - but that conflated "when the
-    // data was entered" with "when the money arrived" and double-counted settlements a
-    // store incharge simply hadn't uploaded yet even though the count already had them.
-    // Confirmed wrong with the business owner: a settlement dated before a
-    // recalibration is always already in the count.
-    const effectiveRecalBalance = (date: string, recal: any): number => {
-      const record = storeSales.find((s: any) => s.date === date);
-      const paytmAmount = record?.paytmAmount || 0;
-      const aggregatorPayout = storeSettlements
-        .filter((s: any) => s.settlementDate === date)
-        .reduce((sum: number, s: any) => sum + (s.netPayout || 0), 0);
-      const contractPayouts = storePayouts
-        .filter((p: any) => p.date === date)
-        .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-      return recal.actualBalance + paytmAmount + aggregatorPayout - contractPayouts - lateTopupsFor(date, recal);
-    };
+    // A recalibration (a human physically checking the Paytm app balance) resets the chain
+    // on its own date; a production-reason top-up drains this same Paytm even though it never
+    // goes on a sales row; a same-day top-up only comes off a recalibration if it was approved
+    // after the count - all of that is in paytmRules.ts now, shared with the app.
+    const src = paytmSourcesForStore({
+      sales: (allSales || []).filter((s: any) => typeof s?.date === 'string'),
+      settlements: allSettlements || [],
+      payouts: allPayouts || [],
+      topups: allTopups || [],
+      loans: allLoans || [],
+      overheads: allOverheads || [],
+      recalibrations: allRecalibrations || [],
+    }, storeId);
 
-    // Anchor: whichever is chronologically most recent strictly before fromDate - a
-    // verified recalibration or the last actual balance on a sales record.
-    let anchor = 0;
-    let anchorDate: string | null = null;
-    const priorRecord = storeSales
-      .filter((s: any) => s.date < fromDate && s.actualPaytmBalance !== undefined && s.actualPaytmBalance !== null)
-      .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
-    if (priorRecord) {
-      anchor = priorRecord.actualPaytmBalance;
-      anchorDate = priorRecord.date;
-    }
-    for (const [date, recal] of recalibrationByDate.entries()) {
-      if (date < fromDate && (!anchorDate || date > anchorDate)) {
-        anchor = effectiveRecalBalance(date, recal);
-        anchorDate = date;
-      }
-    }
-
+    // Start from whichever is chronologically most recent strictly before fromDate - a
+    // verified recalibration or the last real balance on a sales record (a POS-sync
+    // placeholder's blank or old 0 is skipped) - and walk forward a day at a time. The first
+    // step also covers any gap between that anchor and fromDate. No anchor at all = every
+    // record from the beginning, from zero, exactly like the app's own fallback.
+    const anchor = paytmAnchorBefore(src, fromDate);
+    let running = anchor ? anchor.balance : 0;
+    let lastDate = anchor ? anchor.date : '';
     let cursor = fromDate;
     let updated = 0;
     while (cursor <= today) {
-      const recalRecord = recalibrationByDate.get(cursor);
-      const recalibratedBalance = recalRecord !== undefined ? effectiveRecalBalance(cursor, recalRecord) : undefined;
-      const record = storeSales.find((s: any) => s.date === cursor);
-      if (record) {
-        let newBalance: number;
-        if (recalibratedBalance !== undefined) {
-          newBalance = recalibratedBalance;
-        } else {
-          const paytmAmount = record.paytmAmount || 0;
-          const usedOnlineMoney = record.usedOnlineMoney || 0;
-          const aggregatorPayout = storeSettlements
-            .filter((s: any) => s.settlementDate === cursor)
-            .reduce((sum: number, s: any) => sum + (s.netPayout || 0), 0);
-          const contractPayouts = storePayouts
-            .filter((p: any) => p.date === cursor)
-            .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-          // Production-reason topups never touch usedOnlineMoney (see the comment on
-          // productionTopups above) but still drained Paytm on this date, so they're
-          // subtracted here as their own separate term rather than folded into it.
-          newBalance = anchor + paytmAmount + aggregatorPayout - contractPayouts - usedOnlineMoney - productionTopupsOn(cursor);
-        }
-        if (Math.abs((record.actualPaytmBalance ?? 0) - newBalance) > 0.005) {
-          await kv.set(`sales:${record.userId}:${record.id}`, { ...record, actualPaytmBalance: newBalance });
+      const recal = recalibrationOn(src, cursor);
+      running = recal ? recalDayEndBalance(src, recal) : running + paytmMovement(src, lastDate, cursor).net;
+      for (const record of src.sales.filter((s: any) => s.date === cursor)) {
+        if (typeof record.actualPaytmBalance !== 'number' || Math.abs(record.actualPaytmBalance - running) > 0.005) {
+          await kv.set(`sales:${record.userId}:${record.id}`, { ...record, actualPaytmBalance: running });
           updated++;
         }
-        anchor = newBalance;
-      } else if (recalibratedBalance !== undefined) {
-        // No sales record exists for this exact date (e.g. a recalibration logged on a day
-        // with no separate sales entry) - the recalibration still resets the anchor for
-        // every day after it, even though there's nothing here to write it into.
-        anchor = recalibratedBalance;
-      } else {
-        // No sales record AND no recalibration for this date - still can't lose a
-        // production topup approved that day just because there's nowhere to persist the
-        // result; a store-reason topup gets a placeholder sales record created for exactly
-        // this reason (see /cash-topup-requests/:id/approve), but production-reason ones
-        // don't, so the running anchor itself absorbs it directly instead.
-        anchor -= productionTopupsOn(cursor);
       }
+      lastDate = cursor;
       cursor = addDaysToDateString(cursor, 1);
     }
     console.log(`Cascade Paytm recompute for store ${storeId} from ${fromDate}: ${updated} record(s) updated`);
@@ -5488,7 +5452,7 @@ app.post('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
     // history - no store/aggregator/date has ever legitimately needed two records - so the
     // UTR is no longer part of what defines a duplicate; date alone is enough to require an
     // explicit replace.
-    const existingSettlements = await kv.getByPrefix('aggregator-settlement:');
+    const existingSettlements = await getAllByPrefixWithRetry('aggregator-settlement:');
     const duplicate = (existingSettlements || []).find((s: any) =>
       s.storeId === body.storeId &&
       s.aggregator === body.aggregator &&
@@ -7160,7 +7124,7 @@ app.delete('/make-server-c2dd9b9d/unified-employees/:employeeId', async (c) => {
     }
     
     // Calculate total earnings from payouts
-    const payouts = await kv.getByPrefix('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:');
     const employeePayouts = payouts.filter((p: any) => p.employeeId === employeeId);
     const totalEarnings = employeePayouts.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
     
@@ -8938,7 +8902,7 @@ app.post('/make-server-c2dd9b9d/stores/:storeId/migrate-data', async (c) => {
     }
 
     // Migrate sales data without storeId
-    const salesItems = await kv.getByPrefix('sales:');
+    const salesItems = await getAllByPrefixWithRetry('sales:');
     for (const item of salesItems) {
       if (!item.storeId) {
         const updatedItem = { ...item, storeId };
@@ -8980,7 +8944,7 @@ app.post('/make-server-c2dd9b9d/stores/:storeId/migrate-data', async (c) => {
     }
 
     // Migrate payouts without storeId
-    const payouts = await kv.getByPrefix('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:');
     for (const payout of payouts) {
       if (!payout.storeId) {
         const updatedPayout = { ...payout, storeId };
@@ -11445,7 +11409,7 @@ app.get('/make-server-c2dd9b9d/sales-data', async (c) => {
   }
 
   try {
-    const records = await kv.getByPrefix('sales_data_');
+    const records = await getAllByPrefixWithRetry('sales_data_');
     
     console.log('Retrieved sales data records:', records.length);
     
@@ -12055,7 +12019,7 @@ app.get('/make-server-c2dd9b9d/stock-requests', async (c) => {
 
   try {
     console.log('🔍 SERVER: Fetching stock requests with prefix stock_request_');
-    const requests = await kv.getByPrefix('stock_request_');
+    const requests = await getAllByPrefixWithRetry('stock_request_');
     console.log('📦 Server: Retrieved stock requests:', requests.length);
     console.log('📦 Server: Sample stock request:', requests[0]);
     console.log('📦 Server: All stock request IDs:', requests.map(r => r?.id || 'NO_ID'));
@@ -12292,7 +12256,7 @@ app.post('/make-server-c2dd9b9d/fix-stock-requests', async (c) => {
     console.log('🔧 Starting stock request data fix...');
     
     // Get all stock requests
-    const allRequests = await kv.getByPrefix('stock_request_');
+    const allRequests = await getAllByPrefixWithRetry('stock_request_');
     console.log(`Found ${allRequests.length} stock requests to check`);
     
     // Get all stores to map storeId -> productionHouseId (stores live under `store:`)
@@ -12370,7 +12334,7 @@ app.post('/make-server-c2dd9b9d/migrate-stock-request-timestamps', async (c) => 
     console.log('🔧 Starting stock request timestamp migration...');
     
     // Get all stock requests
-    const allRequests = await kv.getByPrefix('stock_request_');
+    const allRequests = await getAllByPrefixWithRetry('stock_request_');
     console.log(`Found ${allRequests.length} stock requests to check`);
     
     let updated = 0;
@@ -12437,7 +12401,7 @@ app.get('/make-server-c2dd9b9d/debug/stock-keys', async (c) => {
     }
 
     // Get all stock requests
-    const stockRequests = await kv.getByPrefix('stock_request_');
+    const stockRequests = await getAllByPrefixWithRetry('stock_request_');
     
     console.log('🔍 Debug: Stock-related keys:', {
       stockRequestCount: stockRequests.length,
@@ -13641,7 +13605,7 @@ app.post('/make-server-c2dd9b9d/send-fulfillment-reminders', async (c) => {
 
     const productionHeads = await getAllProductionHeads();
 
-    const allStockRequests = await kv.getByPrefix('stock_request_');
+    const allStockRequests = await getAllByPrefixWithRetry('stock_request_');
     const pendingStockRequests = allStockRequests.filter((r: any) => r.status === 'pending');
 
     const notYetSentStatuses = ['pending', 'accepted', 'in-preparation', 'prepared'];
@@ -14013,7 +13977,7 @@ app.post('/make-server-c2dd9b9d/send-data-entry-reminders', async (c) => {
       const inventoryEntries = await kv.getByPrefix(`inventory:${manager.authUserId}:`);
       const hasInventoryToday = inventoryEntries.some((e: any) => e.date === today);
 
-      const salesEntries = await kv.getByPrefix(`sales:${manager.authUserId}:`);
+      const salesEntries = await getAllByPrefixWithRetry(`sales:${manager.authUserId}:`);
       const hasSalesToday = salesEntries.some((e: any) => e.date === today);
 
       if (hasInventoryToday && hasSalesToday) {
@@ -14176,7 +14140,7 @@ app.post('/make-server-c2dd9b9d/send-eod-data-alerts', async (c) => {
 
     for (const incharge of storeIncharges) {
       if (!incharge.authUserId || !incharge.employeeId) continue;
-      const salesEntries = await kv.getByPrefix(`sales:${incharge.authUserId}:`);
+      const salesEntries = await getAllByPrefixWithRetry(`sales:${incharge.authUserId}:`);
       const hasSalesToday = salesEntries.some((e: any) => e.date === today);
       if (hasSalesToday) {
         skipped++;
@@ -14350,7 +14314,7 @@ async function runPosSync(targetDate?: string) {
         }
         const userId = storeIncharge.authUserId;
 
-        const allSales = await kv.getByPrefix('sales:');
+        const allSales = await getAllByPrefixWithRetry('sales:');
         const existingSale = (allSales || []).find((s: any) => s.storeId === store.id && s.date === today);
         const fetchedSalesTotal = posOfflineSales + posOnlineSales;
         const existingSalesTotal = getExistingSalesAmountTotal(existingSale);
@@ -14419,10 +14383,12 @@ async function runPosSync(targetDate?: string) {
             complimentaryCount,
             complimentaryAmount
           });
-          if (hasHumanSplit && existingSale.storeId && existingSale.date) {
+          if (existingSale.storeId && existingSale.date) {
             // The corrected total can change what "should" have been collected after a
             // day was already reconciled - re-run the Paytm cascade so
-            // actualPaytmBalance reflects it instead of going stale.
+            // actualPaytmBalance reflects it instead of going stale. Placeholders too: their
+            // Paytm takings were just re-synced, and their saved balance is what the next
+            // day carries forward.
             await cascadeRecomputePaytmBalances(existingSale.storeId, existingSale.date);
           }
         } else {
@@ -14462,7 +14428,11 @@ async function runPosSync(targetDate?: string) {
             complimentaryCount,
             complimentaryAmount,
             approvalStatus: 'pending',
-            actualCashInHand: 0,
+            // null = not counted yet. 0 here used to be read as a real count everywhere that
+            // looks back for the last count (Paytm carry-forward, the cascade's anchor, the
+            // "store cash is ₹0, use production's" prompt on every bill) - see
+            // countedCashInHand / knownPaytmBalance in paytmRules.ts.
+            actualCashInHand: null,
             cashOffset: 0,
             approvalRequired: false,
             approvedBy: null,
@@ -14476,16 +14446,18 @@ async function runPosSync(targetDate?: string) {
             rejectionReason: null,
             previousCashInHand: carriedPreviousCashInHand,
             usedOnlineMoney: 0,
-            actualPaytmBalance: 0,
+            actualPaytmBalance: null,
             paytmOffset: 0,
             createdBy: 'pos-sync',
             createdByName: 'Ciferon POS Auto-Sync',
             syncedAt: getNowIST(),
           });
+          // Works out the new row's closing Paytm balance (today's POS Paytm takings now count).
+          await cascadeRecomputePaytmBalances(store.id, today);
         }
 
         // Upsert online_sales: record (Zomato/Swiggy split), same as the manual OnlineSalesTab entry
-        const allOnlineSales = await kv.getByPrefix('online_sales:');
+        const allOnlineSales = await getAllByPrefixWithRetry('online_sales:');
         const existingOnlineSales = (allOnlineSales || []).find((s: any) => s.storeId === store.id && s.date === today);
         const existingOnlineSalesTotal = (existingOnlineSales?.swiggySales || 0) + (existingOnlineSales?.zomatoSales || 0);
         const shouldSkipZeroOnlineOverwrite = !!existingOnlineSales && posOnlineSales <= 0 && existingOnlineSalesTotal > 0;
@@ -14582,7 +14554,7 @@ async function runPosSync(targetDate?: string) {
         const itemChannelBreakdown = classifyAndSumProductsByItemAndChannel(products, channelNames);
 
         // Upsert (not duplicate) today's pos-sync-originated SalesDataRecord for this store
-        const allSalesData = await kv.getByPrefix('sales_data_');
+        const allSalesData = await getAllByPrefixWithRetry('sales_data_');
         const existingRecord = (allSalesData || []).find(
           (r: any) => r.storeId === store.id && r.date === today && r.uploadedBy === 'pos-sync'
         );
@@ -14875,7 +14847,7 @@ async function runPosSync(targetDate?: string) {
         }
 
         // This month's sold, from SalesDataRecords - includes tonight's Step B write
-        const monthSalesRecords = (await kv.getByPrefix('sales_data_') || [])
+        const monthSalesRecords = (await getAllByPrefixWithRetry('sales_data_') || [])
           .filter((r: any) => r.storeId === store.id && r.date?.startsWith(currentMonth));
         const sold: Record<string, number> = {};
         for (const key of CATEGORY_KEYS) {
@@ -15549,32 +15521,35 @@ app.post('/make-server-c2dd9b9d/online-cash-recalibration', async (c) => {
     }
 
     console.log('💾 [SERVER] ===== SAVING RECALIBRATION =====');
-    console.log('📦 [SERVER] Received recalibration data:', recalibration);
     console.log('🏪 [SERVER] Store ID:', recalibration.storeId);
     console.log('📅 [SERVER] Date:', recalibration.date);
     console.log('💰 [SERVER] Actual Balance:', recalibration.actualBalance);
-
-    // Add createdAt timestamp if not present
-    const timestamp = recalibration.createdAt || new Date().toISOString();
-    const recalibrationWithTimestamp = {
-      ...recalibration,
-      month: recalibration.date.substring(0, 7), // kept for display/backward-compat only
-      id: `ONLINE-CASH-RECAL-${recalibration.storeId}-${recalibration.date}`,
-      createdAt: timestamp,
-      timestamp: timestamp // For backward compatibility
-    };
-
-    console.log('🆔 [SERVER] Generated ID:', recalibrationWithTimestamp.id);
-    console.log('⏰ [SERVER] Timestamp:', timestamp);
 
     // Use the exact date as part of the key (one recalibration per date per store)
     const key = `online-cash-recalibration:${recalibration.storeId}:${recalibration.date}`;
     console.log('🔑 [SERVER] Storage key:', key);
 
+    // createdAt is when the count was taken - same-day top-ups approved after it still come off
+    // the counted figure. The app edits a recalibration by re-saving it here, which used to
+    // re-stamp createdAt with the edit time and silently reclassify that day's top-ups; an
+    // edit keeps the original count time.
+    const existing = await kvWithRetry.get(key);
+    const timestamp = existing?.createdAt || existing?.timestamp || recalibration.createdAt || new Date().toISOString();
+    const recalibrationWithTimestamp = {
+      ...recalibration,
+      month: recalibration.date.substring(0, 7), // kept for display/backward-compat only
+      id: `ONLINE-CASH-RECAL-${recalibration.storeId}-${recalibration.date}`,
+      createdAt: timestamp,
+      timestamp: timestamp, // For backward compatibility
+      ...(existing ? { updatedAt: new Date().toISOString() } : {})
+    };
+
+    console.log('🆔 [SERVER] Generated ID:', recalibrationWithTimestamp.id);
+    console.log('⏰ [SERVER] Timestamp:', timestamp);
+
     await kvWithRetry.set(key, recalibrationWithTimestamp);
 
     console.log(`✅ [SERVER] Online cash recalibration saved to KV store`);
-    console.log('📊 [SERVER] Final data:', recalibrationWithTimestamp);
     console.log('💾 [SERVER] ===== END SAVING RECALIBRATION =====\n');
 
     // This recalibration is now the authoritative anchor for its own date - ripple it
@@ -15629,11 +15604,14 @@ app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
       return c.json({ error: 'Recalibration not found' }, 404);
     }
 
-    // Merge updates with existing data
+    // Merge updates with existing data. The count time never changes on an edit - later
+    // top-ups are split off against it (see the POST route above).
     const updated = {
       ...existing,
       ...updates,
       id: recalibrationId, // Keep the ID
+      createdAt: existing.createdAt || existing.timestamp,
+      timestamp: existing.timestamp || existing.createdAt,
       updatedAt: new Date().toISOString(),
     };
 
@@ -15646,13 +15624,13 @@ app.put('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
       updated.id = `ONLINE-CASH-RECAL-${storeId}-${newDate}`;
       updated.month = newDate.substring(0, 7);
       await kvWithRetry.set(newKey, updated);
-      console.log(`✅ Online cash recalibration moved from ${date} to ${newDate}`, updated);
+      console.log(`✅ Online cash recalibration moved from ${date} to ${newDate}`);
       // Recompute from whichever date is earlier - the old date's anchor override no
       // longer applies from there, and the new date's does from wherever it now sits.
       cascadeFromDate = date < newDate ? date : newDate;
     } else {
       await kvWithRetry.set(key, updated);
-      console.log(`✅ Online cash recalibration updated: ${key}`, updated);
+      console.log(`✅ Online cash recalibration updated: ${key}`);
     }
 
     await cascadeRecomputePaytmBalances(storeId, cascadeFromDate);
@@ -15732,81 +15710,6 @@ app.delete('/make-server-c2dd9b9d/online-cash-recalibration/:id', async (c) => {
   } catch (error) {
     console.error('❌ Error deleting online cash recalibration:', error);
     return c.json({ error: 'Failed to delete recalibration', details: error instanceof Error ? error.message : String(error) }, 500);
-  }
-});
-
-// ============================================
-// CASH CONVERSION (Offline to Online)
-// ============================================
-
-// Convert offline cash to online cash (Paytm)
-app.post('/make-server-c2dd9b9d/cash-conversion', async (c) => {
-  const auth = await verifyUser(c.req.header('Authorization'));
-  if ('error' in auth) {
-    return c.json({ error: auth.error }, auth.status);
-  }
-
-  try {
-    const { storeId, date, amount, performedBy } = await c.req.json();
-    
-    if (!storeId || !date || !amount || amount <= 0) {
-      return c.json({ error: 'Invalid conversion data' }, 400);
-    }
-
-    console.log(`💱 Converting ₹${amount} from offline to online cash for store ${storeId} on ${date}`);
-
-    // Get the sales record for this date
-    const salesKey = `sales_${storeId}_${date}`;
-    const salesData = await kv.get(salesKey);
-
-    if (!salesData) {
-      return c.json({ error: 'No sales record found for this date' }, 404);
-    }
-
-    // Calculate current expected cash in hand to validate the conversion amount
-    const previousCashInHand = salesData.previousCashInHand || 0;
-    const usedOnlineMoney = salesData.usedOnlineMoney || 0;
-    const cashAmount = salesData.cashAmount || 0;
-    
-    // For validation, we need to check total expenses, but for simplicity,
-    // we'll trust the frontend validation that the amount is valid
-    
-    // Create a cash conversion record
-    const conversionId = `cash-conversion_${storeId}_${date}_${Date.now()}`;
-    const conversionRecord = {
-      id: conversionId,
-      storeId,
-      date,
-      amount,
-      performedBy,
-      createdAt: new Date().toISOString()
-    };
-    
-    await kv.set(conversionId, conversionRecord);
-
-    // Update the sales record:
-    // - Increase usedOnlineMoney by the conversion amount (this will decrease expected cash)
-    // - This effectively transfers cash from offline to online
-    const updatedSalesData = {
-      ...salesData,
-      usedOnlineMoney: (salesData.usedOnlineMoney || 0) + amount,
-      cashConversionAmount: amount,
-      cashConversionDate: new Date().toISOString(),
-      cashConversionPerformedBy: performedBy
-    };
-
-    await kv.set(salesKey, updatedSalesData);
-
-    console.log(`✅ Cash conversion successful: ₹${amount} moved to online cash`);
-
-    return c.json({ 
-      success: true, 
-      conversion: conversionRecord,
-      updatedSales: updatedSalesData
-    });
-  } catch (error: any) {
-    console.error('❌ Error converting cash:', error);
-    return c.json({ error: error.message || 'Failed to convert cash' }, 500);
   }
 });
 
@@ -16033,6 +15936,10 @@ app.post('/make-server-c2dd9b9d/online-loans/:id/approve', async (c) => {
       approvedAt: getNowIST(),
     };
     await kvWithRetry.set(key, approved);
+    // An approved loan adds to Paytm on its loanDate - refresh the stored balances from there.
+    if (existing.storeId && existing.loanDate) {
+      await cascadeRecomputePaytmBalances(existing.storeId, existing.loanDate);
+    }
 
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
     if (existing.requestedByUserId) {
@@ -16155,25 +16062,54 @@ app.put('/make-server-c2dd9b9d/online-loans/:id/repay', async (c) => {
     if (!existing) {
       return c.json({ error: 'Loan not found' }, 404);
     }
-    
+    const repaymentAmount = Number(repaymentData.repaymentAmount);
+    const repaymentDate = repaymentData.repaymentDate;
+    if (!(repaymentAmount > 0) || typeof repaymentDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(repaymentDate)) {
+      return c.json({ error: 'A repayment needs an amount and a date' }, 400);
+    }
+    if (existing.status !== 'active') {
+      return c.json({ error: 'Only an approved loan that is still outstanding can be repaid' }, 400);
+    }
+
     // Calculate new repaid amount
-    const newRepaidAmount = existing.repaidAmount + repaymentData.repaymentAmount;
-    
+    const newRepaidAmount = (existing.repaidAmount || 0) + repaymentAmount;
+
     // Check if loan is fully repaid
     const isFullyRepaid = newRepaidAmount >= existing.loanAmount;
-    
+
+    // Each repayment is kept with its own date so Paytm drops on the day the money actually
+    // went out. A partial repayment used to only bump repaidAmount - no date anywhere - so it
+    // never moved Paytm until the loan was finished, and then the whole amount landed on the
+    // final day. Partial repayments made before this list existed are carried in as one entry
+    // on the day of the last of them (updatedAt holds IST wall time, so its first 10
+    // characters are that IST date).
+    const earlierRepayments = Array.isArray(existing.repayments)
+      ? existing.repayments
+      : (existing.repaidAmount || 0) > 0
+        ? [{ date: (typeof existing.updatedAt === 'string' && existing.updatedAt.substring(0, 10)) || repaymentDate, amount: existing.repaidAmount, carriedOver: true }]
+        : [];
+    const repayments = [...earlierRepayments, { date: repaymentDate, amount: repaymentAmount, recordedAt: new Date().toISOString() }];
+
     const updated = {
       ...existing,
       repaidAmount: newRepaidAmount,
+      repayments,
       status: isFullyRepaid ? 'repaid' : 'active',
-      repaymentDate: isFullyRepaid ? repaymentData.repaymentDate : existing.repaymentDate,
+      repaymentDate: isFullyRepaid ? repaymentDate : existing.repaymentDate,
       repaymentType: isFullyRepaid ? 'full' : 'partial',
-      notes: repaymentData.notes ? `${existing.notes}\n[Repayment on ${repaymentData.repaymentDate}]: ${repaymentData.notes}` : existing.notes,
+      notes: repaymentData.notes ? `${existing.notes}\n[Repayment on ${repaymentDate}]: ${repaymentData.notes}` : existing.notes,
       updatedAt: getNowIST(),
     };
-    
+
     await kvWithRetry.set(key, updated);
-    
+
+    // Paytm moves on this repayment's date (and on the carried-over one, the first time).
+    const newEntries = Array.isArray(existing.repayments) ? [] : earlierRepayments;
+    const cascadeFrom = newEntries.reduce((min: string, r: any) => (r.date < min ? r.date : min), repaymentDate);
+    if (existing.storeId) {
+      await cascadeRecomputePaytmBalances(existing.storeId, cascadeFrom);
+    }
+
     console.log(`✅ Online loan repayment processed: ${key}`, {
       repaidAmount: repaymentData.repaymentAmount,
       totalRepaid: newRepaidAmount,
