@@ -804,9 +804,10 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
       item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
       : null;
@@ -877,6 +878,15 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
   }
 });
 
+// Who logged an expense stays on it: the edit forms don't send these fields and the PUT
+// routes replace the whole record, so every edit used to drop them.
+function keepExpenseAuthor(existing: any, updated: any) {
+  for (const field of ['createdBy', 'createdByName', 'createdByEmail']) {
+    if (existing?.[field] !== undefined) updated[field] = existing[field];
+  }
+  return updated;
+}
+
 // Update inventory item
 app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -899,15 +909,19 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     // Paginated: inventory: has 3000+ rows, and the plain prefix read stops at 1000, so an
     // older entry wasn't found and the edit was saved as a second copy.
     const existing = (await getAllByPrefixWithRetry('inventory:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Inventory item not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `inventory:${ownerId}:${itemId}`;
     const updates = await c.req.json();
 
-    const inventoryItem = {
+    const inventoryItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     inventoryItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(inventoryItem, role, existing);
 
     await kvWithRetry.set(key, inventoryItem);
@@ -1032,9 +1046,10 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
       : null;
@@ -1094,7 +1109,11 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated, like GET /overheads: the plain prefix read stops at 1000 rows.
     const existing = (await getAllByPrefixWithRetry('overhead:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Overhead item not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `overhead:${ownerId}:${itemId}`;
     const updates = await c.req.json();
     if (updates?.category === 'fuel' && role !== 'cluster_head') {
@@ -1104,11 +1123,11 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     
-    const overheadItem = {
+    const overheadItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     overheadItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(overheadItem, role, existing);
 
     await kvWithRetry.set(key, overheadItem);
@@ -1219,9 +1238,10 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
       body.entityType === 'production_house' || body.entityType === 'store' ? body.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (body.productionHouseId || null))
       : null;
@@ -1278,15 +1298,19 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: the plain prefix read stops at 1000 rows.
     const existing = (await getAllByPrefixWithRetry('fixedcost:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Fixed cost not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `fixedcost:${ownerId}:${itemId}`;
     const updates = await c.req.json();
 
-    const fixedCostItem = {
+    const fixedCostItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     fixedCostItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(fixedCostItem, role, existing);
 
     await kvWithRetry.set(key, fixedCostItem);
