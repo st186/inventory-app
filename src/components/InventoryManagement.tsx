@@ -625,6 +625,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  productionHouseForStore={productionHouseForStore}
  loadCashCover={loadCashCover}
  priceGuide={priceGuide}
+ accessToken={accessToken}
  onClose={() => setShowQuickAdd(false)}
  onSubmitInventory={async (item) => {
  await context.addInventoryItem(item);

@@ -649,6 +649,18 @@ export async function dismissCalendarSuggestion(accessToken: string, date: strin
   await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/dismiss`, accessToken, { method: 'POST' });
 }
 
+// Voice entry: one spoken sentence read into form fields (server /ai/voice-fill, Haiku).
+export interface VoiceSalesFields { paytm: number | null; cash: number | null; cashInHand: number | null; unclear: string }
+export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; amount: number | null }
+export interface VoiceExpenseFields { items: VoiceExpenseItem[]; paidWith: 'cash' | 'online' | 'unknown'; unclear: string }
+
+export async function voiceFill(accessToken: string, kind: 'sales', text: string): Promise<VoiceSalesFields>;
+export async function voiceFill(accessToken: string, kind: 'expense', text: string): Promise<VoiceExpenseFields>;
+export async function voiceFill(accessToken: string, kind: 'sales' | 'expense', text: string) {
+  const data = await fetchWithAuth(`${API_BASE}/ai/voice-fill`, accessToken, { method: 'POST', body: JSON.stringify({ kind, text }) });
+  return data.fields;
+}
+
 export async function askBunny(accessToken: string, storeId: string | null, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<{ answer: string; toolsUsed: string[] }> {
   return fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages }) });
 }

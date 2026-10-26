@@ -13,6 +13,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Custom plugins must be registered before super.onCreate.
         registerPlugin(RiderAlertPlugin.class);
+        registerPlugin(VoicePlugin.class);
         super.onCreate(savedInstanceState);
         showOverLockScreenForRideRequest(getIntent());
     }

@@ -17,7 +17,7 @@ type Purchase = {
   priceCheckOk?: boolean; // someone confirmed an unusual price is right
 };
 
-type Measure = 'kg' | 'L' | 'pc' | 'packet' | 'carton';
+type Measure = 'kg' | 'L' | 'pc' | 'packet' | 'carton' | 'bundle';
 
 const UNITS: Record<string, { measure: Measure; perBase: number }> = {
   kg: { measure: 'kg', perBase: 1 },
@@ -35,6 +35,7 @@ const UNITS: Record<string, { measure: Measure; perBase: number }> = {
   packet: { measure: 'packet', perBase: 1 },
   packets: { measure: 'packet', perBase: 1 },
   carton: { measure: 'carton', perBase: 1 },
+  bundle: { measure: 'bundle', perBase: 1 }, // leafy greens (আঁটি)
 };
 
 // The other size of the same measure, for a g <-> kg or mL <-> L slip.
@@ -130,7 +131,7 @@ const fmtQty = (q: number) => (Number.isInteger(q) ? q.toLocaleString('en-IN') :
 // A sensible quantity in the entry's own unit: whole pieces, kg to 0.1, grams to 10.
 function roundQuantity(q: number, unit: string) {
   const u = UNITS[unit];
-  if (!u || u.measure === 'pc' || u.measure === 'packet' || u.measure === 'carton') return Math.max(1, Math.round(q));
+  if (!u || u.perBase === 1 && u.measure !== 'kg' && u.measure !== 'L') return Math.max(1, Math.round(q));
   if (u.perBase === 1) return q >= 10 ? Math.round(q) : Math.max(0.1, Math.round(q * 10) / 10);
   return Math.max(10, Math.round(q / 10) * 10);
 }

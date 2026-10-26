@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageCircleQuestion, Send, Loader2, Sparkles } from 'lucide-react';
 import * as api from '../../utils/api';
+import { VoiceButton } from '../VoiceButton';
 
 type Msg = { role: 'user' | 'assistant'; content: string; toolsUsed?: string[]; failed?: boolean };
 
@@ -89,11 +90,13 @@ export function AskBunny({ accessToken, storeId }: { accessToken: string; storeI
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-          placeholder="Ask a question..."
+          placeholder="Ask a question - type or tap the mic"
           rows={1}
           className="flex-1 resize-none px-4 py-3 border border-gray-300 rounded-xl text-base bg-white"
           aria-label="Your question"
         />
+        {/* Spoken questions land in the box to check before sending; Bengali gets a Bengali answer. */}
+        <VoiceButton onText={(text) => setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} prompt="আপনার প্রশ্ন বলুন" />
         <button type="submit" disabled={busy || !input.trim()} className="px-4 rounded-xl bg-violet-600 text-white disabled:opacity-50" aria-label="Send"><Send className="w-5 h-5" /></button>
       </form>
     </div>

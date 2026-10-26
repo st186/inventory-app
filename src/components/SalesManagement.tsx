@@ -15,6 +15,7 @@ import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
 import { paidOutsideStoreTill } from '../utils/cashSource';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
+import { VoiceButton } from './VoiceButton';
 
 type Props = {
  context: InventoryContextType;
@@ -1450,6 +1451,32 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const actualCashCount = parseFloat(formData.actualCashInHand) || 0;
  const actualPaytmBalance = parseFloat(formData.actualPaytmBalance) || calculatePaytmBalance;
 
+ // Voice cash count: "ajke cash 3400, ar paytm 3500, ar cash in hand ache 3000" fills Cash, Paytm
+ // and Actual Cash in Hand (only the boxes this person may edit), to check before saving.
+ const [voiceBusy, setVoiceBusy] = useState(false);
+ const [voiceHeard, setVoiceHeard] = useState<string | null>(null);
+ const fillSalesFromVoice = async (text: string) => {
+ const token = context.user?.accessToken;
+ if (!token) return;
+ setVoiceBusy(true);
+ try {
+ const f = await api.voiceFill(token, 'sales', text);
+ const updates: Partial<typeof formData> = {};
+ const filled: string[] = [];
+ if (f.paytm !== null && canEditSales) { updates.paytmAmount = String(f.paytm); filled.push(`Paytm ₹${f.paytm.toLocaleString('en-IN')}`); }
+ if (f.cash !== null && canEditSales) { updates.cashAmount = String(f.cash); filled.push(`Cash ₹${f.cash.toLocaleString('en-IN')}`); }
+ if (f.cashInHand !== null && canReconcileCash) { updates.actualCashInHand = String(f.cashInHand); filled.push(`Cash in hand ₹${f.cashInHand.toLocaleString('en-IN')}`); }
+ setFormData((prev) => ({ ...prev, ...updates }));
+ setVoiceHeard(`"${text}"${f.unclear ? ` - not used: ${f.unclear}` : ''}`);
+ if (filled.length) toast.success(`Filled ${filled.join(', ')} - check, then save`);
+ else toast.error('No amounts found in that. Try: "cash 3400, paytm 3500, cash in hand 3000"');
+ } catch (e: any) {
+ toast.error(e?.message || 'Could not read that');
+ } finally {
+ setVoiceBusy(false);
+ }
+ };
+
  return (
  <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/30 to-rose-50/30">
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1712,6 +1739,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  </div>
  <h3 className="text-sm font-bold text-gray-900 tracking-tight">Cash Count</h3>
  </div>
+ {(canEditSales || canReconcileCash) && (
+ <VoiceButton onText={fillSalesFromVoice} busy={voiceBusy} label="বলুন" prompt="যেমন: আজকে ক্যাশ ৩৪০০, পেটিএম ৩৫০০, হাতে আছে ৩০০০" />
+ )}
  {offlineSalesTotal > 0 && (
  paymentMismatch ? (
  <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-100/80 px-2.5 py-1 rounded-full">
@@ -1727,6 +1757,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  {/* Bengali+English instructions - what he actually needs to do here, in his own
  mixed language rather than English-only jargon. */}
+ {voiceHeard && (
+ <p className="text-[11px] text-violet-800 bg-violet-50 rounded-lg px-3 py-1.5 mb-2">Heard: {voiceHeard}</p>
+ )}
  <p className="text-xs text-gray-700 bg-white/70 rounded-lg px-3 py-2 mb-3 leading-relaxed">
  👉 দোকান বন্ধ করার আগে ক্যাশ বক্স আর Paytm-এ যা <b>সত্যিই</b> আছে, সেটা গুনে এখানে লিখুন — আন্দাজে না, একদম আসল সংখ্যা। এটা POS-এর sales-এর সাথে মিলিয়ে check হবে।
  </p>

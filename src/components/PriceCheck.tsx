@@ -7,7 +7,7 @@ import { formatDateIST } from '../utils/timezone';
 // Price checks on purchases (utils/expenseChecks.ts): a warning while an entry is typed in, and
 // a list of older entries whose price looks wrong, each with a fix.
 
-const UNIT_CHOICES = ['kg', 'g', 'L', 'mL', 'pcs', 'units'];
+const UNIT_CHOICES = ['kg', 'g', 'L', 'mL', 'pcs', 'units', 'bundle'];
 
 export function PriceWarning({ flag, onFix }: { flag: PriceFlag | null; onFix?: (fix: PriceFix) => void }) {
   if (!flag) return null;

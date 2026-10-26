@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Loader2, Check, AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
 import {
   SELECTABLE_INVENTORY_CATEGORIES,
@@ -23,6 +24,7 @@ import { productionShouldCover } from '../utils/cashSource';
 import { useCashCover, type LoadCashCover } from './useCashCover';
 import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
+import { VoiceButton } from './VoiceButton';
 import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
@@ -53,6 +55,7 @@ type Props = {
   loadCashCover?: LoadCashCover;
   // What each item usually costs and the unit it's usually bought in (utils/expenseChecks.ts).
   priceGuide?: PriceGuide;
+  accessToken?: string; // for voice entry (server reads what was said)
 };
 
 const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
@@ -76,6 +79,7 @@ export function QuickAddExpense({
   productionHouseForStore,
   loadCashCover,
   priceGuide,
+  accessToken,
 }: Props) {
   const [amount, setAmount] = useState('');
   // Default: the expense's own cash (store cash for a store bill, production cash for production).
@@ -163,7 +167,7 @@ export function QuickAddExpense({
     // a carrot came to be saved as "1 pcs ₹60" and a Coke crate as "1 pcs ₹470".
     if (s.entryType === 'inventory') {
       const usual = priceGuide?.usualUnit.get(priceItemKey(s.label));
-      setUnit(usual && ['kg', 'g', 'L', 'mL', 'pcs', 'units'].includes(usual) ? usual : 'pcs');
+      setUnit(usual && UNIT_PILLS.includes(usual) ? usual : 'pcs');
       setQuantity('1');
     }
   };
@@ -237,6 +241,42 @@ export function QuickAddExpense({
     setIsBundleMode(false);
     setUnit(fix.unit);
     setQuantity(String(fix.quantity));
+  };
+
+  // Voice: "ajke 3kg chicken niyeche 600 taka" fills amount ₹600, Chicken, 3 kg - to check, then save.
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceHeard, setVoiceHeard] = useState<string | null>(null);
+  const fillFromVoice = async (text: string) => {
+    if (!accessToken) return;
+    setVoiceBusy(true);
+    try {
+      const f = await api.voiceFill(accessToken, 'expense', text);
+      const [first, ...rest] = f.items || [];
+      setVoiceHeard(`"${text}"${rest.length ? ` - ${rest.length + 1} items heard; filled the first, add ${rest.map((r) => r.name).join(', ')} after saving` : ''}${f.unclear ? ` - not used: ${f.unclear}` : ''}`);
+      if (!first) {
+        toast.error('No item found in that. Try: "3 kg chicken 600 taka"');
+        return;
+      }
+      if (first.amount !== null) setAmount(String(first.amount));
+      const top = searchExpenseCandidates(first.name, candidates, 1)[0];
+      const best = top && top.score >= 0.85 ? top : null;
+      if (best) selectSuggestion(best);
+      else resetMatchIfTyping(first.name);
+      const unitSaid = first.unit === 'packet' ? 'pcs' : first.unit;
+      if (best?.category === 'beverages') {
+        setPackageType('pieces');
+        if (first.quantity !== null) setPieceCount(String(first.quantity));
+      } else {
+        if (unitSaid && UNIT_PILLS.includes(unitSaid)) { setUnit(unitSaid); setIsBundleMode(false); }
+        if (first.quantity !== null) setQuantity(String(first.quantity));
+      }
+      if (f.paidWith === 'online' && ownerPaymentOption) setPaidFrom('online');
+      toast.success(`Filled ${first.quantity ?? ''} ${unitSaid ?? ''} ${first.name}${first.amount !== null ? ` · ₹${first.amount.toLocaleString('en-IN')}` : ''} - check, then save`.replace(/\s+/g, ' '));
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not read that');
+    } finally {
+      setVoiceBusy(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -362,6 +402,13 @@ export function QuickAddExpense({
             on-screen keyboard opened, scrolling the field you were actively typing into
             out of view with nothing to bring it back. */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+          {accessToken && (
+            <div className="flex items-center gap-3">
+              <VoiceButton onText={fillFromVoice} busy={voiceBusy} label="বলুন" prompt="যেমন: আজকে ৩ কেজি চিকেন ৬০০ টাকা" />
+              <p className="text-[11px] text-gray-500 leading-snug">Say it instead - e.g. "ajke 3 kg chicken 600 taka"</p>
+            </div>
+          )}
+          {voiceHeard && <p className="text-[11px] text-violet-800 bg-violet-50 rounded-lg px-3 py-1.5">Heard: {voiceHeard}</p>}
           <div className="flex bg-gray-100 rounded-xl p-1">
             {(['store', 'production_house'] as const).map((opt) => (
               <button
@@ -659,7 +706,7 @@ export function QuickAddExpense({
                   {/* Pill buttons instead of a dropdown - a native <select>'s popup can render
                       past the bottom of the screen inside the Android WebView. */}
                   <div className="flex flex-wrap gap-2">
-                    {['kg', 'g', 'L', 'mL', 'pcs', 'units'].map((u) => (
+                    {UNIT_PILLS.map((u) => (
                       <button
                         key={u}
                         type="button"
@@ -670,7 +717,7 @@ export function QuickAddExpense({
                             : 'bg-white text-gray-700 border-gray-300 hover:border-orange-400'
                         }`}
                       >
-                        {u}
+                        {u === 'bundle' ? 'bundle (আঁটি)' : u}
                       </button>
                     ))}
                   </div>
@@ -747,6 +794,9 @@ export function QuickAddExpense({
     </div>
   );
 }
+
+// Leafy greens (coriander, pudina, onion leaves) are bought by the bundle, not weighed.
+const UNIT_PILLS = ['kg', 'g', 'L', 'mL', 'pcs', 'units', 'bundle'];
 
 function normalize(s: string) {
   return s.trim().toLowerCase();

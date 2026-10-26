@@ -236,7 +236,16 @@ How to answer:
 - Write for a busy owner: short, plain English, concrete numbers, and what to do. Rupees as "Rs 12,400" with Indian digit grouping.
 - Use only the data you are given or fetch with your tools. If something is not in the data, say so instead of guessing.
 - Name dates as "Sun 25 Oct". Today's date is given in each request.
-- Never ask for or discuss individual salaries or personal details.`;
+- Never ask for or discuss individual salaries or personal details.
+- A question asked in Bengali (in Bengali script or written in English letters, often spoken into the phone) gets its answer in simple Bengali; keep numbers in digits.`;
+
+// Reads one spoken sentence (speech-to-text from the phone, usually Bengali mixed with English
+// words) into form fields. Only what was said - nothing worked out or guessed.
+const VOICE_PROMPT = `You turn one spoken sentence from staff at Bunny Momos, a momo shop in Bardhaman, West Bengal, into form fields. The text comes from phone speech recognition: usually Bengali (Bengali script, or Bengali in English letters) mixed with English words, sometimes English only. Recognition mistakes are common - read for what was meant.
+
+Numbers: Bengali digits ০১২৩৪৫৬৭৮৯ are 0-9. Number words: এক 1, দুই/দু 2, তিন 3, চার 4, পাঁচ 5, ছয় 6, সাত 7, আট 8, নয় 9, দশ 10, বিশ 20, পঞ্চাশ 50, একশো/শো 100, হাজার 1000 (তিন হাজার চারশো = 3400); দেড় 1.5, আড়াই 2.5, সাড়ে = plus a half (সাড়ে তিন = 3.5, সাড়ে তিনশো = 350); পোয়া = 250 g. টাকা / taka / rupees = rupees. কেজি/kilo = kg, গ্রাম = g, লিটার = L, পিস/টা = pieces, আঁটি/bundle = bundle, প্যাকেট = packet.
+
+Only fill what was actually said; leave everything else null. Never calculate one value from another.`;
 
 async function callClaude(deps: Deps, opts: {
   purpose: string;
@@ -245,6 +254,8 @@ async function callClaude(deps: Deps, opts: {
   effort?: 'low' | 'medium' | 'high';
   maxTokens?: number;
   format?: any;
+  system?: string; // in place of the analyst prompt, for small jobs like reading voice input
+  noThinking?: boolean; // quick extraction: skip thinking (Haiku thinks by default)
 }) {
   if (!aiConfigured()) throw new AiError('AI is not set up yet: add the ANTHROPIC_API_KEY secret in Supabase.', 503);
   const spent = await spentThisMonth(deps.kv);
@@ -253,11 +264,12 @@ async function callClaude(deps: Deps, opts: {
   const body: any = {
     model: AI_MODEL,
     max_tokens: opts.maxTokens || 8000,
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+    system: opts.system || [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: opts.messages,
     output_config: { effort: opts.effort || 'medium', ...(opts.format ? { format: opts.format } : {}) },
   };
   if (opts.tools) body.tools = opts.tools;
+  if (opts.noThinking) body.thinking = { type: 'disabled' };
   if (SUPPORTS_FALLBACK) {
     body.betas = ['server-side-fallback-2026-07-01'];
     body.fallbacks = 'default';
@@ -734,6 +746,67 @@ ${JSON.stringify({
         );
       }
       return c.json({ success: true, added: added.length, notified });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Voice entry: one spoken sentence -> sales cash-count or expense fields. The app fills the form
+  // with them and the person checks it before saving. About ₹0.01 a sentence on Haiku.
+  app.post(`${P}/ai/voice-fill`, async (c: any) => {
+    const authResult = await deps.verifyUser(c.req.header('Authorization'));
+    if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+    const role = authResult.user.user_metadata?.role;
+    if (role !== 'manager' && role !== 'cluster_head') return c.json({ error: 'Only people who enter sales or expenses can use voice entry' }, 403);
+    try {
+      const { kind, text } = await c.req.json();
+      const said = String(text || '').trim().slice(0, 600);
+      if (!said) return c.json({ error: 'Nothing was heard' }, 400);
+      const num = { anyOf: [{ type: 'number' }, { type: 'null' }] };
+      const salesSchema = {
+        type: 'object', additionalProperties: false,
+        required: ['paytm', 'cash', 'cashInHand', 'unclear'],
+        properties: {
+          paytm: { ...num, description: 'Money received on Paytm / UPI / online today (paytm, online, UPI, GPay, PhonePe)' },
+          cash: { ...num, description: 'Cash collected from sales today ("cash", "ক্যাশ" on its own)' },
+          cashInHand: { ...num, description: 'Cash counted in the cash box now ("cash in hand", "হাতে আছে", "ক্যাশ বক্সে আছে")' },
+          unclear: { type: 'string', description: 'Anything said that did not fit these fields, in English; empty if none' },
+        },
+      };
+      const expenseSchema = {
+        type: 'object', additionalProperties: false,
+        required: ['items', 'paidWith', 'unclear'],
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object', additionalProperties: false,
+              required: ['name', 'quantity', 'unit', 'amount'],
+              properties: {
+                name: { type: 'string', description: 'The item in plain English as a shop list would name it: Chicken, Onion, Coriander Leaves, Maida, Coke' },
+                quantity: num,
+                unit: { anyOf: [{ type: 'string', enum: ['kg', 'g', 'L', 'mL', 'pcs', 'bundle', 'packet'] }, { type: 'null' }] },
+                amount: { ...num, description: 'Total rupees paid for this line (not the price per unit)' },
+              },
+            },
+          },
+          paidWith: { type: 'string', enum: ['cash', 'online', 'unknown'], description: 'online = Paytm / UPI / GPay / PhonePe' },
+          unclear: { type: 'string', description: 'Anything said that did not fit, in English; empty if none' },
+        },
+      };
+      const res = await callClaude(deps, {
+        purpose: 'voice',
+        system: VOICE_PROMPT,
+        effort: 'low',
+        noThinking: /haiku/.test(AI_MODEL),
+        maxTokens: 1500,
+        format: { type: 'json_schema', schema: kind === 'sales' ? salesSchema : expenseSchema },
+        messages: [{ role: 'user', content: kind === 'sales'
+          ? `The store's end-of-day cash count. They said: "${said}"`
+          : `An expense (purchase) entry. They said: "${said}"` }],
+      });
+      let fields: any = null;
+      try { fields = JSON.parse(textOf(res)); } catch { /* reported below */ }
+      if (!fields) return c.json({ error: 'Could not read that - try saying it again' }, 422);
+      return c.json({ fields, heard: said });
     } catch (err) { return fail(c, err); }
   });
 

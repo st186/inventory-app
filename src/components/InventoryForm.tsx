@@ -691,6 +691,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
                   <option value="mL">mL</option>
                   <option value="pcs">pcs</option>
                   <option value="units">units</option>
+                  <option value="bundle">bundle (আঁটি)</option>
                 </select>
               </div>
             </div>
@@ -769,7 +770,7 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
           <PriceWarning
             flag={priceFlag}
             onFix={isBeverage || isBundlePurchase ? undefined : (fix) => {
-              const u = ['kg', 'g', 'L', 'mL', 'pcs', 'units'].includes(fix.unit) ? fix.unit : 'pcs';
+              const u = ['kg', 'g', 'L', 'mL', 'pcs', 'units', 'bundle'].includes(fix.unit) ? fix.unit : 'pcs';
               setFormData({ ...formData, quantity: String(fix.quantity), unit: u });
             }}
           />
