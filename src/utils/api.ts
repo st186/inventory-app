@@ -1307,6 +1307,8 @@ export interface Employee {
   phone?: string;
   aadharFront?: string;
   aadharBack?: string;
+  // Set by the server instead of the images for anyone but the owner and the person themself.
+  hasAadharImages?: boolean;
   authUserId?: string;
   createdBy?: string;
   createdAt?: string;
@@ -1417,6 +1419,27 @@ export async function deleteUnifiedEmployee(employeeId: string) {
     throw new Error(error.error || 'Failed to delete employee');
   }
   
+  return await response.json();
+}
+
+// Owner only: brings a past employee back and switches their login back on.
+export async function restoreArchivedEmployee(employeeId: string): Promise<{ success: boolean; loginRestored: boolean }> {
+  const session = await getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const response = await fetch(`${API_BASE}/archived-employees/${employeeId}/restore`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to restore employee');
+  }
+
   return await response.json();
 }
 

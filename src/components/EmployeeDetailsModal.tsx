@@ -38,9 +38,14 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
   const handleSave = async () => {
     try {
       setSaving(true);
-      
+
+      // The role goes through its own owner-only route, which writes only the role to the
+      // login (the general profile update is open to managers too).
+      if (formData.role !== employee.role) {
+        await api.updateEmployeeRole(employee.employeeId, formData.role);
+      }
+
       const updates: any = {
-        role: formData.role,
         designation: formData.designation,
         department: formData.department,
         storeId: formData.storeId || null,

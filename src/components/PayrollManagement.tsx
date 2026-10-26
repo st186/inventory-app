@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, Users, DollarSign, Calendar, X, Edit2, Trash2, Download, FileText, CreditCard, CheckCircle, XCircle, Clock, AlertCircle, Minus } from 'lucide-react';
 import * as api from '../utils/api';
-import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { DatePicker } from './DatePicker';
 import { PaymentHistoryModal } from './PaymentHistoryModal';
 import { generatePayslip } from '../utils/payslip';
@@ -187,10 +186,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [showEditPayout, setShowEditPayout] = useState(false);
   const [editingPayout, setEditingPayout] = useState<Payout | null>(null);
 
-  // Employee account setup modal state
-  const [showAccountSetup, setShowAccountSetup] = useState(false);
-
-  
   // Same store-match + incharge-permission predicate used for both lists below - pulled
   // out once so the roster (active-only) and the payout-matching list (active + archived)
   // can never drift apart on what counts as "in scope" the way they used to.
@@ -2585,13 +2580,6 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
         />
       )}
 
-      {/* Employee Account Setup Modal */}
-      {showAccountSetup && (
-        <EmployeeAccountSetup
-          onClose={() => setShowAccountSetup(false)}
-          employees={employees}
-        />
-      )}
     </div>
   );
 }
