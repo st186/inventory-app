@@ -63,6 +63,9 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
   }, [initialTab]);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  // The pending-approvals list's own Approve buttons: one approval at a time, so a double tap
+  // can't send the same approval twice.
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [cleaning, setCleaning] = useState(false);
 
   const isProductionIncharge = context.user?.designation === 'production_incharge';
@@ -92,6 +95,15 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     }
     return null;
   }, [isProductionIncharge, context.user?.storeId, selectedStoreId, context.stores]);
+
+  // Pending entries for the approvals tab. Entries are matched on their production house (older
+  // ones carry it only in storeId); operations managers and the cluster head see every house's.
+  // This compared entries with the viewer's own storeId, so an operations manager who has a
+  // store saw an empty list.
+  const isPendingForViewer = (p: ProductionData) =>
+    p.approvalStatus === 'pending' &&
+    (isOperationsManager || isClusterHead || !resolvedProductionHouseId ||
+      p.productionHouseId === resolvedProductionHouseId || p.storeId === resolvedProductionHouseId);
 
   const [ledgerEntry, setLedgerEntry] = useState<api.ProductionLedgerEntry | null>(null);
   const [ledgerLive, setLedgerLive] = useState<api.ProductionLedgerLive | null>(null);
@@ -613,10 +625,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
           >
             Pending Approvals
             {(() => {
-              const pendingCount = context.productionData.filter(p =>
-                p.approvalStatus === 'pending' &&
-                (!context.user?.storeId || p.storeId === context.user.storeId)
-              ).length;
+              const pendingCount = context.productionData.filter(isPendingForViewer).length;
               return pendingCount > 0 && (
                 <span className={`px-2 py-1 rounded-full text-xs ${
                   activeTab === 'approvals' ? 'bg-orange-500 text-white' : 'bg-gray-300 text-gray-700'
@@ -634,10 +643,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         <div className="space-y-4">
           {(() => {
             const pendingProduction = context.productionData
-              .filter(p => 
-                p.approvalStatus === 'pending' && 
-                (!context.user?.storeId || p.storeId === context.user.storeId)
-              )
+              .filter(isPendingForViewer)
               .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
             if (pendingProduction.length === 0) {
@@ -685,17 +691,22 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
                     </div>
                     <button
                       onClick={async () => {
+                        if (approvingId) return;
+                        setApprovingId(production.id);
                         try {
                           await context.approveProductionData(production.id);
                           alert('Production data approved successfully!');
                         } catch (error) {
                           alert('Failed to approve production data. Please try again.');
+                        } finally {
+                          setApprovingId(null);
                         }
                       }}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                      disabled={approvingId !== null}
+                      className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait"
                     >
                       <CheckSquare className="w-5 h-5" />
-                      Approve
+                      {approvingId === production.id ? 'Approving...' : 'Approve'}
                     </button>
                   </div>
 
