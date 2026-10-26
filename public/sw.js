@@ -102,6 +102,7 @@ const NOTIFICATION_VIEW_MAP = {
   stock_request_fulfilled: { view: 'stock-requests' },
   stock_request_partial: { view: 'stock-requests' },
   stock_request_cancelled: { view: 'stock-requests' },
+  stock_request_reminder: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
   calendar_suggestions: { view: 'analytics', tab: 'trends' }, // weekly AI festival-day draft
