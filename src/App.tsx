@@ -843,6 +843,8 @@ export default function App() {
  assignedProductionHouseIds
  };
  setUser(userData);
+ // Read and write this person's own cache (shared phones - see dataCache.ts)
+ dataCache.setCacheUser(userData.employeeId || userData.email);
  
  // Load data for the user
  await loadData(session.access_token);
@@ -1038,6 +1040,8 @@ export default function App() {
  assignedProductionHouseIds
  };
  setUser(userData);
+ // Read and write this person's own cache (shared phones - see dataCache.ts)
+ dataCache.setCacheUser(userData.employeeId || userData.email);
  
  // Load data for the user
  await loadData(data.session.access_token);
@@ -1132,6 +1136,10 @@ export default function App() {
  try {
  if (user && nativePushNotifications.isNativePushSupported()) {
  await nativePushNotifications.unsubscribeNativePushNotifications(user.employeeId || user.email);
+ } else if (user && pushNotifications.isPushNotificationSupported()) {
+ // Same for the browser's web-push subscription, or the next person to sign in on this
+ // browser keeps receiving this person's notifications.
+ await pushNotifications.unsubscribeFromPushNotifications(user.employeeId || user.email);
  }
  } catch (error) {
  console.log('Could not unsubscribe push on logout:', error);
@@ -1144,6 +1152,7 @@ export default function App() {
  setSalesData([]);
  setActiveView('sales');
  dataCache.invalidateAllCaches(); // Clear all caches on logout
+ dataCache.setCacheUser(null);
  };
 
  const handleRefreshData = async () => {

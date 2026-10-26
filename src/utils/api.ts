@@ -5,6 +5,7 @@ import type { DispatchInfo, DeliveryReceipt } from './batches';
 import type { StockOutEntry } from './stockOuts';
 import type { AccuracySummary, BacktestDay, CalendarEvent, DayRecord, EffectLearning, ForecastDay, ForecastSettings } from './forecast';
 import { currentAccessToken } from './accessToken';
+import { invalidateAllCaches, setCacheUser } from './dataCache';
 
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
@@ -117,9 +118,12 @@ async function fetchWithAuth(url: string, accessToken: string, options?: Request
         isHandlingUnauthorized = true;
         console.error('Session expired or invalid. Please log in again.');
 
-        // Clear the session
+        // Clear the session, and the signed-out person's cached data so it isn't shown to
+        // whoever signs in next on this device
         const supabase = createBrowserSupabase();
         await supabase.auth.signOut();
+        invalidateAllCaches();
+        setCacheUser(null);
 
         // Use a flag to ensure we only reload once
         if (!sessionStorage.getItem('logout_redirect_in_progress')) {
