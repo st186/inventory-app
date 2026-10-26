@@ -53,6 +53,7 @@ import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
 import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
+import { useRiderLocationSharing } from './utils/riderLocationSharing';
 import { getTodayIST } from './utils/timezone';
 
 export type InventoryItem = {
@@ -881,6 +882,10 @@ export default function App() {
  }
  console.log('🔔 [nav] Applied: view=', view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
  }, [setActiveView, user]);
+
+ // Riders share their live location for the whole active ride, whichever screen is open
+ // (it used to stop when they left the Riders screen mid-delivery).
+ useRiderLocationSharing(user?.designation === 'rider');
 
  // Initialize push notifications when user logs in
  useEffect(() => {

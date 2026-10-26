@@ -6,7 +6,8 @@ import * as api from '../utils/api';
 import type { RiderListItem, RiderPlace, RiderStop, RiderSummary, RiderTrip, RiderTripEta, RiderTripLocation, RiderTripStatus, RiderTripType } from '../utils/api';
 import { RiderMap } from './RiderMap';
 import { LocationPicker, type PickedLocation } from './LocationPicker';
-import { openRiderLocationSettings, startRiderTracking, type TrackingState } from '../utils/riderTracking';
+import { openRiderLocationSettings } from '../utils/riderTracking';
+import { refreshRiderLocationSharing, useRiderTrackingState } from '../utils/riderLocationSharing';
 import {
   getRiderAlertStatus, isRiderAlertRinging, openRiderAlertSetting, riderAlertSupported, stopRiderAlert, testRiderAlert,
   type RiderAlertStatus,
@@ -719,7 +720,6 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
   useEffect(() => {
     setLinkedRequestIds(new Set(openRequests.filter((r) => r.status === 'shipped' || r.status === 'partially-shipped').map((r) => r.id)));
   }, [openRequests]);
-  const [trackingState, setTrackingState] = useState<TrackingState | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -853,17 +853,19 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
     if (mode === 'rider' && !loading && !hasWaitingRequest) stopRiderAlert();
   }, [mode, loading, hasWaitingRequest]);
 
-  // Rider only: share the phone's position for as long as the active ride is in a tracked stage.
+  // Rider only: the phone's position is shared while the active ride is in a tracked stage.
+  // The sharing runs app-wide (utils/riderLocationSharing.ts, mounted in App.tsx) so it keeps
+  // going when the rider leaves this screen mid-delivery; this screen shows its state and
+  // nudges it when a ride changes stage here, so it doesn't wait for its own poll.
   const riderTripId = mode === 'rider' ? active[0]?.id || null : null;
   const riderShouldTrack = mode === 'rider' && !!active[0] && TRACKED_STATUSES.includes(active[0].status);
+  const trackingState = useRiderTrackingState();
   useEffect(() => {
-    if (!riderTripId || !riderShouldTrack) { setTrackingState(null); return; }
-    const stop = startRiderTracking(riderTripId, (state) => {
-      setTrackingState(state);
-      if (state === 'stopped') load(true);
-    });
-    return () => stop();
-  }, [riderTripId, riderShouldTrack, load]);
+    if (mode === 'rider') refreshRiderLocationSharing();
+  }, [mode, riderTripId, riderShouldTrack]);
+  useEffect(() => {
+    if (mode === 'rider' && trackingState === 'stopped') load(true); // the ride ended on the server
+  }, [mode, trackingState, load]);
 
   const header = (
     <div className="flex items-center justify-between gap-3 mb-5">
