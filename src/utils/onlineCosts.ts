@@ -59,6 +59,35 @@ const emptyDay = (): DayAmounts => ({ commission: 0, ads: 0, gst: 0, discount: 0
 const asAggregator = (value: string): Aggregator | null =>
   value === 'zomato' || value === 'swiggy' ? value : null;
 
+// How a settlement's amounts are split over dates. Weight each date by its orders' value, and
+// treat those dates as the ones the file covers - the stored period isn't reliable (July's
+// daily Zomato files all say 1-31 Jul). Files without dated orders cover their period, split
+// evenly.
+function settlementDayWeights(s: OnlineCostSettlement): { weights: Map<string, number>; totalWeight: number } {
+  const weights = new Map<string, number>();
+  for (const o of s.orders || []) {
+    if (o.orderDate) weights.set(o.orderDate, (weights.get(o.orderDate) || 0) + Math.max(0, o.grossValue || 0));
+  }
+  let totalWeight = [...weights.values()].reduce((t, w) => t + w, 0);
+  if (totalWeight <= 0) {
+    const period = getSettlementPeriod(s);
+    weights.clear();
+    for (let d = period.start; d <= period.end; d = addDays(d, 1)) weights.set(d, 1);
+    totalWeight = weights.size;
+  }
+  return { weights, totalWeight };
+}
+
+// The part (0-1) of a settlement that falls on dates from start to end - the same per-day
+// split onlineCostsForRange counts, so a breakdown built from it adds up to the cards.
+export function settlementShareInRange(s: OnlineCostSettlement, start: string, end: string): number {
+  const { weights, totalWeight } = settlementDayWeights(s);
+  if (totalWeight <= 0) return 0;
+  let inRange = 0;
+  for (const [d, w] of weights) if (d >= start && d <= end) inRange += w;
+  return inRange / totalWeight;
+}
+
 export function buildOnlineCostIndex(settlements: OnlineCostSettlement[], storeId?: string | null): OnlineCostIndex {
   const index: OnlineCostIndex = {
     settled: { zomato: new Map(), swiggy: new Map() },
@@ -67,21 +96,7 @@ export function buildOnlineCostIndex(settlements: OnlineCostSettlement[], storeI
   for (const s of settlements || []) {
     const agg = asAggregator(s.aggregator);
     if (!agg || (storeId && s.storeId !== storeId)) continue;
-    const period = getSettlementPeriod(s);
-
-    // Weight each date by its orders' value, and treat those dates as the ones this file
-    // covers - the stored period isn't reliable (July's daily Zomato files all say 1-31 Jul).
-    // Files without dated orders cover their period, split evenly.
-    const weights = new Map<string, number>();
-    for (const o of s.orders || []) {
-      if (o.orderDate) weights.set(o.orderDate, (weights.get(o.orderDate) || 0) + Math.max(0, o.grossValue || 0));
-    }
-    let totalWeight = [...weights.values()].reduce((t, w) => t + w, 0);
-    if (totalWeight <= 0) {
-      weights.clear();
-      for (let d = period.start; d <= period.end; d = addDays(d, 1)) weights.set(d, 1);
-      totalWeight = weights.size;
-    }
+    const { weights, totalWeight } = settlementDayWeights(s);
 
     // Older files without the GST column: 5% GST on the food, i.e. 5/105 of what the customer paid.
     const gst = s.gstCollected ?? ((s.grossSales || 0) * 5) / 105;

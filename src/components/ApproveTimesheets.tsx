@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { CheckCircle, XCircle, Clock, User, Calendar, AlertCircle } from 'lucide-react';
 import * as api from '../utils/api';
-import { RouteDebugger } from './RouteDebugger';
 import { employeeBelongsToStore } from '../utils/entityAccess';
 import type { Store } from '../utils/api';
 
@@ -215,11 +214,6 @@ export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge
               </div>
             </div>
           </div>
-        )}
-
-        {/* Route Debugger - Only show when there are no employees */}
-        {managerId && employees.length === 0 && (
-          <RouteDebugger managerId={managerId} />
         )}
 
         {/* Pending Count Badge */}

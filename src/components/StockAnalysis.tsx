@@ -34,14 +34,15 @@ const PERIOD_LABELS: Record<Period, string> = {
 };
 
 // Calendar-date (YYYY-MM-DD) arithmetic in IST, so a late-night check doesn't land on the
-// wrong day - same approach as the Analytics page's own date filters. Weeks run Sun-Sat.
+// wrong day - same approach as the Analytics page's own date filters. Weeks run Mon-Sun.
 const todayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const shiftDate = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().substring(0, 10);
 };
-const weekdayOf = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay();
+// Days since Monday (Mon = 0 ... Sun = 6), so "This week" matches the Analytics page's week.
+const weekdayOf = (iso: string) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
 
 // Inclusive [start, end] for a period, or null when it's unbounded ("All time", or a custom
 // range that isn't filled in yet).
@@ -78,10 +79,11 @@ const isDeliveredStatus = (status: string) => status === 'delivered' || status =
 // no real delivery time, so the SLA timings leave them out.
 const deliveryTime = (r: ProductionRequest) => ((r as any).deliveryClosedInBulk ? undefined : r.deliveredAt);
 
+// Whole IST calendar days between a date (YYYY-MM-DD or a UTC timestamp) and today. Both
+// sides are IST dates: the old UTC "today" was a day behind between midnight and 5:30 AM.
 function daysAgo(dateStr: string): number {
-  const then = new Date(dateStr.substring(0, 10) + 'T00:00:00');
-  const now = new Date(new Date().toISOString().substring(0, 10) + 'T00:00:00');
-  return Math.round((now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24));
+  const then = dateStr.length > 10 ? istDate(dateStr) : dateStr.substring(0, 10);
+  return Math.round((Date.parse(`${todayIST()}T00:00:00Z`) - Date.parse(`${then}T00:00:00Z`)) / (1000 * 60 * 60 * 24));
 }
 
 // Time-of-day as a decimal hour (14.5 = 2:30 PM), for plotting against a fixed 10am-10pm

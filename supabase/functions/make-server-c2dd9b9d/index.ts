@@ -13468,10 +13468,17 @@ app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
         continue;
       }
       
+      // Employees carry their login as authUserId - there is no `userId` field, so these
+      // reminders used to go nowhere. notifyUser maps it to the employee's push devices.
+      if (!employee.authUserId) {
+        console.log(`Store incharge ${employee.id} has no login - skipping`);
+        continue;
+      }
+
       // This incharge needs a reminder
       reminderTargets.push({
         employeeId: employee.id,
-        userId: employee.userId,
+        authUserId: employee.authUserId,
         name: employee.name,
         storeName: store.name,
         storeId: storeId,
@@ -13486,17 +13493,14 @@ app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
     
     for (const target of reminderTargets) {
       try {
-        const success = await push.sendPushNotification(target.userId, {
-          title: '⏰ Stock Request Reminder',
-          message: `Hi ${target.name}, you haven't submitted a stock request for ${target.storeName} today. Please submit your request to ensure timely stock delivery.`,
-          icon: '/icon-192x192.png',
-          tag: 'stock-request-reminder',
-          data: {
-            type: 'stock-request-reminder',
-            storeId: target.storeId,
-            date: today,
-          },
-        });
+        const success = await notifyUser(
+          target.authUserId,
+          'stock_request_reminder',
+          '⏰ Stock Request Reminder',
+          `Hi ${target.name}, you haven't submitted a stock request for ${target.storeName} today. Please submit your request to ensure timely stock delivery.`,
+          undefined,
+          today
+        );
         
         if (success) {
           sent++;

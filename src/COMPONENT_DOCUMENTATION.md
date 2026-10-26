@@ -192,14 +192,12 @@ Complete reference for all React components in Bhandar-IMS.
 
 **Features:**
 - Inventory transfer between locations
-- Predictive analytics
 - Store performance comparison
 - Production house stock status
 - Stock threshold settings
 - Low stock alerts
 
 **Components Used:**
-- `PredictiveAnalytics`
 - `StorePerformanceComparison`
 - `ProductionHouseStockStatus`
 - `StockThresholdSettings`
@@ -657,20 +655,6 @@ Complete reference for all React components in Bhandar-IMS.
 
 ---
 
-### PredictiveAnalytics.tsx
-**Path:** `/components/PredictiveAnalytics.tsx`
-
-**Purpose:** AI/ML-based inventory forecasting and predictions.
-
-**Features:**
-- Demand forecasting
-- Stock-out predictions
-- Reorder point suggestions
-- Seasonal trend analysis
-- Inventory optimization
-
----
-
 ### ReportsVisualization.tsx
 **Path:** `/components/ReportsVisualization.tsx`
 
@@ -765,19 +749,6 @@ Complete reference for all React components in Bhandar-IMS.
 
 ---
 
-### PushNotificationSetup.tsx
-**Path:** `/components/PushNotificationSetup.tsx`
-
-**Purpose:** Setup interface for push notifications.
-
-**Features:**
-- Request notification permission
-- Subscribe to push notifications
-- Test notification
-- Unsubscribe option
-
----
-
 ## Utility Components
 
 ### DatePicker.tsx
@@ -836,35 +807,6 @@ Complete reference for all React components in Bhandar-IMS.
 - Date range filtering
 - Category selection
 - Custom fields
-
----
-
-## Debug Components
-
-### DebugPanel.tsx
-**Path:** `/components/DebugPanel.tsx`
-
-**Purpose:** Development debugging panel (only visible in development mode).
-
-**Features:**
-- View current state
-- Test API calls
-- Clear localStorage
-- View console logs
-- Reset database
-
----
-
-### RouteDebugger.tsx
-**Path:** `/components/RouteDebugger.tsx`
-
-**Purpose:** Debug routing and navigation issues.
-
-**Features:**
-- Current route display
-- Navigation history
-- Route parameters
-- Query strings
 
 ---
 

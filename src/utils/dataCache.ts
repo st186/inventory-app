@@ -13,6 +13,7 @@
 // - setCache(key, data): Store data in cache
 // - invalidateCache(key): Clear specific cache entry (use after data mutations)
 // - invalidateAllCaches(): Clear all caches (use on logout)
+// - setCacheUser(id): Whose cache is read and written - call on login, null on logout
 
 const CACHE_PREFIX = 'bhandar_cache_';
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes - data is considered fresh
@@ -24,12 +25,26 @@ export interface CacheEntry<T> {
   version: number; // For cache invalidation
 }
 
-const CACHE_VERSION = 1; // Increment this to invalidate all caches
+const CACHE_VERSION = 2; // Increment this to invalidate all caches (2: keys are per user)
+
+// Entries are stored per signed-in user. Phones are shared at the counter: with one shared
+// key, the next person to sign in was shown the previous person's cached data until the
+// background refresh replaced it. With no user set, nothing is read or written.
+let cacheUser: string | null = null;
+
+export function setCacheUser(userId: string | null): void {
+  cacheUser = userId ? userId.toLowerCase() : null;
+}
+
+function storageKey(key: string): string | null {
+  return cacheUser ? `${CACHE_PREFIX}${encodeURIComponent(cacheUser)}:${key}` : null;
+}
 
 // Get cached data
 export function getCache<T>(key: string): T | null {
   try {
-    const cacheKey = `${CACHE_PREFIX}${key}`;
+    const cacheKey = storageKey(key);
+    if (!cacheKey) return null;
     const cached = localStorage.getItem(cacheKey);
     
     if (!cached) {
@@ -62,7 +77,8 @@ export function getCache<T>(key: string): T | null {
 // Check if cache is fresh (within CACHE_DURATION)
 export function isCacheFresh(key: string): boolean {
   try {
-    const cacheKey = `${CACHE_PREFIX}${key}`;
+    const cacheKey = storageKey(key);
+    if (!cacheKey) return false;
     const cached = localStorage.getItem(cacheKey);
     
     if (!cached) {
@@ -80,8 +96,9 @@ export function isCacheFresh(key: string): boolean {
 
 // Set cache data
 export function setCache<T>(key: string, data: T): void {
+  const cacheKey = storageKey(key);
+  if (!cacheKey) return;
   try {
-    const cacheKey = `${CACHE_PREFIX}${key}`;
     const entry: CacheEntry<T> = {
       data,
       timestamp: Date.now(),
@@ -94,7 +111,6 @@ export function setCache<T>(key: string, data: T): void {
     if (error instanceof Error && error.name === 'QuotaExceededError') {
       clearOldCaches();
       try {
-        const cacheKey = `${CACHE_PREFIX}${key}`;
         const entry: CacheEntry<T> = {
           data,
           timestamp: Date.now(),
@@ -146,8 +162,8 @@ export function clearOldCaches(): void {
 // Invalidate specific cache
 export function invalidateCache(key: string): void {
   try {
-    const cacheKey = `${CACHE_PREFIX}${key}`;
-    localStorage.removeItem(cacheKey);
+    const cacheKey = storageKey(key);
+    if (cacheKey) localStorage.removeItem(cacheKey);
   } catch (error) {
     console.error('Cache invalidation error:', error);
   }

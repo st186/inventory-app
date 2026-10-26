@@ -213,8 +213,10 @@ export async function unsubscribeFromPushNotifications(
   userId: string
 ): Promise<boolean> {
   try {
-    const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.getSubscription();
+    // getRegistration, not .ready: .ready never settles when no worker was registered,
+    // which would leave sign-out (the caller) hanging.
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
 
     if (subscription) {
       await subscription.unsubscribe();

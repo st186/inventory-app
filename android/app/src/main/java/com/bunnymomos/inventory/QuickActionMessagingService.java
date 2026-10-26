@@ -49,10 +49,10 @@ public class QuickActionMessagingService extends MessagingService {
             // rider is still told about the ride.
         }
 
-        showNotification(data, title, body);
+        showNotification(data, title, body, remoteMessage.getMessageId());
     }
 
-    private void showNotification(Map<String, String> data, String title, String body) {
+    private void showNotification(Map<String, String> data, String title, String body, String messageId) {
         Context context = getApplicationContext();
         createChannelIfNeeded(context);
 
@@ -83,6 +83,11 @@ public class QuickActionMessagingService extends MessagingService {
         for (Map.Entry<String, String> entry : data.entrySet()) {
             tapIntent.putExtra(entry.getKey(), entry.getValue());
         }
+        // Capacitor's PushNotificationsPlugin only reports a tap to JS (as
+        // pushNotificationActionPerformed, which the app turns into the deep link) when the
+        // launch intent carries "google.message_id" - FCM adds it to notifications it builds
+        // itself, but this one is built here, so without it taps just opened the app.
+        tapIntent.putExtra("google.message_id", messageId != null ? messageId : idSource);
         PendingIntent tapPendingIntent = PendingIntent.getActivity(
             context,
             notifId,

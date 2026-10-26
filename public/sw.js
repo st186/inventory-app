@@ -27,13 +27,19 @@ self.addEventListener('push', (event) => {
   if (event.data) {
     try {
       const data = event.data.json();
+      // The server sends { title, message, tag, data: { type, relatedId, notificationId, ... } }.
+      // Flatten the inner data onto the payload so the click handler finds data.type.
+      const inner = data.data && typeof data.data === 'object' ? data.data : {};
+      const flat = { ...data, ...inner };
       notificationData = {
         ...notificationData,
         title: data.title || notificationData.title,
         body: data.message || data.body || notificationData.body,
         icon: data.icon || notificationData.icon,
-        tag: data.tag || notificationData.tag,
-        data: data, // Store full data for click handling
+        // One tag per notification: the server's tag is just the type, so a second push of
+        // the same type silently replaced the first one still waiting in the tray.
+        tag: flat.type && flat.notificationId ? `${flat.type}-${flat.notificationId}` : (data.tag || notificationData.tag),
+        data: flat, // Store full data for click handling
       };
     } catch (e) {
       console.error('Error parsing push data:', e);
@@ -71,6 +77,7 @@ const NOTIFICATION_VIEW_MAP = {
   cash_topup_approved: { view: 'sales' },
   production_cash_store_bill: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
+  paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
   low_stock_alert: { view: 'stock-requests' },
   loan_requested: { view: 'sales' },
@@ -95,6 +102,7 @@ const NOTIFICATION_VIEW_MAP = {
   stock_request_fulfilled: { view: 'stock-requests' },
   stock_request_partial: { view: 'stock-requests' },
   stock_request_cancelled: { view: 'stock-requests' },
+  stock_request_reminder: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
   calendar_suggestions: { view: 'analytics', tab: 'trends' }, // weekly AI festival-day draft
@@ -113,7 +121,9 @@ const NOTIFICATION_VIEW_MAP = {
   rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
 };
 
-function getNavigationTarget(data) {
+function getNavigationTarget(payload) {
+  // Notifications shown before the push handler flattened the payload keep type under .data.
+  const data = payload && payload.data && typeof payload.data === 'object' ? { ...payload, ...payload.data } : payload;
   if (!data || !data.type) return null;
 
   // Production requests always carry a specific request to highlight/scroll to

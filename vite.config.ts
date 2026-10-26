@@ -4,8 +4,13 @@
   import tailwindcss from '@tailwindcss/vite';
   import path from 'path';
 
-  export default defineConfig({
+  export default defineConfig(({ mode }) => ({
     plugins: [react(), tailwindcss()],
+    // Production builds strip console.log/debug/info calls (some screens logged whole data
+    // arrays on every render) but keep console.warn/error for real problems.
+    esbuild: mode === 'production'
+      ? { pure: ['console.log', 'console.debug', 'console.info'], drop: ['debugger'] }
+      : undefined,
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {
@@ -55,10 +60,25 @@
     build: {
       target: 'esnext',
       outDir: 'dist',
+      rollupOptions: {
+        output: {
+          // Charts and the Supabase client get their own chunks, so they stay cached across
+          // deploys that only change app code, and recharts loads only with the screens that
+          // draw charts. Rollup pulls a manual chunk's unassigned dependencies into it, so the
+          // libraries recharts shares with the rest of the app (React, and clsx behind every
+          // card and badge) get a chunk of their own - otherwise they'd land in the recharts
+          // chunk and every screen would download the charts.
+          manualChunks(id) {
+            if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|victory-vendor|d3-[^\\/]+)[\\/]/.test(id)) return 'recharts';
+            if (/[\\/]node_modules[\\/]@supabase[\\/]/.test(id)) return 'supabase';
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler|clsx)[\\/]/.test(id)) return 'react';
+          },
+        },
+      },
     },
     server: {
       host: '127.0.0.1',
       port: 5173,
       open: true,
     },
-  });
+  }));

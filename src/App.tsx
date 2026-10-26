@@ -1,7 +1,7 @@
 // Bhandar-IMS - Performance optimized with lazy loading
 import { isPhase1Live, type ProductionBatch } from './utils/batches';
 import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
-import { InventoryView } from './components/InventoryView';
+const InventoryView = lazy(() => import('./components/InventoryView').then(module => ({ default: module.InventoryView })));
 const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
 const SalesView = lazy(() => import('./components/SalesView').then(module => ({ default: module.SalesView })));
 const ClusterDashboard = lazy(() => import('./components/ClusterDashboard').then(module => ({ default: module.ClusterDashboard })));
@@ -24,11 +24,8 @@ const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInve
 const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
 const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
 import { AuthPage } from './components/AuthPage';
-import { EmployeeTimesheet } from './components/EmployeeTimesheet';
-import { EmployeeLeave } from './components/EmployeeLeave';
-import { ApproveTimesheets } from './components/ApproveTimesheets';
-import { ApproveLeaves } from './components/ApproveLeaves';
-import { EmployeeHierarchy } from './components/EmployeeHierarchy';
+// The attendance and store screens are rendered by AttendancePortal / AssetsManagement (both
+// lazy), so App doesn't import them itself - unused imports here kept them in the first-load bundle.
 const AttendancePortal = lazy(() => import('./components/AttendancePortal').then(module => ({ default: module.AttendancePortal })));
 const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').then(module => ({ default: module.EmployeeManagement })));
 import { Notifications } from './components/Notifications';
@@ -37,7 +34,6 @@ import { BunnyChat } from './components/BunnyChat';
 import { ProfileCompletionCard } from './components/ProfileCompletionCard';
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
-import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
@@ -54,6 +50,7 @@ import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
 import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
+import { useRiderLocationSharing } from './utils/riderLocationSharing';
 import { getTodayIST } from './utils/timezone';
 
 export type InventoryItem = {
@@ -844,6 +841,8 @@ export default function App() {
  assignedProductionHouseIds
  };
  setUser(userData);
+ // Read and write this person's own cache (shared phones - see dataCache.ts)
+ dataCache.setCacheUser(userData.employeeId || userData.email);
  
  // Load data for the user
  await loadData(session.access_token);
@@ -880,6 +879,10 @@ export default function App() {
  }
  console.log('🔔 [nav] Applied: view=', view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
  }, [setActiveView, user]);
+
+ // Riders share their live location for the whole active ride, whichever screen is open
+ // (it used to stop when they left the Riders screen mid-delivery).
+ useRiderLocationSharing(user?.designation === 'rider');
 
  // Initialize push notifications when user logs in
  useEffect(() => {
@@ -1039,6 +1042,8 @@ export default function App() {
  assignedProductionHouseIds
  };
  setUser(userData);
+ // Read and write this person's own cache (shared phones - see dataCache.ts)
+ dataCache.setCacheUser(userData.employeeId || userData.email);
  
  // Load data for the user
  await loadData(data.session.access_token);
@@ -1133,6 +1138,10 @@ export default function App() {
  try {
  if (user && nativePushNotifications.isNativePushSupported()) {
  await nativePushNotifications.unsubscribeNativePushNotifications(user.employeeId || user.email);
+ } else if (user && pushNotifications.isPushNotificationSupported()) {
+ // Same for the browser's web-push subscription, or the next person to sign in on this
+ // browser keeps receiving this person's notifications.
+ await pushNotifications.unsubscribeFromPushNotifications(user.employeeId || user.email);
  }
  } catch (error) {
  console.log('Could not unsubscribe push on logout:', error);
@@ -1145,6 +1154,7 @@ export default function App() {
  setSalesData([]);
  setActiveView('sales');
  dataCache.invalidateAllCaches(); // Clear all caches on logout
+ dataCache.setCacheUser(null);
  };
 
  const handleRefreshData = async () => {

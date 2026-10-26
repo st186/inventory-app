@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown, Package, AlertCircle, Calendar, Filter, Downl
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line, ReferenceLine, ComposedChart, AreaChart, Area } from 'recharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
-import { formatDateTimeIST, formatDateIST, getTodayIST, addDays } from '../utils/timezone';
+import { formatDateTimeIST, formatDateIST, getTodayIST, addDays, utcToIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
 import { employeeBelongsToStore } from '../utils/entityAccess';
 import { SalaryBreakdownModal } from './SalaryBreakdownModal';
@@ -188,6 +188,63 @@ function presetDateRange(choice: TimeFilterChoice): { from: string; to: string }
  return { from: start, to: today };
  }
  return null;
+}
+
+// The selected period as an inclusive IST calendar window (YYYY-MM-DD strings). Every card,
+// chart and fetch on this page reads its window from here so they agree on the same days:
+// weeks run Monday-Sunday, "last month" is computed from the 1st (setMonth(-1) on the 29th-31st
+// overflowed into the wrong month), and dates are compared as strings - new Date('YYYY-MM-DD')
+// is 05:30 IST, which dropped the first day of ranges compared at local midnight.
+type PeriodWindow = { startDate: string; endDate: string };
+function periodWindow(filter: TimeFilter, range: { from: string; to: string }): PeriodWindow {
+ const today = getTodayIST();
+ const [y, m, d] = today.split('-').map(Number);
+ const daysSinceMonday = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+ const weekStart = addDays(today, -daysSinceMonday);
+ switch (filter) {
+ case 'today':
+ return { startDate: today, endDate: today };
+ case 'yesterday': {
+ const yesterday = addDays(today, -1);
+ return { startDate: yesterday, endDate: yesterday };
+ }
+ case 'thisWeek':
+ return { startDate: weekStart, endDate: today };
+ case 'lastWeek':
+ return { startDate: addDays(weekStart, -7), endDate: addDays(weekStart, -1) };
+ case 'thisMonth':
+ return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
+ case 'lastMonth': {
+ const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
+ return { startDate: `${lastMonthEnd.slice(0, 7)}-01`, endDate: lastMonthEnd };
+ }
+ case 'custom':
+ return { startDate: range.from, endDate: range.to };
+ default:
+ return { startDate: today, endDate: today };
+ }
+}
+
+// A record's IST calendar date. Plain YYYY-MM-DD dates pass through; timestamps are shifted
+// to IST first so a 1 AM IST entry doesn't land on the previous (UTC) day.
+function istDateKey(value: any): string | null {
+ if (!value) return null;
+ if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+ const time = new Date(value).getTime();
+ if (isNaN(time)) return null;
+ return utcToIST(new Date(time).toISOString()).slice(0, 10);
+}
+
+function isInWindow(value: any, window: PeriodWindow): boolean {
+ const date = istDateKey(value);
+ return !!date && date >= window.startDate && date <= window.endDate;
+}
+
+// Month-tagged amounts (a personal expense's expenseMonth, a payout's forMonth) count in every
+// month the window touches - but never in a day or week view, they're monthly figures.
+function monthInPeriod(yearMonth: string, filter: TimeFilter, window: PeriodWindow): boolean {
+ if (filter !== 'thisMonth' && filter !== 'lastMonth' && filter !== 'custom') return false;
+ return yearMonth >= window.startDate.slice(0, 7) && yearMonth <= window.endDate.slice(0, 7);
 }
 
 // Shortens long item names for chart axis ticks (full name still shows in the tooltip).
@@ -411,8 +468,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // DEBUG: Log the effective store ID being used
  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
  logger.debugStore('Analytics mode:', analyticsMode);
- console.log('🏪 All stores in context:', context.stores);
- console.log('🏪 Number of stores:', context.stores?.length);
  
  // 'profit'/'expense'/'sales' keep their original internal names (Revenue & Channels /
  // Costs & Margins / Item Performance are just their new display labels) to avoid
@@ -755,10 +810,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  break;
  
  case 'thisWeek':
- // Compare with same days in previous week
+ // Compare with same days in previous week (weeks start on Monday, like getDateRangeBounds)
+ const daysIntoWeek = (today.getDay() + 6) % 7;
  const currentWeekStart = new Date(today);
- currentWeekStart.setDate(today.getDate() - today.getDay());
- const daysIntoWeek = today.getDay();
+ currentWeekStart.setDate(today.getDate() - daysIntoWeek);
  
  startDate = new Date(currentWeekStart);
  startDate.setDate(currentWeekStart.getDate() - 7);
@@ -767,16 +822,17 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  break;
  
  case 'previousWeek':
- // Compare with 2 weeks ago
+ // Compare with 2 weeks ago (Monday-start, like getDateRangeBounds)
  startDate = new Date(today);
- startDate.setDate(today.getDate() - today.getDay() - 14);
+ startDate.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 14);
  endDate = new Date(startDate);
  endDate.setDate(startDate.getDate() + 6);
  break;
  
  case 'thisMonth':
  // Compare with same date range in previous month
- const daysIntoMonth = today.getDate();
+ // (capped at that month's last day - 31 Oct compares with 1-30 Sep, not up to 1 Oct)
+ const daysIntoMonth = Math.min(today.getDate(), new Date(today.getFullYear(), today.getMonth(), 0).getDate());
  startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
  endDate = new Date(today.getFullYear(), today.getMonth() - 1, daysIntoMonth);
  break;
@@ -863,18 +919,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  // Fetch latest recalibration and calculate previous month's stock for carry-forward
  useEffect(() => {
- console.log('🔄 Carry-Forward useEffect triggered:', {
- analyticsMode,
- selectedProductionHouseId,
- hasProductionData: !!context.productionData?.length,
- hasProductionRequests: !!context.productionRequests?.length
- });
- 
  if (analyticsMode === 'production' && selectedProductionHouseId) {
- console.log('✅ Conditions met - fetching opening balance...');
  fetchRecalibrationAndCalculateOpeningBalance();
- } else {
- console.log('❌ Conditions not met for carry-forward');
  }
  }, [selectedProductionHouseId, analyticsMode, context.productionData, context.productionRequests]);
 
@@ -888,21 +934,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  context.productionHouses.length > 0
  ) {
  const firstProductionHouse = context.productionHouses[0];
- console.log('🏭 Auto-selecting first production house for Cluster Head/Manager:', firstProductionHouse.id, firstProductionHouse.name);
  setSelectedProductionHouseId(firstProductionHouse.id);
  }
  }, [analyticsMode, isClusterHead, isManager, context.productionHouses]);
 
  async function fetchRecalibrationAndCalculateOpeningBalance() {
  try {
- const currentMonth = new Date().toISOString().substring(0, 7);
- 
- console.log('🚀 Starting opening balance calculation:');
- console.log(' Current month:', currentMonth);
- console.log(' Selected production house ID:', selectedProductionHouseId);
- console.log(' Available production data records:', productionData.length);
- console.log(' Available production requests:', context.productionRequests?.length || 0);
- console.log(' Available stores (local):', stores.length);
+ // IST month - the UTC one is still last month until 5:30 AM on the 1st.
+ const currentMonth = getTodayIST().slice(0, 7);
  
  // Resolve production house UUID
  // Use local stores state (loaded in useEffect) or fallback to context.stores
@@ -912,7 +951,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const userStore = allStores.find(s => s.id === selectedProductionHouseId);
  if (userStore?.productionHouseId) {
  productionHouseUUID = userStore.productionHouseId;
- console.log(' Resolved production house UUID:', productionHouseUUID);
  }
  }
 
@@ -924,7 +962,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  
  // Skip API call if no production house is selected
  if (!productionHouseUUID) {
- console.log(' ⚠️ No production house UUID available, skipping recalibration fetch');
  setLatestRecalibration(null);
  setPreviousMonthStock(null);
  return;
@@ -939,16 +976,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // If no recalibration found with UUID, try to find it using the store ID
  // that maps to this production house (for production incharge created recalibrations)
  if (!recalResponse?.record && productionHouseUUID) {
- console.log(' No recalibration found with UUID, checking with mapped store ID...');
- 
  // Find store(s) that map to this production house
  const mappedStores = allStores.filter(s => s.productionHouseId === productionHouseUUID);
- console.log(' Stores mapped to this production house:', mappedStores.map(s => ({ id: s.id, name: s.name })));
  
  // Try each mapped store ID (usually there's only one production house store)
  if (mappedStores && mappedStores.length > 0) {
  for (const mappedStore of mappedStores) {
- console.log(' Trying to fetch recalibration with store ID:', mappedStore.id);
  const storeRecalResponse = await api.fetchLatestRecalibration(
  context.user?.accessToken || '', 
  mappedStore.id,
@@ -956,15 +989,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  );
  
  if (storeRecalResponse?.record) {
- console.log(' ✅ Found recalibration using store ID:', mappedStore.id);
  recalResponse = storeRecalResponse;
  break;
  }
  }
  }
  }
- 
- console.log('📦 Recalibration Response:', recalResponse);
  
  // Check if recalibration exists and is from current month
  let openingBalance: any = null;
@@ -973,20 +1003,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const recalDate = recalResponse.record.date.substring(0, 7); // "2026-01"
  const recalDay = parseInt(recalResponse.record.date.substring(8, 10)); // Day of month
  
- console.log('📅 Recalibration date comparison:', {
- recalDate,
- recalDay,
- currentMonth,
- isFirstOfMonth: recalDay === 1,
- match: recalDate === currentMonth
- });
- 
  if (recalDate === currentMonth) {
  // Use recalibration as opening balance regardless of the day
  // This is the actual counted stock and becomes the new baseline
- console.log('✅ Current month recalibration found - using as opening balance');
- console.log(` Recalibration date: ${recalResponse.record.date} (day ${recalDay})`);
- console.log(' Recalibration items:', recalResponse.record.items);
  
  openingBalance = {};
  recalResponse.record.items.forEach((item: any) => {
@@ -998,29 +1017,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
  const stockKey = camelName.replace(/Momo(s)?$/i, '');
  openingBalance[stockKey] = item.actualQuantity;
- console.log(` 📦 Opening balance: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
  } else {
  // Fallback: use itemId as-is
  openingBalance[item.itemId] = item.actualQuantity;
- console.log(` ⚠️ Opening balance item not found in inventory: ${item.itemId}, using as-is`);
  }
  });
- console.log(' Parsed opening balance:', openingBalance);
  } else {
  // Recalibration is from a previous month - calculate from that point
- console.log('📅 Recalibration from previous month, calculating forward...');
  openingBalance = calculateStockFromRecalibration(recalResponse.record, currentMonth);
  }
  } else {
  // No recalibration - calculate from previous month's production/deliveries
- console.log('🔢 No recalibration found, calculating from previous month...');
  openingBalance = calculatePreviousMonthClosingStock(productionHouseUUID);
  }
  
  setLatestRecalibration(recalResponse?.record || null);
  setPreviousMonthStock(openingBalance);
- 
- console.log('💰 Opening Balance Calculated:', openingBalance);
  } catch (error) {
  console.error('Error fetching recalibration:', error);
  }
@@ -1045,24 +1057,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
  const stockKey = camelName.replace(/Momo(s)?$/i, '');
  stock[stockKey] = item.actualQuantity;
- console.log(` 📦 Recalibration item mapping: ${item.itemId} -> ${stockKey} = ${item.actualQuantity}`);
  } else {
  // Fallback: use itemId as-is
  stock[item.itemId] = item.actualQuantity;
- console.log(` ⚠️ Recalibration item not found in inventory: ${item.itemId}, using as-is`);
  }
  });
  
- // Calculate months between recalibration and target month
- const recalDate = new Date(recalMonth + '-01');
- const targetDate = new Date(targetMonth + '-01');
- 
- // For each month between recalibration and current, add production and subtract deliveries
- let currentDate = new Date(recalDate);
- currentDate.setMonth(currentDate.getMonth() + 1); // Start from month after recalibration
- 
- while (currentDate < targetDate) {
- const monthStr = currentDate.toISOString().substring(0, 7);
+ // For each month between recalibration and target month (YYYY-MM strings, so no
+ // UTC/local drift), add production and subtract deliveries
+ for (let monthStr = monthAdd(recalMonth, 1); monthStr < targetMonth; monthStr = monthAdd(monthStr, 1)) {
  
  // Get production for this month
  const monthProduction = getMonthProduction(selectedProductionHouseId, monthStr);
@@ -1072,8 +1075,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'].forEach(type => {
  stock[type] = (stock[type] || 0) + (monthProduction[type] || 0) - (monthDeliveries[type] || 0);
  });
- 
- currentDate.setMonth(currentDate.getMonth() + 1);
  }
  
  return stock;
@@ -1081,7 +1082,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  function calculatePreviousMonthClosingStock(productionHouseUUID: string | null): any {
  // Get previous month - properly handle year boundaries
- const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
+ const currentMonth = getTodayIST().slice(0, 7); // "2026-01", IST (not UTC)
  const [year, month] = currentMonth.split('-').map(Number);
  
  // Calculate previous month
@@ -1097,9 +1098,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Format as YYYY-MM
  const previousMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
  
- console.log('📊 Calculating previous month closing stock for:', previousMonthStr);
- console.log(' Current month:', currentMonth, '→ Previous month:', previousMonthStr);
- 
  // Get production and deliveries for previous month
  const production = getMonthProduction(productionHouseUUID, previousMonthStr);
  const deliveries = getMonthDeliveries(productionHouseUUID, previousMonthStr);
@@ -1110,21 +1108,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  closingStock[type] = (production[type] || 0) - (deliveries[type] || 0);
  });
  
- console.log(' Previous month production:', production);
- console.log(' Previous month deliveries:', deliveries);
- console.log(' Calculated closing stock:', closingStock);
- 
  return closingStock;
  }
 
  function getMonthProduction(phId: string | null, monthStr: string): any {
  if (!phId) {
- console.log('⚠️ getMonthProduction called with null phId');
  return {};
  }
- 
- console.log(`🔍 Getting production for phId: ${phId}, month: ${monthStr}`);
- console.log(` Total production records available: ${productionData.length}`);
  
  const filteredProduction = productionData.filter(p => {
  if (!p.date.startsWith(monthStr)) return false;
@@ -1144,8 +1134,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  return matchesStoreId || matchesProductionHouseId || resolvedPhId === phId;
  });
  
- console.log(` Filtered production records: ${filteredProduction.length}`);
- 
  return filteredProduction.reduce((acc, p) => ({
  chicken: acc.chicken + (p.chickenMomos?.final || 0),
  chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
@@ -1162,12 +1150,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  function getMonthDeliveries(phId: string | null, monthStr: string): any {
  if (!phId) {
- console.log('⚠️ getMonthDeliveries called with null phId');
  return {};
  }
- 
- console.log(`🚚 Getting deliveries for phId: ${phId}, month: ${monthStr}`);
- console.log(` Total production requests available: ${context.productionRequests?.length || 0}`);
  
  // Resolve UUID if needed
  // Use local stores state (loaded in useEffect) or fallback to context.stores
@@ -1177,7 +1161,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const userStore = allStores.find(s => s.id === phId);
  if (userStore?.productionHouseId) {
  productionHouseUUID = userStore.productionHouseId;
- console.log(` Resolved UUID: ${productionHouseUUID}`);
  }
  }
  
@@ -1190,8 +1173,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const requestingStore = allStores.find(s => s.id === req.storeId);
  return requestingStore?.productionHouseId === productionHouseUUID;
  });
- 
- console.log(` Filtered delivered requests: ${fulfilledRequests.length}`);
  
  return fulfilledRequests.reduce((acc, req) => ({
  chicken: acc.chicken + (req.chickenMomos || 0),
@@ -1235,249 +1216,39 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  logger.debugAnalytics(' - Stores that map to user production house:', context.stores?.filter(s => s.productionHouseId === context.user?.storeId).map(s => ({ id: s.id, name: s.name })));
  }
 
- // Helper function to filter data by time period
- const filterByTimeRange = (data: any[], dateField: string = 'date') => {
- // Ensure we have a fresh `today` reference for this filter operation
- const now = new Date();
- const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
- 
- return data.filter(item => {
- // Safety check for null/undefined items or missing date field
- if (!item || !item[dateField]) return false;
- 
- // Safety check: ensure we have a valid date
- try {
- const itemDate = new Date(item[dateField]);
- if (isNaN(itemDate.getTime())) return false;
- 
- const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
- 
- switch (timeFilter) {
- case 'today':
- return itemDateOnly.getTime() === today.getTime();
- 
- case 'yesterday':
- const yesterday = new Date(today);
- yesterday.setDate(yesterday.getDate() - 1);
- return itemDateOnly.getTime() === yesterday.getTime();
- 
- case 'thisWeek':
- // Get start of this week (Monday)
- const startOfThisWeek = new Date(today);
- const dayOfWeek = today.getDay();
- const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // If Sunday, go back 6 days, else go to Monday
- startOfThisWeek.setDate(today.getDate() + diff);
- return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
- 
- case 'thisMonth':
- const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
- return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
- 
- case 'lastWeek':
- // Get start and end of last week (Monday to Sunday)
- const startOfLastWeek = new Date(today);
- const currentDay = today.getDay();
- const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6); // If Sunday, go back 13 days, else go to last Monday
- startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
- const endOfLastWeek = new Date(startOfLastWeek);
- endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
- return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
- 
- case 'lastMonth':
- const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
- const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
- return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
- 
- case 'custom':
- const fromDate = new Date(dateRange.from);
- const toDate = new Date(dateRange.to);
- return itemDateOnly >= fromDate && itemDateOnly <= toDate;
- 
- default:
- return true;
- }
- } catch (error) {
- console.error('Error filtering by time range:', error, 'Item:', item);
- return false;
- }
- });
- };
+ // The selected period as an IST date window - see periodWindow.
+ const periodRange = useMemo(() => periodWindow(timeFilter, dateRange), [timeFilter, dateRange]);
 
- // Apply time filtering first
- const timeFilteredSalesData = filterByTimeRange(salesData);
- const timeFilteredInventoryData = filterByTimeRange(inventoryData);
- 
- // Special handling for overhead data: use expenseMonth for personal_expense category
- const timeFilteredOverheadData = overheadData.filter(item => {
- // Define today at the top of the filter so it's available in all code paths
- const now = new Date();
- const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
- 
- // For personal_expense with expenseMonth, filter based on expenseMonth instead of date
- if (item.category === 'personal_expense' && item.expenseMonth) {
- const expenseYearMonth = item.expenseMonth; // Format: "YYYY-MM"
- 
- switch (timeFilter) {
- case 'today':
- case 'yesterday':
- // Daily filters don't apply to monthly expense mapping
- return false;
- 
- case 'thisWeek':
- case 'lastWeek':
- // Weekly filters don't apply to monthly expense mapping
- return false;
- 
- case 'thisMonth':
- const thisMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
- return expenseYearMonth === thisMonthStr;
- 
- case 'lastMonth':
- const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
- const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
- return expenseYearMonth === lastMonthStr;
- 
- case 'custom':
- // For custom range, check if expenseMonth falls within the range
- const fromDate = new Date(dateRange.from);
- const toDate = new Date(dateRange.to);
- const expenseDate = new Date(expenseYearMonth + '-01');
- const expenseMonthStart = new Date(expenseDate.getFullYear(), expenseDate.getMonth(), 1);
- const expenseMonthEnd = new Date(expenseDate.getFullYear(), expenseDate.getMonth() + 1, 0);
- // Include if the expense month overlaps with the date range
- return expenseMonthStart <= toDate && expenseMonthEnd >= fromDate;
- 
- default:
- return true;
- }
- }
- 
- // For all other overhead items, use regular date-based filtering
- const itemDate = new Date(item.date);
- const itemDateOnly = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
- 
- switch (timeFilter) {
- case 'today':
- return itemDateOnly.getTime() === today.getTime();
- 
- case 'yesterday':
- const yesterday = new Date(today);
- yesterday.setDate(yesterday.getDate() - 1);
- return itemDateOnly.getTime() === yesterday.getTime();
- 
- case 'thisWeek':
- const startOfThisWeek = new Date(today);
- const dayOfWeek = today.getDay();
- const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
- startOfThisWeek.setDate(today.getDate() + diff);
- return itemDateOnly >= startOfThisWeek && itemDateOnly <= today;
- 
- case 'thisMonth':
- const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
- return itemDateOnly >= startOfThisMonth && itemDateOnly <= today;
- 
- case 'lastWeek':
- const startOfLastWeek = new Date(today);
- const currentDay = today.getDay();
- const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6);
- startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
- const endOfLastWeek = new Date(startOfLastWeek);
- endOfLastWeek.setDate(startOfLastWeek.getDate() + 6);
- return itemDateOnly >= startOfLastWeek && itemDateOnly <= endOfLastWeek;
- 
- case 'lastMonth':
- const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
- const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
- return itemDateOnly >= startOfLastMonth && itemDateOnly <= endOfLastMonth;
- 
- case 'custom':
- const fromDate = new Date(dateRange.from);
- const toDate = new Date(dateRange.to);
- return itemDateOnly >= fromDate && itemDateOnly <= toDate;
- 
- default:
- return true;
- }
- });
- 
- const timeFilteredFixedCostsData = filterByTimeRange(fixedCostsData);
- console.log('💰 Before time filtering - payoutsData:', payoutsData.length, 'payouts');
- console.log('💰 Payouts before filtering:', payoutsData.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
- console.log('💰 Sample payout object:', payoutsData[0]);
- console.log('💰 All payout dates as strings:', payoutsData.map(p => p.date).join(', '));
- // FIX: Payouts use 'date' field, not 'payoutDate'
- // Payouts with a forMonth set (backlogged/late salaries, e.g. paid on the 5th
- // for the prior month) are bucketed by forMonth instead of the actual payment
- // date, mirroring the expenseMonth handling for personal_expense overheads above.
- // Payouts without forMonth fall back to the standard date-based filter.
- const payoutsWithForMonth = payoutsData.filter((payout: any) => !!payout.forMonth);
- const payoutsWithoutForMonth = payoutsData.filter((payout: any) => !payout.forMonth);
+ // Records dated inside the selected period.
+ const filterByTimeRange = (data: any[], dateField: string = 'date'): any[] =>
+ (data || []).filter(item => isInWindow(item?.[dateField], periodRange));
 
- const timeFilteredPayoutsWithForMonth = payoutsWithForMonth.filter((payout: any) => {
- const now = new Date();
- const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
- const payoutYearMonth = payout.forMonth;
+ // The period's slice of each list, memoized: built in the render body they were new arrays
+ // on every render, so every store filter, metric and chart below recomputed each time too.
+ const timeFilteredSalesData = useMemo(() => filterByTimeRange(salesData), [salesData, periodRange]);
+ const timeFilteredInventoryData = useMemo(() => filterByTimeRange(inventoryData), [inventoryData, periodRange]);
 
- switch (timeFilter) {
- case 'today':
- case 'yesterday':
- case 'thisWeek':
- case 'lastWeek':
- // Daily/weekly filters don't apply to monthly payout mapping
- return false;
+ // Personal expenses with an expenseMonth count in that month rather than on the day they
+ // were logged; every other overhead goes by its date.
+ const timeFilteredOverheadData = useMemo(() => (overheadData || []).filter((item: any) =>
+ item?.category === 'personal_expense' && item.expenseMonth
+ ? monthInPeriod(item.expenseMonth, timeFilter, periodRange)
+ : isInWindow(item?.date, periodRange)
+ ), [overheadData, timeFilter, periodRange]);
 
- case 'thisMonth': {
- const thisMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
- return payoutYearMonth === thisMonthStr;
- }
+ const timeFilteredFixedCostsData = useMemo(() => filterByTimeRange(fixedCostsData), [fixedCostsData, periodRange]);
 
- case 'lastMonth': {
- const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
- const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
- return payoutYearMonth === lastMonthStr;
- }
-
- case 'custom': {
- const fromDate = new Date(dateRange.from);
- const toDate = new Date(dateRange.to);
- const payoutDate = new Date(payoutYearMonth + '-01');
- const payoutMonthStart = new Date(payoutDate.getFullYear(), payoutDate.getMonth(), 1);
- const payoutMonthEnd = new Date(payoutDate.getFullYear(), payoutDate.getMonth() + 1, 0);
- return payoutMonthStart <= toDate && payoutMonthEnd >= fromDate;
- }
-
- default:
- return true;
- }
- });
-
- const timeFilteredPayoutsWithoutForMonth = filterByTimeRange(payoutsWithoutForMonth, 'date');
- const timeFilteredPayoutsData = [...timeFilteredPayoutsWithForMonth, ...timeFilteredPayoutsWithoutForMonth];
- console.log('💰 After time filtering - timeFilteredPayoutsData:', timeFilteredPayoutsData.length, 'payouts');
- console.log('💰 Time filter:', timeFilter);
- console.log('💰 Current date for reference:', new Date().toISOString());
+ // Payouts with a forMonth set (backlogged/late salaries, e.g. paid on the 5th for the prior
+ // month) are bucketed by forMonth instead of the payment date, mirroring expenseMonth above.
+ // Payouts without forMonth go by their date.
+ const timeFilteredPayoutsData = useMemo(() => [
+ ...payoutsData.filter((payout: any) => !!payout.forMonth && monthInPeriod(payout.forMonth, timeFilter, periodRange)),
+ ...filterByTimeRange(payoutsData.filter((payout: any) => !payout.forMonth)),
+ ], [payoutsData, timeFilter, periodRange]);
 
  // Filter data by selected store (after time filtering)
  const filteredSalesData = useMemo(() => {
- logger.debugSales('=== SALES DATA FILTERING ===');
- logger.debugSales('Total sales records (time-filtered):', timeFilteredSalesData.length);
- logger.debugSales('effectiveStoreId:', effectiveStoreId);
- console.log('User role:', context.user?.role);
- console.log('All sales storeIds:', timeFilteredSalesData.map(s => s.storeId));
- console.log('User storeId:', context.user?.storeId);
- 
- // Debug: Show all sales with their dates and storeIds
- const dec28Sales = timeFilteredSalesData.filter(sale => {
- const saleDate = new Date(sale.date);
- return saleDate.getDate() === 28 && saleDate.getMonth() === 11; // December is month 11
- });
- console.log('December 28th sales found:', dec28Sales.length);
- dec28Sales.forEach(sale => {
- console.log(` - Date: ${sale.date}, StoreId: ${sale.storeId}, Revenue: ${(sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0)}`);
- });
- 
  if (!effectiveStoreId) {
- console.log('No store filter - returning all', timeFilteredSalesData.length, 'sales');
  return timeFilteredSalesData;
  }
  
@@ -1486,39 +1257,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const filtered = timeFilteredSalesData.filter(sale => 
  sale.storeId === effectiveStoreId
  );
- console.log('After store filtering (exact match only):', filtered.length, 'sales');
- console.log('Filtered sales details:', filtered.map(s => ({ date: s.date, storeId: s.storeId, total: (s.offlineSales || 0) + (s.onlineSales || 0) })));
  
- // Show what got filtered out
- const filteredOut = timeFilteredSalesData.filter(sale => 
- sale.storeId !== effectiveStoreId
- );
- console.log('Filtered out (all non-matching storeIds):', filteredOut.length, 'sales');
- if (filteredOut.length > 0) {
- console.log('Sample filtered out sales storeIds:', filteredOut.slice(0, 5).map(s => s.storeId));
- }
- 
- console.log('🔍 === END DEBUG ===');
  return filtered;
  }, [timeFilteredSalesData, effectiveStoreId]);
 
  const filteredInventoryData = useMemo(() => {
- console.log('🔍 === INVENTORY DATA FILTERING DEBUG ===');
- console.log('Total inventory records (time-filtered):', timeFilteredInventoryData.length);
- console.log('effectiveStoreId:', effectiveStoreId);
- 
- // Debug: Show all inventory with their dates and storeIds
- const dec28Inventory = timeFilteredInventoryData.filter(item => {
- const itemDate = new Date(item.date);
- return itemDate.getDate() === 28 && itemDate.getMonth() === 11; // December is month 11
- });
- console.log('December 28th inventory found:', dec28Inventory.length);
- dec28Inventory.forEach(item => {
- console.log(` - Date: ${item.date}, StoreId: ${item.storeId}, Cost: ${item.totalCost || 0}`);
- });
- 
  if (!effectiveStoreId) {
- console.log('No store filter - returning all', timeFilteredInventoryData.length, 'inventory items');
  return timeFilteredInventoryData;
  }
 
@@ -1530,29 +1274,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  item.storeId === effectiveStoreId ||
  (!!effectiveProductionHouseIdForCosts && (item as any).entityType === 'production_house' && (item as any).productionHouseId === effectiveProductionHouseIdForCosts)
  );
- console.log('After store filtering (store + linked production house):', filtered.length, 'inventory items');
- console.log('🔍 === END INVENTORY DEBUG ===');
  
  return filtered;
  }, [timeFilteredInventoryData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
  const filteredOverheadData = useMemo(() => {
- console.log('🔍 === OVERHEAD DATA FILTERING DEBUG ===');
- console.log('Total overhead records (time-filtered):', timeFilteredOverheadData.length);
- console.log('effectiveStoreId:', effectiveStoreId);
- 
- // Debug: Show all overhead with their dates and storeIds
- const dec28Overhead = timeFilteredOverheadData.filter(item => {
- const itemDate = new Date(item.date);
- return itemDate.getDate() === 28 && itemDate.getMonth() === 11; // December is month 11
- });
- console.log('December 28th overhead found:', dec28Overhead.length);
- dec28Overhead.forEach(item => {
- console.log(` - Date: ${item.date}, StoreId: ${item.storeId}, Amount: ${item.amount || 0}`);
- });
- 
  if (!effectiveStoreId) {
- console.log('No store filter - returning all', timeFilteredOverheadData.length, 'overhead items');
  return timeFilteredOverheadData;
  }
 
@@ -1562,9 +1289,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  item.storeId === effectiveStoreId ||
  (!!effectiveProductionHouseIdForCosts && (item as any).entityType === 'production_house' && (item as any).productionHouseId === effectiveProductionHouseIdForCosts)
  );
- console.log('After store filtering (store + linked production house):', filtered.length, 'overhead items');
- console.log('Filtered overhead storeIds:', filtered.map(o => ({ date: o.date, storeId: o.storeId, amount: o.amount })));
- console.log('🔍 === END OVERHEAD DEBUG ===');
 
  return filtered;
  }, [timeFilteredOverheadData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
@@ -1625,7 +1349,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  useEffect(() => {
  const loadData = async () => {
  try {
- console.log('💰 === LOADING PAYOUTS AND EMPLOYEES ===');
  // Archived (released) employees are fetched too and merged in below - this list is
  // only ever used to look up who a payout belongs to (their type and store), and an
  // employee archived after being paid still has real salary expense in the months they
@@ -1638,13 +1361,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  api.getArchivedEmployees().catch(() => [])
  ]);
  const employees = [...(activeEmployees || []), ...(archivedEmployees || [])];
- console.log('💰 Raw payouts from API:', payouts);
- console.log('💰 Number of payouts:', payouts?.length || 0);
- console.log('💰 Payout dates:', payouts?.map(p => ({ id: p.id, date: p.date, amount: p.amount })));
- console.log('👥 Number of employees:', employees?.length || 0);
  setPayoutsData(payouts || []);
  setEmployeesData(employees || []);
- console.log('💰 === END LOADING PAYOUTS AND EMPLOYEES ===');
  } catch (error) {
  console.error('❌ Error loading payouts and employees:', error);
  setPayoutsData([]);
@@ -1660,23 +1378,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const loadStores = async () => {
  // Load stores for cluster heads OR when in production analytics mode
  // Production analytics needs stores to resolve production house mappings
- console.log('🔧 Store Loading Check:', {
- isClusterHead,
- analyticsMode,
- shouldLoad: isClusterHead || analyticsMode === 'production'
- });
  
  if (!isClusterHead && analyticsMode !== 'production') return;
  
  try {
  const storesList = await api.getStores();
  setStores(storesList);
- console.log('📍 Loaded stores for analytics:', storesList.length, 'stores');
- console.log('📍 Store details:', storesList.map(s => ({
- id: s.id,
- name: s.name,
- productionHouseId: s.productionHouseId
- })));
  } catch (error) {
  console.error('❌ Error loading stores:', error);
  }
@@ -1799,9 +1506,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // exists under Store Analytics, so force that mode even for a production incharge whose
  // default view is Production Analytics.
  useEffect(() => {
- console.log('📊 Analytics - highlightRequestId changed:', highlightRequestId);
  if (highlightRequestId) {
- console.log('📊 Analytics - Switching to production-requests tab');
  setAnalyticsMode('store');
  setActiveView('production-requests');
  }
@@ -1872,23 +1577,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Monthly interest: (Principal × Rate × Days) / (100 × 30)
  const interest = (loan.loanAmount * loan.interestRate * daysDiff) / (100 * 30);
  totalInterest += Math.max(0, interest);
- 
- console.log(`📊 Interest for loan ${loan.id}:`, {
- storeName: loan.storeName,
- principal: loan.loanAmount,
- rate: loan.interestRate,
- loanDate: loan.loanDate,
- repaymentDate: loan.repaymentDate,
- status: loan.status,
- overlapStart: overlapStart.toISOString().split('T')[0],
- overlapEnd: overlapEnd.toISOString().split('T')[0],
- days: daysDiff,
- interest: interest.toFixed(2)
- });
  }
  });
  
- console.log(`💰 Total accrued interest for period ${startDate} to ${endDate}:`, totalInterest.toFixed(2));
  return totalInterest;
  };
 
@@ -1896,52 +1587,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // the bank/Paytm balance, while periodStart/periodEnd is when the customer orders happened.
  // Analytics filters use the sales period so a Jul 29-31 report paid on Aug 3 belongs to
  // Last Month; cash/bank history can still display the Aug 3 settlement date.
- const analyticsLocalDateStr = (d: Date) => {
- const y = d.getFullYear();
- const m = String(d.getMonth() + 1).padStart(2, '0');
- const day = String(d.getDate()).padStart(2, '0');
- return `${y}-${m}-${day}`;
- };
- const analyticsLocalYearMonth = (d: Date) => analyticsLocalDateStr(d).slice(0, 7);
- const getActiveSettlementDateRange = (): { start: string; end: string } | null => {
- const now = new Date();
- switch (timeFilter) {
- case 'today':
- return { start: getTodayIST(), end: getTodayIST() };
- case 'yesterday': {
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- const date = analyticsLocalDateStr(yesterday);
- return { start: date, end: date };
- }
- case 'thisWeek': {
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return { start: analyticsLocalDateStr(startOfWeek), end: analyticsLocalDateStr(today) };
- }
- case 'lastWeek': {
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return { start: analyticsLocalDateStr(lastWeekStart), end: analyticsLocalDateStr(lastWeekEnd) };
- }
- case 'thisMonth':
- return { start: `${analyticsLocalYearMonth(now)}-01`, end: analyticsLocalDateStr(now) };
- case 'lastMonth': {
- const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
- const lastMonth = analyticsLocalYearMonth(lastMonthDate);
- const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
- return { start: `${lastMonth}-01`, end: analyticsLocalDateStr(lastDay) };
- }
- case 'custom':
- return dateRange.from && dateRange.to ? { start: dateRange.from, end: dateRange.to } : null;
- default:
- return null;
- }
- };
- const activeSettlementDateRange = getActiveSettlementDateRange();
+ // Same window as every other figure on the page (a custom range that isn't filled in yet
+ // means no filter).
+ const activeSettlementDateRange = useMemo((): { start: string; end: string } | null =>
+ timeFilter === 'custom' && !(dateRange.from && dateRange.to)
+ ? null
+ : { start: periodRange.startDate, end: periodRange.endDate },
+ [timeFilter, dateRange, periodRange]);
 
  // Zomato/Swiggy commission and ads for any window come from here (utils/onlineCosts.ts),
  // so the cards, the daily chart, the carry-forward and Unit Economics all agree.
@@ -1960,20 +1612,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  // Calculate analytics metrics
  const calculateMetrics = () => {
- console.log('💰 === METRICS CALCULATION DEBUG ===');
- console.log('Time filter:', timeFilter);
- console.log('Filtered sales data count:', filteredSalesData.length);
- console.log('Filtered inventory data count:', filteredInventoryData.length);
- console.log('Filtered overhead data count:', filteredOverheadData.length);
- console.log('Filtered fixed costs data count:', filteredFixedCostsData.length);
- 
  // Calculate revenue from main sales table (Swiggy/Zomato added below after filtering)
  const mainSalesRevenue = filteredSalesData.reduce((sum, sale) => {
  return sum + (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0);
  }, 0);
  
- console.log('Main sales revenue calculated:', mainSalesRevenue);
-
  // Online revenue from main sales table only (Swiggy/Zomato added below after filtering)
  const onlineRevenueFromMainSales = filteredSalesData.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
  const offlineRevenue = filteredSalesData.reduce((sum, sale) => {
@@ -1992,13 +1635,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const packagingPurchases = filteredInventoryData
  .filter(item => canonicalCategory(item.category || '') === 'packaging')
  .reduce((sum, item) => sum + (item.totalCost || 0), 0);
- console.log('Inventory expenses:', inventoryPurchases);
 
  // Calculate overhead expenses (EXCLUDING legacy commission entries)
  // Separate personal_expense items (employee salary-related) from other overhead
  const personalExpenseItems = filteredOverheadData.filter(item => item.category === 'personal_expense');
  const personalExpenseTotal = personalExpenseItems.reduce((sum, item) => sum + (item.amount || 0), 0);
- console.log('💼 Personal expense overhead items:', personalExpenseItems.length, 'Total:', personalExpenseTotal);
 
  const overheadExpenses = filteredOverheadData
  .filter(item => !isCommissionEntry(item)) // Exclude legacy commission entries
@@ -2014,98 +1655,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  // Calculate commission expenses from online sales and payout data
  // Commission = Total Sales - Total Payouts for the filtered time period
- console.log('🔍 DEBUG COMMISSION - Calculating from online sales/payout data');
  
- // Local (not UTC) YYYY-MM-DD / YYYY-MM - .toISOString() converts to UTC first, which
- // rolled "this month"/"yesterday" back to the wrong calendar boundary for the ~5.5 hours
- // after midnight IST (positive UTC offset), silently pulling the previous month's data
- // into "This Month" comparisons below.
- const localDateStr = (d: Date) => {
- const y = d.getFullYear();
- const m = String(d.getMonth() + 1).padStart(2, '0');
- const day = String(d.getDate()).padStart(2, '0');
- return `${y}-${m}-${day}`;
- };
- const localYearMonth = (d: Date) => localDateStr(d).slice(0, 7);
-
- // Filter online sales and payouts by time and store
- const filteredOnlineSales = onlineSalesData.filter(sale => {
- const dateMatch = (() => {
- switch (timeFilter) {
- case 'today':
- return sale.date === getTodayIST();
- case 'yesterday':
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return sale.date === localDateStr(yesterday);
- case 'thisWeek':
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(sale.date) >= startOfWeek && new Date(sale.date) <= today;
- case 'lastWeek':
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(sale.date) >= lastWeekStart && new Date(sale.date) <= lastWeekEnd;
- case 'thisMonth':
- const currentMonth = localYearMonth(new Date());
- return sale.date.startsWith(currentMonth);
- case 'lastMonth':
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = localYearMonth(lastMonthDate);
- return sale.date.startsWith(lastMonth);
- case 'custom':
- return sale.date >= dateRange.from && sale.date <= dateRange.to;
- default:
- return true;
- }
- })();
-
- const storeMatch = effectiveStoreId ? sale.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- });
-
- const filteredOnlinePayouts = onlinePayoutData.filter(payout => {
- const dateMatch = (() => {
- switch (timeFilter) {
- case 'today':
- return payout.date === getTodayIST();
- case 'yesterday':
- const yesterday = new Date();
- yesterday.setDate(yesterday.getDate() - 1);
- return payout.date === localDateStr(yesterday);
- case 'thisWeek':
- const today = new Date();
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() - today.getDay());
- return new Date(payout.date) >= startOfWeek && new Date(payout.date) <= today;
- case 'lastWeek':
- const lastWeekEnd = new Date();
- lastWeekEnd.setDate(lastWeekEnd.getDate() - lastWeekEnd.getDay() - 1);
- const lastWeekStart = new Date(lastWeekEnd);
- lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
- return new Date(payout.date) >= lastWeekStart && new Date(payout.date) <= lastWeekEnd;
- case 'thisMonth':
- const currentMonth = localYearMonth(new Date());
- return payout.date.startsWith(currentMonth);
- case 'lastMonth':
- const lastMonthDate = new Date();
- lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
- const lastMonth = localYearMonth(lastMonthDate);
- return payout.date.startsWith(lastMonth);
- case 'custom':
- return payout.date >= dateRange.from && payout.date <= dateRange.to;
- default:
- return true;
- }
- })();
-
- const storeMatch = effectiveStoreId ? payout.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- });
+ // Online sales and payouts for this store in the period window (same Monday-start weeks
+ // and month bounds as the counter sales above - online used to start weeks on Sunday).
+ const filteredOnlineSales = storeOnlineSales.filter((sale: any) => isInWindow(sale.date, periodRange));
+ const filteredOnlinePayouts = storeOnlinePayouts.filter((payout: any) => isInWindow(payout.date, periodRange));
  
  const totalOnlineSales = filteredOnlineSales.reduce((sum, sale) =>
  sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
@@ -2119,14 +1673,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  
  // Total revenue = main sales + Swiggy/Zomato platform sales
  const totalRevenue = mainSalesRevenue + totalOnlineSales;
- console.log('🔍 Online Revenue: mainSales=', onlineRevenueFromMainSales, 'swiggy+zomato=', totalOnlineSales, 'TOTAL=', onlineRevenue);
- console.log('🔍 Total Revenue: mainSales=', mainSalesRevenue, '+ platforms=', totalOnlineSales, '= TOTAL=', totalRevenue);
  
- console.log('🔍 DEBUG COMMISSION - Filtered online sales:', filteredOnlineSales.length);
- console.log('🔍 DEBUG COMMISSION - Filtered online payouts:', filteredOnlinePayouts.length);
- console.log('🔍 DEBUG COMMISSION - Total online sales:', totalOnlineSales);
- console.log('🔍 DEBUG COMMISSION - Total online payouts:', totalOnlinePayouts);
-
  // Calculate fixed costs
  const electricityExpenses = filteredFixedCostsData
  .filter(fc => fc.category === 'electricity')
@@ -2146,13 +1693,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  let contractWorkerExpenses = 0;
  let permanentEmployeeExpenses = 0;
 
- console.log('💵 === EMPLOYEE PAYOUT SALARY DEBUG ===');
- console.log('Time filter:', timeFilter);
- console.log('Total filteredPayoutsData:', filteredPayoutsData.length);
- console.log('Raw employeesData count:', employeesData.length);
- console.log('All employee types:', employeesData.map((e: any) => ({ id: e.id, employeeId: e.employeeId, name: e.name, type: e.type, employmentType: e.employmentType })));
- console.log('All payout data:', filteredPayoutsData.map((p: any) => ({ id: p.id, employeeId: p.employeeId, amount: p.amount, date: p.date })));
-
  if (timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom') {
  // For month/custom view: Use DATE-FILTERED payouts to respect the selected time range
  let relevantPayouts = filteredPayoutsData;
@@ -2161,39 +1701,27 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // When store is selected, filter payouts to employees of that store
  const storeEmployeeIds = filteredEmployeesData.map(emp => emp.id);
  relevantPayouts = relevantPayouts.filter(payout => storeEmployeeIds.includes(payout.employeeId));
- console.log('Store filtered payouts:', relevantPayouts.length);
  }
-
- console.log('Relevant payouts for calculation:', relevantPayouts.length);
 
  for (const payout of relevantPayouts) {
  // IMPORTANT: Use raw employeesData (not store-filtered) for type lookup
  // This ensures we can identify employee type even if store filtering is active
  const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
  if (!employee) {
- console.log(' ✗ Skipping payout - employee not found:', payout.id);
  continue;
  }
  const empType = employee?.type || employee?.employmentType;
- console.log('Processing payout:', payout.id, 'employeeId:', payout.employeeId, 'amount:', payout.amount, `${employee.name} (resolved type=${empType})`);
  if (empType === 'contract') {
  contractWorkerExpenses += payout.amount || 0;
  } else {
  permanentEmployeeExpenses += payout.amount || 0;
  }
  }
-
- console.log('Total contract worker expenses calculated:', contractWorkerExpenses);
- console.log('Total permanent employee expenses calculated:', permanentEmployeeExpenses);
- } else {
- console.log('Skipping payout calculation - time filter is:', timeFilter);
  }
- console.log('💵 === END EMPLOYEE PAYOUT SALARY DEBUG ===');
  // For daily/weekly view, both buckets stay 0 - payouts are monthly, not daily events
 
  // Total salary expenses = contract workers + permanent employee payouts + personal expenses (employee-mapped overhead)
  const salaryExpenses = contractWorkerExpenses + permanentEmployeeExpenses + personalExpenseTotal;
- console.log('💰 Salary breakdown: contract=', contractWorkerExpenses, 'permanent payouts=', permanentEmployeeExpenses, 'personal expenses=', personalExpenseTotal, 'TOTAL=', salaryExpenses);
 
  // Total fixed costs = rent, electricity, internet/phone (and old LPG entries) - salary is
  // tracked separately; the yearly software subscription is spread like equipment.
@@ -2201,60 +1729,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  .filter(fc => costBucketFor(fc.category || '', 'fixedcost') === 'fixed')
  .reduce((sum, fc) => sum + (fc.amount || 0), 0) + inventoryFixedExpenses + overheadFixedExpenses;
  
- // Calculate interest expense (accrual basis)
- // Get the date range for the current filter
- const getDateRangeForFilter = (): { startDate: string; endDate: string } => {
- // IST calendar-date string arithmetic throughout (getTodayIST/addDays) - a raw
- // `new Date()` + toISOString() rolls the date back a day for anyone in IST between
- // midnight and 5:30am, since UTC is still "yesterday" at that point.
- const today = getTodayIST();
- const dayOfWeek = (dateStr: string) => {
- const [y, m, d] = dateStr.split('-').map(Number);
- return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
- };
-
- switch (timeFilter) {
- case 'today':
- return { startDate: today, endDate: today };
-
- case 'yesterday': {
- const yesterdayStr = addDays(today, -1);
- return { startDate: yesterdayStr, endDate: yesterdayStr };
- }
-
- case 'thisWeek': {
- const startOfWeek = addDays(today, -dayOfWeek(today));
- return { startDate: startOfWeek, endDate: today };
- }
-
- case 'lastWeek': {
- const thisWeekStart = addDays(today, -dayOfWeek(today));
- const lastWeekEnd = addDays(thisWeekStart, -1);
- const lastWeekStart = addDays(lastWeekEnd, -6);
- return { startDate: lastWeekStart, endDate: lastWeekEnd };
- }
-
- case 'thisMonth':
- return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
-
- case 'lastMonth': {
- const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
- const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
- return { startDate: lastMonthStart, endDate: lastMonthEnd };
- }
-
- case 'custom':
- return { startDate: dateRange.from, endDate: dateRange.to };
-
- default:
- return { startDate: getTodayIST(), endDate: getTodayIST() };
- }
- };
- 
- const { startDate, endDate } = getDateRangeForFilter();
+ // Calculate interest expense (accrual basis) over the period window
+ const { startDate, endDate } = periodRange;
  const interestExpenses = calculateAccruedInterest(startDate, endDate, effectiveStoreId || undefined);
-
- console.log('💸 Interest expense for period:', interestExpenses.toFixed(2));
 
  // This window's share of equipment purchases and yearly subscriptions (up to today). Bulk
  // packaging stock is spread too, but it's food & packaging cost, not equipment.
@@ -2278,22 +1755,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Net profit calculation (commission is now separate)
  const netProfit = totalRevenue - totalCosts;
  const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
-
- console.log('🔴🔴🔴 TOTAL EXPENSE BREAKDOWN 🔴🔴🔴');
- console.log('inventoryExpenses:', inventoryExpenses);
- console.log('overheadExpenses:', overheadExpenses);
- console.log('fixedCostsTotal:', fixedCostsTotal, 'elec:', electricityExpenses, 'rent:', rentExpenses);
- console.log('commissionExpenses:', commissionExpenses);
- console.log('interestExpenses:', interestExpenses);
- console.log('salaryExpenses:', salaryExpenses, 'contract:', contractWorkerExpenses, 'permanent:', permanentEmployeeExpenses, 'personal:', personalExpenseTotal);
- console.log('TOTAL:', totalCosts);
- console.log('Gap from 198K:', 198000 - totalCosts);
- console.log('Overhead items count:', filteredOverheadData.length);
- console.log('Commission entries excluded:', filteredOverheadData.filter(item => isCommissionEntry(item)).length, 'total:', filteredOverheadData.filter(item => isCommissionEntry(item)).reduce((s, i) => s + (i.amount || 0), 0));
- console.log('Personal expense excluded:', personalExpenseItems.length, 'total:', personalExpenseTotal);
- console.log('Raw overhead (no filter):', filteredOverheadData.reduce((s, i) => s + (i.amount || 0), 0));
- console.log('Net profit:', netProfit);
- console.log('💰 === END METRICS DEBUG ===');
 
  return {
  totalRevenue,
@@ -2340,6 +1801,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  spreadSourceRecords,
  timeFilter,
  dateRange,
+ periodRange,
  effectiveStoreId
  ]);
 
@@ -2517,50 +1979,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  () => (aggregatorSettlements || []).filter((st: any) =>
  (!effectiveStoreId || st.storeId === effectiveStoreId) && settlementOverlapsAnalyticsRange(st, activeSettlementDateRange)
  ),
- [aggregatorSettlements, effectiveStoreId, timeFilter, dateRange]
+ [aggregatorSettlements, effectiveStoreId, activeSettlementDateRange]
  );
 
- // Date range for the current timeFilter, usable outside calculateMetrics() (which has its
- // own copy scoped to its own body). Kept in sync with that logic.
- const itemPerfDateRange = useMemo((): { startDate: string; endDate: string } => {
- // Kept in sync with getDateRangeForFilter() above - same IST-safe string arithmetic.
- const today = getTodayIST();
- const dayOfWeek = (dateStr: string) => {
- const [y, m, d] = dateStr.split('-').map(Number);
- return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
- };
- switch (timeFilter) {
- case 'today': {
- return { startDate: today, endDate: today };
- }
- case 'yesterday': {
- const yesterdayStr = addDays(today, -1);
- return { startDate: yesterdayStr, endDate: yesterdayStr };
- }
- case 'thisWeek': {
- const startOfWeek = addDays(today, -dayOfWeek(today));
- return { startDate: startOfWeek, endDate: today };
- }
- case 'lastWeek': {
- const thisWeekStart = addDays(today, -dayOfWeek(today));
- const lastWeekEnd = addDays(thisWeekStart, -1);
- const lastWeekStart = addDays(lastWeekEnd, -6);
- return { startDate: lastWeekStart, endDate: lastWeekEnd };
- }
- case 'thisMonth': {
- return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
- }
- case 'lastMonth': {
- const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
- const lastMonthStart = `${lastMonthEnd.slice(0, 7)}-01`;
- return { startDate: lastMonthStart, endDate: lastMonthEnd };
- }
- case 'custom':
- return { startDate: dateRange.from, endDate: dateRange.to };
- default:
- return { startDate: getTodayIST(), endDate: getTodayIST() };
- }
- }, [timeFilter, dateRange]);
+ // Date range for the current timeFilter, usable outside calculateMetrics() - the same
+ // window calculateMetrics uses (see periodWindow).
+ const itemPerfDateRange = periodRange;
 
  // The comparable "previous period" for every Overview trend chart's dashed line - not
  // just "N days back" but the actual matching period: same weekday last week for Today,
@@ -3155,32 +2579,24 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  filteredOverheadData
  ]);
 
- // Prepare sales chart data with online/offline breakdown based on time filter
+ // Prepare sales chart data with online/offline breakdown based on time filter. Online
+ // amounts are this store's Swiggy/Zomato sales inside the same window as the cards - they
+ // used to come from every store, and a custom range added every online record ever.
  const prepareSalesChartData = () => {
- const now = new Date();
- const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
  const chartData: any[] = [];
- 
- // Helper function to get date string in YYYY-MM-DD format without timezone issues
- const getLocalDateString = (date: Date): string => {
- const year = date.getFullYear();
- const month = String(date.getMonth() + 1).padStart(2, '0');
- const day = String(date.getDate()).padStart(2, '0');
- return `${year}-${month}-${day}`;
- };
+ const periodOnlineSales = storeOnlineSales.filter((sale: any) => isInWindow(sale.date, periodRange));
  
  // Helper function to add day data
- const addDayData = (date: Date) => {
- const dateStr = getLocalDateString(date);
- const dayLabel = date.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+ const addDayData = (dateStr: string) => {
+ const dayLabel = new Date(`${dateStr}T00:00:00`).toLocaleDateString('default', { month: 'short', day: 'numeric' });
  
  const daySales = filteredSalesData.filter(sale => sale.date === dateStr);
  // Get online sales from main sales table
  const onlineRevenueFromSales = daySales.reduce((sum, sale) => sum + (sale.onlineSales || 0), 0);
  
  // ALSO get online sales from the separate online sales table (Swiggy + Zomato)
- const dayOnlineSales = onlineSalesData.filter(sale => sale.date === dateStr);
- const onlineRevenueFromPlatforms = dayOnlineSales.reduce((sum, sale) => 
+ const dayOnlineSales = periodOnlineSales.filter((sale: any) => sale.date === dateStr);
+ const onlineRevenueFromPlatforms = dayOnlineSales.reduce((sum: number, sale: any) => 
  sum + (sale.swiggySales || 0) + (sale.zomatoSales || 0), 0);
  
  // Total online revenue = both sources
@@ -3197,61 +2613,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  });
  };
  
- if (timeFilter === 'today') {
- addDayData(today);
- } else if (timeFilter === 'yesterday') {
- const yesterday = new Date(today);
- yesterday.setDate(yesterday.getDate() - 1);
- addDayData(yesterday);
- } else if (timeFilter === 'thisWeek') {
- // Get days from Monday of this week to today
- const dayOfWeek = today.getDay();
- const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
- const startOfWeek = new Date(today);
- startOfWeek.setDate(today.getDate() + diff);
- 
- let current = new Date(startOfWeek);
- while (current <= today) {
- addDayData(new Date(current));
- current.setDate(current.getDate() + 1);
- }
- } else if (timeFilter === 'thisMonth') {
- // Get days from 1st of this month to today
- const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
- let current = new Date(startOfMonth);
- while (current <= today) {
- addDayData(new Date(current));
- current.setDate(current.getDate() + 1);
- }
- } else if (timeFilter === 'lastWeek') {
- // Get days from last Monday to last Sunday
- const currentDay = today.getDay();
- const daysToLastMonday = currentDay === 0 ? -13 : -(currentDay + 6);
- const startOfLastWeek = new Date(today);
- startOfLastWeek.setDate(today.getDate() + daysToLastMonday);
- 
- let current = new Date(startOfLastWeek);
- for (let i = 0; i < 7; i++) {
- addDayData(new Date(current));
- current.setDate(current.getDate() + 1);
- }
- } else if (timeFilter === 'lastMonth') {
- // Get all days from last month
- const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
- const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
- 
- let current = new Date(startOfLastMonth);
- while (current <= endOfLastMonth) {
- addDayData(new Date(current));
- current.setDate(current.getDate() + 1);
- }
- } else if (timeFilter === 'custom') {
+ if (timeFilter === 'custom') {
  // For custom range, group by month
  const monthlyData: any = {};
+ const monthOf = (date: string) => new Date(`${date.slice(0, 7)}-01T00:00:00`).toLocaleDateString('default', { month: 'short', year: '2-digit' });
  
  filteredSalesData.forEach(sale => {
- const date = new Date(sale.date);
- const monthKey = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+ const monthKey = monthOf(sale.date);
  
  if (!monthlyData[monthKey]) {
  monthlyData[monthKey] = {
@@ -3271,9 +2639,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  });
  
  // ALSO add online sales from Swiggy/Zomato
- onlineSalesData.forEach(sale => {
- const date = new Date(sale.date);
- const monthKey = date.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+ periodOnlineSales.forEach((sale: any) => {
+ const monthKey = monthOf(sale.date);
  
  if (!monthlyData[monthKey]) {
  monthlyData[monthKey] = {
@@ -3292,44 +2659,41 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  return Object.values(monthlyData);
  }
  
+ // Every day of the window (today, yesterday, Monday-to-date, the month to date, last week,
+ // last month), as IST date strings.
+ for (let day = periodRange.startDate; day <= periodRange.endDate; day = addDays(day, 1)) {
+ addDayData(day);
+ }
+ 
  return chartData;
  };
 
  const salesChartData = useMemo(() => prepareSalesChartData(), [
  filteredSalesData,
- onlineSalesData,
- timeFilter
+ storeOnlineSales,
+ timeFilter,
+ periodRange
  ]);
 
  // Rent / electricity / permanent salaries (incl. variable pay) spread over the days of the
  // month they belong to - see utils/dailyCostSmoothing.ts for the rules (estimates, true-up).
  // Built from ALL records (not the time-filtered ones) so a payment made outside the viewed
  // window still contributes its daily share to the days inside it.
- const fixedCostAccrual = useMemo(() => {
- const today = getTodayIST();
- const dow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)).getUTCDay(); };
- let start = today;
- let end = today;
- switch (timeFilter) {
- case 'yesterday': start = end = addDays(today, -1); break;
- case 'thisWeek': start = addDays(today, -dow(today)); break;
- case 'lastWeek': { const ws = addDays(today, -dow(today)); end = addDays(ws, -1); start = addDays(end, -6); break; }
- case 'thisMonth': start = `${today.slice(0, 7)}-01`; break;
- case 'lastMonth': { end = addDays(`${today.slice(0, 7)}-01`, -1); start = `${end.slice(0, 7)}-01`; break; }
- case 'custom': start = dateRange.from; end = dateRange.to; break;
- default: break;
- }
- return accrualFor(start, end);
- }, [timeFilter, dateRange, accrualFor]);
+ const fixedCostAccrual = useMemo(
+ () => accrualFor(periodRange.startDate, periodRange.endDate),
+ [periodRange, accrualFor]
+ );
  // The daily charts only use the spread when the toggle is on; the Net Normalized Profit card always does.
  const smoothedCosts = smoothFixedCosts ? fixedCostAccrual : null;
 
  // Prepare profit chart data with revenue, expenses, profit based on time filter
  const prepareProfitChartData = () => {
- const now = new Date();
  const dailyData: any = {};
- 
- console.log('📊 === CHART DATA PREPARATION DEBUG ===');
+ // Payouts with a forMonth and personal expenses with an expenseMonth count in the window
+ // even when paid outside it (a September salary paid on 5 October): put them on the
+ // window's nearest day so the chart still adds up to the card.
+ const chartDay = (date: string) =>
+ !date || date < periodRange.startDate ? periodRange.startDate : date > periodRange.endDate ? periodRange.endDate : date;
  
  // Group by date for daily breakdown
  filteredSalesData.forEach(sale => {
@@ -3340,52 +2704,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Use GROSS revenue (to match metrics calculation)
  const grossRevenue = (sale.paytmAmount || 0) + (sale.cashAmount || 0) + (sale.onlineSales || 0);
  dailyData[date].revenue += grossRevenue;
- 
- // Add contract worker salary
- dailyData[date].expenses += (sale.employeeSalary || 0);
+ // Contract pay comes from payouts below, like the card - the legacy sale.employeeSalary
+ // field isn't filled any more and would double-count old days.
  });
  
  // Calculate commission by date from onlineSalesData and onlinePayoutData (same as metrics)
- const filteredOnlineSales = onlineSalesData.filter(sale => {
- const dateMatch = (() => {
- // IST calendar-date string arithmetic (see getDateRangeForFilter above for why).
- const today = getTodayIST();
- const dayOfWeek = (dateStr: string) => {
- const [y, m, d] = dateStr.split('-').map(Number);
- return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
- };
- switch (timeFilter) {
- case 'today':
- return sale.date === today;
- case 'yesterday':
- return sale.date === addDays(today, -1);
- case 'thisWeek': {
- const startOfWeek = addDays(today, -dayOfWeek(today));
- return sale.date >= startOfWeek && sale.date <= today;
- }
- case 'lastWeek': {
- const thisWeekStart = addDays(today, -dayOfWeek(today));
- const lastWeekEnd = addDays(thisWeekStart, -1);
- const lastWeekStart = addDays(lastWeekEnd, -6);
- return sale.date >= lastWeekStart && sale.date <= lastWeekEnd;
- }
- case 'thisMonth':
- return sale.date.startsWith(today.slice(0, 7));
- case 'lastMonth': {
- const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
- return sale.date.startsWith(lastMonthEnd.slice(0, 7));
- }
- case 'custom':
- return sale.date >= dateRange.from && sale.date <= dateRange.to;
- default:
- return true;
- }
- })();
- const storeMatch = effectiveStoreId ? sale.storeId === effectiveStoreId : true;
- return dateMatch && storeMatch;
- });
+ const filteredOnlineSales = storeOnlineSales.filter((sale: any) => isInWindow(sale.date, periodRange));
  
- filteredOnlineSales.forEach(sale => {
+ filteredOnlineSales.forEach((sale: any) => {
  const date = sale.date;
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
@@ -3418,10 +2744,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  dailyData[date].expenses += (item.totalCost || 0);
  });
 
- // Add overhead expenses by date
+ // Add overhead expenses by date (old aggregator-commission entries are left out, as on the
+ // card - commission comes from the settlements above)
  filteredOverheadData.forEach(item => {
  if (!isDatedProfitCost(item.category || '', 'overhead')) return;
- const date = item.date;
+ if (isCommissionEntry(item)) return;
+ const date = chartDay(item.date);
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
@@ -3458,20 +2786,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  });
  }
  
- // Add employee payouts by date (only for fulltime employees to avoid double-counting)
- // - skipped in smoothed mode, where permanent salaries are spread over the month instead
- if (!smoothedCosts) filteredPayoutsData.forEach(payout => {
- const date = payout.date;
+ // Employee payouts, counted like the card's Salaries line: contract and permanent pay
+ // alike, and only on month/custom views (the card shows no payouts for a day or a week).
+ // Smoothed mode spreads permanent salaries over the month instead (smoothedCosts) but
+ // never contract pay (dailyCostSmoothing leaves it out), so contract pay stays here.
+ const viewCountsPayouts = timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom';
+ if (viewCountsPayouts) filteredPayoutsData.forEach(payout => {
+ // Find the employee for this payout - use raw employeesData for type lookup
+ const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
+ if (!employee) return; // the card skips payouts it can't match to an employee too
+ const isContract = (employee.type || employee.employmentType) === 'contract';
+ if (smoothedCosts && !isContract) return;
+ const date = chartDay(payout.date);
  if (!dailyData[date]) {
  dailyData[date] = { revenue: 0, expenses: 0, profit: 0 };
  }
- // Find the employee for this payout - use raw employeesData for type lookup
- const employee = employeesData.find((emp: any) => emp.id === payout.employeeId);
- const empType = employee?.type || employee?.employmentType;
- // Only include if employee is fulltime (permanent) - contract workers are in sales.employeeSalary
- if (employee && empType === 'fulltime') {
  dailyData[date].expenses += (payout.amount || 0);
- }
  });
  
  // Calculate profit and format for chart
@@ -3480,7 +2810,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  .map(date => {
  const data = dailyData[date];
  const profit = data.revenue - data.expenses;
- console.log(`Chart data for ${date}: revenue=${data.revenue}, expenses=${data.expenses}, profit=${profit}`);
  return {
  date: date, // Add unique date identifier for React key
  period: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
@@ -3490,7 +2819,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  };
  });
  
- console.log('📊 === END CHART DATA DEBUG ===');
  return chartData;
  };
 
@@ -3501,14 +2829,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  filteredFixedCostsData,
  filteredPayoutsData,
  filteredEmployeesData,
- onlineSalesData,
+ employeesData,
+ storeOnlineSales,
  metrics,
  smoothedCosts,
  spreadSourceRecords,
  itemPerfDateRange,
- timeFilter,
- effectiveStoreId,
- dateRange
+ periodRange,
+ timeFilter
  ]);
 
  // Previous-period revenue/expenses/profit for the dashed comparison line on Revenue &
@@ -4384,7 +3712,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  value={selectedProductionHouseId || ''}
  onChange={(e) => {
  const newValue = e.target.value || null;
- console.log('🏭 Production Analytics - Production House Selector Changed:', newValue);
  setSelectedProductionHouseId(newValue);
  }}
  className="px-4 py-2 bg-white border-2 border-orange-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -4606,7 +3933,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  <button
  onClick={() => {
- console.log('🔄 Recalibration button clicked!');
  setActiveView('recalibration-reports');
  }}
  className={`group relative px-4 py-4 rounded-xl transition-all duration-300 transform hover:scale-105 border ${
@@ -6686,46 +6012,21 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Use consistent production house filtering logic
  const filterById = selectedProductionHouseId; // Always use production house selector in production analytics
  
- console.log('🏭 Production Summary Cards Filter Debug:');
- console.log(' - analyticsMode:', analyticsMode);
- console.log(' - selectedProductionHouseId:', selectedProductionHouseId);
- console.log(' - effectiveStoreId:', effectiveStoreId);
- console.log(' - filterById:', filterById);
- console.log(' - Total production records:', productionData.length);
- 
  // Find the selected production house by its id
  const selectedProductionHouse = filterById 
  ? context.productionHouses?.find(ph => ph.id === filterById)
  : null;
  
- console.log(' - Selected production house object:', selectedProductionHouse);
- 
  // Get date range bounds for filtering
  const { startDate, endDate } = getDateRangeBounds();
- 
- console.log('📅 Date Range Filter:', {
- rangeType: productionDateRange,
- startDate,
- endDate,
- customStart: customStartDate,
- customEnd: customEndDate
- });
  
  const filteredProduction = productionData.filter(p => {
  // Filter by date range first
  if (p.date < startDate || p.date > endDate) {
- console.log('❌ Date filter excluded record:', { date: p.date, startDate, endDate });
  return false;
  }
  
  if (!filterById) return true; // No filter selected, show all
- 
- console.log('🔎 Filtering production record:', {
- recordStoreId: p.storeId,
- recordProductionHouseId: p.productionHouseId,
- filterById,
- date: p.date
- });
  
  // For production incharges, the filterById is their storeId
  // Production data has BOTH storeId (where production happened) and productionHouseId (UUID)
@@ -6744,30 +6045,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Use local stores state (loaded in useEffect) or fallback to context.stores
  const allStores = stores.length > 0 ? stores : (context.stores || []);
  const store = allStores.find(s => s.id === p.storeId);
- console.log(' 🔎 Production Summary - Store lookup:', {
- pStoreId: p.storeId,
- localStoresCount: stores.length,
- contextStoresCount: context.stores?.length || 0,
- allStoresCount: allStores.length,
- foundStore: store ? { id: store.id, name: store.name, productionHouseId: store.productionHouseId } : null
- });
  recordProductionHouseId = store?.productionHouseId || undefined;
  }
  
  const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
- 
- console.log(' 🔍 Checking record:', {
- recordId: p.id.slice(0, 8),
- recordStoreId: p.storeId,
- recordProductionHouseId: p.productionHouseId,
- resolvedProductionHouseId: recordProductionHouseId,
- phId,
- filterById,
- matchesStoreId,
- matchesProductionHouseId,
- localStores: stores.length,
- match: matchesStoreId || matchesProductionHouseId || phId === filterById
- });
  
  // Match if ANY of these are true
  const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
@@ -6775,8 +6056,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  return matches;
  });
  
- console.log(' - Filtered production records:', filteredProduction.length);
-
  // Calculate production by type for current period
  const chickenMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenMomos?.final || 0), 0);
  const chickenCheeseMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenCheeseMomos?.final || 0), 0);
@@ -7466,7 +6745,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {(isOperationsManager || isClusterHead) && onNavigateToManageItems && (
  <button
  onClick={() => {
- console.log('🔘 Manage Items button clicked in Analytics');
  onNavigateToManageItems();
  }}
  className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg font-semibold"
@@ -7487,7 +6765,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  value={selectedProductionHouseId || 'all'}
  onChange={(e) => {
  const newValue = e.target.value === 'all' ? null : e.target.value;
- console.log('🏭 Production House Selector Changed:', newValue);
  setSelectedProductionHouseId(newValue);
  }}
  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
@@ -7509,26 +6786,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // In production analytics mode, always use selectedProductionHouseId
  const effectiveProductionHouseId = selectedProductionHouseId;
  
- console.log('🏭 Production House Stock Status Filter Debug:');
- console.log(' - analyticsMode:', analyticsMode);
- console.log(' - selectedProductionHouseId:', selectedProductionHouseId);
- console.log(' - effectiveProductionHouseId:', effectiveProductionHouseId);
- 
  // Find the selected production house by its id
  const selectedProductionHouseForStock = effectiveProductionHouseId 
  ? context.productionHouses?.find(ph => ph.id === effectiveProductionHouseId)
  : null;
- 
- console.log(' - Selected production house for stock:', selectedProductionHouseForStock);
- console.log(' - Total production records available:', productionData.length);
- if (productionData.length > 0 && productionData.length <= 3) {
- console.log(' - All production records:', productionData.map(p => ({
- id: p.id,
- storeId: p.storeId,
- productionHouseId: p.productionHouseId,
- date: p.date
- })));
- }
  
  // Get all production data for the production house
  const filteredProduction = productionData.filter(p => {
@@ -7554,27 +6815,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Match if ANY of these are true
  return matchesStoreId || matchesProductionHouseId || phId === effectiveProductionHouseId;
  });
- 
- console.log(' - Filtered production for stock status:', filteredProduction.length);
- if (filteredProduction.length > 0) {
- console.log(' - Sample production record:', {
- id: filteredProduction[0].id,
- storeId: filteredProduction[0].storeId,
- productionHouseId: filteredProduction[0].productionHouseId,
- date: filteredProduction[0].date
- });
- }
 
  // Fixed current-month activity for this stock view. Stock Available itself remains
  // current stock, so a separate date filter would make the card misleading.
  const nowForMonth = new Date();
  const currentMonth = `${nowForMonth.getFullYear()}-${String(nowForMonth.getMonth() + 1).padStart(2, '0')}`;
  const monthlyFilteredProduction = filteredProduction.filter(p => p.date.startsWith(currentMonth));
- 
- console.log(' - Monthly filtered production:', monthlyFilteredProduction.length, 'for month:', currentMonth);
- if (monthlyFilteredProduction.length > 0) {
- console.log(' - Sample monthly production record:', monthlyFilteredProduction[0]);
- }
 
  // Get all finished product inventory items FIRST (we need this for dynamic calculations)
  const finishedProductsForCalc = context.inventoryItems?.filter(item => 
@@ -7670,10 +6916,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const userStore = context.stores?.find(s => s.id === effectiveProductionHouseId);
  if (userStore?.productionHouseId) {
  productionHouseUUID = userStore.productionHouseId;
- console.log('🔧 Resolved production house UUID:', {
- userStoreId: effectiveProductionHouseId,
- resolvedUUID: productionHouseUUID
- });
  }
  }
  
@@ -7688,12 +6930,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const requestDate = req.shippedAt || req.deliveredAt || req.requestDate || req.createdAt;
  
  if (!requestDate || !requestDate.startsWith(currentMonth)) {
- console.log('❌ Filtered out request - wrong month:', {
- requestId: req.id.slice(0, 8),
- requestDate,
- currentMonth,
- matches: requestDate?.startsWith(currentMonth)
- });
  return false;
  }
  
@@ -7705,48 +6941,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // Filter by production house if one is selected
  if (productionHouseUUID) {
  const matches = requestingStore?.productionHouseId === productionHouseUUID;
- console.log('🔍 Checking production request:', {
- requestId: req.id.slice(0, 8),
- storeId: req.storeId,
- storeName: requestingStore?.name,
- storeProductionHouseId: requestingStore?.productionHouseId,
- productionHouseUUID,
- deliveredDate: req.deliveredAt,
- availableStores: allStores.length,
- matches
- });
  return matches;
  }
  
  // If no production house selected, show all
  return true;
  }) || [];
-
- console.log('🏭 Production Stock Calculation:', {
- effectiveProductionHouseId,
- isProductionIncharge: context.user?.designation === 'production_incharge',
- totalProductionRequests: context.productionRequests?.length || 0,
- deliveredRequests: context.productionRequests?.filter(r => r.status === 'delivered').length || 0,
- fulfilledRequestsCount: fulfilledRequests.length,
- stores: context.stores?.map(s => ({ id: s.id, name: s.name, productionHouseId: s.productionHouseId })) || [],
- filteredProductionRecords: filteredProduction.length,
- allProductionData: productionData.map(p => ({
- id: p.id.slice(0, 8),
- date: p.date,
- productionHouseId: p.productionHouseId,
- storeId: p.storeId,
- resolvedId: p.productionHouseId || p.storeId
- })),
- sampleRequest: fulfilledRequests[0],
- sampleRequestData: fulfilledRequests[0] ? {
- id: fulfilledRequests[0].id,
- storeId: fulfilledRequests[0].storeId,
- requestDate: fulfilledRequests[0].requestDate,
- status: fulfilledRequests[0].status,
- chickenMomos: fulfilledRequests[0].chickenMomos,
- vegMomos: fulfilledRequests[0].vegMomos
- } : null
- });
 
  // Calculate total fulfilled stock requests (sent to stores) - DYNAMIC
  const totalSentToStores: Record<string, number> = {};
@@ -7811,23 +7011,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  0;
  });
  
- console.log('��� Stock Calculation with Carry-Forward:');
- console.log(' previousMonthStock (raw):', previousMonthStock);
- console.log(' Opening Balance (processed):', openingBalance);
- console.log(' Current Month Production (APPROVED ONLY):', totalProduced);
- console.log(' Current Month Sent to Stores:', totalSentToStores);
- console.log(' 📊 Production Records Debug:');
- console.log(' Total monthly production records:', monthlyFilteredProduction.length);
- console.log(' Approved monthly production records:', monthlyFilteredProduction.filter(p => p.approvalStatus === 'approved').length);
- console.log(' Sample production records:', monthlyFilteredProduction.slice(0, 3).map(p => ({
- id: p.id.slice(0, 8),
- date: p.date,
- approvalStatus: p.approvalStatus,
- hasData: !!(p as any).data,
- dataKeys: (p as any).data ? Object.keys((p as any).data) : [],
- sampleValue: (p as any).data ? (p as any).data[Object.keys((p as any).data)[0]] : null
- })));
- 
  // Stock = Opening Balance + This Month Produced - Sent to Stores.
  // Base momos also lose stock when converted into Kurkure momos.
  const productionHouseStock: Record<string, number> = {};
@@ -7844,8 +7027,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  convertedToKurkure;
  });
 
- console.log(' Final Stock:', productionHouseStock);
- 
  // Store calculated stock globally for the recalibration modal
  (window as any).__currentProductionHouseStock = productionHouseStock;
 
@@ -7857,15 +7038,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  (item.linkedEntityType === 'production_house' && item.linkedEntityId === effectiveProductionHouseId))
  ) || [];
  
- console.log('📦 Finished Products for Stock Display:', finishedProducts.map(item => {
- const stockKey = getStockKey(item.name); // Convert to camelCase base key
- return {
- name: item.name,
- displayName: item.displayName,
- stock: productionHouseStock[stockKey]
- };
- }));
-
  // Helper function to convert snake_case to camelCase for stock lookup
  const snakeToCamel = (str: string) => {
  return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
@@ -8499,23 +7671,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  (p.wastage?.coating || 0) > 0
  );
 
- console.log('🗑️ Wastage Analysis Debug:', {
- analyticsMode,
- selectedProductionHouseId,
- filterById,
- mappedStoreIds,
- totalProductionRecords: productionData.length,
- filteredProductionRecords: filteredProduction.length,
- recordsWithWastage: recordsWithWastage.length,
- totalWastageAllTime,
- sampleWastageData: filteredProduction.slice(0, 3).map(p => ({
- date: p.date,
- storeId: p.storeId,
- productionHouseId: p.productionHouseId,
- wastage: p.wastage
- }))
- });
-
  if (filteredProduction.length === 0) {
  return (
  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
@@ -8667,12 +7822,13 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  let displayLabel = p.date;
  
  if (wastageTimeFilter === 'weekly') {
- const date = new Date(p.date);
- const weekStart = new Date(date.setDate(date.getDate() - date.getDay()));
- const weekEnd = new Date(weekStart);
- weekEnd.setDate(weekEnd.getDate() + 6);
- key = weekStart.toISOString().split('T')[0];
- // Format as "Dec 21 - Dec 27"
+ // Monday-Sunday weeks, as on the rest of the page (date-string arithmetic, no UTC drift)
+ const [py, pm, pd] = p.date.split('-').map(Number);
+ const weekStartStr = addDays(p.date, -((new Date(Date.UTC(py, pm - 1, pd)).getUTCDay() + 6) % 7));
+ const weekStart = new Date(`${weekStartStr}T00:00:00`);
+ const weekEnd = new Date(`${addDays(weekStartStr, 6)}T00:00:00`);
+ key = weekStartStr;
+ // Format as "Dec 22 - Dec 28"
  displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
  } else if (wastageTimeFilter === 'monthly') {
  key = p.date.substring(0, 7); // YYYY-MM
@@ -8929,15 +8085,6 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  : (context.user?.designation === 'production_incharge'
  ? effectiveStoreId
  : selectedProductionHouseId);
- console.log('🔍 SOP Compliance Filter - analyticsMode:', analyticsMode);
- console.log('🔍 SOP Compliance Filter - selectedProductionHouseId:', selectedProductionHouseId);
- console.log('🔍 SOP Compliance Filter - effectiveStoreId:', effectiveStoreId);
- console.log('🔍 SOP Compliance Filter - filterById:', filterById);
- console.log('🔍 SOP Compliance Filter - user designation:', context.user?.designation);
- console.log('🔍 SOP Compliance Filter - sopComplianceDate:', sopComplianceDate);
- console.log('🔍 SOP Compliance Filter - All production dates:', [...new Set(productionData.map(p => p.date))]);
- console.log('🔍 SOP Compliance Filter - Total production records:', productionData.length);
- console.log('🔍 SOP Compliance Filter - Approved production records:', productionData.filter(p => p.approvalStatus === 'approved').length);
  
  // Use the SOP compliance date selector
  const datesToShow = [sopComplianceDate];
@@ -8970,31 +8117,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  const passesFilter = (matchesStoreId || matchesProductionHouseId || matchesFallback || matchesMappedStore);
  const finalResult = passesFilter && matchesDate && isApproved;
  
- console.log('🔍 SOP Compliance - Checking production record:', {
- date: p.date,
- storeId: p.storeId,
- productionHouseId: p.productionHouseId,
- approvalStatus: p.approvalStatus,
- filterById,
- mappedStoreIds,
- matchesStoreId,
- matchesProductionHouseId,
- matchesFallback,
- matchesMappedStore,
- matchesDate,
- isApproved,
- passesFilter,
- finalResult
- });
- 
  if (filterById && !passesFilter) {
  return false;
  }
  return matchesDate && isApproved;
  });
  
- console.log(`🔍 SOP Compliance - Date ${dateStr}: Found ${dayProduction.length} production records`);
-
  if (dayProduction.length === 0) continue;
 
  // Map production data fields to SOP threshold keys
@@ -9237,19 +8365,16 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  setShowRecalibration(false);
  // Refresh opening balance data after recalibration
  if (analyticsMode === 'production') {
- console.log('🔄 Recalibration modal closed - refreshing data...');
  // Clear existing opening balance to force refetch
  setPreviousMonthStock(null);
  setLatestRecalibration(null);
  // Longer delay to ensure backend has processed and committed the save
  setTimeout(() => {
- console.log('⏰ Timeout complete - fetching latest recalibration...');
  fetchRecalibrationAndCalculateOpeningBalance();
  }, 1500);
  }
  }}
  onSaveSuccess={() => {
- console.log('✅ Recalibration saved successfully - triggering immediate refresh!');
  // Clear cached data
  setPreviousMonthStock(null);
  setLatestRecalibration(null);
@@ -9673,6 +8798,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  totalAmount={metrics.commissionExpenses + metrics.adSpend}
  settlements={commissionBreakdownSettlements}
  costs={metrics.online}
+ range={activeSettlementDateRange}
  periodLabel={getPeriodLabel()}
  onClose={() => setSelectedExpenseCategory(null)}
  />
