@@ -436,7 +436,13 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
         // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
         // token issued before that stays valid until it expires - refuse it here so leaving
         // takes effect at once. 401 makes the app sign them out.
-        if (isLoginBlocked(userData.user)) {
+        // Someone archived before archiving switched logins off has no ban yet: catch them
+        // by their archived record and ban them now. (Never the owner - a stray archived
+        // copy of their record must not lock the business out.)
+        const employeeIdHint = userData.user.app_metadata?.employeeId || userData.user.user_metadata?.employeeId;
+        const isOwner = userData.user.app_metadata?.role === 'cluster_head';
+        if (isLoginBlocked(userData.user) || (!isOwner && (await isArchivedLogin(employeeIdHint, user.id)))) {
+          if (!isLoginBlocked(userData.user)) await setEmployeeLoginBlocked(user.id, true);
           const result = { error: 'This login has been switched off', status: 401 };
           verifiedTokens.set(accessToken, { at: Date.now(), result });
           return result;
@@ -485,6 +491,22 @@ function isLoginBlocked(user: any): boolean {
   if (user?.app_metadata?.archived === true) return true;
   const until = user?.banned_until ? new Date(user.banned_until).getTime() : 0;
   return until > Date.now();
+}
+
+// True when this login belongs to an archived employee record and to no active one. Ids
+// were reused in the past, so the archived record must carry this very login. One primary
+// key read on the common path (verifyUser answers are cached for 30s); a read failure
+// never locks anyone out.
+async function isArchivedLogin(employeeId: string | undefined, authUserId: string): Promise<boolean> {
+  if (!employeeId) return false;
+  try {
+    const archived = await kv.get(`archived-employee:${employeeId}`);
+    if (!archived || archived.authUserId !== authUserId) return false;
+    const active = await kv.get(`unified-employee:${employeeId}`);
+    return !(active && active.authUserId === authUserId);
+  } catch {
+    return false;
+  }
 }
 
 async function setEmployeeLoginBlocked(authUserId: string | undefined, blocked: boolean): Promise<boolean> {
