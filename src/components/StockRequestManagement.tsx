@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { Package, Send, CheckCircle, XCircle, Clock, AlertCircle, TrendingUp, Boxes, Trash2 } from 'lucide-react';
+import { Package, Send, CheckCircle, XCircle, Clock, AlertCircle, TrendingUp, Trash2 } from 'lucide-react';
 import { getDefaultStoreId } from '../utils/entityAccess';
 import { getTodayIST } from '../utils/timezone';
 import { StockWastageModal } from './StockWastageModal';
@@ -15,10 +15,6 @@ const PRODUCT_LABELS: Record<string, string> = {
  vegKurkure: 'Veg Kurkure Momos',
  chickenKurkure: 'Chicken Kurkure Momos',
 };
-
-// Same default used on the Store Stock Status page - kept in sync via the same
-// localStorage key so plate counts read the same on both pages.
-const DEFAULT_PIECES_PER_PLATE = 6;
 
 type Props = {
   context: InventoryContextType;
@@ -59,52 +55,8 @@ export function StockRequestManagement({ context, stores, initialTab = null }: P
   const userStore = stores.find(s => s.id === userStoreId);
   const userProductionHouse = context.productionHouses.find(h => h.productionHeadId === context.user?.employeeId);
 
-  // Current stock for the store incharge's own store - same estimate (fulfilled stock
-  // minus a rough daily-sales draw-down) used on the Store Stock Status page, scoped to
-  // just this store so it can sit right on the request page instead of a separate tab.
-  const currentStock = useMemo(() => {
-    if (!userStore) return null;
-
-    const fulfilledRequests = context.stockRequests.filter(
-      req => req.storeId === userStore.id &&
-      (req.status === 'fulfilled' || req.status === 'partially_fulfilled') &&
-      req.fulfilledQuantities
-    );
-
-    const totals: Record<string, number> = {
-      chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0, paneer: 0, vegKurkure: 0, chickenKurkure: 0,
-    };
-    fulfilledRequests.forEach(req => {
-      if (req.fulfilledQuantities) {
-        Object.keys(totals).forEach(key => {
-          totals[key] += (req.fulfilledQuantities as any)[key] || 0;
-        });
-      }
-    });
-
-    const storeSales = context.salesData.filter(sale => sale.storeId === userStore.id);
-    const avgSalesPerType = storeSales.length > 0 ? Math.floor(storeSales.length / 7) : 0;
-
-    const stock: Record<string, number> = {};
-    Object.keys(totals).forEach(key => {
-      stock[key] = Math.max(0, totals[key] - avgSalesPerType);
-    });
-    return stock;
-  }, [userStore, context.stockRequests, context.salesData]);
-
-  const stockStatusFor = (qty: number): 'healthy' | 'low' | 'critical' | 'out' => {
-    if (qty === 0) return 'out';
-    if (qty < 50) return 'critical';
-    if (qty < 100) return 'low';
-    return 'healthy';
-  };
-
-  const stockStatusColors: Record<'healthy' | 'low' | 'critical' | 'out', string> = {
-    healthy: 'border-green-200 bg-green-50 text-green-700',
-    low: 'border-yellow-200 bg-yellow-50 text-yellow-700',
-    critical: 'border-orange-200 bg-orange-50 text-orange-700',
-    out: 'border-red-200 bg-red-50 text-red-700',
-  };
+  // No "Current Stock" here: it was every fulfilled old-style request minus (number of sales
+  // records / 7), which is not a stock figure, so it is no longer shown.
 
   // Form state for new request
   const [requestForm, setRequestForm] = useState({
@@ -308,30 +260,6 @@ export function StockRequestManagement({ context, stores, initialTab = null }: P
         </div>
       )}
 
-      {/* Current Stock - the thing a store incharge actually needs to see before
-          deciding how much to request, so it lives right here instead of a separate page. */}
-      {isStoreIncharge && currentStock && (
-        <div className="mb-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 shadow-lg shadow-blue-500/20">
-          <div className="flex items-center gap-2 mb-4">
-            <Boxes className="w-5 h-5 text-white" />
-            <h2 className="text-sm font-semibold text-white">Current Stock</h2>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-            {Object.entries(currentStock).map(([product, qty]) => {
-              const status = stockStatusFor(qty);
-              const plates = Math.floor(qty / DEFAULT_PIECES_PER_PLATE);
-              return (
-                <div key={product} className={`rounded-xl border p-3 ${stockStatusColors[status]}`}>
-                  <p className="text-[11px] text-gray-600 mb-1 truncate">{PRODUCT_LABELS[product]}</p>
-                  <p className="text-lg font-semibold text-gray-900">{qty}</p>
-                  <p className="text-[11px] text-gray-500">{plates} plates</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Tabs - a store incharge and a production incharge are mutually exclusive
           designations, so in practice only one of these ever applies per user. Skip
           the tab bar entirely rather than showing a single lonely pill. */}
@@ -389,9 +317,6 @@ export function StockRequestManagement({ context, stores, initialTab = null }: P
                   <div key={key}>
                     <label className="block text-sm text-gray-700 mb-1">
                       {PRODUCT_LABELS[key]}
-                      {currentStock && (
-                        <span className="text-xs text-gray-400 font-normal"> · have {currentStock[key] ?? 0}</span>
-                      )}
                     </label>
                     <input
                       type="number"
