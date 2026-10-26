@@ -2390,6 +2390,7 @@ export default function App() {
  <Analytics
  context={contextValue}
  highlightRequestId={highlightRequestId}
+ initialTab={highlightTab}
  onNavigateToManageItems={() => {
  console.log('🔄 App.tsx: Changing activeView to inventory-items');
  setPreManageItemsView('analytics');
@@ -3082,6 +3083,7 @@ export default function App() {
  context={contextValue} 
  selectedStoreId={selectedStoreId} 
  highlightRequestId={highlightRequestId}
+ initialTab={highlightTab}
  onNavigateToManageItems={() => {
  console.log('🔄 App.tsx: Changing activeView to inventory-items');
  setActiveView('inventory-items');

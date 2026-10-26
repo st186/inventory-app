@@ -614,11 +614,27 @@ export async function updateGrowthIdea(accessToken: string, storeId: string, id:
   return data.idea;
 }
 
-export interface CalendarSuggestion { date: string; name: string; effect: CalendarEvent['effect']; reason: string; confidence: 'high' | 'medium' }
+// Days Claude drafted, waiting for the owner side to add or skip (drafted every Monday, or on tap).
+export interface CalendarSuggestion { date: string; name: string; effect: CalendarEvent['effect']; reason: string; confidence: 'high' | 'medium'; drafted?: 'weekly' | 'manual' }
+export interface CalendarDraftRun { at: string; drafted: 'weekly' | 'manual'; added: number }
 
-export async function draftCalendar(accessToken: string, from: string, to: string): Promise<CalendarSuggestion[]> {
+export async function draftCalendar(accessToken: string, from: string, to: string): Promise<{ added: number; suggestions: CalendarSuggestion[] }> {
   const data = await fetchWithAuth(`${API_BASE}/ai/calendar-draft`, accessToken, { method: 'POST', body: JSON.stringify({ from, to }) });
-  return data.suggestions || [];
+  return { added: data.added || 0, suggestions: data.suggestions || [] };
+}
+
+export async function getCalendarSuggestions(accessToken: string): Promise<{ suggestions: CalendarSuggestion[]; lastRun: CalendarDraftRun | null }> {
+  const data = await fetchWithAuth(`${API_BASE}/calendar-suggestions`, accessToken);
+  return { suggestions: data.suggestions || [], lastRun: data.lastRun || null };
+}
+
+export async function acceptCalendarSuggestion(accessToken: string, date: string): Promise<CalendarEvent> {
+  const data = await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/accept`, accessToken, { method: 'POST' });
+  return data.event;
+}
+
+export async function dismissCalendarSuggestion(accessToken: string, date: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/dismiss`, accessToken, { method: 'POST' });
 }
 
 export async function askBunny(accessToken: string, storeId: string | null, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<{ answer: string; toolsUsed: string[] }> {

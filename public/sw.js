@@ -97,6 +97,7 @@ const NOTIFICATION_VIEW_MAP = {
   stock_request_cancelled: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
+  calendar_suggestions: { view: 'analytics', tab: 'trends' }, // weekly AI festival-day draft
   fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' }, // covers both stock + production requests; lands on the fulfillment screen
   data_entry_reminder: { view: 'inventory' },
   rider_called: { view: 'riders' },

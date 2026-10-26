@@ -21,7 +21,13 @@ type Kv = {
   del: (key: string) => Promise<any>;
   getByPrefix: <T = any>(prefix: string) => Promise<T[]>;
 };
-type Deps = { kv: Kv; verifyUser: (authHeader: string | null) => Promise<any>; getTodayIST: () => string };
+type Deps = {
+  kv: Kv;
+  verifyUser: (authHeader: string | null) => Promise<any>;
+  getTodayIST: () => string;
+  // Push + in-app notification to every cluster head; returns how many were sent.
+  notifyClusterHeads?: (type: string, title: string, message: string, relatedDate?: string) => Promise<number>;
+};
 
 // Haiku by default (owner, 27 Oct 2026): about 40x cheaper than Opus. Set the AI_MODEL secret
 // to claude-sonnet-5-5 or claude-opus-5-5 for better writing at higher cost.
@@ -37,6 +43,8 @@ const PRICES: Record<string, [number, number, number]> = {
   'claude-sonnet-5-5': [2, 10, 0.2],
   'claude-haiku-5-5': [0.1, 0.5, 0.01],
 };
+// Web searches are billed on top of tokens: $10 per 1,000.
+const WEB_SEARCH_USD = 0.01;
 // Server-side refusal fallback: Opus and Sonnet only (Haiku has none).
 const SUPPORTS_FALLBACK = /opus|sonnet|fable/.test(AI_MODEL);
 // The dynamic-filtering web search is documented for Opus and Sonnet; Haiku gets the basic one.
@@ -163,10 +171,12 @@ async function recordUsage(kv: Kv, purpose: string, usage: any) {
   const output = usage?.output_tokens || 0;
   const cacheRead = usage?.cache_read_input_tokens || 0;
   const cacheWrite = usage?.cache_creation_input_tokens || 0;
-  const cost = (input * inP + output * outP + cacheRead * cacheP + cacheWrite * inP * 1.25) / 1_000_000;
+  const searches = usage?.server_tool_use?.web_search_requests || 0;
+  const cost = (input * inP + output * outP + cacheRead * cacheP + cacheWrite * inP * 1.25) / 1_000_000 + searches * WEB_SEARCH_USD;
   const key = monthKey();
   const cur = (await kv.get<any>(key)) || { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, byPurpose: {} };
   cur.calls += 1;
+  cur.webSearches = (cur.webSearches || 0) + searches;
   cur.costUsd = Math.round((cur.costUsd + cost) * 10000) / 10000;
   cur.inputTokens += input + cacheRead + cacheWrite;
   cur.outputTokens += output;
@@ -357,6 +367,67 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
     default:
       return { error: `Unknown tool ${name}` };
   }
+}
+
+// ---------------- Calendar suggestions ----------------
+// Claude drafts festival days into a waiting list (calendar-suggestion:{date}). Nothing reaches
+// the calendar - and so the forecast, production plan and stock requests - until the owner side
+// adds it. Skipped days are remembered (calendar-dismissed:{date}) so they aren't offered again.
+// Runs every Monday morning (cron) and whenever someone taps "Draft next 60 days".
+
+type CalendarSuggestion = {
+  date: string; name: string; effect: DayEffect; reason: string; confidence: 'high' | 'medium';
+  createdAt: string; drafted: 'weekly' | 'manual';
+};
+
+const DRAFT_DAYS = 60;
+const LAST_DRAFT_KEY = 'calendar-draft:last-run';
+
+async function pendingSuggestions(kv: Kv, today: string): Promise<CalendarSuggestion[]> {
+  const rows = await kv.getByPrefix<CalendarSuggestion>('calendar-suggestion:');
+  return (rows || []).filter((s) => s?.date && s.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function draftCalendarDays(deps: Deps, from: string, to: string, drafted: 'weekly' | 'manual') {
+  const [events, pending, dismissed] = await Promise.all([
+    loadEvents(deps.kv),
+    deps.kv.getByPrefix<any>('calendar-suggestion:'),
+    deps.kv.getByPrefix<any>('calendar-dismissed:'),
+  ]);
+  // Days already in the calendar, waiting for an answer, or turned down.
+  const known = new Set([...events, ...(pending || []), ...(dismissed || [])].map((e: any) => e?.date).filter((d) => d && d >= from && d <= to));
+  const res = await callClaude(deps, {
+    purpose: 'calendar',
+    effort: 'low',
+    maxTokens: 8000,
+    tools: [{ type: WEB_SEARCH_TOOL, name: 'web_search', max_uses: 3, user_location: { type: 'approximate', country: 'IN', region: 'West Bengal', city: 'Bardhaman', timezone: 'Asia/Kolkata' } }],
+    messages: [{
+      role: 'user',
+      content: `List the days between ${from} and ${to} that are likely to change sales at a momo shop in Bardhaman, West Bengal: Bengali and national festivals, puja days when many people avoid non-veg, big local fairs, public holidays. Check the exact ${from.slice(0, 4)} dates with web search - lunar festival dates move every year.
+
+For each day give: date (YYYY-MM-DD), name, effect - one of "low_nonveg" (many avoid non-veg), "busy" (festival crowds, holidays out), "quiet" (people stay home or fast) - a one-line reason, and confidence ("high" if you confirmed the date, "medium" otherwise). Skip days with no real effect. Days already decided: ${JSON.stringify([...known].sort())} - skip those.
+
+Answer with only a JSON array, no other text.`,
+    }],
+  });
+  const text = textOf(res);
+  let parsed: any[] = [];
+  try { parsed = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1)); } catch { /* nothing usable */ }
+  const createdAt = new Date().toISOString();
+  const added: CalendarSuggestion[] = [];
+  for (const s of Array.isArray(parsed) ? parsed : []) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s?.date) || s.date < from || s.date > to || known.has(s.date)) continue;
+    if (!['low_nonveg', 'busy', 'quiet'].includes(s.effect) || !s.name) continue;
+    known.add(s.date);
+    const suggestion: CalendarSuggestion = {
+      date: s.date, name: String(s.name).slice(0, 80), effect: s.effect, reason: String(s.reason || '').slice(0, 200),
+      confidence: s.confidence === 'high' ? 'high' : 'medium', createdAt, drafted,
+    };
+    await deps.kv.set(`calendar-suggestion:${s.date}`, suggestion);
+    added.push(suggestion);
+  }
+  await deps.kv.set(LAST_DRAFT_KEY, { at: createdAt, drafted, from, to, added: added.length });
+  return added;
 }
 
 // ---------------- Routes ----------------
@@ -551,38 +622,78 @@ ${JSON.stringify({
     } catch (err) { return fail(c, err); }
   });
 
-  // Draft festival / event days for a date range. Nothing is saved - the owner accepts each one.
+  // Draft festival / event days now. New days join the waiting list; the reply is the whole list.
   app.post(`${P}/ai/calendar-draft`, async (c: any) => {
     const g = await guard(c, 'manage'); if (g.error) return g.error;
     try {
       const today = deps.getTodayIST();
       const body = await c.req.json().catch(() => ({}));
       const from = body.from || today;
-      const to = body.to || addDaysISO(from, 60);
-      const existing = (await loadEvents(deps.kv)).filter((e) => e.date >= from && e.date <= to);
-      const res = await callClaude(deps, {
-        purpose: 'calendar',
-        effort: 'low',
-        maxTokens: 8000,
-        tools: [{ type: WEB_SEARCH_TOOL, name: 'web_search', max_uses: 5, user_location: { type: 'approximate', country: 'IN', region: 'West Bengal', city: 'Bardhaman', timezone: 'Asia/Kolkata' } }],
-        messages: [{
-          role: 'user',
-          content: `List the days between ${from} and ${to} that are likely to change sales at a momo shop in Bardhaman, West Bengal: Bengali and national festivals, puja days when many people avoid non-veg, big local fairs, public holidays. Check the exact ${from.slice(0, 4)} dates with web search - lunar festival dates move every year.
+      const to = body.to || addDaysISO(from, DRAFT_DAYS);
+      const added = await draftCalendarDays(deps, from, to, 'manual');
+      return c.json({ added: added.length, suggestions: await pendingSuggestions(deps.kv, today) });
+    } catch (err) { return fail(c, err); }
+  });
 
-For each day give: date (YYYY-MM-DD), name, effect - one of "low_nonveg" (many avoid non-veg), "busy" (festival crowds, holidays out), "quiet" (people stay home or fast) - a one-line reason, and confidence ("high" if you confirmed the date, "medium" otherwise). Skip days with no real effect. Days already in the calendar: ${JSON.stringify(existing.map((e) => e.date))} - skip those.
+  // The waiting list of drafted days, and when the last draft ran.
+  app.get(`${P}/calendar-suggestions`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    const [suggestions, lastRun] = await Promise.all([pendingSuggestions(deps.kv, deps.getTodayIST()), deps.kv.get<any>(LAST_DRAFT_KEY)]);
+    return c.json({ suggestions, lastRun: lastRun || null });
+  });
 
-Answer with only a JSON array, no other text.`,
-        }],
-      });
-      const text = textOf(res);
-      const start = text.indexOf('[');
-      const end = text.lastIndexOf(']');
-      let suggestions: any[] = [];
-      try { suggestions = JSON.parse(text.slice(start, end + 1)); } catch { /* fall through */ }
-      suggestions = (Array.isArray(suggestions) ? suggestions : [])
-        .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s?.date) && s.date >= from && s.date <= to && ['low_nonveg', 'busy', 'quiet'].includes(s.effect) && s.name)
-        .map((s) => ({ date: s.date, name: String(s.name).slice(0, 80), effect: s.effect, reason: String(s.reason || '').slice(0, 200), confidence: s.confidence === 'high' ? 'high' : 'medium' }));
-      return c.json({ suggestions });
+  app.post(`${P}/calendar-suggestions/:date/accept`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    const date = c.req.param('date');
+    const s = await deps.kv.get<CalendarSuggestion>(`calendar-suggestion:${date}`);
+    if (!s) return c.json({ error: 'That day is no longer waiting - it may already have been added or skipped' }, 404);
+    const event = {
+      date, name: s.name, effect: s.effect, note: s.reason || undefined, confirmed: true, source: 'ai',
+      updatedBy: g.actor!.name, updatedAt: new Date().toISOString(),
+    };
+    await deps.kv.set(`store-calendar:${date}`, event);
+    await deps.kv.del(`calendar-suggestion:${date}`);
+    return c.json({ event });
+  });
+
+  app.post(`${P}/calendar-suggestions/:date/dismiss`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    const date = c.req.param('date');
+    const s = await deps.kv.get<CalendarSuggestion>(`calendar-suggestion:${date}`);
+    await deps.kv.set(`calendar-dismissed:${date}`, { date, name: s?.name || null, by: g.actor!.name, at: new Date().toISOString() });
+    await deps.kv.del(`calendar-suggestion:${date}`);
+    return c.json({ success: true });
+  });
+
+  // Weekly draft (pg_cron, Mondays 6 AM IST - see the weekly_calendar_draft_cron migration).
+  // Skipped when someone drafted in the last 5 days; tells the cluster heads when there are new days.
+  app.post(`${P}/cron/calendar-draft`, async (c: any) => {
+    const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+    if (!expectedSecret || c.req.header('X-Cron-Secret') !== expectedSecret) return c.json({ error: 'Unauthorized' }, 401);
+    if (!aiConfigured()) return c.json({ success: true, skipped: 'AI is not set up' });
+    try {
+      const today = deps.getTodayIST();
+      // Tidy away days that have passed.
+      for (const prefix of ['calendar-suggestion:', 'calendar-dismissed:']) {
+        for (const row of (await deps.kv.getByPrefix<any>(prefix)) || []) {
+          if (row?.date && row.date < today) await deps.kv.del(`${prefix}${row.date}`);
+        }
+      }
+      const last = await deps.kv.get<any>(LAST_DRAFT_KEY);
+      if (last?.at && Date.now() - Date.parse(last.at) < 5 * 86400000) return c.json({ success: true, skipped: `Drafted on ${istDay(last.at)}` });
+      const added = await draftCalendarDays(deps, today, addDaysISO(today, DRAFT_DAYS), 'weekly');
+      let notified = 0;
+      if (added.length && deps.notifyClusterHeads) {
+        const names = added.slice(0, 4).map((s) => `${WEEKDAY_SHORT[weekdayOf(s.date)]} ${Number(s.date.slice(8))} ${new Date(`${s.date}T00:00:00Z`).toLocaleString('en-IN', { month: 'short', timeZone: 'UTC' })} ${s.name}`);
+        const more = added.length > 4 ? ` and ${added.length - 4} more` : '';
+        notified = await deps.notifyClusterHeads(
+          'calendar_suggestions',
+          added.length === 1 ? '1 festival day to check' : `${added.length} festival days to check`,
+          `${names.join(', ')}${more}. Add or skip them in Analytics > Trends so the forecast and stock requests plan for them.`,
+          today,
+        );
+      }
+      return c.json({ success: true, added: added.length, notified });
     } catch (err) { return fail(c, err); }
   });
 

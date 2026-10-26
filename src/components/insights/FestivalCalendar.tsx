@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CalendarDays, Plus, Sparkles, Trash2, Check, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../../utils/api';
@@ -8,7 +8,8 @@ import { EFFECT_CHIP, effectLabel } from './ForecastCard';
 import { fmtDay } from './useInsightsOverview';
 
 // The festival / event calendar the forecast reads. The owner side adds days by hand or
-// accepts days the AI drafts (it checks lunar festival dates with a web search).
+// adds days the AI drafts (it checks lunar festival dates with a web search). Drafted days
+// wait on the server until someone adds or skips them; a draft also runs every Monday.
 export function FestivalCalendar({ accessToken, events, canManage, onChanged }: {
   accessToken: string;
   events: CalendarEvent[];
@@ -19,7 +20,19 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
   const [form, setForm] = useState<{ date: string; name: string; effect: DayEffect; note: string }>({ date: today, name: '', effect: 'low_nonveg', note: '' });
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
-  const [suggestions, setSuggestions] = useState<api.CalendarSuggestion[] | null>(null);
+  const [suggestions, setSuggestions] = useState<api.CalendarSuggestion[]>([]);
+  const [lastRun, setLastRun] = useState<api.CalendarDraftRun | null>(null);
+  const [justDrafted, setJustDrafted] = useState(false);
+  const [busyDate, setBusyDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canManage || !accessToken) return;
+    let cancelled = false;
+    api.getCalendarSuggestions(accessToken)
+      .then((r) => { if (!cancelled) { setSuggestions(r.suggestions); setLastRun(r.lastRun); } })
+      .catch(() => { /* the calendar still works without the waiting list */ });
+    return () => { cancelled = true; };
+  }, [accessToken, canManage]);
 
   const upcoming = events.filter((e) => e.date >= today).sort((a, b) => a.date.localeCompare(b.date));
   const past = events.filter((e) => e.date < today).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
@@ -56,7 +69,10 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
   const draft = async () => {
     setDrafting(true);
     try {
-      setSuggestions(await api.draftCalendar(accessToken, today, addDaysISO(today, 60)));
+      const r = await api.draftCalendar(accessToken, today, addDaysISO(today, 60));
+      setSuggestions(r.suggestions);
+      setLastRun({ at: new Date().toISOString(), drafted: 'manual', added: r.added });
+      setJustDrafted(true);
     } catch (e: any) {
       toast.error(e?.message || 'Could not draft the calendar');
     } finally {
@@ -64,13 +80,21 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
     }
   };
 
-  const accept = async (s: api.CalendarSuggestion) => {
+  const answer = async (s: api.CalendarSuggestion, add: boolean) => {
+    setBusyDate(s.date);
     try {
-      await save({ date: s.date, name: s.name, effect: s.effect, note: s.reason, confirmed: true, source: 'ai' });
-      setSuggestions((prev) => prev?.filter((x) => x.date !== s.date) || null);
-      toast.success(`${s.name} added`);
+      if (add) {
+        await api.acceptCalendarSuggestion(accessToken, s.date);
+        toast.success(`${s.name} added`);
+        onChanged();
+      } else {
+        await api.dismissCalendarSuggestion(accessToken, s.date);
+      }
+      setSuggestions((prev) => prev.filter((x) => x.date !== s.date));
     } catch (e: any) {
       toast.error(e?.message || 'Could not save');
+    } finally {
+      setBusyDate(null);
     }
   };
 
@@ -108,7 +132,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
         )}
       </div>
 
-      {suggestions && (
+      {canManage && (suggestions.length > 0 || justDrafted) && (
         <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
           <p className="text-xs font-semibold text-violet-800 mb-2">{suggestions.length ? 'Suggested days - check each date, then add the right ones' : 'No new days suggested for the next 60 days.'}</p>
           <ul className="space-y-2">
@@ -119,12 +143,17 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
                   <p className="text-[11px] text-gray-600"><span className={`px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[s.effect]}`}>{effectLabel(s.effect)}</span> {s.reason}{s.confidence !== 'high' ? ' · date not confirmed' : ''}</p>
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
-                  <button onClick={() => accept(s)} className="p-1.5 rounded-lg bg-emerald-600 text-white" aria-label={`Add ${s.name}`}><Check className="w-4 h-4" /></button>
-                  <button onClick={() => setSuggestions((prev) => prev?.filter((x) => x.date !== s.date) || null)} className="p-1.5 rounded-lg border border-gray-300 text-gray-600" aria-label={`Skip ${s.name}`}><X className="w-4 h-4" /></button>
+                  <button onClick={() => answer(s, true)} disabled={busyDate === s.date} className="p-2.5 rounded-lg bg-emerald-600 text-white disabled:opacity-60" aria-label={`Add ${s.name}`}><Check className="w-4 h-4" /></button>
+                  <button onClick={() => answer(s, false)} disabled={busyDate === s.date} className="p-2.5 rounded-lg border border-gray-300 text-gray-600 disabled:opacity-60" aria-label={`Skip ${s.name}`}><X className="w-4 h-4" /></button>
                 </div>
               </li>
             ))}
           </ul>
+          {lastRun && (
+            <p className="text-[11px] text-violet-700/80 mt-2">
+              Last checked {fmtDay(new Date(Date.parse(lastRun.at) + 330 * 60000).toISOString().slice(0, 10))}{lastRun.drafted === 'weekly' ? ' (weekly check)' : ''}. Skipped days won't be suggested again.
+            </p>
+          )}
         </div>
       )}
 

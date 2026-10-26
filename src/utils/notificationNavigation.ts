@@ -45,6 +45,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stock_request_cancelled: { view: 'stock-requests' },
   stock_request_delayed: { view: 'analytics' },
   stock_recalibration: { view: 'analytics' },
+  calendar_suggestions: { view: 'analytics', tab: 'trends' },
   fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' },
   data_entry_reminder: { view: 'inventory' },
   rider_called: { view: 'riders' },

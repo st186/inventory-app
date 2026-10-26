@@ -16234,7 +16234,20 @@ app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
 });
 
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
-registerInsightsRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST });
+registerInsightsRoutes(app, {
+  kv: kvWithRetry,
+  verifyUser,
+  getTodayIST,
+  notifyClusterHeads: async (type, title, message, relatedDate) => {
+    let sent = 0;
+    for (const clusterHead of await getAllClusterHeads()) {
+      if (!clusterHead.authUserId) continue;
+      await notifyUser(clusterHead.authUserId, type, title, message, undefined, relatedDate);
+      sent++;
+    }
+    return sent;
+  },
+});
 
 console.log('✅ Server initialization complete - all routes registered successfully');
 console.log('🚀 Starting Deno server...');

@@ -37,6 +37,8 @@ interface AnalyticsProps {
  context: InventoryContextType;
  selectedStoreId?: string | null;
  highlightRequestId?: string | null;
+ // A notification can open a tab directly (only 'trends' so far - weekly festival-day check).
+ initialTab?: string | null;
  onNavigateToManageItems?: () => void;
  // Production Management no longer has its own top-level nav entry - it's opened from
  // here instead, same idea as onNavigateToManageItems above.
@@ -262,7 +264,7 @@ function TimeFilterBar({ value, onChange, range, onRangeChange }: {
  );
 }
 
-export function Analytics({ context, selectedStoreId, highlightRequestId, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
+export function Analytics({ context, selectedStoreId, highlightRequestId, initialTab, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
  // Online sales/payout/settlement data now lives in context (see the Analytics page
  // redesign) - Analytics.tsx, OnlineSalesTab.tsx, and SalesData.tsx all read the same
  // fetch instead of each independently re-fetching it.
@@ -418,7 +420,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  // page redesign).
  type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId ? 'production-requests' : 'overview'
+ highlightRequestId ? 'production-requests' : initialTab === 'trends' ? 'trends' : 'overview'
  );
  
  // Expense breakdown modal state
@@ -1802,6 +1804,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, onNavi
  setActiveView('production-requests');
  }
  }, [highlightRequestId]);
+
+ // Same for a tab opened from a notification while Analytics is already on screen.
+ useEffect(() => {
+ if (initialTab === 'trends') {
+ setAnalyticsMode('store');
+ setActiveView('trends');
+ }
+ }, [initialTab]);
 
  // Get period label for summary cards
  const getPeriodLabel = () => {
