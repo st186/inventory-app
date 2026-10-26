@@ -38,7 +38,6 @@ import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
-import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
@@ -3094,11 +3093,6 @@ export default function App() {
  </Suspense>
  </main>
  </div>
-
- {/* Fix Legacy Inventory - Shows when there are items missing storeId */}
- {user && activeView === 'inventory' && (
- <FixLegacyInventory context={contextValue} />
- )}
  </>
  );
 }
