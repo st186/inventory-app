@@ -1,9 +1,22 @@
 import { useMemo, useState } from 'react';
-import { X, Camera, Loader2, PackageCheck, Image as ImageIcon } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { Camera, Image as ImageIcon, PackageCheck, X } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
+import { ChoiceChips } from '../ui/chip';
+import { Checkbox } from '../ui/checkbox';
+import { Field } from '../ui/field';
+import { IconButton } from '../ui/icon-button';
+import { Input } from '../ui/input';
+import { NativeSelect } from '../ui/select';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { SegmentedControl } from '../ui/segmented-control';
+import { Textarea } from '../ui/textarea';
+import { t as tSaved, useT } from '../../utils/i18n';
 import * as api from '../../utils/api';
 import type { ProductionRequest } from '../../utils/api';
-import { RECEIPT_DAMAGE_REASONS, ReceiptDamageReason, bagSize, bagsLabel } from '../../utils/batches';
+import { RECEIPT_DAMAGE_REASONS, ReceiptDamageReason, bagSize } from '../../utils/batches';
+import { QuantityStepper, bagsText, momoName, reasonLabel, whenLabel } from '../stock/stockShared';
 
 type Labels = { camelKey: string; label: string }[];
 const shortLabel = (label: string) => label.replace(/ Momos?$/, '');
@@ -48,6 +61,8 @@ type Props = {
 // count bags against the slip, check the momos are hard, record anything crushed, stuck or
 // soft with its batch code and a photo. Short and damaged pieces are logged as waste (Q).
 export function ReceiveDeliveryDialog({ request, products, accessToken, onClose, onReceived }: Props) {
+  const { t, lang } = useT();
+  const [open, setOpen] = useState(true);
   const shippedProducts = useMemo(
     () => products.filter(({ camelKey }) => (request.shippedQuantities?.[camelKey] || 0) > 0),
     [products, request.shippedQuantities]
@@ -76,17 +91,17 @@ export function ReceiveDeliveryDialog({ request, products, accessToken, onClose,
       const dataUrl = await compressImage(file);
       setPhotos((prev) => [...prev, dataUrl].slice(0, 4));
     } catch {
-      toast.error('Could not read that photo - try again');
+      toast.error(tSaved('stock.recv.photoFailed'));
     }
   };
 
   const save = async () => {
     if (hardFrozen === null) {
-      toast.error('Say whether the momos arrived hard frozen');
+      toast.error(tSaved('stock.recv.sayFrozen'));
       return;
     }
     if (needsPhoto && photos.length === 0) {
-      toast.error('Add a photo of the damaged or soft momos');
+      toast.error(tSaved('stock.recv.photoNeeded'));
       return;
     }
     setSaving(true);
@@ -108,182 +123,138 @@ export function ReceiveDeliveryDialog({ request, products, accessToken, onClose,
         notes: notes.trim() || undefined,
         photoIds,
       });
-      toast.success('Delivery received');
+      toast.success(tSaved('stock.recv.saved'));
       onReceived(updated);
     } catch (error: any) {
-      toast.error(error?.message || 'Could not save the delivery');
+      toast.error(error?.message || tSaved('stock.recv.saveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
+
+  const dirty = Object.values(lines).some((l) => l.damaged > 0) || hardFrozen !== null || photos.length > 0 || notes.trim() !== '' || saucesMissing.length > 0;
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl">
-        <div className="bg-green-700 p-5 text-white rounded-t-xl flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-bold flex items-center gap-2"><PackageCheck className="w-6 h-6" /> Receive delivery</h2>
-            <p className="text-green-100 text-sm mt-1">Count the bags against the slip before anything goes in the freezer.</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-lg" aria-label="Close"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="p-5 overflow-y-auto space-y-5">
-          <div className="space-y-3">
-            {shippedProducts.map(({ camelKey, label }) => {
-              const shipped = request.shippedQuantities?.[camelKey] || 0;
-              const l = lines[camelKey];
-              const size = bagSize(camelKey);
-              const diff = l.received - shipped;
-              const batches = request.dispatch?.batches?.[camelKey] || [];
-              return (
-                <div key={camelKey} className={`border rounded-lg p-3 ${diff !== 0 || l.damaged > 0 ? 'border-red-300 bg-red-50/50' : 'border-gray-200'}`}>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <p className="text-sm font-semibold text-gray-900">{shortLabel(label)}</p>
-                    <p className="text-xs text-gray-500 text-right">Sent {bagsLabel(shipped, camelKey)} ({shipped})</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => setLine(camelKey, { received: Math.max(0, Math.ceil(l.received / size) * size - size) })} className="w-10 h-10 flex-shrink-0 border-2 border-gray-300 rounded-lg font-bold" aria-label={`One bag less ${label}`}>−</button>
-                    <div className="flex-1 text-center">
-                      <p className="text-base font-bold tabular-nums">{bagsLabel(l.received, camelKey)}</p>
-                      <p className="text-xs text-gray-500">counted</p>
-                    </div>
-                    <button type="button" onClick={() => setLine(camelKey, { received: Math.floor(l.received / size) * size + size })} className="w-10 h-10 flex-shrink-0 border-2 border-gray-300 rounded-lg font-bold" aria-label={`One bag more ${label}`}>+</button>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={l.received}
-                      onChange={(e) => setLine(camelKey, { received: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                      aria-label={`${label} pieces received`}
-                      className="w-20 px-2 py-2 border border-gray-300 rounded-lg text-right tabular-nums"
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(o) => { if (!o) setOpen(false); }}
+      onClosed={onClose}
+      dirty={dirty && !saving}
+      title={t('stock.recv.sheetTitle')}
+      description={t('stock.recv.caption')}
+      size="detail"
+      footer={
+        <Button size="lg" className="flex-1" leadingIcon={<PackageCheck />} loading={saving} onClick={save}>
+          {t('stock.recv.save')}
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-5" lang={lang}>
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+          {shippedProducts.map(({ camelKey, label }) => {
+            const shipped = request.shippedQuantities?.[camelKey] || 0;
+            const l = lines[camelKey];
+            const size = bagSize(camelKey);
+            const diff = l.received - shipped;
+            const batches = request.dispatch?.batches?.[camelKey] || [];
+            const name = momoName(lang, camelKey, label);
+            return (
+              <div key={camelKey} className="flex flex-col gap-3 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-body-md font-medium text-text">{name}</span>
+                    <span className="num text-label text-text-3">{t('stock.recv.sent', { bags: bagsText(lang, shipped, camelKey), n: shipped })}</span>
+                    {diff !== 0 && <span className={`num text-label font-semibold ${diff < 0 ? 'text-danger' : 'text-warning'}`}>{diff < 0 ? t('stock.recv.short', { n: -diff }) : t('stock.recv.extra', { n: diff })}</span>}
+                  </span>
+                  <QuantityStepper label={name} value={l.received} step={size} bump={(v, d) => (d < 0 ? Math.ceil(v / size) * size - size : Math.floor(v / size) * size + size)} onChange={(n) => setLine(camelKey, { received: Math.max(0, n) })} />
+                </div>
+                <Field label={t('stock.recv.damaged')}>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    value={l.damaged ? String(l.damaged) : ''}
+                    placeholder="0"
+                    onChange={(e) => setLine(camelKey, { damaged: Math.min(l.received, Math.max(0, parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0)) })}
+                    className="num"
+                  />
+                </Field>
+                {l.damaged > 0 && (
+                  <>
+                    <ChoiceChips
+                      aria-label={t('stock.recv.whatWrong')}
+                      value={l.damageReason}
+                      onValueChange={(v) => setLine(camelKey, { damageReason: v })}
+                      options={RECEIPT_DAMAGE_REASONS.map((r) => ({ value: r.id, label: reasonLabel(lang, 'dmg', r.id, r.label) }))}
                     />
-                  </div>
-                  {diff !== 0 && (
-                    <p className={`text-xs font-semibold mt-1 ${diff < 0 ? 'text-red-700' : 'text-amber-700'}`}>{diff < 0 ? `${-diff} short` : `${diff} extra`}</p>
-                  )}
-                  <div className="mt-2 flex items-center gap-2">
-                    <label htmlFor={`dmg-${camelKey}`} className="text-xs text-gray-700 flex-1">Crushed, stuck or soft (pcs)</label>
-                    <input
-                      id={`dmg-${camelKey}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={l.damaged || ''}
-                      placeholder="0"
-                      onChange={(e) => setLine(camelKey, { damaged: Math.min(l.received, Math.max(0, parseInt(e.target.value, 10) || 0)) })}
-                      className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-right tabular-nums"
-                    />
-                  </div>
-                  {l.damaged > 0 && (
-                    <div className="mt-2 space-y-2">
-                      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="What was wrong">
-                        {RECEIPT_DAMAGE_REASONS.map((r) => (
-                          <button
-                            key={r.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={l.damageReason === r.id}
-                            onClick={() => setLine(camelKey, { damageReason: r.id })}
-                            className={`px-2.5 py-1 rounded-full text-xs font-medium border ${l.damageReason === r.id ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                      <select
-                        value={l.damageBatch}
-                        onChange={(e) => setLine(camelKey, { damageBatch: e.target.value })}
-                        aria-label="Batch code on the damaged bag"
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
-                      >
-                        <option value="">Batch code on the bag (if known)</option>
+                    <Field label={t('stock.recv.batch')}>
+                      <NativeSelect value={l.damageBatch} onChange={(e) => setLine(camelKey, { damageBatch: e.target.value })}>
+                        <option value="">{t('stock.recv.batchUnknown')}</option>
                         {batches.map((b) => <option key={b.code} value={b.code}>{b.code}</option>)}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {sentSauces.length > 0 && (
-            <div>
-              <p className="text-sm font-semibold text-gray-900 mb-2">Sauces - untick any that didn't come</p>
-              <div className="flex flex-wrap gap-2">
-                {sentSauces.map((s) => {
-                  const missing = saucesMissing.includes(s);
-                  return (
-                    <label key={s} className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-sm ${missing ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200'}`}>
-                      <input type="checkbox" checked={!missing} onChange={(e) => setSaucesMissing((prev) => e.target.checked ? prev.filter((x) => x !== s) : [...prev, s])} />
-                      {s}
-                    </label>
-                  );
-                })}
+                      </NativeSelect>
+                    </Field>
+                  </>
+                )}
               </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="rcv-boxes" className="block text-sm font-medium text-gray-700 mb-1">Boxes received{request.dispatch?.boxes ? ` (sent ${request.dispatch.boxes})` : ''}</label>
-              <input id="rcv-boxes" type="number" inputMode="numeric" min={0} value={boxesReceived} onChange={(e) => setBoxesReceived(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-            </div>
-            <div>
-              <p className="block text-sm font-medium text-gray-700 mb-1">Momos hard frozen? *</p>
-              <div className="flex gap-2" role="radiogroup" aria-label="Momos hard frozen">
-                {[{ v: true, t: 'Yes, hard' }, { v: false, t: 'No, soft' }].map((o) => (
-                  <button
-                    key={o.t}
-                    type="button"
-                    role="radio"
-                    aria-checked={hardFrozen === o.v}
-                    onClick={() => setHardFrozen(o.v)}
-                    className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium ${hardFrozen === o.v ? (o.v ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600') : 'bg-white text-gray-700 border-gray-300'}`}
-                  >
-                    {o.t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          {hardFrozen === false && (
-            <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">Don't refreeze soft momos - they weld into one block. Count them as damaged above, photograph them and call the production house.</p>
-          )}
-
-          <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">Photos{needsPhoto ? ' *' : ' (if anything is wrong)'}</p>
-            <div className="flex flex-wrap gap-2">
-              {photos.map((p, i) => (
-                <div key={i} className="relative">
-                  <img src={p} alt={`Delivery photo ${i + 1}`} className="w-20 h-20 object-cover rounded-lg border" />
-                  <button type="button" onClick={() => setPhotos((prev) => prev.filter((_, j) => j !== i))} className="absolute -top-2 -right-2 bg-white border rounded-full p-0.5" aria-label="Remove photo"><X className="w-3.5 h-3.5" /></button>
-                </div>
-              ))}
-              {photos.length < 4 && (
-                <label className="w-20 h-20 flex flex-col items-center justify-center gap-1 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 text-xs cursor-pointer">
-                  <Camera className="w-5 h-5" /> Add
-                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { addPhoto(e.target.files?.[0]); e.target.value = ''; }} />
-                </label>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="rcv-notes" className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea id="rcv-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Box 2 lid was cracked" className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none" />
-          </div>
+            );
+          })}
         </div>
 
-        <div className="p-4 bg-gray-50 border-t flex gap-3 rounded-b-xl">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg font-medium text-gray-700">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageCheck className="w-4 h-4" />}
-            {saving ? 'Saving...' : 'Save count'}
-          </button>
+        {sentSauces.length > 0 && (
+          <section className="flex flex-col gap-2">
+            <h3 className="overline-label mx-1">{t('stock.recv.sauces')}</h3>
+            <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+              {sentSauces.map((s) => {
+                const missing = saucesMissing.includes(s);
+                const id = `rcv-sauce-${s.replace(/\W+/g, '-')}`;
+                return (
+                  <label key={s} htmlFor={id} className="flex min-h-12 cursor-pointer items-center gap-3 px-4">
+                    <Checkbox id={id} checked={!missing} onCheckedChange={(v) => setSaucesMissing((prev) => (v === true ? prev.filter((x) => x !== s) : [...prev, s]))} />
+                    <span className={`text-body-md ${missing ? 'text-danger' : 'text-text'}`}>{s}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label={t('stock.recv.boxes')} hint={request.dispatch?.boxes ? t('stock.recv.boxesSent', { n: request.dispatch.boxes }) : undefined}>
+            <Input type="text" inputMode="numeric" value={boxesReceived} onChange={(e) => setBoxesReceived(e.target.value.replace(/[^\d]/g, ''))} className="num" />
+          </Field>
+          <Field label={t('stock.recv.hardFrozen')} required>
+            <SegmentedControl
+              aria-label={t('stock.recv.hardFrozen')}
+              value={hardFrozen === null ? '' : hardFrozen ? 'hard' : 'soft'}
+              onValueChange={(v) => setHardFrozen(v === 'hard')}
+              options={[{ value: 'hard', label: t('stock.recv.yesHard') }, { value: 'soft', label: t('stock.recv.noSoft') }]}
+            />
+          </Field>
         </div>
+        {hardFrozen === false && <Callout tone="danger" title={t('stock.recv.noSoft')}>{t('stock.recv.softWarning')}</Callout>}
+
+        <Field label={t('stock.recv.photos')} required={needsPhoto} helper={t('stock.recv.photosHint')}>
+          <div className="flex flex-wrap gap-2">
+            {photos.map((p, i) => (
+              <div key={i} className="relative">
+                <img src={p} alt={`${t('stock.recv.photos')} ${i + 1}`} className="size-20 rounded-md border border-border object-cover" />
+                <IconButton label={t('stock.recv.removePhoto')} icon={<X />} size="sm" variant="secondary" className="absolute -top-2 -right-2" onClick={() => setPhotos((prev) => prev.filter((_, j) => j !== i))} />
+              </div>
+            ))}
+            {photos.length < 4 && (
+              <label className="flex size-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-border-strong text-caption text-text-2 [&_svg]:size-5">
+                <Camera aria-hidden="true" /> {t('stock.recv.addPhoto')}
+                <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => { addPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+              </label>
+            )}
+          </div>
+        </Field>
+
+        <Field label={t('stock.req.notes')} optional>
+          <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('stock.recv.notesPlaceholder')} />
+        </Field>
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }
 
@@ -295,6 +266,7 @@ type SummaryProps = {
 
 // Sent vs counted for a received delivery, with the store's photos on demand.
 export function ReceiptSummary({ request, products, accessToken }: SummaryProps) {
+  const { t, lang } = useT();
   const r = request.receipt;
   const [photos, setPhotos] = useState<{ id: string; dataUrl: string }[] | null>(null);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
@@ -309,66 +281,60 @@ export function ReceiptSummary({ request, products, accessToken }: SummaryProps)
     try {
       setPhotos(await api.getReceiptPhotos(accessToken, request.id));
     } catch {
-      toast.error('Could not load photos');
+      toast.error(tSaved('stock.recv.photosFailed'));
     } finally {
       setLoadingPhotos(false);
     }
   };
 
   return (
-    <div className={`mt-4 pt-4 border-t ${problems ? 'border-red-200' : 'border-gray-200'}`}>
-      <p className={`text-xs font-semibold mb-2 ${problems ? 'text-red-700' : 'text-green-700'}`}>
-        Counted at the store by {r.receivedByName} · {new Date(r.receivedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
-        {problems ? ' · differences' : ' · all correct'}
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs tabular-nums">
-          <thead>
-            <tr className="text-left text-gray-500">
-              <th className="font-medium py-1 pr-2">Type</th>
-              <th className="font-medium py-1 pr-2 text-right">Sent</th>
-              <th className="font-medium py-1 pr-2 text-right">Counted</th>
-              <th className="font-medium py-1 text-right">Damaged</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ camelKey, label }) => {
-              const l = r.lines[camelKey];
-              const short = l.received !== l.shipped;
-              return (
-                <tr key={camelKey} className="border-t border-gray-100">
-                  <td className="py-1 pr-2 text-gray-800">{shortLabel(label)}</td>
-                  <td className="py-1 pr-2 text-right">{l.shipped}</td>
-                  <td className={`py-1 pr-2 text-right ${short ? 'text-red-700 font-semibold' : ''}`}>{l.received}</td>
-                  <td className={`py-1 text-right ${l.damaged > 0 ? 'text-red-700 font-semibold' : 'text-gray-400'}`}>
-                    {l.damaged > 0 ? `${l.damaged} ${RECEIPT_DAMAGE_REASONS.find((x) => x.id === l.damageReason)?.label.split(' ')[0].toLowerCase() || ''}${l.damageBatch ? ` · ${l.damageBatch}` : ''}` : '-'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+    <section className="flex flex-col">
+      <div className="mx-1 mb-2 flex flex-col">
+        <h3 className="overline-label">{problems ? t('stock.recv.differences') : t('stock.recv.allCorrect')}</h3>
+        <span className="text-label text-text-3">{t('stock.recv.countedBy', { name: r.receivedByName, when: whenLabel(lang, r.receivedAt) })}</span>
       </div>
-      <div className="text-[11px] text-gray-600 mt-2 space-y-0.5">
-        {(r.saucesMissing?.length || 0) > 0 && <p className="text-red-700">Sauces missing: {r.saucesMissing!.join(', ')}</p>}
-        <p>{r.hardFrozen ? 'Arrived hard frozen' : <span className="text-red-700 font-semibold">Arrived soft</span>}{r.boxesReceived != null ? ` · ${r.boxesReceived} box${r.boxesReceived === 1 ? '' : 'es'} received` : ''}</p>
-        {r.notes && <p>Note: {r.notes}</p>}
+      <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+        {rows.map(({ camelKey, label }) => {
+          const l = r.lines[camelKey];
+          const short = l.received !== l.shipped;
+          return (
+            <div key={camelKey} className="flex items-center gap-3 px-4 py-2.5">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-body-sm font-medium text-text">{momoName(lang, camelKey, label)}</span>
+                {l.damaged > 0 && (
+                  <span className="text-caption text-danger">
+                    {t('stock.recv.damagedN', { n: l.damaged })} · {reasonLabel(lang, 'dmg', l.damageReason || '', RECEIPT_DAMAGE_REASONS.find((x) => x.id === l.damageReason)?.label || '')}{l.damageBatch ? ` · ${l.damageBatch}` : ''}
+                  </span>
+                )}
+              </span>
+              <span className={`num text-body-sm font-semibold ${short ? 'text-danger' : 'text-text'}`}>{t('stock.recv.sentCounted', { sent: l.shipped, counted: l.received })}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mx-1 mt-2 flex flex-col gap-0.5 text-label text-text-2">
+        {(r.saucesMissing?.length || 0) > 0 && <span className="text-danger">{t('stock.recv.saucesMissing', { list: r.saucesMissing!.join(', ') })}</span>}
+        <span>
+          {r.hardFrozen ? t('stock.recv.arrivedHard') : <span className="font-semibold text-danger">{t('stock.recv.arrivedSoft')}</span>}
+          {r.boxesReceived != null ? ` · ${t('stock.recv.boxesReceivedN', { n: r.boxesReceived })}` : ''}
+        </span>
+        {r.notes && <span>{r.notes}</span>}
       </div>
       {(r.photoIds?.length || 0) > 0 && (
         photos ? (
-          <div className="flex flex-wrap gap-2 mt-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             {photos.map((p) => (
-              <a key={p.id} href={p.dataUrl} target="_blank" rel="noopener noreferrer">
-                <img src={p.dataUrl} alt="Delivery photo" className="w-20 h-20 object-cover rounded-lg border" />
+              <a key={p.id} href={p.dataUrl} target="_blank" rel="noopener noreferrer" className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <img src={p.dataUrl} alt={t('stock.recv.photos')} className="size-20 rounded-md border border-border object-cover" />
               </a>
             ))}
           </div>
         ) : (
-          <button type="button" onClick={loadPhotos} disabled={loadingPhotos} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
-            {loadingPhotos ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />} {r.photoIds!.length} photo{r.photoIds!.length === 1 ? '' : 's'}
-          </button>
+          <Button variant="link" size="sm" className="mx-1 mt-2 self-start" leadingIcon={<ImageIcon />} loading={loadingPhotos} onClick={loadPhotos}>
+            {t('stock.recv.photosN', { n: r.photoIds!.length })}
+          </Button>
         )
       )}
-    </div>
+    </section>
   );
 }

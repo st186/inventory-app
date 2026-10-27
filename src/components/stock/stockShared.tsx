@@ -43,6 +43,13 @@ export function bagsText(lang: Lang, pieces: number, key: string): string {
   return bags === 0 ? translate(lang, 'stock.loose', { n: loose }) : `${bagText} + ${translate(lang, 'stock.loose', { n: loose })}`;
 }
 
+/** A data label (waste reason, damage reason, stock-out reason) in the person's language when there is a translation. */
+export function reasonLabel(lang: Lang, kind: 'waste' | 'dmg' | 'soReason' | 'soReasonHint', id: string, fallback: string): string {
+  const key = (kind === 'soReasonHint' ? `stock.soReason.${id}.hint` : `stock.${kind}.${id}`) as I18nKey;
+  const text = translate(lang, key);
+  return text === key ? fallback : text;
+}
+
 export const formatCount = (n: number) => Math.round(n).toLocaleString('en-IN');
 
 /** "Sat 28 Oct" for an ISO day. */
@@ -233,6 +240,7 @@ export function QuantityStepper({
   decimals = false,
   min = 0,
   emptyWhenZero = false,
+  bump,
   disabled,
   className,
 }: {
@@ -243,6 +251,8 @@ export function QuantityStepper({
   decimals?: boolean;
   min?: number;
   emptyWhenZero?: boolean;
+  /** Own rule for − and + (e.g. to the next whole bag); default value ± step. */
+  bump?: (value: number, direction: 1 | -1) => number;
   disabled?: boolean;
   className?: string;
 }) {
@@ -262,7 +272,7 @@ export function QuantityStepper({
   );
   return (
     <div role="group" aria-label={label} className={cn('inline-flex shrink-0 items-stretch overflow-hidden rounded-md border border-border-strong bg-surface', disabled && 'opacity-60', className)}>
-      <button type="button" className={btn} aria-label={t('common.less', { label })} disabled={disabled || value <= min} onClick={() => onChange(Math.max(min, value - step))}>
+      <button type="button" className={btn} aria-label={t('common.less', { label })} disabled={disabled || value <= min} onClick={() => onChange(Math.max(min, bump ? bump(value, -1) : value - step))}>
         <Minus aria-hidden="true" />
       </button>
       <div className="flex w-14 items-center justify-center border-x border-border">
@@ -288,7 +298,7 @@ export function QuantityStepper({
           className="num h-11 w-full bg-transparent text-center text-body font-semibold text-text outline-none placeholder:text-text-3 focus:bg-primary-soft"
         />
       </div>
-      <button type="button" className={btn} aria-label={t('common.more', { label })} disabled={disabled} onClick={() => onChange(value + step)}>
+      <button type="button" className={btn} aria-label={t('common.more', { label })} disabled={disabled} onClick={() => onChange(bump ? bump(value, 1) : value + step)}>
         <Plus aria-hidden="true" />
       </button>
     </div>
