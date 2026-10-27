@@ -14880,7 +14880,8 @@ const STORE_OPENING_HOUR_IST = 15;
 // Ciferon is still closing the day between 11:50 PM and 6:10 AM IST and hands back wrong or
 // previous-day figures (the 25 Oct 2026 copy of 24 Oct was saved by a 1:09 AM re-sync), so no
 // sync of any kind - nightly, Sync Now, past-day or bulk re-sync - runs in that window (owner,
-// 27 Oct 2026). The nightly cron fires at 10:30 PM, outside it.
+// 27 Oct 2026). The nightly cron fires at 10:30 PM and again at 11 PM for last-minute sales
+// (pg_cron pos-nightly-sync and pos-late-sync), both outside it.
 const POS_QUIET_START_MIN_IST = 23 * 60 + 50;
 const POS_QUIET_END_MIN_IST = 6 * 60 + 10;
 function inPosQuietHours(): boolean {
