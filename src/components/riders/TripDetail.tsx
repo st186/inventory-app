@@ -110,13 +110,13 @@ export function useTripDetail({ trip, viewer, requests, people, busy, run }: Tri
         {viewer.mode === 'rider' && viewer.current && isTracked(trip) && <LocationChip state={viewer.trackingState} onOpenSettings={viewer.onOpenSettings} />}
       </div>
 
-      {viewer.mode === 'staff' && (
+      {riderPhone && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2">
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="text-label text-text-3">{w.t('rider.staff.rider')}</span>
             <span className="text-subtitle font-semibold text-text">{trip.riderName}</span>
           </span>
-          {riderPhone && <IconButton variant="secondary" icon={<Phone />} label={w.t('rider.call', { name: riderPhone.name })} href={`tel:${riderPhone.phone}`} />}
+          <IconButton variant="secondary" icon={<Phone />} label={w.t('rider.call', { name: riderPhone.name })} href={`tel:${riderPhone.phone}`} />
         </div>
       )}
 
@@ -195,21 +195,27 @@ export function useTripDetail({ trip, viewer, requests, people, busy, run }: Tri
     footer = <div className="flex-1"><NextStepButton trip={trip} busy={busy} onStep={viewer.onStep} /></div>;
   } else if (awaitingReceipt) {
     footer = (
-      <>
+      <FooterStack>
         <Button variant="danger-ghost" size="lg" disabled={busy} onClick={reportProblem}>{w.t('rider.staff.reportProblem')}</Button>
-        <Button size="lg" className="flex-1" loading={busy} onClick={confirmReceived}>{w.t('rider.staff.confirmReceived')}</Button>
-      </>
+        <Button size="lg" loading={busy} onClick={confirmReceived}>{w.t('rider.staff.confirmReceived')}</Button>
+      </FooterStack>
     );
   } else if (canMarkReady || canCancel) {
     footer = (
-      <>
+      <FooterStack>
         {canCancel && <Button variant="danger-ghost" size="lg" leadingIcon={<X />} disabled={busy} onClick={cancelRide}>{w.t('rider.staff.cancel')}</Button>}
-        {canMarkReady && <Button size="lg" className="flex-1" leadingIcon={<PackageCheck />} loading={busy} onClick={markReady}>{w.t('rider.staff.markReady')}</Button>}
-      </>
+        {canMarkReady && <Button size="lg" leadingIcon={<PackageCheck />} loading={busy} onClick={markReady}>{w.t('rider.staff.markReady')}</Button>}
+      </FooterStack>
     );
   }
 
   return { title, description, body, footer };
+}
+
+// Two footer actions: stacked on phones with the main one on top (long Bengali labels fit),
+// side by side from tablet width.
+function FooterStack({ children }: { children: ReactNode }) {
+  return <div className="flex w-full flex-col-reverse gap-2.5 md:flex-row md:justify-end [&>*]:w-full md:[&>*]:w-auto">{children}</div>;
 }
 
 export function TripDetailSheet({ trip, open, onOpenChange, ...rest }: Omit<TripDetailProps, 'trip'> & { trip: RiderTrip | null; open: boolean; onOpenChange: (open: boolean) => void }) {

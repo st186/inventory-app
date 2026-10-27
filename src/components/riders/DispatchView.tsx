@@ -131,12 +131,24 @@ export function DispatchView({ state, canDispatch, stores, defaultStoreId, stock
               key={r.employeeId}
               icon={Bike}
               iconTone={r.available ? 'neutral' : 'danger'}
-              title={r.name}
-              subtitle={[
-                r.available ? (r.defaultRate ? w.t('rider.staff.perRide', { amount: formatINR(wholeRupees(r.defaultRate)) }) : w.t('rider.staff.noRate')) : r.unavailableReason,
-                r.aadhaarFull || r.aadhaarMasked ? w.t('rider.staff.aadhaar', { n: r.aadhaarFull ? r.aadhaarFull.replace(/(\d{4})(?=\d)/g, '$1 ') : (r.aadhaarMasked as string) }) : null,
-              ].filter(Boolean).join(' · ')}
-              trailing={<StatusChip tone={r.available ? 'success' : 'danger'} dot>{r.available ? w.t('rider.staff.available') : w.t('rider.staff.unavailable')}</StatusChip>}
+              title={
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>{r.name}</span>
+                  <StatusChip tone={r.available ? 'success' : 'danger'} dot size="sm">{r.available ? w.t('rider.staff.available') : w.t('rider.staff.unavailable')}</StatusChip>
+                </span>
+              }
+              subtitle={
+                <>
+                  <span className="block">
+                    {r.available ? (r.defaultRate ? w.t('rider.staff.perRide', { amount: formatINR(wholeRupees(r.defaultRate)) }) : w.t('rider.staff.noRate')) : r.unavailableReason}
+                  </span>
+                  {(r.aadhaarFull || r.aadhaarMasked) && (
+                    <span className="num block">
+                      {w.t('rider.staff.aadhaar', { n: r.aadhaarFull ? r.aadhaarFull.replace(/(\d{4})(?=\d)/g, '$1 ') : (r.aadhaarMasked as string) })}
+                    </span>
+                  )}
+                </>
+              }
               chevron
               onClick={() => openCall(r.employeeId)}
             />

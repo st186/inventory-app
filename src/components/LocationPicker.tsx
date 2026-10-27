@@ -145,7 +145,7 @@ export function LocationPicker({ value, onChange, centerHint = null, height = 24
         </ul>
       )}
       {/* data-vaul-no-drag: panning the map inside a bottom sheet must not drag the sheet down. */}
-      <div ref={containerRef} data-vaul-no-drag="" style={{ height, width: '100%' }} className="isolate z-0 overflow-hidden rounded-lg border border-border bg-surface-2" />
+      <div ref={containerRef} data-vaul-no-drag="" style={{ height, width: '100%' }} className="isolate z-0 overflow-hidden rounded-lg border border-border bg-surface-2 [&_.leaflet-control-zoom_a]:size-11! [&_.leaflet-control-zoom_a]:text-title! [&_.leaflet-control-zoom_a]:leading-[44px]!" />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="min-w-0 flex-1 text-label text-text-3">
           {value ? <span className="num">{t('loc.pinnedAt', { lat: value.latitude.toFixed(5), lng: value.longitude.toFixed(5) })}</span> : t('loc.howTo')}

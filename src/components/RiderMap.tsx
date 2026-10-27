@@ -129,5 +129,5 @@ export function RiderMap({ rider, places = [], track = [], height = 280, labels 
   }, [rider, places, track]);
 
   // data-vaul-no-drag: panning the map inside a bottom sheet must not drag the sheet down.
-  return <div ref={containerRef} data-vaul-no-drag="" style={{ height, width: '100%' }} className="isolate z-0 overflow-hidden rounded-lg border border-border bg-surface-2" />;
+  return <div ref={containerRef} data-vaul-no-drag="" style={{ height, width: '100%' }} className="isolate z-0 overflow-hidden rounded-lg border border-border bg-surface-2 [&_.leaflet-control-zoom_a]:size-11! [&_.leaflet-control-zoom_a]:text-title! [&_.leaflet-control-zoom_a]:leading-[44px]!" />;
 }

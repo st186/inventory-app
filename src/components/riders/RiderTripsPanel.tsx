@@ -21,7 +21,7 @@ export function RiderTripsPanel({ refreshKey, deliveredCount, onOpenTrip, initia
   const [tab, setTab] = useState<TripsTab>(initialTab);
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as TripsTab)}>
-      <TabsList aria-label={w.t('rider.trips.title')} className={cn(inSheet ? '-mx-4 w-auto bg-bg md:-mx-6' : 'sticky top-0 z-(--z-sticky)')}>
+      <TabsList aria-label={w.t('rider.trips.title')} className={cn(inSheet && '-mx-4 w-auto bg-bg md:-mx-6')}>
         <TabsTrigger value="history">{w.t('rider.trips.history')}</TabsTrigger>
         <TabsTrigger value="payments">{w.t('rider.trips.payments')}</TabsTrigger>
       </TabsList>
