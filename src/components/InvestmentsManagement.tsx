@@ -10,7 +10,6 @@ import { Textarea } from './ui/textarea';
 import { Field } from './ui/field';
 import { ListGroup, ListRow } from './ui/list-row';
 import { InitialsAvatar } from './ui/avatar';
-import { StatTile, StatGrid } from './ui/stat-tile';
 import { StatusChip } from './ui/status-chip';
 import { Money } from './ui/money';
 import { EmptyState } from './ui/empty-state';
@@ -218,12 +217,19 @@ export function InvestmentsManagement({ context }: Props) {
                   )}
                 </button>
 
-                <StatGrid>
-                  <StatTile label="Total lent" value={<Money value={analytics.totalLent} />} />
-                  <StatTile label="Total repaid" value={<Money value={analytics.totalRepaid} />} />
-                  <StatTile label="Interest accrued" value={<Money value={analytics.totalInterest} decimals={2} />} />
-                  <StatTile label="Outstanding" value={<Money value={analytics.outstanding} decimals={2} />} />
-                </StatGrid>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-md bg-surface-2 p-3">
+                  {[
+                    { label: 'Total lent', value: <Money value={analytics.totalLent} /> },
+                    { label: 'Total repaid', value: <Money value={analytics.totalRepaid} /> },
+                    { label: 'Interest accrued', value: <Money value={analytics.totalInterest} decimals={2} /> },
+                    { label: 'Outstanding', value: <Money value={analytics.outstanding} decimals={2} /> },
+                  ].map((f) => (
+                    <div key={f.label} className="flex min-w-0 flex-col">
+                      <dt className="text-label text-text-2">{f.label}</dt>
+                      <dd className="text-subtitle font-semibold text-text">{f.value}</dd>
+                    </div>
+                  ))}
+                </dl>
 
                 {analytics.investorLoans.length > 0 && (
                   <ListGroup overline="Recent loans">
@@ -233,7 +239,7 @@ export function InvestmentsManagement({ context }: Props) {
                         density="compact"
                         title={<Money value={loan.loanAmount} className="font-medium" />}
                         subtitle={<span className="num">{loan.loanDate} · {loan.interestRate || 0}% interest</span>}
-                        trailing={<StatusChip tone={loan.status === 'active' ? 'success' : 'neutral'}>{loan.status === 'active' ? 'Active' : loan.status}</StatusChip>}
+                        trailing={<StatusChip tone={loan.status === 'active' ? 'success' : 'neutral'}>{loan.status ? loan.status.charAt(0).toUpperCase() + loan.status.slice(1) : '-'}</StatusChip>}
                       />
                     ))}
                   </ListGroup>

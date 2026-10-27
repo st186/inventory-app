@@ -80,7 +80,7 @@ const SCREENS: Screen[] = [
   { id: 'stores', title: 'more.stores', role: 'owner', render: (c) => <AssetsManagement context={c} stores={STORES as unknown as api.Store[]} employees={EMPLOYEES as unknown as api.Employee[]} onRefreshStores={() => undefined} initialTab="assets" /> },
   { id: 'hierarchy', title: 'more.hierarchy', role: 'owner', render: () => <HierarchyManagement userRole="cluster_head" accessToken="preview-token-not-real" currentEmployeeId="DEMO-01" /> },
   { id: 'my-team', title: 'My team', role: 'owner', render: () => <EmployeeHierarchy managerId="DEMO-10" role="manager" /> },
-  { id: 'chain', title: 'org.chainTitle', role: 'staff', render: () => <EmployeeHierarchyView currentUser={{ employeeId: 'DEMO-41', role: 'employee', email: 'crew@example.test', name: 'Counter Crew Demo' }} /> },
+  { id: 'chain', title: 'more.myAttendance', role: 'staff', render: () => <EmployeeHierarchyView currentUser={{ employeeId: 'DEMO-41', role: 'employee', email: 'crew@example.test', name: 'Counter Crew Demo' }} /> },
   { id: 'items', title: 'more.items', role: 'owner', render: (c) => <InventoryItemsManagement context={c} /> },
   { id: 'items-incharge', title: 'more.items', role: 'incharge', render: (c) => <InventoryItemsManagement context={c} /> },
   { id: 'categories', title: 'items.categories', role: 'owner', render: () => <CategoriesDemo /> },

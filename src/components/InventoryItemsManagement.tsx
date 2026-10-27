@@ -12,7 +12,6 @@ import { Field } from './ui/field';
 import { NativeSelect } from './ui/select';
 import { ChoiceChips, FilterChips } from './ui/chip';
 import { ListGroup, ListRow } from './ui/list-row';
-import { StatSplit } from './ui/stat-tile';
 import { EmptyState } from './ui/empty-state';
 import { ErrorState } from './ui/error-state';
 import { ResponsiveModal } from './ui/responsive-modal';
@@ -265,14 +264,19 @@ export function InventoryItemsManagement({ context }: Props) {
         <ErrorState title={t('items.loadFailed')} body={loadError} onRetry={loadItems} />
       ) : (
         <>
-          <div className="rounded-lg border border-border bg-surface p-4">
-            <StatSplit items={[
+          <dl className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-4">
+            {[
               { label: t('items.total'), value: items.filter(i => i.isActive).length },
               { label: t('items.filter.global'), value: items.filter(i => i.linkedEntityType === 'global').length },
               { label: t('items.filter.store'), value: items.filter(i => i.linkedEntityType === 'store').length },
               { label: t('items.filter.house'), value: items.filter(i => i.linkedEntityType === 'production_house').length },
-            ]} />
-          </div>
+            ].map((s) => (
+              <div key={s.label} className="flex min-w-0 flex-col">
+                <dt className="text-label text-text-3">{s.label}</dt>
+                <dd className="num text-body-md font-semibold text-text">{s.value}</dd>
+              </div>
+            ))}
+          </dl>
 
           <div className="flex flex-col gap-2">
             <FilterChips

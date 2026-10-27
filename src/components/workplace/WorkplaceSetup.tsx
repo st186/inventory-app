@@ -77,7 +77,7 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
   const [people, setPeople] = useState<Person[]>([]);
   const [isDefault, setIsDefault] = useState(false);
   const [updated, setUpdated] = useState<{ at?: string; by?: string }>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [bulk, setBulk] = useState({ assigneeId: '', start: '15:00', end: '16:00' });

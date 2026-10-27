@@ -38,7 +38,7 @@ export function TreeRow({ depth, name, meta, trailing, onClick }: { depth: numbe
       <InitialsAvatar name={name} size={depth === 0 ? 40 : 32} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-body-md font-medium text-text">{name}</span>
-        {meta && <span className="truncate text-label text-text-3">{meta}</span>}
+        {meta && <span className="line-clamp-2 text-label text-text-3">{meta}</span>}
       </span>
       {trailing}
     </>

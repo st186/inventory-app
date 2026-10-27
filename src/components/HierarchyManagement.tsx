@@ -76,6 +76,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken, cu
   const loadHierarchy = async () => {
     if (!accessToken) {
       console.error('No access token available');
+      setLoaded(true);
       return;
     }
 
@@ -175,7 +176,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken, cu
   const teamManagers = unassignedManagers.filter((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0));
   const nobody = hierarchy.length === 0 && unassignedManagers.length === 0 && unassignedEmployees.length === 0;
 
-  const structure = !loaded && loading ? (
+  const structure = !loaded ? (
     <LoadingList leading="avatar" rows={6} />
   ) : loadError ? (
     <ErrorState title="Couldn't load who reports to whom" body={loadError} onRetry={loadHierarchy} retrying={loading} />

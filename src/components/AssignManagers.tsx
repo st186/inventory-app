@@ -209,7 +209,7 @@ export function AssignManagers({ clusterHeadId, embedded = false }: AssignManage
   const changed = !!person && !!assignments[person.employeeId] && assignments[person.employeeId] !== person.managerId;
 
   let body;
-  if (!loaded && loading) {
+  if (!loaded) {
     body = <LoadingList leading="avatar" rows={6} withTile />;
   } else if (loadError) {
     body = <ErrorState body={loadError} onRetry={loadData} retrying={loading} />;
