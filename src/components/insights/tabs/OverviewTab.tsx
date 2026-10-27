@@ -237,35 +237,24 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
           <p className="text-body-sm text-text-2">
             Three ways of counting the same {getPeriodLabel().toLowerCase()}. They differ only in when rent, electricity and salaries count, and whether losses from earlier months are carried in.
           </p>
-          <ListGroup>
-            <ListRow
-              title="Net profit, rent and salaries spread (shown above)"
-              subtitle={`Rent, electricity and permanent salaries count as an even daily share of their month, up to today, so payday doesn't swing the figure. ${normalizedCardNote}.`}
-              trailing={<span className="num text-body-md font-semibold text-text">{inr(netNormalizedProfit)}</span>}
-            />
-            <ListRow
-              title="Net profit as paid"
-              subtitle="Every cost on the day it was paid, after approved cash shortages."
-              trailing={<span className="num text-body-md font-semibold text-text">{inr(realizedProfit)}</span>}
-            />
-            <ListRow
-              title="Net realised profit"
-              subtitle={`Net profit as paid, after any loss brought forward from earlier months. ${carryText}.`}
-              trailing={<span className="num text-body-md font-semibold text-text">{inr(netRealisedProfit)}</span>}
-            />
-            <ListRow
-              title="Before cash shortages"
-              subtitle={`Sales less every cost, before ${inr(totalCashDiscrepancy)} of approved cash shortages.`}
-              trailing={<span className="num text-body-md font-semibold text-text">{inr(unrealizedProfit)}</span>}
-            />
-            {ev && (
-              <ListRow
-                title="Events"
-                subtitle={`Profit from ${ev.events.length} event${ev.events.length === 1 ? '' : 's'} in this period, from their own day closes. Added to the figure above in the All stores view.`}
-                trailing={<span className="num text-body-md font-semibold text-text">{inr(ev.profit)}</span>}
-              />
-            )}
-          </ListGroup>
+          {/* Full explanations (no 2-line clamp, unlike list rows). */}
+          <dl className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+            {[
+              { title: 'Net profit, rent and salaries spread (shown above)', value: netNormalizedProfit, body: `Rent, electricity and permanent salaries count as an even daily share of their month, up to today, so payday doesn't swing the figure. ${normalizedCardNote}.` },
+              { title: 'Net profit as paid', value: realizedProfit, body: 'Every cost on the day it was paid, after approved cash shortages.' },
+              { title: 'Net realised profit', value: netRealisedProfit, body: `Net profit as paid, after any loss brought forward from earlier months. ${carryText}.` },
+              { title: 'Before cash shortages', value: unrealizedProfit, body: `Sales less every cost, before ${inr(totalCashDiscrepancy)} of approved cash shortages.` },
+              ...(ev ? [{ title: 'Events', value: ev.profit, body: `Profit from ${ev.events.length} event${ev.events.length === 1 ? '' : 's'} in this period, from their own day closes. Added to the figure above in the All stores view.` }] : []),
+            ].map((row) => (
+              <div key={row.title} className="flex flex-col gap-1 px-4 py-3">
+                <dt className="flex items-baseline justify-between gap-3">
+                  <span className="text-body-md font-medium text-text">{row.title}</span>
+                  <span className="num shrink-0 text-body-md font-semibold text-text">{inr(row.value)}</span>
+                </dt>
+                <dd className="text-label text-text-3">{row.body}</dd>
+              </div>
+            ))}
+          </dl>
           <Card className="bg-surface-2">
             <p className="text-body-sm text-text-2">
               The change next to the profit compares this period with {prevLabel.replace(/^vs /, '')} ({pct(comparison.current - comparison.previous, Math.abs(comparison.previous))}), both with rent and salaries spread and before any loss brought forward.
