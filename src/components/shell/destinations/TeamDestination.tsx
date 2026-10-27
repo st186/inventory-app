@@ -71,11 +71,8 @@ export function TeamDestination({ spec, params }: { spec: ScreenSpec; params: Re
     case 'EmployeeDashboard':
       return <EmployeeDashboard employeeId={user.employeeId || ''} />;
     case 'HierarchyManagement':
-      return (
-        <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 lg:px-8">
-          <HierarchyManagement userRole={user.role as 'cluster_head' | 'manager' | 'employee'} selectedStoreId={selectedStoreId} accessToken={user.accessToken} />
-        </div>
-      );
+      // The screen brings its own page padding (WP6).
+      return <HierarchyManagement userRole={user.role as 'cluster_head' | 'manager' | 'employee'} selectedStoreId={selectedStoreId} accessToken={user.accessToken} currentEmployeeId={user.employeeId} />;
     case 'TeamKpis':
       return <TeamKpis />;
     case 'MyKpis':

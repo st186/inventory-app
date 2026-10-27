@@ -14,7 +14,7 @@ export function MoneyDestination({ spec, params }: { spec: ScreenSpec; params: R
   const callbacks = useScreenCallbacks();
   switch (spec.screen) {
     case 'SalesManagement':
-      return <SalesManagement context={context} selectedStoreId={selectedStoreId} initialTab={spec.tab ?? 'entry'} />;
+      return <SalesManagement context={context} selectedStoreId={selectedStoreId} initialTab={spec.tab === 'cash' ? 'entry' : spec.tab ?? 'entry'} />;
     case 'SalesView':
       return <SalesView context={context} selectedStoreId={selectedStoreId} initialTab={spec.tab ?? 'entry'} />;
     case 'InventoryManagement':

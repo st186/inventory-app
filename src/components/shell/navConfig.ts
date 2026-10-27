@@ -89,7 +89,7 @@ export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
   | { screen: 'Analytics'; tab?: 'cash-reconciliation' | null }
   | { screen: 'ProductionRequests' }
-  | { screen: 'SalesManagement' | 'SalesView'; tab?: 'entry' | 'payout' | 'loans' }
+  | { screen: 'SalesManagement' | 'SalesView'; tab?: 'entry' | 'payout' | 'loans' | 'cash' }
   | { screen: 'InventoryManagement' }
   | { screen: 'ProductionManagement' }
   | { screen: 'AdvancedInventoryManagement' }
@@ -273,7 +273,9 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     add('insights', 'nav.insights', 'insights', analyticsSpec, L('analytics', analyticsSpec));
     add(`${stockTab}/requests`, kind === 'owner' ? 'more.stockRequests' : 'shell.requests', 'requests', { screen: 'ProductionRequests' }, L('analytics', analyticsSpec), 'analytics');
     if (kind === 'owner' || kind === 'ops') {
-      add('money/cash', 'shell.cashPaytm', 'cash', { screen: 'Analytics', tab: 'cash-reconciliation' }, L('analytics', analyticsSpec));
+      // Cash & Paytm lives in the sales overview's own Cash tab now (top-ups, Paytm ledger, weekly
+      // reconciliation); Insights keeps the cash trend.
+      add('money/cash', 'shell.cashPaytm', 'cash', { screen: 'SalesView', tab: 'cash' }, L('sales', { screen: 'SalesView' }));
     }
   }
   if (can.sales) {

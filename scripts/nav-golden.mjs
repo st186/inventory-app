@@ -216,6 +216,7 @@ const EMBEDDED_IN = {
   HierarchyManagement: ['EmployeeManagement'],
   'SalesView(payout)': ['SalesView'],
   'SalesView(loans)': ['SalesView'],
+  'SalesView(cash)': ['SalesView'], // top-ups, Paytm ledger, weekly reconciliation sat inside the old sales overview
   'SalesManagement(payout)': ['SalesManagement'],
   'SalesManagement(loans)': ['SalesManagement'],
   'AssetsManagement(assets)': ['AssetsManagement'],
