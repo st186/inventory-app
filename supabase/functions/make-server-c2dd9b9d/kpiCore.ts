@@ -164,7 +164,23 @@ export function roleGroupOf(emp: any, kind: WorkplaceKind): RoleGroup {
   return 'store_staff';
 }
 
-export type Pin = { kind: 'store' | 'production'; id: string; name?: string; lat: number; lng: number };
+// 'event': an event stall (events.ts), with its own check-in radius.
+export type Pin = { kind: 'store' | 'production' | 'event'; id: string; name?: string; lat: number; lng: number; radiusM?: number };
+
+// Event stalls a person is assigned to (as incharge or staff) that are open on `today`, from the
+// day before the first day (setting up) to the day after the last (wrapping up) - the same window
+// in which they enter the stall's figures (eventRules.ts). Their pins are added to the person's
+// own workplace pins, so a check-in at the stall is verified there.
+export function eventPinsFor(emp: any, events: any[], today: string): Pin[] {
+  const id = emp?.employeeId ? String(emp.employeeId) : '';
+  if (!id) return [];
+  return (events || [])
+    .filter((e) => e && !e.closedAt && e.status !== 'closed' && Number.isFinite(e.lat) && Number.isFinite(e.lng)
+      && (e.inchargeId === id || (Array.isArray(e.staffIds) && e.staffIds.includes(id)))
+      && typeof e.startDate === 'string' && typeof e.endDate === 'string'
+      && today >= addDays(e.startDate, -1) && today <= addDays(e.endDate, 1))
+    .map((e) => ({ kind: 'event' as const, id: String(e.id), name: e.name, lat: e.lat, lng: e.lng, ...(Number(e.radiusM) > 0 ? { radiusM: Number(e.radiusM) } : {}) }));
+}
 
 // The pins a person's punches are measured against: their own store / production house, or every
 // pin for operations people who move between them (and when their own place isn't pinned yet).
