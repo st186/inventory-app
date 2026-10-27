@@ -5,67 +5,18 @@
 // paid is nearly always right, so each entry's price per kg / L / piece is compared with what
 // the same item usually costs. A price more than 3x off gets a flag and, where the slip is
 // clear, a one-tap fix (switch g <-> kg, or the quantity the amount paid works out to).
+//
+// The units, the plausible range and the trimmed median live in priceRules.ts, shared with
+// recipe costing (and mirrored on the server), so both read purchase prices the same way.
 
-type Purchase = {
-  id?: string;
-  itemName: string;
-  quantity: number;
-  unit: string;
-  totalCost: number;
-  date?: string;
-  packageType?: 'carton' | 'pieces';
-  priceCheckOk?: boolean; // someone confirmed an unusual price is right
-};
+import {
+  MAX_RATIO, MIN_SAMPLES, SWAP_UNIT, UNITS, implausible, median, priceItemKey, pricePerBase,
+  type Measure, type PurchaseLike,
+} from './priceRules';
 
-type Measure = 'kg' | 'L' | 'pc' | 'packet' | 'carton' | 'bundle';
+export { priceItemKey };
 
-const UNITS: Record<string, { measure: Measure; perBase: number }> = {
-  kg: { measure: 'kg', perBase: 1 },
-  g: { measure: 'kg', perBase: 0.001 },
-  L: { measure: 'L', perBase: 1 },
-  l: { measure: 'L', perBase: 1 },
-  mL: { measure: 'L', perBase: 0.001 },
-  ml: { measure: 'L', perBase: 0.001 },
-  pcs: { measure: 'pc', perBase: 1 },
-  pc: { measure: 'pc', perBase: 1 },
-  piece: { measure: 'pc', perBase: 1 },
-  pieces: { measure: 'pc', perBase: 1 },
-  units: { measure: 'pc', perBase: 1 },
-  unit: { measure: 'pc', perBase: 1 },
-  packet: { measure: 'packet', perBase: 1 },
-  packets: { measure: 'packet', perBase: 1 },
-  carton: { measure: 'carton', perBase: 1 },
-  bundle: { measure: 'bundle', perBase: 1 }, // leafy greens (আঁটি)
-};
-
-// The other size of the same measure, for a g <-> kg or mL <-> L slip.
-const SWAP_UNIT: Record<string, string> = { g: 'kg', kg: 'g', mL: 'L', ml: 'L', L: 'mL', l: 'mL' };
-
-// Per kg or litre, nothing this kitchen buys costs under ₹0.5 (even drinking-water jars are
-// about ₹1.5 a litre) or over ₹10,000 (small spice sachets come to a few thousand), so such
-// an entry is wrong whatever the item's history says.
-const PLAUSIBLE_PER_BASE = { low: 0.5, high: 10000 };
-const MAX_RATIO = 3;
-const MIN_SAMPLES = 3;
-
-export const priceItemKey = (name: string) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-
-const pricePerBase = (p: Purchase) => {
-  const u = UNITS[p.unit];
-  const qty = Number(p.quantity) || 0;
-  const total = Number(p.totalCost) || 0;
-  if (!u || qty <= 0 || total <= 0) return null;
-  return { measure: u.measure, perBase: u.perBase, value: total / (qty * u.perBase) };
-};
-
-const implausible = (measure: Measure, value: number) =>
-  (measure === 'kg' || measure === 'L') && (value < PLAUSIBLE_PER_BASE.low || value > PLAUSIBLE_PER_BASE.high);
-
-function median(xs: number[]) {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
+type Purchase = PurchaseLike;
 
 export type PriceRef = { measure: Measure; typical: number; samples: number };
 export type PriceGuide = {

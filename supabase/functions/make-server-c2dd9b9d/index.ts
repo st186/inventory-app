@@ -20,6 +20,7 @@ import {
   attachEventRollups, buildEventTopupRequest, eventInchargeAuthId, eventTopupFunding, eventTransfersForStore,
   registerEventsRoutes, runEventPosSync, withoutEventRollups, type EventsDeps,
 } from './events.ts';
+import { registerRecipeRoutes } from './recipes.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -349,6 +350,10 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
   { test: /^\/events$/, methods: ['POST'], roles: OWNER_ONLY },
   { test: /^\/events\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: OWNER_ONLY },
   { test: /^\/events\/[^/]+\/(close|reopen)$/, roles: OWNER_ONLY },
+  // Recipe capture (recipes.ts): only the owner sets a standard; review, costs and price links are
+  // for the owner and managers (the module narrows managers to operations managers).
+  { test: /^\/recipes\/standards(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
+  { test: /^\/recipes\/(review|costs|price-items|price-links)(\/|$)/, roles: LEADS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 
@@ -17011,6 +17016,8 @@ registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: L
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
 registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST });
 registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
+// Recipe capture sheets, standards and cost per piece (recipes.ts).
+registerRecipeRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, getAllByPrefix: getAllByPrefixWithRetry, storage: supabase.storage });
 // Shift clock-in/out, team KPIs and variable pay (attendance.ts, kpi.ts).
 registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
 // Event stalls: their own P&L, stock, cash, staff and sales (events.ts).
