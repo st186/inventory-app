@@ -1,572 +1,476 @@
-import { useState } from 'react';
-import { Download, Upload, Database, AlertCircle, CheckCircle, Loader2, Calendar, HardDrive } from 'lucide-react';
+// Backup & Restore (owner only). A backup is a locked (encrypted) copy of every record in the app
+// plus the list of logins, made by the server: every night to Google Drive, or on demand as a
+// file. Restoring writes records back under their original IDs (the old page re-added them as new
+// records, which made duplicates), always after a dry run, and saves a safety copy of anything it
+// replaces. Server side: supabase/functions/make-server-c2dd9b9d/backup.ts.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle, Cloud, Database, Download, FileSearch, Loader2, Lock, RotateCcw, ShieldCheck } from 'lucide-react';
 import { InventoryContextType } from '../App';
-import { getTodayIST, formatDateTimeIST } from '../utils/timezone';
-import * as api from '../utils/api';
+import { formatDateTimeIST } from '../utils/timezone';
+import { saveFile } from '../utils/saveFile';
+import {
+  applyRestore, downloadFullBackup, getBackupStatus, parseBackupFile, planRestore, runDriveBackupNow, verifyBackupFile,
+  type ApplyResult, type BackupStatus, type ParsedBackup, type PlanResult, type VerifyResult,
+} from '../utils/backupApi';
 
 type Props = {
   context: InventoryContextType;
 };
 
+type Busy = null | 'download' | 'drive' | 'verify' | 'plan' | 'apply';
+type Note = { where: 'drive' | 'download' | 'file' | 'restore'; kind: 'ok' | 'error'; text: string };
+
+// Plain names for the record types (key prefixes) the owner chooses from when restoring.
+const LABELS: Record<string, string> = {
+  'sales:': 'Daily sales', 'sales_data_': 'Sales (old format)', 'online_sales:': 'Online sales', 'item-sales:': 'Item sales',
+  'inventory:': 'Purchases', 'overhead:': 'Overhead expenses', 'fixedcost:': 'Fixed costs', 'inventory_item_': 'Item catalogue',
+  'custom-item:': 'Custom items', 'custom-category:': 'Custom categories', 'stock-thresholds:': 'Stock alert levels',
+  'unified-employee:': 'Employees', 'employee:': 'Employees (old format)', 'archived-employee:': 'Archived employees',
+  'timesheet:': 'Timesheets', 'leave:': 'Leaves', 'payout:': 'Salary payouts', 'salary_advance:': 'Salary advances',
+  'attendance-employee:': 'Attendance', 'attendance-manager:': 'Attendance (managers)',
+  'store:': 'Stores', 'production_house_': 'Production houses', 'production:': 'Production logs',
+  'production_request_': 'Production requests', 'stock_request_': 'Stock requests', 'production-cash:': 'Production cash',
+  'production-ledger:': 'Production ledger', 'production-ledger-item:': 'Production ledger items', 'stock-out:': 'Out of stock log',
+  'stock-wastage:': 'Wastage', 'cash-topup:': 'Cash top-ups', 'investor:': 'Investors', 'online-loan:': 'Online loans',
+  'online-cash-recalibration:': 'Paytm recalibrations', 'aggregator-settlement:': 'Swiggy / Zomato settlements',
+  'rider-trip:': 'Rider trips', 'rider-profile:': 'Rider profiles', 'rider-place:': 'Pinned places', 'delivery-photo:': 'Receipt photos',
+  'notification:': 'Notifications', 'store-calendar:': 'Festival calendar', 'growth-idea:': 'Growth ideas',
+  'push_subscription:': 'Notification sign-ups (web)', 'fcm_token:': 'Notification sign-ups (phone)', 'restore-log:': 'Restore history',
+};
+const labelOf = (prefix: string) => LABELS[prefix] || prefix.replace(/[:_-]+$/, '').replace(/[_-]/g, ' ');
+
+const fmtBytes = (n?: number | null) => {
+  if (!n && n !== 0) return '-';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+};
+const fmtNum = (n?: number | null) => (n ?? 0).toLocaleString('en-IN');
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <span className="block text-xs text-gray-500 mt-1" lang="bn">{children}</span>;
+}
+
+function NoteBox({ note }: { note: Note | null }) {
+  if (!note) return null;
+  const ok = note.kind === 'ok';
+  return (
+    <div className={`mt-4 p-3 rounded-lg flex items-start gap-2 text-sm ${ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+      {ok ? <CheckCircle className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
+      <p className="whitespace-pre-line">{note.text}</p>
+    </div>
+  );
+}
+
+const card = 'bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6';
+const primaryButton = 'w-full sm:w-auto px-5 py-3 rounded-lg font-semibold text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
 export function BackupRestore({ context }: Props) {
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [exportStatus, setExportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [showImportConfirm, setShowImportConfirm] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const isOwner = context.user?.role === 'cluster_head';
+  const [status, setStatus] = useState<BackupStatus | null>(null);
+  const [statusError, setStatusError] = useState('');
+  const [busy, setBusy] = useState<Busy>(null);
+  const [progress, setProgress] = useState('');
+  const [note, setNote] = useState<Note | null>(null);
+  const [file, setFile] = useState<{ name: string; parsed: ParsedBackup } | null>(null);
+  const [verify, setVerify] = useState<VerifyResult | null>(null);
+  const [plan, setPlan] = useState<PlanResult | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'missing-only' | 'overwrite'>('missing-only');
+  const [confirmText, setConfirmText] = useState('');
+  const [applied, setApplied] = useState<ApplyResult | null>(null);
 
-  // Export all data to JSON
-  const handleExportData = async () => {
-    setIsExporting(true);
-    setExportStatus(null);
-
+  const loadStatus = useCallback(async () => {
     try {
-      // Gather all data from context
-      const backupData = {
-        exportDate: new Date().toISOString(),
-        exportDateIST: formatDateTimeIST(new Date().toISOString()),
-        version: '1.0',
-        data: {
-          inventory: context.inventory || [],
-          overheads: context.overheads || [],
-          fixedCosts: context.fixedCosts || [],
-          sales: context.salesData || [],
-          categorySalesData: context.categorySalesData || [],
-          productionData: context.productionData || [],
-          productionHouses: context.productionHouses || [],
-          stockRequests: context.stockRequests || [],
-          productionRequests: context.productionRequests || [],
-          stores: context.stores || [],
-          inventoryItems: context.inventoryItems || [],
-        },
-        metadata: {
-          totalInventoryItems: (context.inventory || []).length,
-          totalOverheadItems: (context.overheads || []).length,
-          totalFixedCostItems: (context.fixedCosts || []).length,
-          totalSalesRecords: (context.salesData || []).length,
-          totalCategorySalesData: (context.categorySalesData || []).length,
-          totalProductionRecords: (context.productionData || []).length,
-          totalProductionHouses: (context.productionHouses || []).length,
-          totalStockRequests: (context.stockRequests || []).length,
-          totalProductionRequests: (context.productionRequests || []).length,
-          totalStores: (context.stores || []).length,
-          totalInventoryItemTypes: (context.inventoryItems || []).length,
-        }
-      };
-
-      // Create blob and download
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `bhandar-ims-backup-${getTodayIST()}-${Date.now()}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      setExportStatus({
-        type: 'success',
-        message: `Backup created successfully! Downloaded ${Object.values(backupData.metadata).reduce((a, b) => a + b, 0)} total records.`
-      });
-    } catch (error) {
-      console.error('Export error:', error);
-      setExportStatus({
-        type: 'error',
-        message: 'Failed to export data. Please try again.'
-      });
-    } finally {
-      setIsExporting(false);
+      setStatus(await getBackupStatus());
+      setStatusError('');
+    } catch (e) {
+      setStatusError(errorText(e));
     }
-  };
+  }, []);
+  useEffect(() => { if (isOwner) loadStatus(); }, [isOwner, loadStatus]);
 
-  // Handle file selection
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.type !== 'application/json') {
-        setImportStatus({
-          type: 'error',
-          message: 'Please select a valid JSON backup file.'
-        });
-        return;
-      }
-      setSelectedFile(file);
-      setShowImportConfirm(true);
-      setImportStatus(null);
-    }
-  };
-
-  // Import data from JSON backup
-  const handleImportData = async () => {
-    if (!selectedFile || !context.user) {
-      return;
-    }
-
-    setIsImporting(true);
-    setImportStatus(null);
-    setShowImportConfirm(false);
-
+  // Runs one action at a time and keeps its message under the right card.
+  const run = async (what: Exclude<Busy, null>, where: Note['where'], work: () => Promise<string | void>) => {
+    setBusy(what);
+    setNote(null);
+    setProgress('');
     try {
-      // Read file
-      const fileContent = await selectedFile.text();
-      const backupData = JSON.parse(fileContent);
-
-      // Validate backup structure
-      if (!backupData.data || !backupData.version) {
-        throw new Error('Invalid backup file format');
-      }
-
-      let importedCounts = {
-        inventory: 0,
-        overheads: 0,
-        fixedCosts: 0,
-        sales: 0,
-        categorySalesData: 0,
-        productionData: 0,
-        productionHouses: 0,
-        stockRequests: 0,
-        productionRequests: 0,
-        stores: 0,
-        inventoryItems: 0,
-      };
-
-      // Import inventory items
-      if (backupData.data.inventory) {
-        for (const item of backupData.data.inventory) {
-          try {
-            await context.addInventoryItem(item);
-            importedCounts.inventory++;
-          } catch (error) {
-            console.error('Error importing inventory item:', error);
-          }
-        }
-      }
-
-      // Import overhead costs
-      if (backupData.data.overheads) {
-        for (const item of backupData.data.overheads) {
-          try {
-            await context.addOverheadItem(item);
-            importedCounts.overheads++;
-          } catch (error) {
-            console.error('Error importing overhead:', error);
-          }
-        }
-      }
-
-      // Import fixed costs
-      if (backupData.data.fixedCosts) {
-        for (const item of backupData.data.fixedCosts) {
-          try {
-            await context.addFixedCostItem(item);
-            importedCounts.fixedCosts++;
-          } catch (error) {
-            console.error('Error importing fixed cost:', error);
-          }
-        }
-      }
-
-      // Import sales
-      if (backupData.data.sales) {
-        for (const item of backupData.data.sales) {
-          try {
-            await context.addSalesData(item);
-            importedCounts.sales++;
-          } catch (error) {
-            console.error('Error importing sale:', error);
-          }
-        }
-      }
-
-      // Import category sales data
-      if (backupData.data.categorySalesData) {
-        for (const item of backupData.data.categorySalesData) {
-          try {
-            await api.addCategorySalesData(context.user.accessToken, item);
-            importedCounts.categorySalesData++;
-          } catch (error) {
-            console.error('Error importing category sales data:', error);
-          }
-        }
-      }
-
-      // Import production data
-      if (backupData.data.productionData) {
-        for (const item of backupData.data.productionData) {
-          try {
-            await context.addProductionData(item);
-            importedCounts.productionData++;
-          } catch (error) {
-            console.error('Error importing production data:', error);
-          }
-        }
-      }
-
-      // Import production houses
-      if (backupData.data.productionHouses) {
-        for (const item of backupData.data.productionHouses) {
-          try {
-            await context.addProductionHouse(item);
-            importedCounts.productionHouses++;
-          } catch (error) {
-            console.error('Error importing production house:', error);
-          }
-        }
-      }
-
-      // Import stock requests
-      if (backupData.data.stockRequests) {
-        for (const item of backupData.data.stockRequests) {
-          try {
-            // Skip if it has fulfillment info - use createStockRequest for base requests only
-            const { fulfilledQuantities, status, fulfilledBy, fulfilledByName, fulfillmentDate, notes, ...baseRequest } = item;
-            await context.createStockRequest(baseRequest);
-            importedCounts.stockRequests++;
-          } catch (error) {
-            console.error('Error importing stock request:', error);
-          }
-        }
-      }
-
-      // Import production requests - using API directly as context may not have method
-      if (backupData.data.productionRequests) {
-        for (const item of backupData.data.productionRequests) {
-          try {
-            await api.createProductionRequest(context.user.accessToken, item);
-            importedCounts.productionRequests++;
-          } catch (error) {
-            console.error('Error importing production request:', error);
-          }
-        }
-      }
-
-      // Import stores - using API directly
-      if (backupData.data.stores) {
-        for (const item of backupData.data.stores) {
-          try {
-            await api.createStore(item.name, item.location);
-            importedCounts.stores++;
-          } catch (error) {
-            console.error('Error importing store:', error);
-          }
-        }
-      }
-
-      // Import inventory items - using API directly
-      if (backupData.data.inventoryItems) {
-        for (const item of backupData.data.inventoryItems) {
-          try {
-            await api.createInventoryItem(context.user.accessToken, item);
-            importedCounts.inventoryItems++;
-          } catch (error) {
-            console.error('Error importing inventory item type:', error);
-          }
-        }
-      }
-
-      const totalImported = Object.values(importedCounts).reduce((a, b) => a + b, 0);
-
-      setImportStatus({
-        type: 'success',
-        message: `Successfully imported ${totalImported} records! Page will reload in 3 seconds...`
-      });
-
-      // Reload page after 3 seconds to refresh all data
-      setTimeout(() => {
-        window.location.reload();
-      }, 3000);
-
-    } catch (error) {
-      console.error('Import error:', error);
-      setImportStatus({
-        type: 'error',
-        message: `Failed to import data: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+      const text = await work();
+      if (text) setNote({ where, kind: 'ok', text });
+    } catch (e) {
+      setNote({ where, kind: 'error', text: errorText(e) });
     } finally {
-      setIsImporting(false);
-      setSelectedFile(null);
+      setBusy(null);
+      setProgress('');
     }
   };
 
-  const totalRecords = 
-    context.inventory.length +
-    context.overheads.length +
-    context.fixedCosts.length +
-    context.salesData.length +
-    context.categorySalesData.length +
-    context.productionData.length +
-    context.productionHouses.length +
-    context.stockRequests.length +
-    context.productionRequests.length +
-    context.stores.length +
-    context.inventoryItems.length;
+  const downloadNow = () => run('download', 'download', async () => {
+    const { blob, fileName, rows } = await downloadFullBackup((r, b) => setProgress(`${fmtNum(r)} records read, ${fmtBytes(b)} so far…`));
+    setProgress('Saving the file…');
+    await saveFile(fileName, blob, 'application/octet-stream');
+    loadStatus();
+    return `Saved ${fileName} (${fmtNum(rows)} records, ${fmtBytes(blob.size)}). On the phone it is in Downloads › Bunny Momos.\nIt opens only with the backup passphrase, so it is safe to keep a copy in Drive or on a pen drive.`;
+  });
+
+  const driveNow = () => run('drive', 'drive', async () => {
+    const result = await runDriveBackupNow((r, b) => setProgress(`${fmtNum(r)} records sent, ${fmtBytes(b)} so far…`));
+    await loadStatus();
+    return `Backed up to Google Drive: ${result?.fileName || ''} (${fmtNum(result?.rows)} records, ${fmtBytes(result?.bytes)}).`;
+  });
+
+  const pickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const chosen = e.target.files?.[0];
+    e.target.value = '';
+    setVerify(null); setPlan(null); setApplied(null); setSelected(new Set()); setConfirmText(''); setNote(null);
+    if (!chosen) return;
+    try {
+      setFile({ name: chosen.name, parsed: parseBackupFile(await chosen.arrayBuffer()) });
+    } catch (err) {
+      setFile(null);
+      setNote({ where: 'file', kind: 'error', text: errorText(err) });
+    }
+  };
+
+  const checkFile = () => file && run('verify', 'file', async () => {
+    const result = await verifyBackupFile(file.parsed, (d, t) => setProgress(`Checking part ${Math.min(d + 1, t)} of ${t}…`));
+    setVerify(result);
+    if (!result.ok) throw new Error(`This file has problems:\n• ${result.problems.join('\n• ')}`);
+    return `The file is good: it opens, every part matches its checksum, and it holds ${fmtNum(result.manifest.totalRows)} records and ${result.manifest.authUsers} logins.`;
+  });
+
+  const makePlan = () => file && run('plan', 'restore', async () => {
+    setApplied(null);
+    const result = await planRestore(file.parsed, (d, t) => setProgress(`Comparing part ${Math.min(d + 1, t)} of ${t} with today's data…`));
+    setPlan(result);
+    setSelected(new Set());
+    setConfirmText('');
+  });
+
+  const rows = useMemo(() => Object.entries(plan?.prefixes || {})
+    .map(([prefix, n]) => ({ prefix, label: labelOf(prefix), ...n }))
+    .sort((a, b) => (b.missing + b.changed) - (a.missing + a.changed) || a.label.localeCompare(b.label)), [plan]);
+  const chosenRows = rows.filter((r) => selected.has(r.prefix));
+  const willAdd = chosenRows.reduce((n, r) => n + r.missing, 0);
+  const willReplace = mode === 'overwrite' ? chosenRows.reduce((n, r) => n + r.changed, 0) : 0;
+  const confirmed = confirmText.trim().toUpperCase() === 'RESTORE';
+
+  const toggle = (prefix: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(prefix)) next.delete(prefix); else next.add(prefix);
+    return next;
+  });
+
+  const applyNow = () => file && plan && run('apply', 'restore', async () => {
+    const result = await applyRestore(file.parsed, plan, { prefixes: [...selected], mode, confirm: 'RESTORE' },
+      (d, t) => setProgress(`Restoring part ${Math.min(d + 1, t)} of ${t}… keep this screen open`));
+    setApplied(result);
+    setConfirmText('');
+    loadStatus();
+    context.refreshData().catch(() => {});
+    return `Restore finished: ${fmtNum(result.added)} records put back, ${fmtNum(result.overwritten)} replaced.` +
+      (result.snapshots.length ? `\nThe records it replaced were saved first (safety copy ${result.snapshots[0].split(':').slice(0, 2).join(':')}).` : '') +
+      `\nRestore log: restore-log:${result.run}. Screens refresh in a moment; balances worked out from other records update the next time those records are saved.`;
+  });
+
+  if (!isOwner) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <div className={card}>
+          <p className="text-gray-700">Only the owner can use Backup & Restore.</p>
+          <Hint>শুধু মালিক ব্যাকআপ ও রিস্টোর ব্যবহার করতে পারেন।</Hint>
+        </div>
+      </div>
+    );
+  }
+
+  const last = status?.last;
+  const working = busy !== null;
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-6 sm:p-8 shadow-xl">
-        <div className="absolute inset-0 bg-white/10" />
+    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-5">
+      <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-6 shadow-xl">
         <div className="relative flex items-center gap-4">
-          <div className="w-14 h-14 sm:w-16 sm:h-16 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-            <Database className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+          <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
+            <Database className="w-7 h-7 text-white" />
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Backup & Restore</h1>
-            <p className="text-sm sm:text-base text-white/80 mt-1">
-              Protect your data by creating regular backups. Export your data to JSON files and restore when needed.
-            </p>
+            <p className="text-sm text-white/85 mt-1">A locked copy of every record in the app and the list of logins. Only you can see this page.</p>
+            <p className="text-xs text-white/75 mt-1" lang="bn">অ্যাপের সব তথ্যের তালা-দেওয়া কপি। শুধু মালিক এই পাতা দেখতে পান।</p>
           </div>
         </div>
       </div>
 
-      {/* Current Database Stats */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <HardDrive className="w-5 h-5 text-blue-600" />
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Current Database</h2>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-blue-100">Inventory Items</p>
-            <p className="text-2xl font-semibold">{context.inventory.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-orange-100">Overhead Costs</p>
-            <p className="text-2xl font-semibold">{context.overheads.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-emerald-100">Fixed Costs</p>
-            <p className="text-2xl font-semibold">{context.fixedCosts.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-amber-100">Sales Records</p>
-            <p className="text-2xl font-semibold">{context.salesData.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-rose-100">Category Sales Data</p>
-            <p className="text-2xl font-semibold">{context.categorySalesData.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-4 shadow-lg shadow-sky-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-sky-100">Production Data</p>
-            <p className="text-2xl font-semibold">{context.productionData.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-yellow-100">Production Houses</p>
-            <p className="text-2xl font-semibold">{context.productionHouses.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-red-100">Stock Requests</p>
-            <p className="text-2xl font-semibold">{context.stockRequests.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-4 shadow-lg shadow-teal-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-teal-100">Production Requests</p>
-            <p className="text-2xl font-semibold">{context.productionRequests.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-xl p-4 shadow-lg shadow-cyan-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-cyan-100">Stores</p>
-            <p className="text-2xl font-semibold">{context.stores.length}</p>
-          </div>
-          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 shadow-lg shadow-purple-500/20 text-white">
-            <p className="text-xs uppercase tracking-wide text-purple-100">Inventory Item Types</p>
-            <p className="text-2xl font-semibold">{context.inventoryItems.length}</p>
-          </div>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <p className="text-lg text-gray-900">
-            <span className="font-semibold">Total Records:</span> {totalRecords.toLocaleString()}
-          </p>
-        </div>
-      </div>
-
-      {/* Export Section */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Download className="w-5 h-5 text-green-600" />
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Export Data (Create Backup)</h2>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-          <div className="flex gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-800">
-              <p className="font-semibold mb-1">💡 Backup Best Practices:</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>Create backups daily or after important data entry</li>
-                <li>Store backup files in multiple locations (Google Drive, external hard drive, etc.)</li>
-                <li>Name files with dates for easy identification</li>
-                <li>Test restoring from backups periodically</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={handleExportData}
-          disabled={isExporting || totalRecords === 0}
-          className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-lg font-semibold"
-        >
-          {isExporting ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Creating Backup...
-            </>
-          ) : (
-            <>
-              <Download className="w-5 h-5" />
-              Download Backup ({totalRecords} records)
-            </>
-          )}
-        </button>
-
-        {exportStatus && (
-          <div className={`mt-4 p-4 rounded-lg flex items-start gap-3 ${
-            exportStatus.type === 'success' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-          }`}>
-            {exportStatus.type === 'success' ? (
-              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            )}
-            <p className={`text-sm ${exportStatus.type === 'success' ? 'text-green-800' : 'text-red-800'}`}>
-              {exportStatus.message}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Import Section */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Upload className="w-5 h-5 text-orange-600" />
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Import Data (Restore Backup)</h2>
-        </div>
-
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-          <div className="flex gap-3">
-            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-yellow-800">
-              <p className="font-semibold mb-1">⚠️ Important Warning:</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>Importing will <strong>ADD</strong> data from the backup file to your current database</li>
-                <li>This may create duplicate records if the same data already exists</li>
-                <li>Create a backup of your current data before importing</li>
-                <li>Only use backup files created by this system</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <input
-            type="file"
-            accept=".json"
-            onChange={handleFileSelect}
-            disabled={isImporting}
-            className="w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-orange-400 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-
-          {selectedFile && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-600">Selected file:</p>
-              <p className="text-gray-900 font-medium">{selectedFile.name}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {(selectedFile.size / 1024).toFixed(2)} KB
-              </p>
-            </div>
-          )}
-        </div>
-
-        {importStatus && (
-          <div className={`mt-4 p-4 rounded-lg flex items-start gap-3 ${
-            importStatus.type === 'success' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-          }`}>
-            {importStatus.type === 'success' ? (
-              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            )}
-            <p className={`text-sm ${importStatus.type === 'success' ? 'text-green-800' : 'text-red-800'}`}>
-              {importStatus.message}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Confirmation Modal */}
-      {showImportConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertCircle className="w-6 h-6 text-orange-600" />
-              <h3 className="text-xl font-bold text-gray-900 tracking-tight">Confirm Import</h3>
-            </div>
-
-            <div className="space-y-3 mb-6">
-              <p className="text-gray-700">
-                Are you sure you want to import data from this backup file?
-              </p>
-              <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                <p className="text-sm text-yellow-800">
-                  <strong>Warning:</strong> This will add all records from the backup file to your current database. Make sure you've created a backup of your current data first!
-                </p>
-              </div>
-              <div className="bg-gray-50 rounded p-3">
-                <p className="text-sm text-gray-600 font-medium">{selectedFile?.name}</p>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowImportConfirm(false);
-                  setSelectedFile(null);
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleImportData}
-                className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <Upload className="w-4 h-4" />
-                Import Data
-              </button>
-            </div>
+      {statusError && <NoteBox note={{ where: 'drive', kind: 'error', text: `Could not load the backup status: ${statusError}` }} />}
+      {status && !status.passphraseOk && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex gap-2">
+          <Lock className="w-5 h-5 flex-shrink-0" />
+          <div>
+            <p className="font-semibold">Backups are switched off until the backup passphrase is set.</p>
+            <p>Set the BACKUP_PASSPHRASE secret (at least 12 characters) as shown in docs/backup-google-drive-setup.md, step 1.</p>
+            <Hint>ব্যাকআপ চালু করতে আগে BACKUP_PASSPHRASE সেট করুন।</Hint>
           </div>
         </div>
       )}
 
-      {/* Additional Tips */}
-      <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-2xl shadow-sm border border-orange-100 p-6">
-        <div className="flex items-start gap-3">
-          <Calendar className="w-6 h-6 text-orange-600 flex-shrink-0 mt-1" />
-          <div>
-            <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-2">📅 Recommended Backup Schedule</h3>
-            <ul className="space-y-2 text-sm text-gray-700">
-              <li className="flex items-start gap-2">
-                <span className="text-orange-600 font-bold">•</span>
-                <span><strong>Daily:</strong> At the end of each business day (especially after sales entry)</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-orange-600 font-bold">•</span>
-                <span><strong>Weekly:</strong> Every Sunday for weekly records</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-orange-600 font-bold">•</span>
-                <span><strong>Monthly:</strong> On the last day of each month before monthly reports</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-orange-600 font-bold">•</span>
-                <span><strong>Before Major Changes:</strong> Always backup before bulk edits or deletions</span>
-              </li>
+      {/* Automatic backup */}
+      <div className={card}>
+        <div className="flex items-center gap-2 mb-1">
+          <Cloud className="w-5 h-5 text-sky-600" />
+          <h2 className="text-lg font-bold text-gray-900">Automatic backup to Google Drive</h2>
+        </div>
+        <p className="text-sm text-gray-600">{status?.schedule || 'Every night from 2:30 AM IST'}. Keeps the last 30 days and the first backup of each month for a year.</p>
+        <Hint>প্রতি রাতে আড়াইটায় নিজে থেকেই Google Drive-এ ব্যাকআপ হয়।</Hint>
+
+        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm">
+          {!status ? (
+            <p className="text-gray-500">Loading…</p>
+          ) : !status.driveConnected ? (
+            <p className="text-amber-700">Google Drive is not connected yet. Follow docs/backup-google-drive-setup.md (about 15 minutes, once).</p>
+          ) : !last ? (
+            <p className="text-gray-600">No automatic backup yet. The first one runs tonight.</p>
+          ) : last.ok ? (
+            <div className="flex items-start gap-2 text-green-800">
+              <CheckCircle className="w-5 h-5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold">Last backup: {formatDateTimeIST(last.at)}</p>
+                <p>{fmtNum(last.rows)} records · {fmtBytes(last.bytes)} · {last.fileName}</p>
+                {last.warning && <p className="text-amber-700 mt-1">{last.warning}</p>}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 text-red-800">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold">Last backup failed: {formatDateTimeIST(last.at)}</p>
+                <p>{last.error}</p>
+              </div>
+            </div>
+          )}
+          {status?.running && (
+            <p className="mt-2 text-sky-700">A backup is in progress: {fmtNum(status.running.rows)} records so far{status.running.lastError ? ` (last try: ${status.running.lastError})` : ''}.</p>
+          )}
+          {last?.ok && Date.now() - Date.parse(last.at) > 36 * 3600_000 && (
+            <p className="mt-2 text-amber-700">No automatic backup for more than a day. Check the settings or press the button below.</p>
+          )}
+        </div>
+
+        <button onClick={driveNow} disabled={working || !status?.driveConnected || !status?.passphraseOk} className={`${primaryButton} mt-4 bg-sky-600 hover:bg-sky-700`}>
+          {busy === 'drive' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Cloud className="w-5 h-5" />}
+          Back up to Google Drive now
+        </button>
+        {busy === 'drive' && progress && <p className="text-sm text-gray-600 mt-2">{progress}</p>}
+        {note?.where === 'drive' && <NoteBox note={note} />}
+      </div>
+
+      {/* Download */}
+      <div className={card}>
+        <div className="flex items-center gap-2 mb-1">
+          <Download className="w-5 h-5 text-green-600" />
+          <h2 className="text-lg font-bold text-gray-900">Download full backup now</h2>
+        </div>
+        <p className="text-sm text-gray-600">One locked file with every record and the list of logins, saved to this phone (Downloads › Bunny Momos) or computer. It opens only with the backup passphrase.</p>
+        <Hint>এখনই পুরো ব্যাকআপ ফাইল এই ফোনে বা কম্পিউটারে সেভ করুন।</Hint>
+        {status?.lastDownload && <p className="text-xs text-gray-500 mt-2">Last downloaded {formatDateTimeIST(status.lastDownload.at)} ({fmtNum(status.lastDownload.rows)} records).</p>}
+        <button onClick={downloadNow} disabled={working || !status?.passphraseOk} className={`${primaryButton} mt-4 bg-green-600 hover:bg-green-700`}>
+          {busy === 'download' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+          Download full backup now
+        </button>
+        {busy === 'download' && progress && <p className="text-sm text-gray-600 mt-2">{progress}</p>}
+        {note?.where === 'download' && <NoteBox note={note} />}
+      </div>
+
+      {/* Check / restore */}
+      <div className={card}>
+        <div className="flex items-center gap-2 mb-1">
+          <FileSearch className="w-5 h-5 text-violet-600" />
+          <h2 className="text-lg font-bold text-gray-900">Check or restore a backup file</h2>
+        </div>
+        <p className="text-sm text-gray-600">Pick a backup file (it ends in .bunnybak; copies from Google Drive can be downloaded there first).</p>
+        <Hint>ব্যাকআপ ফাইল বেছে নিন, তারপর দেখুন ফাইলটা ঠিক আছে কিনা।</Hint>
+        <input
+          type="file"
+          onChange={pickFile}
+          disabled={working}
+          className="mt-3 w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-violet-400 cursor-pointer disabled:opacity-50"
+        />
+        {file && (
+          <div className="mt-3 bg-gray-50 rounded-lg p-3 text-sm text-gray-700">
+            <p className="font-medium break-all">{file.name}</p>
+            <p className="text-gray-500">Made {formatDateTimeIST(file.parsed.header.createdAt)} · app {file.parsed.header.appVersion || '?'} · {fmtBytes(file.parsed.size)}</p>
+          </div>
+        )}
+        <button onClick={checkFile} disabled={working || !file} className={`${primaryButton} mt-4 bg-violet-600 hover:bg-violet-700`}>
+          {busy === 'verify' ? <Loader2 className="w-5 h-5 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
+          Check this file
+        </button>
+        {busy === 'verify' && progress && <p className="text-sm text-gray-600 mt-2">{progress}</p>}
+        {note?.where === 'file' && <NoteBox note={note} />}
+
+        {verify && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b">
+                  <th className="py-2 pr-2">Kind of record</th>
+                  <th className="py-2 px-2 text-right">In file</th>
+                  <th className="py-2 pl-2 text-right">In the app now</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...new Set([...Object.keys(verify.manifest.prefixes), ...Object.keys(verify.live?.prefixes || {})])]
+                  .sort((a, b) => labelOf(a).localeCompare(labelOf(b)))
+                  .map((p) => (
+                    <tr key={p} className="border-b border-gray-100">
+                      <td className="py-1.5 pr-2">{labelOf(p)} <span className="text-xs text-gray-400 font-mono">{p}</span></td>
+                      <td className="py-1.5 px-2 text-right">{fmtNum(verify.manifest.prefixes[p])}</td>
+                      <td className="py-1.5 pl-2 text-right">{fmtNum(verify.live?.prefixes?.[p])}</td>
+                    </tr>
+                  ))}
+                <tr className="font-semibold">
+                  <td className="py-2 pr-2">Total</td>
+                  <td className="py-2 px-2 text-right">{fmtNum(verify.manifest.totalRows)}</td>
+                  <td className="py-2 pl-2 text-right">{fmtNum(verify.live?.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {verify.logins.length > 0 && (
+              <div className="mt-4 text-sm">
+                <p className="font-semibold text-gray-800">Logins in this file ({verify.logins.length})</p>
+                <p className="text-gray-600">Logins are not restored. If someone here can no longer sign in, add them again in Employees.</p>
+                <Hint>লগইন রিস্টোর হয় না; দরকার হলে Employees-এ আবার যোগ করুন।</Hint>
+                <ul className="mt-2 grid sm:grid-cols-2 gap-1 text-gray-700">
+                  {verify.logins.map((l, i) => <li key={i} className="truncate">{l.name || '-'} · {l.email} · {l.role || 'employee'}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Restore */}
+        <div className="mt-6 pt-5 border-t border-gray-200">
+          <div className="flex items-center gap-2 mb-1">
+            <RotateCcw className="w-5 h-5 text-orange-600" />
+            <h3 className="text-base font-bold text-gray-900">Restore from this file</h3>
+          </div>
+          <p className="text-sm text-gray-600">First see what would change; nothing is written until you confirm. Restore never deletes records added after the backup.</p>
+          <Hint>আগে দেখুন কী বদলাবে; নিশ্চিত না করা পর্যন্ত কিছু লেখা হয় না।</Hint>
+          <button onClick={makePlan} disabled={working || !file} className={`${primaryButton} mt-3 bg-orange-500 hover:bg-orange-600`}>
+            {busy === 'plan' ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileSearch className="w-5 h-5" />}
+            Step 1: See what a restore would change
+          </button>
+          {busy === 'plan' && progress && <p className="text-sm text-gray-600 mt-2">{progress}</p>}
+
+          {plan && (
+            <div className="mt-4">
+              {rows.every((r) => !r.missing && !r.changed) ? (
+                <p className="text-sm text-green-700">Today's data already has everything in this backup. Nothing to restore.</p>
+              ) : (
+                <>
+                  <div className="flex gap-3 text-sm mb-2">
+                    <button className="text-orange-700 underline" onClick={() => setSelected(new Set(rows.filter((r) => r.missing > 0).map((r) => r.prefix)))}>Select all with missing records</button>
+                    <button className="text-gray-600 underline" onClick={() => setSelected(new Set())}>Clear</button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="py-2 pr-2" />
+                          <th className="py-2 pr-2">Kind of record</th>
+                          <th className="py-2 px-2 text-right">Missing now<br /><span className="font-normal text-xs">will come back</span></th>
+                          <th className="py-2 px-2 text-right">Changed since<br /><span className="font-normal text-xs">replaced only if you choose</span></th>
+                          <th className="py-2 px-2 text-right">Same</th>
+                          <th className="py-2 pl-2 text-right">New since backup<br /><span className="font-normal text-xs">always kept</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r) => {
+                          const useful = r.missing + r.changed > 0;
+                          return (
+                            <tr key={r.prefix} className={`border-b border-gray-100 ${useful ? '' : 'text-gray-400'}`}>
+                              <td className="py-1.5 pr-2">
+                                <input type="checkbox" disabled={!useful || working} checked={selected.has(r.prefix)} onChange={() => toggle(r.prefix)} aria-label={`Restore ${r.label}`} />
+                              </td>
+                              <td className="py-1.5 pr-2">{r.label} <span className="text-xs text-gray-400 font-mono">{r.prefix}</span></td>
+                              <td className="py-1.5 px-2 text-right">{fmtNum(r.missing)}</td>
+                              <td className="py-1.5 px-2 text-right">{fmtNum(r.changed)}</td>
+                              <td className="py-1.5 px-2 text-right">{fmtNum(r.same)}</td>
+                              <td className="py-1.5 pl-2 text-right">{fmtNum(r.newSinceBackup)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <fieldset className="mt-4 space-y-2 text-sm">
+                    <legend className="font-semibold text-gray-800 mb-1">How to restore</legend>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" name="restore-mode" checked={mode === 'missing-only'} onChange={() => setMode('missing-only')} disabled={working} />
+                      <span><strong>Only put back missing records</strong> (safe: nothing in today's data changes)<Hint>শুধু হারানো রেকর্ড ফেরত আসবে।</Hint></span>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" name="restore-mode" checked={mode === 'overwrite'} onChange={() => setMode('overwrite')} disabled={working} />
+                      <span><strong>Also replace records that changed</strong> with the backup's version (a safety copy of today's version is saved first)<Hint>বদলে যাওয়া রেকর্ডও ব্যাকআপের মতো হয়ে যাবে।</Hint></span>
+                    </label>
+                  </fieldset>
+
+                  <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900">
+                    {selected.size === 0
+                      ? 'Tick the kinds of record to restore.'
+                      : `This will put back ${fmtNum(willAdd)} missing records${mode === 'overwrite' ? ` and replace ${fmtNum(willReplace)} changed records` : ''} in ${selected.size} kind${selected.size === 1 ? '' : 's'} of record.`}
+                  </div>
+                  <label className="block mt-3 text-sm text-gray-700">
+                    Type <span className="font-mono font-semibold">RESTORE</span> to confirm
+                    <Hint>নিশ্চিত করতে RESTORE লিখুন।</Hint>
+                    <input
+                      value={confirmText}
+                      onChange={(e) => setConfirmText(e.target.value)}
+                      disabled={working}
+                      autoCapitalize="characters"
+                      className="mt-1 w-full sm:w-64 px-3 py-2 border border-gray-300 rounded-lg font-mono"
+                      placeholder="RESTORE"
+                    />
+                  </label>
+                  <button
+                    onClick={applyNow}
+                    disabled={working || selected.size === 0 || !confirmed || (willAdd + willReplace === 0)}
+                    className={`${primaryButton} mt-4 bg-red-600 hover:bg-red-700`}
+                  >
+                    {busy === 'apply' ? <Loader2 className="w-5 h-5 animate-spin" /> : <RotateCcw className="w-5 h-5" />}
+                    Step 2: Restore now
+                  </button>
+                  {busy === 'apply' && progress && <p className="text-sm text-gray-600 mt-2">{progress}</p>}
+                </>
+              )}
+            </div>
+          )}
+          {note?.where === 'restore' && <NoteBox note={note} />}
+          {applied && !working && (
+            <p className="text-xs text-gray-500 mt-2">Run {applied.run}: {fmtNum(applied.unchanged)} records were left as they were.</p>
+          )}
+        </div>
+      </div>
+
+      {/* What is and is not included */}
+      <div className="bg-gradient-to-r from-blue-50 to-orange-50 rounded-2xl border border-orange-100 p-5 text-sm text-gray-700 space-y-2">
+        <p className="font-semibold text-gray-900">What a backup holds</p>
+        <p>Every record in the app (sales, stock, staff, payroll, production, riders, settlements, photos and so on) and the list of logins with their roles. Left out on purpose: live rider locations, cached travel times, one-time approve/reject links, "reminder already sent" flags and AI usage counters, which mean nothing a day later.</p>
+        <p>Passwords are never in a backup. If a login itself is lost, add the person again in Employees.</p>
+        <p className="text-red-700">Keep the backup passphrase written down somewhere safe outside the app. Without it no backup can be opened, by anyone.</p>
+        <Hint>ব্যাকআপ পাসফ্রেজ অ্যাপের বাইরে কোথাও লিখে রাখুন; এটা ছাড়া কোনো ব্যাকআপ খোলা যাবে না।</Hint>
+        {(status?.restores?.length || 0) > 0 && (
+          <div className="pt-2">
+            <p className="font-semibold text-gray-900">Recent restores</p>
+            <ul className="mt-1 space-y-0.5">
+              {status!.restores.map((r) => (
+                <li key={r.run}>{formatDateTimeIST(r.startedAt)} · {r.by} · {r.mode === 'overwrite' ? 'missing + changed' : 'missing only'} · {fmtNum(r.added)} put back, {fmtNum(r.overwritten)} replaced{r.finishedAt ? '' : ' (not finished)'}</li>
+              ))}
             </ul>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
