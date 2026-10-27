@@ -64,7 +64,7 @@ function DateChip({ value, onChange, min }: { value: string; onChange: (date: st
   const { t, lang } = useT();
   const ref = React.useRef<HTMLInputElement>(null);
   return (
-    <label className="relative inline-flex">
+    <label className="relative inline-flex min-h-11 items-center">
       <span className="hit-44 inline-flex h-9 min-h-9 items-center gap-1.5 rounded-full border border-border-strong bg-surface px-3 text-label font-medium whitespace-nowrap text-text [&_svg]:size-4">
         <CalendarDays aria-hidden="true" />
         <span className="num">{dayLabel(lang, value)}</span>
