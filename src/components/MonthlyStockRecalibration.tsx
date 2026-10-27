@@ -1,5 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
-import { Calendar, AlertTriangle, Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { ClipboardList } from 'lucide-react';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { SkeletonListRows, SkeletonStatTiles } from './ui/skeleton';
+import { StatTile } from './ui/stat-tile';
+import { t as tSaved, useT } from '../utils/i18n';
+import { momoName } from './stock/stockShared';
 import * as api from '../utils/api';
 import { formatDateTimeIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
@@ -38,6 +50,10 @@ export function MonthlyStockRecalibration({
  isStoreFinishedProducts = false,
  currentCalculatedStock
 }: Props) {
+ const { t, lang } = useT();
+ const [open, setOpen] = useState(true);
+ // What is typed in a count box (kept as text while typing, e.g. "12.").
+ const [drafts, setDrafts] = useState<Record<string, string>>({});
  const [items, setItems] = useState<RecalibrationItem[]>([]);
  const [loading, setLoading] = useState(true);
  const [saving, setSaving] = useState(false);
@@ -111,7 +127,7 @@ export function MonthlyStockRecalibration({
  }
  } catch (err) {
  console.error('Error loading inventory:', err);
- setError('Failed to load inventory data');
+ setError(tSaved('stock.count.loadFailed'));
  } finally {
  setLoading(false);
  }
@@ -660,7 +676,7 @@ export function MonthlyStockRecalibration({
  const invalidItems = items.filter(item => item.difference !== 0 && !item.adjustmentType);
  
  if (invalidItems.length > 0) {
- setError(`Please select adjustment type (Wastage or Counting Error) for all items with differences`);
+ setError(tSaved('stock.count.pickWhy'));
  return;
  }
 
@@ -695,13 +711,13 @@ export function MonthlyStockRecalibration({
  
  setSuccess(true);
  setTimeout(() => {
- onClose();
+ setOpen(false);
  if (onSaveSuccess) onSaveSuccess();
  }, 2000);
  
  } catch (err) {
  console.error('Error submitting recalibration:', err);
- setError(err instanceof Error ? err.message : 'Failed to submit recalibration');
+ setError(err instanceof Error ? err.message : tSaved('stock.count.failed'));
  } finally {
  setSaving(false);
  }
@@ -713,244 +729,92 @@ export function MonthlyStockRecalibration({
  .filter(item => item.adjustmentType === 'wastage' && item.difference < 0)
  .reduce((sum, item) => sum + Math.abs(item.difference), 0);
 
- if (loading) {
+ const dirty = items.some((item) => item.actualQuantity !== item.systemQuantity || item.notes !== '');
+
  return (
- <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
- <div className="bg-white rounded-2xl p-8 max-w-md">
+ <ResponsiveModal
+ open={open}
+ onOpenChange={(o) => { if (!o) setOpen(false); }}
+ onClosed={onClose}
+ dirty={dirty && !saving && !success}
+ title={t('stock.count.sheetTitle')}
+ description={`${locationName || store?.name || ''} · ${currentMonth}`}
+ size="detail"
+ footer={success ? undefined : (
+ <Button size="lg" className="flex-1" loading={saving} disabled={loading} onClick={handleSubmit}>{t('stock.count.submit')}</Button>
+ )}
+ >
+ <div className="flex flex-col gap-5" lang={lang}>
+ {success ? (
+ <Callout tone="success" title={t('stock.count.sent')} live>{t('stock.count.sentBody')}</Callout>
+ ) : loading ? (
+ <>
+ <SkeletonStatTiles count={2} />
+ <SkeletonListRows count={5} leading="none" />
+ </>
+ ) : (
+ <>
+ <div className="grid grid-cols-3 gap-3">
+ <StatTile label={t('stock.count.items')} value={<span className="num">{totalItems}</span>} />
+ <StatTile label={t('stock.count.withDiff')} value={<span className="num">{itemsWithDifference}</span>} />
+ <StatTile label={t('stock.count.wasted')} value={<span className="num">{totalWastage.toFixed(2)}</span>} tone={totalWastage > 0 ? 'danger' : 'default'} />
+ </div>
+ {lastRecalibration && <p className="text-label text-text-3">{t('stock.count.last', { when: formatDateTimeIST(lastRecalibration, true) })}</p>}
+ <Callout tone="info" title={t('stock.count.approvalNote')} />
+
+ {items.length === 0 ? (
+ <EmptyState compact icon={ClipboardList} title={t('stock.onHand.emptyTitle')} />
+ ) : (
+ <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+ {items.map((item) => (
+ <div key={item.itemId} className="flex flex-col gap-3 px-4 py-3">
  <div className="flex items-center gap-3">
- <RefreshCw className="w-6 h-6 animate-spin text-orange-600" />
- <span className="text-gray-700">Loading inventory data...</span>
- </div>
- </div>
- </div>
- );
- }
-
- if (success) {
- return (
- <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
- <div className="bg-white rounded-2xl p-8 max-w-md">
- <div className="flex flex-col items-center gap-4">
- <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
- <CheckCircle className="w-8 h-8 text-green-600" />
- </div>
- <h3 className="text-xl font-bold text-gray-900 tracking-tight">Recalibration Submitted!</h3>
- <p className="text-gray-600 text-center">Your recalibration has been submitted for approval.</p>
- <p className="text-sm text-gray-500 text-center">A manager or cluster head will review and approve it.</p>
- </div>
- </div>
- </div>
- );
- }
-
- return (
- <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
- <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full my-8">
- {/* Header */}
- <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 p-6 rounded-t-2xl">
- <div className="absolute inset-0 bg-white/10"></div>
- <div className="relative flex items-center justify-between">
- <div className="flex items-center gap-4">
- <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center border-2 border-white/30">
- <Calendar className="w-6 h-6 text-white" />
- </div>
- <div>
- <h2 className="text-2xl font-bold text-white tracking-tight">Monthly Stock Recalibration</h2>
- <p className="text-white/80 text-sm">
- {locationName || store?.name} - {currentMonth}
- </p>
- </div>
- </div>
- <button
- onClick={onClose}
- className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center border-2 border-white/30 hover:bg-white/30 transition-all"
- >
- <XCircle className="w-6 h-6 text-white" />
- </button>
- </div>
- </div>
-
- {/* Info Cards */}
- <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-rose-50">
- <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
- <div className="bg-white/80 rounded-xl p-4 border-2 border-orange-200">
- <div className="text-sm text-gray-600 mb-1">Total Items</div>
- <div className="text-2xl font-semibold text-orange-600">{totalItems}</div>
- </div>
- <div className="bg-white/80 rounded-xl p-4 border-2 border-orange-200">
- <div className="text-sm text-gray-600 mb-1">Items with Difference</div>
- <div className="text-2xl font-semibold text-orange-600">{itemsWithDifference}</div>
- </div>
- <div className="bg-white/80 rounded-xl p-4 border-2 border-red-200">
- <div className="text-sm text-gray-600 mb-1">Total Wastage</div>
- <div className="text-2xl font-semibold text-red-600">{totalWastage.toFixed(2)}</div>
- </div>
- </div>
-
- {lastRecalibration && (
- <div className="mt-4 bg-blue-50 border-2 border-blue-200 rounded-xl p-3 flex items-start gap-3">
- <AlertTriangle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
- <div className="flex-1">
- <div className="text-sm text-blue-900 font-medium mb-1">Last recalibration was performed on:</div>
- <div className="text-sm text-blue-700">
- {formatDateTimeIST(lastRecalibration, true)}
- </div>
- <div className="text-xs text-blue-600 mt-1 flex items-center gap-1">
- <span className="inline-block w-2 h-2 bg-blue-500 rounded-full"></span>
- Timezone: Indian Standard Time (GMT+5:30)
- </div>
- </div>
- </div>
- )}
-
- <div className="mt-4 bg-green-50 border-2 border-green-200 rounded-xl p-3 flex items-start gap-3">
- <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
- <div className="text-sm text-green-900">
- Stock recalibration is now enabled for the entire month. Operations Managers and Cluster Heads will be notified when you submit a recalibration.
- </div>
- </div>
- </div>
-
- {/* Items Table */}
- <div className="p-6 max-h-[500px] overflow-y-auto">
- <div className="space-y-4">
- {items.map((item, index) => (
- <div 
- key={item.itemId}
- className={`bg-gradient-to-r ${
- item.difference !== 0 
- ? 'from-red-50 to-orange-50 border-red-200' 
- : 'from-gray-50 to-gray-100 border-gray-200'
- } border-2 rounded-xl p-4`}
- >
- <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
- {/* Item Info */}
- <div className="md:col-span-3">
- <div className="text-sm text-gray-500">Item {index + 1}</div>
- <div className="text-gray-900">{item.itemName}</div>
- <div className="text-xs text-gray-500 mt-1">
- {item.category.replace(/_/g, ' ')} • {item.unit}
- </div>
- </div>
-
- {/* Current Stock */}
- <div className="md:col-span-2">
- <div className="text-xs text-gray-500 mb-1">Current Stock</div>
- <div className="text-gray-900">{item.systemQuantity} {item.unit}</div>
- </div>
-
- {/* Actual Quantity Input */}
- <div className="md:col-span-2">
- <label className="text-xs text-gray-500 mb-1 block">Actual Count</label>
- <input
- type="number"
- step="0.01"
- value={item.actualQuantity}
- onChange={(e) => handleActualQuantityChange(item.itemId, e.target.value)}
- className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
- placeholder="Enter count"
- />
- </div>
-
- {/* Difference */}
- <div className="md:col-span-2">
- <div className="text-xs text-gray-500 mb-1">Difference</div>
- <div className={`text-lg ${
- item.difference > 0 ? 'text-green-600' : 
- item.difference < 0 ? 'text-red-600' : 
- 'text-gray-600'
- }`}>
- {item.difference > 0 ? '+' : ''}{item.difference.toFixed(2)}
- </div>
- </div>
-
- {/* Adjustment Type */}
- <div className="md:col-span-3">
+ <span className="flex min-w-0 flex-1 flex-col">
+ <span className="text-body-md font-medium text-text">{momoName(lang, item.itemId.replace(/_momos?$/i, '').replace(/_([a-z])/g, (g) => g[1].toUpperCase()), item.itemName)}</span>
+ <span className="num text-label text-text-3">{t('stock.count.expected', { n: `${item.systemQuantity} ${item.unit}` })}</span>
  {item.difference !== 0 && (
- <div>
- <label className="text-xs text-gray-500 mb-2 block">Adjustment Type *</label>
- <div className="flex gap-2">
- <button
- onClick={() => handleAdjustmentTypeChange(item.itemId, 'wastage')}
- className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-all ${
- item.adjustmentType === 'wastage'
- ? 'bg-red-600 text-white border-red-600'
- : 'bg-white text-gray-700 border-gray-300 hover:border-red-400'
- }`}
- >
- Wastage
- </button>
- <button
- onClick={() => handleAdjustmentTypeChange(item.itemId, 'counting_error')}
- className={`px-3 py-1.5 rounded-lg text-sm border-2 transition-all ${
- item.adjustmentType === 'counting_error'
- ? 'bg-orange-600 text-white border-orange-600'
- : 'bg-white text-gray-700 border-gray-300 hover:border-orange-400'
- }`}
- >
- Counting Error
- </button>
- </div>
- </div>
+ <span className={`num text-label font-semibold ${item.difference < 0 ? 'text-danger' : 'text-success'}`}>
+ {t('stock.count.diff', { n: `${item.difference > 0 ? '+' : ''}${item.difference.toFixed(2)}` })}
+ </span>
  )}
- </div>
- </div>
-
- {/* Notes */}
- {item.difference !== 0 && (
- <div className="mt-3">
- <label className="text-xs text-gray-500 mb-1 block">Notes (Optional)</label>
- <input
+ </span>
+ <Input
  type="text"
- value={item.notes}
- onChange={(e) => handleNotesChange(item.itemId, e.target.value)}
- className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
- placeholder="Add any additional notes..."
+ inputMode="decimal"
+ aria-label={`${item.itemName} · ${t('stock.count.counted')}`}
+ value={drafts[item.itemId] ?? String(item.actualQuantity)}
+ onChange={(e) => {
+ const v = e.target.value.replace(/[^\d.-]/g, '');
+ setDrafts((d) => ({ ...d, [item.itemId]: v }));
+ handleActualQuantityChange(item.itemId, v);
+ }}
+ onBlur={() => setDrafts((d) => { const next = { ...d }; delete next[item.itemId]; return next; })}
+ className="num w-24 text-right"
  />
  </div>
+ {item.difference !== 0 && (
+ <>
+ <SegmentedControl
+ aria-label={t('stock.count.why')}
+ size="sm"
+ value={item.adjustmentType || ''}
+ onValueChange={(v) => handleAdjustmentTypeChange(item.itemId, v as 'wastage' | 'counting_error')}
+ options={[{ value: 'wastage', label: t('stock.count.wastage') }, { value: 'counting_error', label: t('stock.count.countingError') }]}
+ />
+ <Field label={t('stock.count.notes')} optional>
+ <Input value={item.notes} onChange={(e) => handleNotesChange(item.itemId, e.target.value)} />
+ </Field>
+ </>
  )}
  </div>
  ))}
  </div>
- </div>
-
- {/* Error Message */}
- {error && (
- <div className="px-6 pb-4">
- <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 flex items-start gap-3">
- <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
- <div className="text-sm text-red-900">{error}</div>
- </div>
- </div>
  )}
 
- {/* Footer */}
- <div className="p-6 bg-gray-50 rounded-b-2xl border-t-2 border-gray-200 flex justify-between items-center">
- <button
- onClick={onClose}
- className="px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all"
- >
- Cancel
- </button>
- <button
- onClick={handleSubmit}
- disabled={saving}
- className="px-6 py-3 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-xl hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
- >
- {saving ? (
- <>
- <RefreshCw className="w-5 h-5 animate-spin" />
- Saving...
- </>
- ) : (
- <>
- <Save className="w-5 h-5" />
- Save Recalibration
+ {error && <ErrorState title={t('stock.count.failed')} body={error} />}
  </>
  )}
- </button>
  </div>
- </div>
- </div>
+ </ResponsiveModal>
  );
 }
