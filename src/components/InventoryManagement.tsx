@@ -245,12 +245,14 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const q = searchQuery.toLowerCase().trim();
  return context.inventory
  .filter(item => {
- const storeMatch = effectiveStoreId ? item.storeId === effectiveStoreId : true;
+ // Matched by entity like the lists above: production-house rows have no storeId, so
+ // comparing storeId found nothing on the Production House tab.
  const nameMatch = item.itemName.toLowerCase().includes(q);
- return storeMatch && nameMatch && belongsToTab(item, activeTab);
+ return matchesEffectiveScope(item) && nameMatch && belongsToTab(item, activeTab);
  })
  .sort((a, b) => b.date.localeCompare(a.date));
- }, [searchQuery, context.inventory, effectiveStoreId, activeTab]);
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [searchQuery, context.inventory, effectiveStoreId, targetProductionHouseId, activeTab]);
 
  // Group search results by item name for summary
  const searchSummary = useMemo(() => {
@@ -680,7 +682,8 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
 
  {showOverheadForm && (
  <OverheadForm
- selectedDate={selectedDate}
+ // An edited entry keeps its own date (it was saved under the page's selected date).
+ selectedDate={editingOverhead?.date || selectedDate}
  editingItem={editingOverhead}
  employees={employees}
  existingOverheads={context.overheads}
@@ -715,7 +718,8 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
 
  {showFixedCostForm && (
  <FixedCostForm
- selectedDate={selectedDate}
+ // An edited entry keeps its own date (it was saved under the page's selected date).
+ selectedDate={editingFixedCost?.date || selectedDate}
  editingItem={editingFixedCost}
  allowOwnerPayment={isClusterHead}
  productionCashHouseId={productionCashHouseFor(editingFixedCost)}

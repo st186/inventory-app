@@ -776,78 +776,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
 
                 {/* Assign Production Head */}
                 <div className="mb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm text-gray-700">Assign Production Head</label>
-                    {head && (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={async () => {
-                            if (!context.user?.accessToken) return;
-                            
-                            // Show all production records for debugging
-                            try {
-                              const response = await fetch(`https://xssxnhrzxvtejavoqgwg.supabase.co/functions/v1/make-server-c2dd9b9d/production`, {
-                                headers: {
-                                  'Authorization': `Bearer ${context.user.accessToken}`
-                                }
-                              });
-                              const data = await response.json();
-                              console.log('🔍 ALL PRODUCTION RECORDS:', data.production);
-                              
-                              const recordsForThisHead = data.production.filter((r: any) =>
-                                r.productionHouseId === house.id
-                              );
-                              
-                              console.log('📊 Records related to this production house:', recordsForThisHead);
-                              console.log('📊 Current Production House ID:', house.id);
-                              console.log('📊 Records by productionHouseId:');
-                              recordsForThisHead.forEach((r: any) => {
-                                console.log(`  - Record ${r.id.slice(0,8)} (${r.date}): storeId=${r.storeId}, productionHouseId=${r.productionHouseId}`);
-                              });
-                              
-                              alert(`Found ${recordsForThisHead.length} records related to this production house.\n\nCheck console for details (F12).`);
-                            } catch (error) {
-                              console.error('Error fetching production data:', error);
-                              alert('Failed to fetch data. Check console.');
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
-                          title="Show current production records in console for debugging"
-                        >
-                          🔍 Debug Records
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (!context.user?.accessToken) return;
-                            
-                            // Ask user for the OLD storeId that needs to be fixed
-                            const oldStoreId = window.prompt(
-                              `Enter the OLD storeId to fix (the wrong ID that production records currently have):\n\nThis will update all production records from that ID to the correct production house ID: ${house.id}`
-                            );
-                            
-                            if (!oldStoreId || oldStoreId.trim() === '') {
-                              return; // User cancelled
-                            }
-                            
-                            if (window.confirm(`Fix production records with OLD ID: ${oldStoreId}?\n\nThis will update them to use the correct production house ID: ${house.id}`)) {
-                              try {
-                                const result = await api.fixProductionRecords(context.user.accessToken, house.id, oldStoreId.trim());
-                                alert(`✅ Fixed ${result.updatedCount} production records!\n\nPlease refresh the page.`);
-                                window.location.reload();
-                              } catch (error) {
-                                console.error('Error fixing records:', error);
-                                alert('Failed to fix records. Please try again.');
-                              }
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 transition-colors"
-                          title="Fix old production records that have wrong productionHouseId"
-                        >
-                          🔧 Fix Old Records
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <label className="block text-sm text-gray-700 mb-2">Assign Production Head</label>
                   <select
                     value={house.productionHeadId || ''}
                     onChange={(e) => handleAssignProductionHead(house.id, e.target.value)}

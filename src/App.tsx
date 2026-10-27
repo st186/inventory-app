@@ -36,7 +36,6 @@ import { usePasswordPolicy, ChangePasswordDialog, PasswordExpiryBanner } from '.
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreSelector } from './components/StoreSelector';
-import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
@@ -665,9 +664,12 @@ export default function App() {
  const loadInventoryItems = async () => {
  try {
  const items = await api.fetchInventoryItems();
+ // Writing the item list is for the cluster head and managers only (the server refuses
+ // anyone else), so nobody else tries the set-up writes below.
+ const canEditItems = user?.role === 'cluster_head' || user?.role === 'manager';
  
  // If no items exist, initialize defaults
- if (items.length === 0) {
+ if (items.length === 0 && canEditItems) {
  console.log('📦 No inventory items found, initializing defaults...');
  try {
  await api.initializeDefaultInventoryItems();
@@ -687,7 +689,7 @@ export default function App() {
  setInventoryItems(items);
  
  // Auto-migrate: Ensure the 7 core momo types exist as inventory items
- await ensureCoreMomosExist(items);
+ if (canEditItems) await ensureCoreMomosExist(items);
  } catch (error) {
  console.error('Error loading inventory items:', error);
  setInventoryItems([]);
@@ -1262,12 +1264,12 @@ export default function App() {
  console.log('🚀 [ADD INVENTORY] Starting addInventoryItem...');
  console.log('📊 [ADD INVENTORY] Current inventory count:', inventory.length);
  
- // Auto-add storeId if user has one - but never for a production-house-tagged item,
- // which is identified by productionHouseId, not storeId. Stamping the user's own
- // storeId onto those silently mixes store and production-house identity in the data.
+ // The item's own storeId wins; the user's storeId only fills it in when missing (this
+ // used to overwrite the store an operations manager or cluster head picked). Never for a
+ // production-house-tagged item, which is identified by productionHouseId, not storeId.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  console.log('📤 [ADD INVENTORY] Sending inventory item to backend:', {
  date: itemWithStore.date,
  itemName: itemWithStore.itemName,
@@ -1301,12 +1303,12 @@ export default function App() {
  if (!user) return;
  try {
  console.log('💰 Adding Expense/Overhead item:', item.category, item.description);
- // Auto-add storeId if user has one - but never for a production-house-tagged item,
- // which is identified by productionHouseId, not storeId. Stamping the user's own
- // storeId onto those silently mixes store and production-house identity in the data.
+ // The item's own storeId wins; the user's storeId only fills it in when missing (this
+ // used to overwrite the store an operations manager or cluster head picked). Never for a
+ // production-house-tagged item, which is identified by productionHouseId, not storeId.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  const newItem = await api.addOverhead(user.accessToken, itemWithStore);
  setOverheads((prev) => [...prev, newItem]);
  dataCache.invalidateCache('overheads');
@@ -1320,12 +1322,12 @@ export default function App() {
  const addFixedCostItem = async (item: Omit<FixedCostItem, 'id'>) => {
  if (!user) return;
  try {
- // Auto-add storeId if user has one - but never for a production-house-tagged item,
- // which is identified by productionHouseId, not storeId. Stamping the user's own
- // storeId onto those silently mixes store and production-house identity in the data.
+ // The item's own storeId wins; the user's storeId only fills it in when missing (this
+ // used to overwrite the store an operations manager or cluster head picked). Never for a
+ // production-house-tagged item, which is identified by productionHouseId, not storeId.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  const newItem = await api.addFixedCost(user.accessToken, itemWithStore);
  setFixedCosts((prev) => [...prev, newItem]);
  dataCache.invalidateCache('fixedCosts');
@@ -1338,11 +1340,11 @@ export default function App() {
  const updateInventoryItem = async (id: string, item: Omit<InventoryItem, 'id'>) => {
  if (!user) return;
  try {
- // Auto-add storeId if user has one (for consistency) - but never for a
- // production-house-tagged item (identified by productionHouseId, not storeId).
+ // Keep the item's own storeId (editing someone else's entry used to move it to the
+ // editor's store); only fill it in when missing. Never for a production-house-tagged item.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  const updatedItem = await api.updateInventory(user.accessToken, id, itemWithStore);
  setInventory((prev) => prev.map(inv => inv.id === id ? updatedItem : inv));
  dataCache.invalidateCache('inventory');
@@ -1356,11 +1358,11 @@ export default function App() {
  if (!user) return;
  try {
  console.log('💰 Updating Expense/Overhead item:', id, item.category);
- // Auto-add storeId if user has one (for consistency) - but never for a
- // production-house-tagged item (identified by productionHouseId, not storeId).
+ // Keep the item's own storeId (editing someone else's entry used to move it to the
+ // editor's store); only fill it in when missing. Never for a production-house-tagged item.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  const updatedItem = await api.updateOverhead(user.accessToken, id, itemWithStore);
  setOverheads((prev) => prev.map(ovh => ovh.id === id ? updatedItem : ovh));
  dataCache.invalidateCache('overheads');
@@ -1374,11 +1376,11 @@ export default function App() {
  const updateFixedCostItem = async (id: string, item: Omit<FixedCostItem, 'id'>) => {
  if (!user) return;
  try {
- // Auto-add storeId if user has one (for consistency) - but never for a
- // production-house-tagged item (identified by productionHouseId, not storeId).
+ // Keep the item's own storeId (editing someone else's entry used to move it to the
+ // editor's store); only fill it in when missing. Never for a production-house-tagged item.
  const itemWithStore = item.entityType === 'production_house'
  ? item
- : { ...item, storeId: user.storeId || item.storeId };
+ : { ...item, storeId: item.storeId || user.storeId || undefined };
  const updatedItem = await api.updateFixedCost(user.accessToken, id, itemWithStore);
  setFixedCosts((prev) => prev.map(fc => fc.id === id ? updatedItem : fc));
  dataCache.invalidateCache('fixedCosts');
@@ -2012,19 +2014,9 @@ export default function App() {
  </button>
  </>
  )}
- {isAnyIncharge && (
- <button
- onClick={() => setActiveView('stock-requests')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'stock-requests'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Package className="w-4 h-4" />
- <span>Stock Requests</span>
- </button>
- )}
+ {/* No "Stock Requests" button: it opened the old stock request page (stock_request_ records),
+ which the momo requests in Analytics (Daily Stock Requests) replaced. The page is still
+ reachable from old notifications; no data was removed. */}
  {isManager && (
  <>
  <button
@@ -2224,22 +2216,9 @@ export default function App() {
  </button>
  </>
  )}
- {isAnyIncharge && (
- <button
- onClick={() => {
- setActiveView('stock-requests');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'stock-requests'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Stock Requests</span>
- </button>
- )}
+ {/* No "Stock Requests" button: it opened the old stock request page (stock_request_ records),
+ which the momo requests in Analytics (Daily Stock Requests) replaced. The page is still
+ reachable from old notifications; no data was removed. */}
  {isManager && (
  <>
  <button
@@ -3162,11 +3141,6 @@ export default function App() {
  </Suspense>
  </main>
  </div>
-
- {/* Fix Legacy Inventory - Shows when there are items missing storeId */}
- {user && activeView === 'inventory' && (
- <FixLegacyInventory context={contextValue} />
- )}
  </>
  );
 }

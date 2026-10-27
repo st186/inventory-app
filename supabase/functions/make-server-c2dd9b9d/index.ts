@@ -281,6 +281,10 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/push\/send$/, roles: LEADS },
   // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
   { test: /^\/send-/, roles: LEADS },
+  // Item catalog edits: renaming, merging or deleting expense items and changing the momo
+  // item list (inventory-items.tsx has no checks of its own).
+  { test: /^\/custom-items\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: LEADS },
+  { test: /^\/inventory-items(\/|$)/, methods: WRITES, roles: LEADS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 
@@ -880,9 +884,10 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
       item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
       : null;
@@ -953,6 +958,15 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
   }
 });
 
+// Who logged an expense stays on it: the edit forms don't send these fields and the PUT
+// routes replace the whole record, so every edit used to drop them.
+function keepExpenseAuthor(existing: any, updated: any) {
+  for (const field of ['createdBy', 'createdByName', 'createdByEmail']) {
+    if (existing?.[field] !== undefined) updated[field] = existing[field];
+  }
+  return updated;
+}
+
 // Update inventory item
 app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -975,15 +989,19 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     // Paginated: inventory: has 3000+ rows, and the plain prefix read stops at 1000, so an
     // older entry wasn't found and the edit was saved as a second copy.
     const existing = (await getAllByPrefixWithRetry('inventory:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Inventory item not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `inventory:${ownerId}:${itemId}`;
     const updates = await c.req.json();
 
-    const inventoryItem = {
+    const inventoryItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     inventoryItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(inventoryItem, role, existing);
 
     await kvWithRetry.set(key, inventoryItem);
@@ -1108,9 +1126,10 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       item.entityType === 'production_house' || item.entityType === 'store' ? item.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (item.productionHouseId || null))
       : null;
@@ -1170,7 +1189,11 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated, like GET /overheads: the plain prefix read stops at 1000 rows.
     const existing = (await getAllByPrefixWithRetry('overhead:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Overhead item not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `overhead:${ownerId}:${itemId}`;
     const updates = await c.req.json();
     if (updates?.category === 'fuel' && role !== 'cluster_head') {
@@ -1180,11 +1203,11 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     
-    const overheadItem = {
+    const overheadItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     overheadItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(overheadItem, role, existing);
 
     await kvWithRetry.set(key, overheadItem);
@@ -1295,9 +1318,10 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
       body.entityType === 'production_house' || body.entityType === 'store' ? body.entityType : null;
     const naturalEntityType: 'store' | 'production_house' = isProductionIncharge ? 'production_house' : 'store';
     const entityType = requestedEntityType || naturalEntityType;
-    // The cluster head belongs to no single store or production house, so whichever one the
-    // client names is the one the expense is for.
-    const pinnedToOwnSide = role !== 'cluster_head';
+    // The cluster head and operations managers belong to no single store or production house,
+    // so whichever one the client names is the one the expense is for (an operations manager
+    // used to be pinned to their own storeId too). Store and production incharges stay pinned.
+    const pinnedToOwnSide = role !== 'cluster_head' && (isStoreIncharge || isProductionIncharge);
     const resolvedProductionHouseId = entityType === 'production_house'
       ? (pinnedToOwnSide && entityType === naturalEntityType ? (storeId || null) : (body.productionHouseId || null))
       : null;
@@ -1354,15 +1378,19 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: the plain prefix read stops at 1000 rows.
     const existing = (await getAllByPrefixWithRetry('fixedcost:')).find((i: any) => i.id === itemId);
-    const ownerId = existing?.userId || userId;
+    // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
+    if (!existing) {
+      return c.json({ error: 'Fixed cost not found - it may have been deleted' }, 404);
+    }
+    const ownerId = existing.userId || userId;
     const key = `fixedcost:${ownerId}:${itemId}`;
     const updates = await c.req.json();
 
-    const fixedCostItem = {
+    const fixedCostItem = keepExpenseAuthor(existing, {
       ...updates,
       id: itemId,
       userId: ownerId
-    };
+    });
     fixedCostItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(fixedCostItem, role, existing);
 
     await kvWithRetry.set(key, fixedCostItem);
@@ -2540,7 +2568,11 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
 // fired: this route, the inline pending-approvals "Approve" button (which calls this same
 // route), or the 24h auto-approve-stale cron below - confirmed bug this session, both of
 // the latter two skipped crediting entirely since only the client-side path did it.
-async function creditProductionHouseInventory(productionData: any): Promise<void> {
+// Credits only the change since the entry was last credited (creditedPieces, per type): an
+// approved entry that is edited goes back to pending, and approving it again used to add its
+// whole quantity a second time. Returns the pieces now credited, to save on the record, or
+// null when nothing was credited.
+async function creditProductionHouseInventory(productionData: any): Promise<Record<string, number> | null> {
   try {
     let productionHouseId = productionData.productionHouseId;
     let productionHouse = productionHouseId ? await kv.get(`production_house_${productionHouseId}`) : null;
@@ -2554,14 +2586,16 @@ async function creditProductionHouseInventory(productionData: any): Promise<void
     }
     if (!productionHouse || !productionHouseId) {
       console.log('creditProductionHouseInventory: no matching production house found for', productionData.id, '- skipping credit');
-      return;
+      return null;
     }
 
+    const alreadyCredited = productionData.creditedPieces || {};
+    const credited = producedPiecesByType(productionData);
     const newInventory = { ...(productionHouse.inventory || {}) };
     for (const momoType of PRODUCTION_MOMO_TYPES) {
-      const finalQty = productionData[momoType.key]?.final || 0;
-      if (finalQty > 0) {
-        newInventory[momoType.inventoryKey] = (newInventory[momoType.inventoryKey] || 0) + finalQty;
+      const change = credited[momoType.inventoryKey] - (Number(alreadyCredited[momoType.inventoryKey]) || 0);
+      if (change !== 0) {
+        newInventory[momoType.inventoryKey] = (newInventory[momoType.inventoryKey] || 0) + change;
       }
     }
 
@@ -2571,11 +2605,43 @@ async function creditProductionHouseInventory(productionData: any): Promise<void
       updatedAt: getNowIST(),
     });
     console.log(`Credited production house ${productionHouseId} inventory from production ${productionData.id}:`, newInventory);
+    return credited;
   } catch (error) {
     console.log('Error crediting production house inventory:', error);
     // Non-fatal - the approval itself already succeeded; worst case inventory needs a
     // manual fix, same tradeoff every other non-fatal side effect in this file accepts.
+    return null;
   }
+}
+
+// Finished pieces per type (ProductionHouse.inventory keys) on a production entry.
+function producedPiecesByType(productionData: any): Record<string, number> {
+  const pieces: Record<string, number> = {};
+  for (const momoType of PRODUCTION_MOMO_TYPES) {
+    pieces[momoType.inventoryKey] = Math.max(0, Number(productionData?.[momoType.key]?.final) || 0);
+  }
+  return pieces;
+}
+
+// Approves a production entry and credits the production house: the record is saved as
+// approved first, then creditedPieces is saved once the credit went through, so a failed
+// credit never marks pieces as credited.
+async function approveProductionRecord(existing: any, approvedBy: string): Promise<any> {
+  const key = `production:${existing.userId}:${existing.id}`;
+  const approvedItem = { ...existing, approvalStatus: 'approved', approvedBy, approvedAt: getNowIST() };
+  await kv.set(key, approvedItem);
+  const credited = await creditProductionHouseInventory(approvedItem);
+  if (!credited) return approvedItem;
+  const creditedItem = { ...approvedItem, creditedPieces: credited };
+  await kv.set(key, creditedItem);
+  return creditedItem;
+}
+
+// Cluster head, or an operations manager (a manager who is not a store or production incharge).
+function isClusterHeadOrOps(user: any): boolean {
+  const role = user?.user_metadata?.role;
+  const designation = user?.user_metadata?.designation;
+  return role === 'cluster_head' || (role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge');
 }
 
 // Add production data
@@ -2645,14 +2711,41 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
   }
 
   try {
+    // Production incharges edit their own house's entries (an edit goes back to pending for
+    // approval); operations managers and the cluster head can edit any.
+    const isProductionIncharge = authResult.user.user_metadata?.designation === 'production_incharge';
+    if (!isProductionIncharge && !isClusterHeadOrOps(authResult.user)) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can edit production data' }, 403);
+    }
+
     const itemId = c.req.param('id');
     const data = await c.req.json();
 
-    const key = `production:${authResult.user.id}:${itemId}`;
+    // Update the record where it already lives (under whoever created it): writing under the
+    // editor's own id left the original in place and added a second copy. Paginated, as the
+    // plain prefix read stops at 1000 rows.
+    const existing = (await getAllByPrefixWithRetry('production:')).find((p: any) => p.id === itemId);
+    if (!existing) {
+      return c.json({ error: 'Production data not found' }, 404);
+    }
+    // A production incharge's storeId holds their production house's id.
+    const ownHouseIds = [authResult.user.user_metadata?.storeId, ...(authResult.user.user_metadata?.assignedProductionHouseIds || [])].filter(Boolean);
+    if (isProductionIncharge && !isClusterHeadOrOps(authResult.user) && !ownHouseIds.includes(existing.productionHouseId) && !ownHouseIds.includes(existing.storeId)) {
+      return c.json({ error: 'You can only edit your own production house\'s entries' }, 403);
+    }
+
+    const key = `production:${existing.userId}:${itemId}`;
     const updatedItem = {
       ...data,
       id: itemId,
-      userId: authResult.user.id
+      userId: existing.userId,
+      // The production incharge's own edit always goes back for approval (the app already
+      // sends pending; this stops an edit from marking itself approved).
+      ...(isClusterHeadOrOps(authResult.user) ? {} : { approvalStatus: 'pending', approvedBy: null, approvedAt: null }),
+      // Kept by the server, not the form: what approval has already credited to the production
+      // house, so re-approving the edit credits only the change. An entry approved before this
+      // was tracked had its pieces credited when it was approved.
+      creditedPieces: existing.creditedPieces ?? (existing.approvalStatus === 'approved' ? producedPiecesByType(existing) : undefined),
     };
 
     await kv.set(key, updatedItem);
@@ -2682,28 +2775,23 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    
-    // Find the production item
-    const allProduction = await kv.getByPrefix('production:');
+
+    // Find the production item. Paginated: the plain prefix read stops at 1000 rows, so
+    // entries past that came back "not found".
+    const allProduction = await getAllByPrefixWithRetry('production:');
     const existingProduction = allProduction.find((p: any) => p.id === itemId);
     
     if (!existingProduction) {
       return c.json({ error: 'Production data not found' }, 404);
     }
-    
-    const key = `production:${existingProduction.userId}:${itemId}`;
+    // A second approval (double tap, two approvers at once) would credit the pieces again.
+    if (existingProduction.approvalStatus === 'approved') {
+      return c.json({ error: 'This production entry is already approved' }, 409);
+    }
 
     const approverName = authResult.user.user_metadata?.name || authResult.user.email;
-    const approvedItem = {
-      ...existingProduction,
-      approvalStatus: 'approved',
-      approvedBy: approverName,
-      approvedAt: getNowIST()
-    };
-
-    await kv.set(key, approvedItem);
+    const approvedItem = await approveProductionRecord(existingProduction, approverName);
     console.log('Production data approved:', itemId);
-    await creditProductionHouseInventory(approvedItem);
 
     // Notify the production head who submitted the data
     if (existingProduction.userId) {
@@ -2741,7 +2829,8 @@ app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
 
   try {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const allProduction = await kv.getByPrefix('production:');
+    // Paginated - the plain prefix read stops at 1000 rows, so pending entries past that were skipped.
+    const allProduction = await getAllByPrefixWithRetry('production:');
     const stalePending = allProduction.filter((p: any) => {
       if (p.approvalStatus !== 'pending') return false;
       // Records submitted before createdAt existed have no reliable submission
@@ -2759,16 +2848,9 @@ app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
 
     let approvedCount = 0;
     for (const item of stalePending) {
-      const key = `production:${item.userId}:${item.id}`;
-      const approvedItem = {
-        ...item,
-        approvalStatus: 'approved',
-        approvedBy: 'Auto-approved (no action within 24 hours)',
-        approvedAt: getNowIST()
-      };
-      await kv.set(key, approvedItem);
+      // Same path as a manual approval, so an edited entry is credited only its change.
+      await approveProductionRecord(item, 'Auto-approved (no action within 24 hours)');
       approvedCount++;
-      await creditProductionHouseInventory(approvedItem);
 
       if (item.userId) {
         await notifyUser(
@@ -5039,17 +5121,28 @@ function computeLedgerOpening(houseLedgerRecords: any[], date: string): Record<s
   return opening;
 }
 
+// One production house's closed days and logged items, read by key prefix
+// (production-ledger:{house}:{date}, production-ledger-item:{house}:{date}:{id}) - just one
+// day's items when itemDate is given - and paginated. The plain prefix read of every house's
+// rows stops at 1000, after which logged items and closed days silently dropped out of the
+// totals and openings.
+async function getHouseLedger(productionHouseId: string, itemDate?: string): Promise<{ houseRecords: any[]; houseItems: any[] }> {
+  const [records, items] = await Promise.all([
+    getAllByPrefixWithRetry(`production-ledger:${productionHouseId}:`),
+    getAllByPrefixWithRetry(`production-ledger-item:${productionHouseId}:${itemDate ? `${itemDate}:` : ''}`),
+  ]);
+  return {
+    houseRecords: records.filter((r: any) => r.productionHouseId === productionHouseId),
+    houseItems: items.filter((i: any) => i.productionHouseId === productionHouseId && (!itemDate || i.date === itemDate)),
+  };
+}
+
 async function cascadeRecomputeProductionLedger(productionHouseId: string, fromDate: string): Promise<void> {
   try {
     const today = getTodayIST();
     if (fromDate > today) return;
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId);
 
     let cursor = fromDate;
     let updated = 0;
@@ -5199,23 +5292,17 @@ app.get('/make-server-c2dd9b9d/production-ledger', async (c) => {
       return c.json({ error: 'productionHouseId is required' }, 400);
     }
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId);
-
     if (from && to) {
-      return c.json({ entries: houseRecords.filter((r: any) => r.date >= from && r.date <= to) });
+      const records = await getAllByPrefixWithRetry(`production-ledger:${productionHouseId}:`);
+      return c.json({ entries: records.filter((r: any) => r.productionHouseId === productionHouseId && r.date >= from && r.date <= to) });
     }
 
     if (!date) {
       return c.json({ error: 'date, or from+to, is required' }, 400);
     }
 
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
     const todaysItems = houseItems
-      .filter((i: any) => i.date === date)
       .sort((a: any, b: any) => (a.loggedAt || '').localeCompare(b.loggedAt || ''));
     const existing = houseRecords.find((r: any) => r.date === date);
     // Whether this house has ever closed a day strictly before `date` - the frontend uses
@@ -5315,7 +5402,8 @@ app.put('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const allItems = await kv.getByPrefix('production-ledger-item:');
+    // Paginated - the plain prefix read stops at 1000 rows, so items past that were "not found".
+    const allItems = await getAllByPrefixWithRetry('production-ledger-item:');
     const existing = allItems.find((i: any) => i.id === itemId);
     if (!existing) {
       return c.json({ error: 'Production ledger item not found' }, 404);
@@ -5356,7 +5444,8 @@ app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const allItems = await kv.getByPrefix('production-ledger-item:');
+    // Paginated - the plain prefix read stops at 1000 rows, so items past that were "not found".
+    const allItems = await getAllByPrefixWithRetry('production-ledger-item:');
     const existing = allItems.find((i: any) => i.id === itemId);
     if (!existing) {
       return c.json({ error: 'Production ledger item not found' }, 404);
@@ -5401,12 +5490,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
 
-    const [allLedgerRecords, allItems] = await Promise.all([
-      kv.getByPrefix('production-ledger:'),
-      kv.getByPrefix('production-ledger-item:'),
-    ]);
-    const houseRecords = (allLedgerRecords || []).filter((r: any) => r.productionHouseId === productionHouseId);
-    const houseItems = (allItems || []).filter((i: any) => i.productionHouseId === productionHouseId && i.date === date);
+    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
 
     const existing = houseRecords.find((r: any) => r.date === date);
     const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
@@ -10940,7 +11024,9 @@ async function creditStoreInventoryForDelivery(existingRequest: any, requestId: 
   });
 
   try {
-    const storeKey = `store_${existingRequest.storeId}`;
+    // Stores live under `store:` (see /stores). This read `store_`, never found the store and
+    // returned here, so neither the store credit nor the production-house deduction below ran.
+    const storeKey = `store:${existingRequest.storeId}`;
     const store = await kv.get(storeKey);
 
     if (!store) {
@@ -11036,6 +11122,30 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
       return c.json({ error: 'Production request not found' }, 404);
     }
     
+    // Accept .. ship are production steps: production incharge, operations managers, cluster
+    // head. Confirming delivery is also open to the receiving store's own people (the store
+    // incharge's "Confirm Delivery" before receive-and-count goes live), and only from shipped.
+    // A delivered request can't be moved again - moving it back and confirming again credited
+    // the store's stock twice.
+    const meta = auth.user.user_metadata || {};
+    const isProductionSide = meta.designation === 'production_incharge' || isClusterHeadOrOps(auth.user);
+    if (REQUEST_DONE.includes(existingRequest.status)) {
+      return c.json({ error: `This delivery is already marked ${existingRequest.status}` }, 409);
+    }
+    if (status === 'delivered' || status === 'partially-delivered') {
+      const isOwnStore = !!existingRequest.storeId && (meta.storeId === existingRequest.storeId || (meta.assignedStoreIds || []).includes(existingRequest.storeId));
+      if (!isOwnStore && !isProductionSide) {
+        return c.json({ error: 'Only the receiving store or the production side can confirm this delivery' }, 403);
+      }
+      if (existingRequest.status !== 'shipped' && existingRequest.status !== 'partially-shipped') {
+        return c.json({ error: 'This request has not been shipped yet' }, 409);
+      }
+    } else if (!['accepted', 'in-preparation', 'prepared', 'shipped', 'partially-shipped'].includes(status)) {
+      return c.json({ error: `Unknown status: ${status}` }, 400);
+    } else if (!isProductionSide) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can update a request' }, 403);
+    }
+
     const now = new Date().toISOString();
     const updates: any = {
       status,
@@ -11164,9 +11274,18 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
     const id = c.req.param('id');
     const { shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch } = await c.req.json();
 
+    if (auth.user.user_metadata?.designation !== 'production_incharge' && !isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the production incharge, operations managers and the cluster head can ship a request' }, 403);
+    }
+
     const existingRequest = await kv.get(`production_request_${id}`);
     if (!existingRequest) {
       return c.json({ error: 'Production request not found' }, 404);
+    }
+    // Shipping again would set it back to shipped, and the store's confirmation would then
+    // credit its stock a second time.
+    if (REQUEST_DONE.includes(existingRequest.status)) {
+      return c.json({ error: `This delivery is already marked ${existingRequest.status}` }, 409);
     }
     
     const now = new Date().toISOString();
@@ -11852,6 +11971,11 @@ app.post('/make-server-c2dd9b9d/production-houses', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const body = await c.req.json();
@@ -11897,6 +12021,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const id = c.req.param('id');
@@ -11929,6 +12058,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id/inventory', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -11965,6 +12099,11 @@ app.put('/make-server-c2dd9b9d/production-houses/:id/assign-head', async (c) => 
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -12015,6 +12154,11 @@ app.post('/make-server-c2dd9b9d/production-houses/:id/fix-records', async (c) =>
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -12075,6 +12219,11 @@ app.delete('/make-server-c2dd9b9d/production-houses/:id', async (c) => {
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
   }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
+  }
 
   try {
     const id = c.req.param('id');
@@ -12114,6 +12263,11 @@ app.post('/make-server-c2dd9b9d/production-houses/transfer-inventory', async (c)
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
     return c.json({ error: auth.error }, auth.status);
+  }
+  // Production house set-up, stock and records: the cluster head and operations managers only
+  // (any signed-in user could change them).
+  if (!isClusterHeadOrOps(auth.user)) {
+    return c.json({ error: 'Only the cluster head and operations managers can change production houses' }, 403);
   }
 
   try {
@@ -12944,12 +13098,23 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/approve', async (c) => {
   }
 
   try {
+    // Approvers are the cluster head and operations managers (as on the Recalibration screen),
+    // and never the person who did the count: anyone could approve, their own count included.
+    if (!isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the cluster head and operations managers can approve a stock count' }, 403);
+    }
     const recalibrationId = c.req.param('id');
     
     // Get the recalibration record
     const recalibration = await kv.get(`recalibration_${recalibrationId}`);
     if (!recalibration) {
       return c.json({ error: 'Recalibration not found' }, 404);
+    }
+    if (recalibration.performedBy === auth.user.id) {
+      return c.json({ error: 'Someone other than the person who did the count has to approve it' }, 403);
+    }
+    if (recalibration.status && recalibration.status !== 'pending') {
+      return c.json({ error: `This stock count is already ${recalibration.status}` }, 409);
     }
 
     // Update the record with approval
@@ -12985,6 +13150,9 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/reject', async (c) => {
   }
 
   try {
+    if (!isClusterHeadOrOps(auth.user)) {
+      return c.json({ error: 'Only the cluster head and operations managers can reject a stock count' }, 403);
+    }
     const recalibrationId = c.req.param('id');
     const { reason } = await c.req.json();
     

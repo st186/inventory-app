@@ -5,7 +5,8 @@ import { Package, TrendingUp, TrendingDown, Calendar, Factory, Info } from 'luci
 import { Card } from './ui/card';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { QuickAddInventoryItem } from './QuickAddInventoryItem';
-import { getTodayIST } from '../utils/timezone';
+import { getTodayIST, addDays, formatDateIST } from '../utils/timezone';
+import { SENT_STATUSES, shippedAtIST, shippedPieces } from '../utils/requestStock';
 
 type Props = {
   context: InventoryContextType;
@@ -13,32 +14,37 @@ type Props = {
   onNavigateToManageItems?: () => void;
 };
 
+type ProductStock = { opening: number; produced: number; sent: number; available: number; percentage: number };
+
+const STOCK_KEYS = ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure', 'schezwan'] as const;
+type StockKey = typeof STOCK_KEYS[number];
+
 type ProductionHouseStock = {
   productionHouseId: string;
   productionHouseName: string;
   date: string;
-  stock: {
-    chicken: { produced: number; sent: number; available: number; percentage: number };
-    chickenCheese: { produced: number; sent: number; available: number; percentage: number };
-    veg: { produced: number; sent: number; available: number; percentage: number };
-    cheeseCorn: { produced: number; sent: number; available: number; percentage: number };
-    paneer: { produced: number; sent: number; available: number; percentage: number };
-    vegKurkure: { produced: number; sent: number; available: number; percentage: number };
-    chickenKurkure: { produced: number; sent: number; available: number; percentage: number };
-    schezwan: { produced: number; sent: number; available: number; percentage: number };
-  };
+  countedOn: string | null; // IST day of the stock count the figures start from, if any
+  stock: Record<StockKey, ProductStock>;
   totalProduced: number;
   totalWastage: number;
   approvedEntries: number;
   pendingApproval: number;
 };
 
+// A production house's last stock count (recalibration), mapped to stock keys.
+type StockCount = { date: string; isOpeningBalance: boolean; items: Record<string, number> };
+
+// Requests are fetched from a week before the earliest count (a request asked for before the
+// count can ship after it); a house with no count at all needs the whole history.
+const FULL_HISTORY_FROM = '2020-01-01';
+
 export function ProductionHouseStockStatus({ context, productionHouses, onNavigateToManageItems }: Props) {
   const [selectedDate, setSelectedDate] = useState(getTodayIST());
   const [selectedProductionHouse, setSelectedProductionHouse] = useState<string | null>(null);
   const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [productionHouseOpeningBalance, setProductionHouseOpeningBalance] = useState<Record<string, Record<string, number>>>({});
+  const [stockCounts, setStockCounts] = useState<Record<string, StockCount>>({});
+  const [requestsFrom, setRequestsFrom] = useState<string | null>(null);
 
   // Helper function to get fresh access token
   const getFreshAccessToken = async (): Promise<string | null> => {
@@ -52,365 +58,164 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     }
   };
 
-  // Load production requests
+  // Each house's last stock count, then the requests shipped since the earliest of them.
   useEffect(() => {
-    const loadData = async () => {
+    if (productionHouses.length === 0) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
       const token = await getFreshAccessToken();
       if (!token) {
         console.error('No access token available');
-        setLoading(false);
+        if (!cancelled) setLoading(false);
         return;
       }
 
+      // Map camelCase item names from the count to the stock keys used here.
+      const keyMapping: Record<string, StockKey> = {
+        chickenMomo: 'chicken',
+        chickenCheeseMomo: 'chickenCheese',
+        vegMomo: 'veg',
+        cheeseCornMomo: 'cheeseCorn',
+        paneerMomo: 'paneer',
+        vegKurkureMomo: 'vegKurkure',
+        chickenKurkureMomo: 'chickenKurkure',
+        schezwanMomo: 'schezwan',
+      };
+      const counts: Record<string, StockCount> = {};
+      for (const house of productionHouses) {
+        try {
+          const recalResponse = await api.getLastRecalibration(token, house.id, 'production_house');
+          const record = recalResponse?.record;
+          // A rejected count is not a count to start from.
+          if (!record?.date || record.status === 'rejected') continue;
+          const items: Record<string, number> = {};
+          (record.items || []).forEach((item: any) => {
+            // itemId can be either the item's id or its name
+            const inventoryItem = context.inventoryItems?.find(invItem => invItem.id === item.itemId || invItem.name === item.itemId);
+            const name: string = inventoryItem?.name || item.itemId || '';
+            const camelKey = name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
+            const key = keyMapping[camelKey] || camelKey;
+            if ((STOCK_KEYS as readonly string[]).includes(key)) items[key] = Number(item.actualQuantity) || 0;
+          });
+          // The record's date is stored as IST wall-clock time.
+          counts[house.id] = {
+            date: record.date,
+            isOpeningBalance: record.isOpeningBalance ?? record.date.substring(8, 10) === '01',
+            items,
+          };
+        } catch (error) {
+          console.error(`Error fetching the last stock count for ${house.name}:`, error);
+        }
+      }
+
+      const countDays = productionHouses.map(house => counts[house.id]?.date.substring(0, 10));
+      const from = countDays.some(day => !day)
+        ? FULL_HISTORY_FROM
+        : addDays(countDays.reduce((a, b) => (a! < b! ? a : b))!, -7);
       try {
-        const requestsData = await api.fetchProductionRequests(token);
-        setProductionRequests(requestsData);
+        const requestsData = await api.fetchProductionRequests(token, from);
+        if (!cancelled) {
+          setProductionRequests(requestsData);
+          setRequestsFrom(from);
+        }
       } catch (error) {
         console.error('Error loading production requests:', error);
-      } finally {
+      }
+      if (!cancelled) {
+        setStockCounts(counts);
         setLoading(false);
       }
     };
 
-    loadData();
-  }, []);
-
-  // Load production house opening balance from recalibration
-  useEffect(() => {
-    const loadProductionHouseOpeningBalances = async () => {
-      const token = await getFreshAccessToken();
-      if (!token) return;
-
-      console.log('🔄 Loading production house opening balances...');
-      console.log('  Production houses count:', productionHouses.length);
-      console.log('  Inventory items count:', context.inventoryItems?.length || 0);
-
-      const currentMonth = new Date().toISOString().substring(0, 7); // "2026-01"
-      const balances: Record<string, Record<string, number>> = {};
-
-      for (const house of productionHouses) {
-        console.log(`  Fetching recalibration for ${house.name} (${house.id})...`);
-        try {
-          const recalResponse = await api.getLastRecalibration(token, house.id, 'production_house');
-          
-          console.log(`  Recalibration response for ${house.name}:`, recalResponse);
-          
-          if (recalResponse?.record) {
-            const recalDate = recalResponse.record.date.substring(0, 7);
-            
-            console.log(`  Recalibration date: ${recalDate}, Current month: ${currentMonth}`);
-            
-            if (recalDate === currentMonth) {
-              // Use recalibration data as opening balance
-              const balance: Record<string, number> = {};
-              
-              recalResponse.record.items.forEach((item: any) => {
-                // Map itemId to camelKey - itemId can be either UUID or snake_case name
-                const inventoryItem = context.inventoryItems?.find(invItem => 
-                  invItem.id === item.itemId || invItem.name === item.itemId
-                );
-                
-                console.log(`    Item ${item.itemId}: ${inventoryItem ? 'Found' : 'NOT FOUND'}`, inventoryItem);
-                
-                if (inventoryItem) {
-                  const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-                  balance[camelKey] = item.actualQuantity;
-                  console.log(`    Mapped to ${camelKey} = ${item.actualQuantity}`);
-                }
-              });
-              
-              balances[house.id] = balance;
-              console.log(`✅ Loaded opening balance for ${house.name}:`, balance);
-            } else {
-              console.log(`  ⚠️ Recalibration month ${recalDate} doesn't match current month ${currentMonth}`);
-            }
-          } else {
-            console.log(`  ℹ️ No recalibration found for ${house.name}`);
-          }
-        } catch (error) {
-          console.error(`❌ Error fetching recalibration for ${house.name}:`, error);
-        }
-      }
-
-      console.log('🏁 Final opening balances:', balances);
-      setProductionHouseOpeningBalance(balances);
-    };
-
-    if (productionHouses.length > 0 && context.inventoryItems && context.inventoryItems.length > 0) {
-      loadProductionHouseOpeningBalances();
-    } else {
-      console.log('⚠️ Skipping opening balance load:', {
-        productionHousesCount: productionHouses.length,
-        inventoryItemsCount: context.inventoryItems?.length || 0
-      });
-    }
+    load();
+    return () => { cancelled = true; };
   }, [productionHouses, context.inventoryItems]);
 
-  // Calculate stock for production houses on selected date
+  // A date before a house's last count is worked out from all records, so it needs the
+  // shipments from before the count too.
+  useEffect(() => {
+    if (!requestsFrom || requestsFrom === FULL_HISTORY_FROM) return;
+    const needsHistory = productionHouses.some(house => {
+      const countDay = stockCounts[house.id]?.date.substring(0, 10);
+      return !countDay || countDay > selectedDate;
+    });
+    if (!needsHistory) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const token = await getFreshAccessToken();
+      try {
+        if (token) {
+          const requestsData = await api.fetchProductionRequests(token, FULL_HISTORY_FROM);
+          if (!cancelled) {
+            setProductionRequests(requestsData);
+            setRequestsFrom(FULL_HISTORY_FROM);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading production requests:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate, requestsFrom, stockCounts, productionHouses]);
+
+  // Stock for each production house on the selected date: its last stock count (if made on or
+  // before that date) + production since the count - momos shipped to its stores since the
+  // count. With no count, everything on record up to the date.
   const productionHouseStocks = useMemo(() => {
     if (loading) return [];
     const stocks: ProductionHouseStock[] = [];
 
-    console.log('🏭 Production Houses:', productionHouses);
-    console.log('📦 Production Requests:', productionRequests);
-    console.log('📅 Selected Date:', selectedDate);
-
     productionHouses.forEach(house => {
-      console.log(`\n🏭 Processing house: ${house.name} (${house.id})`);
-      
-      // Get all production data up to and including selected date for this house
-      const allPreviousProduction = context.productionData.filter(
-        prod => prod.productionHouseId === house.id && prod.date <= selectedDate
-      );
+      // Older production entries carry the house only in storeId.
+      const isHouseEntry = (prod: { productionHouseId?: string; storeId?: string }) =>
+        prod.productionHouseId === house.id || (!prod.productionHouseId && prod.storeId === house.id);
 
-      // Get all delivered requests up to and including selected date for this house
-      // Using deliveredAt date, and checking status is 'delivered'
-      const allDeliveredRequests = productionRequests?.filter(
-        req => {
-          if (!req.deliveredAt || req.status !== 'delivered') {
-            return false;
-          }
-          
-          // Extract date from deliveredAt timestamp (format: "31/12/2025, 00:29:07" or "2025-12-31")
-          let deliveredDate: string;
-          if (req.deliveredAt.includes('/')) {
-            // Format: "31/12/2025, 00:29:07"
-            const parts = req.deliveredAt.split(',')[0].split('/');
-            deliveredDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-          } else if (req.deliveredAt.includes('T')) {
-            // ISO format: "2025-12-31T00:29:07"
-            deliveredDate = req.deliveredAt.split('T')[0];
-          } else {
-            // Already in YYYY-MM-DD format
-            deliveredDate = req.deliveredAt.split(' ')[0];
-          }
-          
-          // Find the store that made this request
-          const store = context.stores.find(s => s.id === req.storeId);
-          
-          // Check if request is for a store mapped to this production house and delivered before or on selected date
-          const isForThisHouse = store?.productionHouseId === house.id;
-          const isBeforeOrOnDate = deliveredDate <= selectedDate;
-          
-          console.log(`    📦 Request ${req.id}: storeId=${req.storeId}, store.productionHouseId=${store?.productionHouseId}, houseId=${house.id}, deliveredDate=${deliveredDate}, isForThisHouse=${isForThisHouse}, isBeforeOrOnDate=${isBeforeOrOnDate}, status=${req.status}`);
-          
-          return isForThisHouse && isBeforeOrOnDate;
-        }
-      ) || [];
+      const count = stockCounts[house.id];
+      const countDay = count?.date.substring(0, 10) || null;
+      const fromCount = !!count && !!countDay && countDay <= selectedDate;
 
-      console.log(`  ✅ Total delivered requests for ${house.name}: ${allDeliveredRequests.length}`);
-      allDeliveredRequests.forEach(req => {
-        console.log(`    - Request: chicken=${req.chickenMomos}, chickenCheese=${req.chickenCheeseMomos}, deliveredAt=${req.deliveredAt}`);
+      // A count on the 1st is that month's opening balance, so that day's production comes
+      // after it; a mid-month count may have been made after the day's production, so that
+      // day is left out (same rule as Monthly Stock Recalibration).
+      const productionInWindow = context.productionData.filter(prod => {
+        if (!isHouseEntry(prod) || prod.date > selectedDate) return false;
+        if (!fromCount) return true;
+        return count.isOpeningBalance ? prod.date >= countDay! : prod.date > countDay!;
+      });
+
+      // Momos have left the production house once shipped (in transit and part shipments count),
+      // in the shipped amounts.
+      const houseStoreIds = new Set(context.stores.filter(s => s.productionHouseId === house.id).map(s => s.id));
+      const shippedInWindow = productionRequests.filter(req => {
+        if (!SENT_STATUSES.includes(req.status) || !houseStoreIds.has(req.storeId)) return false;
+        const shippedAt = shippedAtIST(req);
+        if (!shippedAt || shippedAt.substring(0, 10) > selectedDate) return false;
+        return !fromCount || shippedAt >= count.date;
+      });
+
+      const stock = {} as Record<StockKey, ProductStock>;
+      STOCK_KEYS.forEach(key => {
+        const opening = fromCount ? count.items[key] || 0 : 0;
+        const produced = productionInWindow.reduce((sum, prod) => sum + ((prod as any)[`${key}Momos`]?.final || 0), 0);
+        const sent = shippedInWindow.reduce((sum, req) => sum + shippedPieces(req, key), 0);
+        const available = Math.max(0, opening + produced - sent);
+        const total = opening + produced;
+        stock[key] = { opening, produced, sent, available, percentage: total > 0 ? (available / total) * 100 : 0 };
       });
 
       // Production for the selected date only
       const todayProduction = context.productionData.find(
-        prod => prod.productionHouseId === house.id && prod.date === selectedDate
+        prod => isHouseEntry(prod) && prod.date === selectedDate
       );
-
-      // Delivered requests for the selected date only
-      const todayDeliveredRequests = productionRequests?.filter(
-        req => {
-          if (!req.deliveredAt || req.status !== 'delivered') return false;
-          
-          // Extract date from deliveredAt timestamp
-          let deliveredDate: string;
-          if (req.deliveredAt.includes('/')) {
-            const parts = req.deliveredAt.split(',')[0].split('/');
-            deliveredDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-          } else if (req.deliveredAt.includes('T')) {
-            deliveredDate = req.deliveredAt.split('T')[0];
-          } else {
-            deliveredDate = req.deliveredAt.split(' ')[0];
-          }
-          
-          // Find the store that made this request
-          const store = context.stores.find(s => s.id === req.storeId);
-          
-          // Check if request is for a store mapped to this production house
-          return store?.productionHouseId === house.id && deliveredDate === selectedDate;
-        }
-      ) || [];
-
-      // Calculate cumulative production up to selected date
-      const cumulativeProduction = {
-        chicken: 0,
-        chickenCheese: 0,
-        veg: 0,
-        cheeseCorn: 0,
-        paneer: 0,
-        vegKurkure: 0,
-        chickenKurkure: 0,
-        schezwan: 0,
-      };
-
-      // Add opening balance from recalibration if available
-      const openingBalance = productionHouseOpeningBalance[house.id] || {};
-      
-      // Map camelCase keys from recalibration to short keys used in production
-      const keyMapping: Record<string, keyof typeof cumulativeProduction> = {
-        'chickenMomo': 'chicken',
-        'chickenCheeseMomo': 'chickenCheese',
-        'vegMomo': 'veg',
-        'cheeseCornMomo': 'cheeseCorn',
-        'paneerMomo': 'paneer',
-        'vegKurkureMomo': 'vegKurkure',
-        'chickenKurkureMomo': 'chickenKurkure',
-        'schezwanMomo': 'schezwan',
-      };
-      
-      Object.keys(openingBalance).forEach(key => {
-        const mappedKey = keyMapping[key] || key;
-        if (mappedKey in cumulativeProduction) {
-          cumulativeProduction[mappedKey as keyof typeof cumulativeProduction] = openingBalance[key];
-          console.log(`  📦 Applied opening balance: ${key} -> ${mappedKey} = ${openingBalance[key]}`);
-        }
-      });
-
-      allPreviousProduction.forEach(prod => {
-        cumulativeProduction.chicken += prod.chickenMomos?.final || 0;
-        cumulativeProduction.chickenCheese += prod.chickenCheeseMomos?.final || 0;
-        cumulativeProduction.veg += prod.vegMomos?.final || 0;
-        cumulativeProduction.cheeseCorn += prod.cheeseCornMomos?.final || 0;
-        cumulativeProduction.paneer += prod.paneerMomos?.final || 0;
-        cumulativeProduction.vegKurkure += prod.vegKurkureMomos?.final || 0;
-        cumulativeProduction.chickenKurkure += prod.chickenKurkureMomos?.final || 0;
-        cumulativeProduction.schezwan += (prod as any).schezwanMomos?.final || 0;
-      });
-
-      // Calculate cumulative sent up to selected date
-      const cumulativeSent = {
-        chicken: 0,
-        chickenCheese: 0,
-        veg: 0,
-        cheeseCorn: 0,
-        paneer: 0,
-        vegKurkure: 0,
-        chickenKurkure: 0,
-        schezwan: 0,
-      };
-
-      allDeliveredRequests.forEach(req => {
-        cumulativeSent.chicken += req.chickenMomos || 0;
-        cumulativeSent.chickenCheese += req.chickenCheeseMomos || 0;
-        cumulativeSent.veg += req.vegMomos || 0;
-        cumulativeSent.cheeseCorn += req.cheeseCornMomos || 0;
-        cumulativeSent.paneer += req.paneerMomos || 0;
-        cumulativeSent.vegKurkure += req.vegKurkureMomos || 0;
-        cumulativeSent.chickenKurkure += req.chickenKurkureMomos || 0;
-        cumulativeSent.schezwan += (req as any).schezwanMomos || 0;
-      });
-
-      // "This Month Produced" - cumulativeProduction above starts from the recalibration
-      // opening balance (not zero), so subtract that back out here; otherwise the card
-      // would double-count opening stock as if it were fresh production this month.
-      const monthProduced: typeof cumulativeProduction = { ...cumulativeProduction };
-      Object.keys(openingBalance).forEach(key => {
-        const mappedKey = keyMapping[key] || key;
-        if (mappedKey in monthProduced) {
-          monthProduced[mappedKey as keyof typeof monthProduced] -= openingBalance[key];
-        }
-      });
-
-      // Production for today (selected date)
-      const todayProductionQuantities = {
-        chicken: todayProduction?.chickenMomos?.final || 0,
-        chickenCheese: todayProduction?.chickenCheeseMomos?.final || 0,
-        veg: todayProduction?.vegMomos?.final || 0,
-        cheeseCorn: todayProduction?.cheeseCornMomos?.final || 0,
-        paneer: todayProduction?.paneerMomos?.final || 0,
-        vegKurkure: todayProduction?.vegKurkureMomos?.final || 0,
-        chickenKurkure: todayProduction?.chickenKurkureMomos?.final || 0,
-        schezwan: (todayProduction as any)?.schezwanMomos?.final || 0,
-      };
-
-      // Sent today (selected date)
-      const todaySentQuantities = {
-        chicken: 0,
-        chickenCheese: 0,
-        veg: 0,
-        cheeseCorn: 0,
-        paneer: 0,
-        vegKurkure: 0,
-        chickenKurkure: 0,
-        schezwan: 0,
-      };
-
-      todayDeliveredRequests.forEach(req => {
-        todaySentQuantities.chicken += req.chickenMomos || 0;
-        todaySentQuantities.chickenCheese += req.chickenCheeseMomos || 0;
-        todaySentQuantities.veg += req.vegMomos || 0;
-        todaySentQuantities.cheeseCorn += req.cheeseCornMomos || 0;
-        todaySentQuantities.paneer += req.paneerMomos || 0;
-        todaySentQuantities.vegKurkure += req.vegKurkureMomos || 0;
-        todaySentQuantities.chickenKurkure += req.chickenKurkureMomos || 0;
-        todaySentQuantities.schezwan += (req as any).schezwanMomos || 0;
-      });
-
-      // Calculate available stock (cumulative approach with carry-forward)
-      const stock: ProductionHouseStock['stock'] = {
-        chicken: {
-          produced: monthProduced.chicken,
-          sent: cumulativeSent.chicken,
-          available: Math.max(0, cumulativeProduction.chicken - cumulativeSent.chicken),
-          percentage: 0,
-        },
-        chickenCheese: {
-          produced: monthProduced.chickenCheese,
-          sent: cumulativeSent.chickenCheese,
-          available: Math.max(0, cumulativeProduction.chickenCheese - cumulativeSent.chickenCheese),
-          percentage: 0,
-        },
-        veg: {
-          produced: monthProduced.veg,
-          sent: cumulativeSent.veg,
-          available: Math.max(0, cumulativeProduction.veg - cumulativeSent.veg),
-          percentage: 0,
-        },
-        cheeseCorn: {
-          produced: monthProduced.cheeseCorn,
-          sent: cumulativeSent.cheeseCorn,
-          available: Math.max(0, cumulativeProduction.cheeseCorn - cumulativeSent.cheeseCorn),
-          percentage: 0,
-        },
-        paneer: {
-          produced: monthProduced.paneer,
-          sent: cumulativeSent.paneer,
-          available: Math.max(0, cumulativeProduction.paneer - cumulativeSent.paneer),
-          percentage: 0,
-        },
-        vegKurkure: {
-          produced: monthProduced.vegKurkure,
-          sent: cumulativeSent.vegKurkure,
-          available: Math.max(0, cumulativeProduction.vegKurkure - cumulativeSent.vegKurkure),
-          percentage: 0,
-        },
-        chickenKurkure: {
-          produced: monthProduced.chickenKurkure,
-          sent: cumulativeSent.chickenKurkure,
-          available: Math.max(0, cumulativeProduction.chickenKurkure - cumulativeSent.chickenKurkure),
-          percentage: 0,
-        },
-        schezwan: {
-          produced: monthProduced.schezwan,
-          sent: cumulativeSent.schezwan,
-          available: Math.max(0, cumulativeProduction.schezwan - cumulativeSent.schezwan),
-          percentage: 0,
-        },
-      };
-
-      // Calculate percentages
-      Object.keys(stock).forEach(key => {
-        const item = stock[key as keyof typeof stock];
-        if (cumulativeProduction[key as keyof typeof cumulativeProduction] > 0) {
-          item.percentage = (item.available / cumulativeProduction[key as keyof typeof cumulativeProduction]) * 100;
-        } else {
-          item.percentage = 0;
-        }
-      });
-
-      // Calculate totals
-      const totalProduced = Object.values(todayProductionQuantities).reduce((a, b) => a + b, 0);
+      const totalProduced = todayProduction
+        ? STOCK_KEYS.reduce((sum, key) => sum + ((todayProduction as any)[`${key}Momos`]?.final || 0), 0)
+        : 0;
       const totalWastage = todayProduction ? (
         (todayProduction.wastage?.dough || 0) +
         (todayProduction.wastage?.stuffing || 0) +
@@ -419,14 +224,14 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       ) : 0;
 
       const approvedEntries = context.productionData.filter(
-        prod => prod.productionHouseId === house.id && 
-        prod.date === selectedDate && 
+        prod => isHouseEntry(prod) &&
+        prod.date === selectedDate &&
         prod.approvalStatus === 'approved'
       ).length;
 
       const pendingApproval = context.productionData.filter(
-        prod => prod.productionHouseId === house.id && 
-        prod.date === selectedDate && 
+        prod => isHouseEntry(prod) &&
+        prod.date === selectedDate &&
         prod.approvalStatus === 'pending'
       ).length;
 
@@ -434,25 +239,17 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         productionHouseId: house.id,
         productionHouseName: house.name,
         date: selectedDate,
+        countedOn: fromCount ? countDay : null,
         stock,
         totalProduced,
         totalWastage,
         approvedEntries,
         pendingApproval,
       });
-      
-      console.log(`  📊 Stock entry created for ${house.name}:`, {
-        totalProduced,
-        totalWastage,
-        availableStock: stock,
-        hasOpeningBalance: Object.keys(openingBalance).length > 0,
-        openingBalance
-      });
     });
 
-    console.log('🏁 Final stocks array:', stocks);
     return stocks;
-  }, [context.productionData, context.stores, productionRequests, productionHouses, selectedDate, productionHouseOpeningBalance]);
+  }, [loading, context.productionData, context.stores, productionRequests, productionHouses, selectedDate, stockCounts]);
 
   const filteredStocks = selectedProductionHouse
     ? productionHouseStocks.filter(s => s.productionHouseId === selectedProductionHouse)
@@ -505,7 +302,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production House Stock Status</h1>
             <p className="text-sm sm:text-base text-gray-500">
-              Opening balance + This month produced - Sent to stores (delivered requests)
+              Last stock count + produced since - sent to stores since (shipped requests)
             </p>
           </div>
         </div>
@@ -591,6 +388,11 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
                 {houseStock.productionHouseName} - Stock Status
               </h3>
             </div>
+            <p className="text-xs text-muted-foreground -mt-2 mb-4">
+              {houseStock.countedOn
+                ? `From the stock count on ${formatDateIST(houseStock.countedOn)}`
+                : 'No stock count on or before this date - from all production and shipments on record'}
+            </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {Object.entries(houseStock.stock).map(([product, data]) => {
@@ -604,11 +406,18 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
                     <h4 className="text-sm font-semibold mb-3">{productLabels[product]}</h4>
                     
                     <div className="space-y-2 text-sm">
+                      {houseStock.countedOn && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Counted:</span>
+                          <span>{data.opening}</span>
+                        </div>
+                      )}
+
                       <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">This Month Produced:</span>
+                        <span className="text-muted-foreground">{houseStock.countedOn ? 'Produced since:' : 'Produced:'}</span>
                         <span className={colors.text}>{data.produced}</span>
                       </div>
-                      
+
                       <div className="flex justify-between items-center">
                         <span className="text-muted-foreground">Sent to Stores:</span>
                         <span className="text-red-600">{data.sent}</span>
