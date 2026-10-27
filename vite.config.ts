@@ -13,6 +13,9 @@
       : undefined,
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
+      // One copy of React however a dependency asks for it (two copies break hooks and add
+      // 140 KB).
+      dedupe: ['react', 'react-dom'],
       alias: {
         'vaul@1.1.2': 'vaul',
         'sonner@2.0.3': 'sonner',
@@ -58,20 +61,32 @@
       },
     },
     build: {
-      target: 'esnext',
+      // es2020 rather than esnext: the Android app runs in whatever System WebView the phone
+      // has, and an older one can't parse the newest syntax (the whole app would fail to start).
+      // CSS stays as it was - lowering it for old browsers would change how colours render.
+      target: 'es2020',
+      cssTarget: 'esnext',
       outDir: 'dist',
       rollupOptions: {
         output: {
-          // Charts and the Supabase client get their own chunks, so they stay cached across
-          // deploys that only change app code, and recharts loads only with the screens that
-          // draw charts. Rollup pulls a manual chunk's unassigned dependencies into it, so the
-          // libraries recharts shares with the rest of the app (React, and clsx behind every
-          // card and badge) get a chunk of their own - otherwise they'd land in the recharts
-          // chunk and every screen would download the charts.
+          // Big libraries get chunks of their own, so they stay cached across deploys that only
+          // change app code and each loads only with the screens that use it: charts, the
+          // spreadsheet reader/writer (exports and settlement uploads), the rider map, and the
+          // Supabase client. Rollup pulls a manual chunk's unassigned dependencies into it, so
+          // the libraries every screen shares (React, clsx behind every card and badge, the
+          // toasts and Capacitor's core) get a 'vendor' chunk - otherwise they'd land in the
+          // recharts chunk and every screen would download the charts.
           manualChunks(id) {
+            // The re-export list the lazy chart loader imports (components/charts) rides with
+            // recharts itself; on its own Rollup could pack unrelated shared code beside it and
+            // the home screen would then load the charts through that.
+            if (/[\\/]components[\\/]charts[\\/]rechartsParts\.ts$/.test(id)) return 'recharts';
+            if (!id.includes('node_modules')) return;
             if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|victory-vendor|d3-[^\\/]+)[\\/]/.test(id)) return 'recharts';
+            if (/[\\/]node_modules[\\/]xlsx[\\/]/.test(id)) return 'xlsx';
+            if (/[\\/]node_modules[\\/]leaflet[\\/]/.test(id)) return 'leaflet';
             if (/[\\/]node_modules[\\/]@supabase[\\/]/.test(id)) return 'supabase';
-            if (/[\\/]node_modules[\\/](react|react-dom|scheduler|clsx)[\\/]/.test(id)) return 'react';
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler|clsx|sonner|@capacitor[\\/]core)[\\/]/.test(id)) return 'vendor';
           },
         },
       },

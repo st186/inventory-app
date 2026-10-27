@@ -8,10 +8,45 @@
       <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
       <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
       <link rel="apple-touch-icon" href="/icon-192.png" />
+      <style>
+        /* Start-up splash, painted with the very first frame before any JavaScript has loaded
+           (a low-end phone needs a second or more to read the app's code). It sits over #root
+           and fades out by itself as soon as React puts anything into #root - App.tsx's orange
+           boot screen, on the same background, takes over. No script involved. */
+        #boot-splash {
+          position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 2147483000;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          background: #F49D1A;
+          transition: opacity 200ms ease-out, visibility 0s linear 200ms;
+        }
+        #root:not(:empty) + #boot-splash { opacity: 0; visibility: hidden; pointer-events: none; }
+        #root:not(:empty) + #boot-splash .bar::after { animation: none; }
+        #boot-splash img { width: 88px; height: 88px; margin-bottom: 20px; }
+        #boot-splash .bar {
+          position: relative; width: 140px; height: 3px; border-radius: 3px; overflow: hidden;
+          background: rgba(255, 255, 255, 0.35);
+        }
+        #boot-splash .bar::after {
+          content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 3px;
+          background: #fff; animation: boot-splash-progress 1.4s ease-in-out infinite;
+        }
+        @keyframes boot-splash-progress {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(250%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          #boot-splash .bar::after { animation-duration: 3s; }
+        }
+      </style>
     </head>
 
     <body>
       <div id="root"></div>
+      <!-- Must stay directly after #root: the CSS above hides it once #root has content. -->
+      <div id="boot-splash" role="progressbar" aria-label="Loading Bhandar-IMS">
+        <img src="/bunny-logo.png" alt="" />
+        <div class="bar"></div>
+      </div>
       <script type="module" src="/src/main.tsx"></script>
     </body>
   </html>

@@ -1,17 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowRight, Bike, ChevronDown, Check, CheckCircle2, Clock, Crosshair, Gauge, IndianRupee, Loader2, Map as MapIcon, MapPin, Navigation, PackageCheck, RefreshCw, Store, Timer, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Geolocation } from '@capacitor/geolocation';
 import * as api from '../utils/api';
 import type { RiderListItem, RiderPlace, RiderStop, RiderSummary, RiderTrip, RiderTripEta, RiderTripLocation, RiderTripStatus, RiderTripType } from '../utils/api';
-import { RiderMap } from './RiderMap';
-import { LocationPicker, type PickedLocation } from './LocationPicker';
+import type { PickedLocation } from './LocationPicker';
 import { openRiderLocationSettings } from '../utils/riderTracking';
+import { isAppVisible, onAppVisibilityChange } from '../utils/appVisibility';
 import { refreshRiderLocationSharing, useRiderTrackingState } from '../utils/riderLocationSharing';
 import {
   getRiderAlertStatus, isRiderAlertRinging, openRiderAlertSetting, riderAlertSupported, stopRiderAlert, testRiderAlert,
   type RiderAlertStatus,
 } from '../utils/riderAlert';
+
+// The map library (leaflet, ~150 KB) loads only when a live map or a custom-location picker is
+// actually on screen, not with the rider's home screen; a same-size grey box holds the space.
+const RiderMap = lazy(() => import('./RiderMap').then((m) => ({ default: m.RiderMap })));
+const LocationPicker = lazy(() => import('./LocationPicker').then((m) => ({ default: m.LocationPicker })));
+const MapPlaceholder = ({ height }: { height: number }) => (
+  <div style={{ height, width: '100%' }} className="rounded-xl border border-gray-200 bg-gray-100 animate-pulse" aria-hidden="true" />
+);
 
 type RiderTripsProps = {
   // 'rider' = the rider's own screen; 'staff' = what production / store / cluster head see.
@@ -152,10 +160,12 @@ function LiveTripMap({ tripId, pollMs, height = 280 }: { tripId: string; pollMs:
     };
     fetchOnce();
     fetchEta();
-    const poll = setInterval(fetchOnce, pollMs);
-    const etaPoll = setInterval(fetchEta, 15000); // the server caches an estimate for ~40s anyway
-    const tick = setInterval(() => setTick((n) => n + 1), 15000); // keeps "x s ago" honest between polls
-    return () => { cancelled = true; clearInterval(poll); clearInterval(etaPoll); clearInterval(tick); };
+    // The timers skip their work while the app is in the background, and catch up on return.
+    const poll = setInterval(() => { if (isAppVisible()) fetchOnce(); }, pollMs);
+    const etaPoll = setInterval(() => { if (isAppVisible()) fetchEta(); }, 15000); // the server caches an estimate for ~40s anyway
+    const tick = setInterval(() => { if (isAppVisible()) setTick((n) => n + 1); }, 15000); // keeps "x s ago" honest between polls
+    const offVisible = onAppVisibilityChange((visible) => { if (visible) { fetchOnce(); fetchEta(); } });
+    return () => { cancelled = true; clearInterval(poll); clearInterval(etaPoll); clearInterval(tick); offVisible(); };
   }, [tripId, pollMs]);
 
   const loc = data?.location || null;
@@ -209,12 +219,14 @@ function LiveTripMap({ tripId, pollMs, height = 280 }: { tripId: string; pollMs:
       {eta?.unavailable === 'destination_not_pinned' && (
         <p className="mb-3 text-xs text-gray-500">Pin {eta.targetName} under "Map pins" to see the distance and ETA.</p>
       )}
-      <RiderMap
-        rider={loc ? { latitude: loc.latitude, longitude: loc.longitude, updatedAt: loc.updatedAt } : null}
-        places={data?.places || []}
-        track={loc?.track || []}
-        height={height}
-      />
+      <Suspense fallback={<MapPlaceholder height={height} />}>
+        <RiderMap
+          rider={loc ? { latitude: loc.latitude, longitude: loc.longitude, updatedAt: loc.updatedAt } : null}
+          places={data?.places || []}
+          track={loc?.track || []}
+          height={height}
+        />
+      </Suspense>
       <div className="mt-2 text-xs flex flex-wrap items-center justify-between gap-2">
         {error ? (
           <span className="text-red-600">{error}</span>
@@ -241,7 +253,7 @@ function RiderEarningsCard({ deliveredCount }: { deliveredCount: number }) {
     let cancelled = false;
     const fetchOnce = () => api.getRiderSummary().then((r) => { if (!cancelled) setSummary(r); }).catch(() => {});
     fetchOnce();
-    const interval = setInterval(fetchOnce, 60000);
+    const interval = setInterval(() => { if (isAppVisible()) fetchOnce(); }, 60000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [deliveredCount]);
 
@@ -287,7 +299,7 @@ function RiderAvailabilityCard() {
   const load = useCallback(() => { api.getRiderProfile().then(setInfo).catch(() => {}); }, []);
   useEffect(() => {
     load();
-    const interval = setInterval(load, 60000);
+    const interval = setInterval(() => { if (isAppVisible()) load(); }, 60000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -737,10 +749,13 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
 
   // Refresh on a short timer so a status change (rider arrived, production marked ready) shows
   // up without a manual refresh. Live GPS in a later phase will replace polling for position.
+  // Skipped while the app is in the background (a pocketed phone polled every 10 seconds), with a
+  // refresh as soon as it comes back.
   useEffect(() => {
     load();
-    const interval = setInterval(() => load(true), mode === 'rider' ? 10000 : 15000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => { if (isAppVisible()) load(true); }, mode === 'rider' ? 10000 : 15000);
+    const offVisible = onAppVisibilityChange((visible) => { if (visible) load(true); });
+    return () => { clearInterval(interval); offVisible(); };
   }, [load, mode]);
 
   useEffect(() => {
@@ -753,7 +768,7 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
       .catch(() => {});
     api.getRiderPlaces().then(setPlaces).catch(() => {});
     // Availability changes through the day, so keep the red/green status fresh.
-    const interval = setInterval(() => { api.getRiders().then(setRiders).catch(() => {}); }, 60000);
+    const interval = setInterval(() => { if (isAppVisible()) api.getRiders().then(setRiders).catch(() => {}); }, 60000);
     return () => clearInterval(interval);
   }, [canDispatch]);
 
@@ -845,8 +860,9 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
     let cancelled = false;
     const check = async () => { const r = await isRiderAlertRinging(); if (!cancelled) setRinging(r); };
     check();
-    const interval = setInterval(check, 1500);
-    return () => { cancelled = true; clearInterval(interval); };
+    const interval = setInterval(() => { if (isAppVisible()) check(); }, 1500);
+    const offVisible = onAppVisibilityChange((visible) => { if (visible) check(); });
+    return () => { cancelled = true; clearInterval(interval); offVisible(); };
   }, [mode]);
   const hasWaitingRequest = trips.some((t) => t.status === 'called');
   useEffect(() => {
@@ -1279,11 +1295,13 @@ export function RiderTrips({ mode, canDispatch = false, stores = [], defaultStor
                               placeholder="Name of the place, e.g. Diwali Mela stall"
                               className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm"
                             />
-                            <LocationPicker
-                              value={customLoc[which]}
-                              onChange={(loc) => setCustomLoc((prev) => ({ ...prev, [which]: loc }))}
-                              centerHint={hint ? { latitude: hint.latitude as number, longitude: hint.longitude as number } : null}
-                            />
+                            <Suspense fallback={<MapPlaceholder height={240} />}>
+                              <LocationPicker
+                                value={customLoc[which]}
+                                onChange={(loc) => setCustomLoc((prev) => ({ ...prev, [which]: loc }))}
+                                centerHint={hint ? { latitude: hint.latitude as number, longitude: hint.longitude as number } : null}
+                              />
+                            </Suspense>
                           </>
                         )}
                       </div>

@@ -6,3 +6,13 @@
 @layer base {
   html, body, #root { min-height: 100vh; height: 100%; margin: 0; }
 }
+
+/* Indeterminate progress bar (LoadingBar in LoadingSkeleton.tsx); index.html's start-up splash
+   inlines the same keyframes because it shows before this file has loaded. */
+@keyframes bunny-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.bunny-progress {
+  animation: bunny-progress 1.4s ease-in-out infinite;
+}

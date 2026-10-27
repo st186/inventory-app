@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { getTodayIST } from '../../utils/timezone';
+import { useForegroundInterval } from '../../utils/appVisibility';
 import { getMyChecks, type MyChecks } from './workplaceApi';
 import { bnBy, bnDigits, fmt12, liveStatus, nowMinutesIST, toMin } from './workplaceUtils';
 
@@ -12,16 +13,20 @@ const SHOW_BEFORE_MINUTES = 60;
 export function WorkplaceDueCard({ onOpen }: { onOpen: () => void }) {
   const [data, setData] = useState<MyChecks | null>(null);
   const [, setTick] = useState(0);
+  const mountedRef = useRef(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => getMyChecks().then((d) => { if (!cancelled) setData(d); }).catch(() => { /* offline or older server: no card */ });
-    load();
-    // Re-check now and then so the card appears as the window nears, and the clock moves statuses.
-    const reload = setInterval(load, 10 * 60000);
-    const tick = setInterval(() => setTick((n) => n + 1), 60000);
-    return () => { cancelled = true; clearInterval(reload); clearInterval(tick); };
+  const load = useCallback(() => {
+    getMyChecks().then((d) => { if (mountedRef.current) setData(d); }).catch(() => { /* offline or older server: no card */ });
   }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    load();
+    return () => { mountedRef.current = false; };
+  }, [load]);
+  // Re-check now and then so the card appears as the window nears, and the clock moves statuses -
+  // only while the app is in front (both catch up straight away when it comes back).
+  useForegroundInterval(load, 10 * 60000);
+  useForegroundInterval(() => setTick((n) => n + 1), 60000, { resumeAfterMs: 0 });
 
   if (!data?.items.length) return null;
   const today = getTodayIST();
