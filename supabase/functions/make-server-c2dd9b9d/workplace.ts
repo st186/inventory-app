@@ -10,6 +10,8 @@
 //   workplace-check:{date}:{employeeId}                 one person's day - the KPI feature reads this shape
 //   workplace-sent:{date}                               reminders already sent that day (cron)
 //   workplace-settings                                  AI scoring on/off and the auto-flag score
+// Event stalls (events.ts) are a third kind of place, 'event': on the event days the incharge gets
+// a short stall checklist by default (or the one the owner saves for that event).
 // Photos: Drive "Workplace photos/YYYY-MM/YYYY-MM-DD/<location name>/" (+ "thumbs/"), or bucket
 // workplace-photos at {date}/{kind}-{locationId}/{employeeId}/{itemId}-{timestamp}.jpg.
 // Nobody gets a public link: photos are streamed through GET /workplace/photo to people allowed
@@ -34,9 +36,10 @@ type Deps = {
   storage: any; // service-role Supabase Storage client, used only when Drive isn't set up
 };
 
-type LocationKind = 'store' | 'production';
+type LocationKind = 'store' | 'production' | 'event';
 type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; start: string; end: string; days: number[] };
-type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string };
+// activeFrom/activeTo: an event's checklist only applies on the event days (taken from the event).
+type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string; activeFrom?: string; activeTo?: string };
 type Assigned = { id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string };
 type Flag = { status: 'ok' | 'needs_cleaning'; note: string; by: string; byId?: string; at: string; auto?: boolean; fixedAt?: string };
 type CheckItem = {
@@ -55,8 +58,12 @@ type CheckRow = {
   updatedAt?: string;
 };
 type Settings = { aiEnabled: boolean; aiThreshold: number; updatedAt?: string; updatedBy?: string };
-type Loc = { kind: LocationKind; id: string; name: string; productionHouseId?: string | null; productionHeadId?: string | null };
-type Locations = { stores: Loc[]; houses: Loc[] };
+type Loc = {
+  kind: LocationKind; id: string; name: string; productionHouseId?: string | null; productionHeadId?: string | null;
+  // events only
+  inchargeId?: string | null; staffIds?: string[]; startDate?: string; endDate?: string; closed?: boolean;
+};
+type Locations = { stores: Loc[]; houses: Loc[]; events: Loc[] };
 
 const P = '/make-server-c2dd9b9d';
 const BUCKET = 'workplace-photos';
@@ -107,7 +114,7 @@ const sentKey = (date: string) => `workplace-sent:${date}`;
 const SETTINGS_KEY = 'workplace-settings';
 const safeSeg = (s: string) => String(s || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60) || 'x';
 const str = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
-const isKind = (k: unknown): k is LocationKind => k === 'store' || k === 'production';
+const isKind = (k: unknown): k is LocationKind => k === 'store' || k === 'production' || k === 'event';
 const empIdOf = (e: any) => String(e?.employeeId || e?.id || '');
 const randomId = () => Math.random().toString(36).slice(2, 6);
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'check';
@@ -162,6 +169,13 @@ const DEFAULT_ITEMS: Record<LocationKind, [string, string, string, string][]> = 
     ['freezer', 'Freezer', 'ফ্রিজার', 'Door seal clean, no ice build-up · দরজার রাবার পরিষ্কার, বরফ জমেনি'],
     ['other-equipment', 'Other equipment', 'অন্যান্য যন্ত্রপাতি', 'Mixer, grinder, utensils · মিক্সার, গ্রাইন্ডার, বাসন'],
   ],
+  event: [
+    ['stall-front', 'Stall front and counter', 'স্টলের সামনে ও কাউন্টার', 'Counter wiped, banner straight · কাউন্টার মোছা, ব্যানার সোজা'],
+    ['steamer', 'Steamer', 'স্টিমার', 'Trays and water area clean · ট্রে ও জলের জায়গা পরিষ্কার'],
+    ['serving-area', 'Serving area', 'পরিবেশনের জায়গা', 'Plates and sauces covered · প্লেট ও সস ঢাকা'],
+    ['cooking-area', 'Gas / fryer area', 'গ্যাস ও ফ্রায়ারের জায়গা', 'No oil spills · তেল পড়ে নেই'],
+    ['bins', 'Bins', 'ডাস্টবিন', 'Covered, not overflowing · ঢাকা, উপচে পড়ছে না'],
+  ],
 };
 
 // Ids get a random tail so the same check at two locations never shares an id in someone's day.
@@ -175,14 +189,43 @@ function defaultTemplate(kind: LocationKind, id: string): Template {
   };
 }
 
+// An event's checklist: the saved one, or the default stall checklist given to the event incharge
+// (ids fixed per event, so photos sent today still match it tomorrow), on the event days only.
+function eventTemplate(saved: Template | null, ev: Loc): Template {
+  const tail = ev.id.slice(-6).toLowerCase().replace(/[^a-z0-9]/g, '') || 'event';
+  const base: Template = saved || {
+    locationKind: 'event', locationId: ev.id,
+    items: DEFAULT_ITEMS.event.map(([sl, name, nameBn, hint]) => ({
+      id: `${sl}-${tail}`, name, nameBn, ...(hint ? { hint } : {}), assigneeId: ev.inchargeId || null, start: '16:00', end: '17:00', days: [...ALL_DAYS],
+    })),
+  };
+  return { ...base, activeFrom: ev.startDate, activeTo: ev.endDate };
+}
+
+async function loadEventLocs(kv: Kv): Promise<Loc[]> {
+  const rows = (await kv.getByPrefix<any>('event:')) || [];
+  return rows.filter((e) => e?.id && String(e.id).startsWith('EVENT-') && e?.name).map((e) => ({
+    kind: 'event' as const, id: String(e.id), name: String(e.name), inchargeId: e.inchargeId || null, staffIds: Array.isArray(e.staffIds) ? e.staffIds.map(String) : [],
+    startDate: e.startDate, endDate: e.endDate, closed: !!e.closedAt || e.status === 'closed',
+  }));
+}
+
 async function loadTemplate(kv: Kv, kind: LocationKind, id: string): Promise<Template | null> {
   const t = await kv.get<Template>(templateKey(kind, id));
-  return t && Array.isArray(t.items) ? t : null;
+  const saved = t && Array.isArray(t.items) ? t : null;
+  if (kind !== 'event') return saved;
+  const ev = (await loadEventLocs(kv)).find((e) => e.id === id);
+  return ev ? eventTemplate(saved, ev) : saved;
 }
 
 async function loadAllTemplates(kv: Kv): Promise<Template[]> {
-  const rows = await kv.getByPrefix<Template>('workplace-template:');
-  return (rows || []).filter((t) => t && isKind(t.locationKind) && t.locationId && Array.isArray(t.items));
+  const [rows, events] = await Promise.all([kv.getByPrefix<Template>('workplace-template:'), loadEventLocs(kv)]);
+  const saved = (rows || []).filter((t) => t && isKind(t.locationKind) && t.locationId && Array.isArray(t.items));
+  const open = new Map(events.filter((e) => !e.closed).map((e) => [e.id, e]));
+  const out = saved.filter((t) => t.locationKind !== 'event');
+  // Open events only: their saved checklist or the default one, with the event days.
+  for (const ev of open.values()) out.push(eventTemplate(saved.find((t) => t.locationKind === 'event' && t.locationId === ev.id) || null, ev));
+  return out;
 }
 
 // Who has which check on a date.
@@ -190,6 +233,7 @@ function assignedOn(templates: Template[], date: string, employeeId?: string): (
   const wd = weekdayOf(date);
   const out: (Assigned & { assigneeId: string })[] = [];
   for (const t of templates) {
+    if ((t.activeFrom && date < t.activeFrom) || (t.activeTo && date > t.activeTo)) continue;
     for (const it of t.items) {
       if (!it.assigneeId || (employeeId && it.assigneeId !== employeeId) || !(it.days || ALL_DAYS).includes(wd)) continue;
       out.push({
@@ -251,17 +295,23 @@ async function loadEmployees(kv: Kv): Promise<any[]> {
 }
 
 async function loadLocations(kv: Kv): Promise<Locations> {
-  const [stores, houses] = await Promise.all([kv.getByPrefix<any>('store:'), kv.getByPrefix<any>('production_house_')]);
+  const [stores, houses, events] = await Promise.all([kv.getByPrefix<any>('store:'), kv.getByPrefix<any>('production_house_'), loadEventLocs(kv)]);
   return {
     stores: (stores || []).filter((s) => s?.id && s?.name).map((s) => ({ kind: 'store' as const, id: String(s.id), name: String(s.name), productionHouseId: s.productionHouseId || null })),
     houses: (houses || []).filter((h) => h?.id && h?.name).map((h) => ({ kind: 'production' as const, id: String(h.id), name: String(h.name), productionHeadId: h.productionHeadId || null })),
+    events,
   };
 }
-const findLoc = (locs: Locations, kind: LocationKind, id: string) => (kind === 'store' ? locs.stores : locs.houses).find((l) => l.id === id) || null;
+const findLoc = (locs: Locations, kind: LocationKind, id: string) =>
+  (kind === 'store' ? locs.stores : kind === 'event' ? locs.events : locs.houses).find((l) => l.id === id) || null;
 
 // Whether an employee record belongs to a location. A production person's storeId sometimes holds
 // a store id rather than the house id - the store says which house supplies it.
 function worksAt(e: any, kind: LocationKind, id: string, locs: Locations) {
+  if (kind === 'event') {
+    const ev = findLoc(locs, 'event', id);
+    return !!ev && (ev.inchargeId === empIdOf(e) || (ev.staffIds || []).includes(empIdOf(e)));
+  }
   const ids = new Set<string>([e?.storeId, e?.productionHouseId, ...(e?.assignedStoreIds || []), ...(e?.assignedProductionHouseIds || [])].filter(Boolean).map(String));
   if (ids.has(id)) return true;
   if (kind !== 'production') return false;
@@ -291,6 +341,7 @@ async function actorOf(deps: Deps, c: any): Promise<{ actor?: Actor; error?: any
 // Owner and operations managers review everywhere; a store or production incharge their own place.
 function reviews(actor: Actor, kind: LocationKind, id: string, locs: Locations) {
   if (actor.isOwner || actor.isOps) return true;
+  if (kind === 'event') return !!actor.employeeId && findLoc(locs, 'event', id)?.inchargeId === actor.employeeId;
   if (kind === 'store' && actor.designation !== 'store_incharge') return false;
   if (kind === 'production' && actor.designation !== 'production_incharge') return false;
   return worksAt(actor.record, kind, id, locs) || (kind === 'production' && findLoc(locs, 'production', id)?.productionHeadId === actor.employeeId);
@@ -298,6 +349,10 @@ function reviews(actor: Actor, kind: LocationKind, id: string, locs: Locations) 
 
 // The incharge(s) of a place - told about missed photos and AI flags.
 function inchargesOf(employees: any[], kind: LocationKind, id: string, locs: Locations) {
+  if (kind === 'event') {
+    const inchargeId = findLoc(locs, 'event', id)?.inchargeId;
+    return inchargeId ? employees.filter((e) => e.status !== 'inactive' && empIdOf(e) === inchargeId) : [];
+  }
   const designation = kind === 'store' ? 'store_incharge' : 'production_incharge';
   return employees.filter((e) => e.status !== 'inactive' && (
     (e.designation === designation && worksAt(e, kind, id, locs)) ||
@@ -486,7 +541,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
   app.get(`${P}/workplace/locations`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     const [locs, settings] = await Promise.all([loadLocations(kv), getSettings(kv)]);
-    const locations = [...locs.stores, ...locs.houses].filter((l) => reviews(actor!, l.kind, l.id, locs)).map(({ kind, id, name }) => ({ kind, id, name }));
+    const locations = [...locs.stores, ...locs.houses, ...locs.events.filter((e) => !e.closed)].filter((l) => reviews(actor!, l.kind, l.id, locs)).map(({ kind, id, name }) => ({ kind, id, name }));
     return c.json({
       canSetup: actor!.canSetup,
       locations,
@@ -522,7 +577,9 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
         .map((e) => ({ id: empIdOf(e), name: String(e.name || empIdOf(e)), designation: e.designation || e.role || null, here: worksAt(e, loc.kind, loc.id, locs) }))
         .sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name));
     }
-    return c.json({ template: saved || defaultTemplate(loc.kind, loc.id), isDefault: !saved, ...(people ? { people } : {}) });
+    // An event's loadTemplate is never empty (the default stall checklist); isDefault says whether it was saved.
+    const stored = loc.kind === 'event' ? await kv.get<Template>(templateKey(loc.kind, loc.id)) : saved;
+    return c.json({ template: saved || defaultTemplate(loc.kind, loc.id), isDefault: !stored, ...(people ? { people } : {}) });
   });
 
   app.put(`${P}/workplace/template`, async (c: any) => {
@@ -556,6 +613,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     }
     const template: Template = { locationKind: loc.kind, locationId: loc.id, items, updatedAt: new Date().toISOString(), updatedBy: actor!.name };
     await kv.set(templateKey(loc.kind, loc.id), template);
+    // The event days are taken from the event each time the checklist is read (loadTemplate).
     return c.json({ template, isDefault: false });
   });
 

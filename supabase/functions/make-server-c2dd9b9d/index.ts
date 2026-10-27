@@ -16,6 +16,10 @@ import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
 import { idempotencyMiddleware } from './idempotency.ts';
 import { registerBootstrapRoutes } from './bootstrap.ts';
+import {
+  attachEventRollups, buildEventTopupRequest, eventInchargeAuthId, eventTopupFunding, eventTransfersForStore,
+  registerEventsRoutes, runEventPosSync, withoutEventRollups, type EventsDeps,
+} from './events.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -339,6 +343,12 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
   // editing it, as before (owner, 27 Oct 2026).
   { test: /^\/custom-items\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: LEADS, alsoDesignations: INCHARGE_DESIGNATIONS },
   { test: /^\/inventory-items(\/|$)/, methods: WRITES, roles: LEADS, alsoDesignations: INCHARGE_DESIGNATIONS },
+  // Events (events.ts): only the owner creates, edits, closes or reopens an event and sets event
+  // costs. Everything else on an event (day close, expenses, stock, money, assets) is open to the
+  // assigned people and managers, checked per event by the routes themselves.
+  { test: /^\/events$/, methods: ['POST'], roles: OWNER_ONLY },
+  { test: /^\/events\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: OWNER_ONLY },
+  { test: /^\/events\/[^/]+\/(close|reopen)$/, roles: OWNER_ONLY },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 
@@ -1662,6 +1672,9 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
     // Get all sales data (not scoped by userId since everyone needs to see all sales)
     // Use paginated query to avoid Supabase's default 1000-row limit
     const items = await getAllByPrefixWithRetry('sales:', windowed.range);
+    // Event stalls on the store's Paytm, and cash moved between a stall and its store, show on
+    // the store's own row for the day (eventPaytmIn / eventCashIn / eventCashOut - events.ts).
+    await attachEventRollups(items || [], { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry }).catch((error) => console.log('Event rollups skipped:', error?.message || error));
     
     return c.json({ sales: items || [] });
   } catch (error: any) {
@@ -2239,6 +2252,25 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests', async (c) => {
     const isProductionIncharge = designation === 'production_incharge';
     const isClusterHead = role === 'cluster_head';
 
+    // An event stall asking for cash (events.ts): the event incharge or a manager asks; the
+    // approver later picks whether the store's Paytm or the production house's cash pays.
+    const peek = await c.req.json().catch(() => ({}));
+    if (peek?.reason === 'event_cash') {
+      const built = await buildEventTopupRequest(eventsDeps, authResult.user, peek);
+      if (built.error) return c.json({ error: built.error }, (built.status || 400) as any);
+      await kvWithRetry.set(`cash-topup:${built.record.id}`, built.record);
+      const approvers = [...(await getAllClusterHeads()), ...(await getOperationsManagers())];
+      const seen = new Set<string>();
+      for (const person of approvers) {
+        if (!person.authUserId || seen.has(person.authUserId)) continue;
+        seen.add(person.authUserId);
+        await notifyUser(person.authUserId, 'cash_topup_request', 'Event cash requested',
+          `${built.record.requestedByName} (${built.event.name}) asked for ₹${built.record.requestedAmount.toFixed(2)} event cash for ${built.record.date}${built.record.note ? ` - ${built.record.note}` : ''}.`,
+          built.record.id, built.record.date);
+      }
+      return c.json({ success: true, request: built.record });
+    }
+
     if (!isOperationsManager && !isStoreIncharge && !isProductionIncharge && !isClusterHead) {
       return c.json({ error: 'Only store incharges, operations managers, production incharges and cluster heads can request a cash top-up' }, 403);
     }
@@ -2524,6 +2556,25 @@ app.post('/make-server-c2dd9b9d/cron/scooter-emi-cash-topup', async (c) => {
 // ledger), marks it approved and refreshes Paytm from that date. Used by the approve route
 // and when a cluster head raises a top-up, which needs no second approval.
 async function applyCashTopupApproval(existingRequest: any, approvedByEmail: string) {
+  // An event stall's cash (events.ts): nothing goes on a store's sales row - the event's own cash
+  // ledger counts the approved request. The store's Paytm (paytmStoreId, through paytmRules.ts)
+  // or the production house's cash (fundedFromProductionHouseId) pays, as the approver chose.
+  if (existingRequest.reason === 'event_cash') {
+    const approvedEvent = {
+      ...existingRequest,
+      status: 'approved',
+      approvedBy: approvedByEmail,
+      approvedAt: new Date().toISOString(),
+      approvedAtIsUtc: true,
+    };
+    await kv.set(`cash-topup:${existingRequest.id}`, approvedEvent);
+    if (approvedEvent.fundingSource === 'store_paytm' && approvedEvent.paytmStoreId) {
+      await cascadeRecomputePaytmBalances(approvedEvent.paytmStoreId, approvedEvent.date);
+    } else if (approvedEvent.fundingSource === 'production_cash' && approvedEvent.fundedFromProductionHouseId) {
+      await cascadeRecomputeProductionCash(approvedEvent.fundedFromProductionHouseId, approvedEvent.date);
+    }
+    return approvedEvent;
+  }
   if (existingRequest.reason === 'production_inventory' && existingRequest.productionHouseId) {
     // Destined for the production cash ledger (§4 of the cash split plan), not the
     // store's usedOnlineMoney. Nothing needs to be written to production-cash directly
@@ -2651,13 +2702,15 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/approve', async (c) => {
 
   try {
     const role = authResult.user.user_metadata?.role;
-    if (role !== 'cluster_head') {
-      return c.json({ error: 'Only cluster heads can approve cash top-up requests' }, 403);
-    }
-
     const requestId = c.req.param('id');
     const key = `cash-topup:${requestId}`;
     const existingRequest = await kv.get(key);
+    // An event's request (events.ts) may also be approved by an operations manager, who says
+    // where the money comes from (the store's Paytm or the production house's cash).
+    const isEventTopup = existingRequest?.reason === 'event_cash';
+    if (role !== 'cluster_head' && !(isEventTopup && isClusterHeadOrOps(authResult.user))) {
+      return c.json({ error: 'Only cluster heads can approve cash top-up requests' }, 403);
+    }
 
     if (!existingRequest) {
       return c.json({ error: 'Cash top-up request not found' }, 404);
@@ -2666,7 +2719,21 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/approve', async (c) => {
       return c.json({ error: 'This request has already been resolved' }, 400);
     }
 
-    const approvedRequest = await applyCashTopupApproval(existingRequest, authResult.user.email);
+    let toApprove = existingRequest;
+    if (isEventTopup) {
+      const funding = eventTopupFunding(existingRequest, await c.req.json().catch(() => ({})));
+      if (funding.error) return c.json({ error: funding.error, code: 'EVENT_FUNDING_REQUIRED' }, 400);
+      toApprove = { ...existingRequest, ...funding };
+    }
+
+    const approvedRequest = await applyCashTopupApproval(toApprove, authResult.user.email);
+    if (isEventTopup) {
+      const inchargeAuthId = await eventInchargeAuthId(kvWithRetry, existingRequest.eventId);
+      if (inchargeAuthId && inchargeAuthId !== existingRequest.requestedByUserId) {
+        await notifyUser(inchargeAuthId, 'cash_topup_approved', 'Event cash approved',
+          `₹${existingRequest.requestedAmount.toFixed(2)} added to ${existingRequest.eventName || 'the event'} cash for ${existingRequest.date}.`, requestId, existingRequest.date);
+      }
+    }
 
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
     if (existingRequest.requestedByUserId) {
@@ -2696,14 +2763,14 @@ app.post('/make-server-c2dd9b9d/cash-topup-requests/:id/reject', async (c) => {
 
   try {
     const role = authResult.user.user_metadata?.role;
-    if (role !== 'cluster_head') {
-      return c.json({ error: 'Only cluster heads can reject cash top-up requests' }, 403);
-    }
-
     const requestId = c.req.param('id');
     const { reason } = await c.req.json();
     const key = `cash-topup:${requestId}`;
     const existingRequest = await kv.get(key);
+    // An event's request (events.ts) may also be decided by an operations manager.
+    if (role !== 'cluster_head' && !(existingRequest?.reason === 'event_cash' && isClusterHeadOrOps(authResult.user))) {
+      return c.json({ error: 'Only cluster heads can reject cash top-up requests' }, 403);
+    }
 
     if (!existingRequest) {
       return c.json({ error: 'Cash top-up request not found' }, 404);
@@ -4308,6 +4375,8 @@ async function cascadeRecomputePaytmBalances(storeId: string, fromDate: string):
     // on its own date; a production-reason top-up drains this same Paytm even though it never
     // goes on a sales row; a same-day top-up only comes off a recalibration if it was approved
     // after the count - all of that is in paytmRules.ts now, shared with the app.
+    // Event stall collections into this store's Paytm (events.ts), same as GET /sales shows.
+    await attachEventRollups(allSales || [], { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry });
     const src = paytmSourcesForStore({
       sales: (allSales || []).filter((s: any) => typeof s?.date === 'string'),
       settlements: allSettlements || [],
@@ -4333,7 +4402,7 @@ async function cascadeRecomputePaytmBalances(storeId: string, fromDate: string):
       running = recal ? recalDayEndBalance(src, recal) : running + paytmMovement(src, lastDate, cursor).net;
       for (const record of src.sales.filter((s: any) => s.date === cursor)) {
         if (typeof record.actualPaytmBalance !== 'number' || Math.abs(record.actualPaytmBalance - running) > 0.005) {
-          await kv.set(`sales:${record.userId}:${record.id}`, { ...record, actualPaytmBalance: running });
+          await kv.set(`sales:${record.userId}:${record.id}`, { ...withoutEventRollups(record), actualPaytmBalance: running });
           updated++;
         }
       }
@@ -4470,7 +4539,13 @@ function computeProductionCashExpected(
   const cashTopupCredited = (allTopups || [])
     .filter((t: any) => t.status === 'approved' && t.reason === 'production_inventory' && t.productionHouseId === productionHouseId && t.date === date)
     .reduce((s: number, t: any) => s + (t.requestedAmount || 0), 0);
-  return { productionExpenses, cashTopupCredited, expectedClosingCashInHand: openingBalance + cashTopupCredited - productionExpenses };
+  // An event's cash top-up the approver paid out of this house's cash (events.ts) leaves the
+  // till like any production spend, so it is counted in with the day's production expenses.
+  const eventTopupsPaid = (allTopups || [])
+    .filter((t: any) => t.status === 'approved' && t.reason === 'event_cash' && t.fundingSource === 'production_cash' && t.fundedFromProductionHouseId === productionHouseId && t.date === date)
+    .reduce((s: number, t: any) => s + (t.requestedAmount || 0), 0);
+  const spent = productionExpenses + eventTopupsPaid;
+  return { productionExpenses: spent, cashTopupCredited, expectedClosingCashInHand: openingBalance + cashTopupCredited - spent };
 }
 
 // A day with no saved production-cash record (nobody counted that day, or the shop was shut,
@@ -6174,6 +6249,15 @@ app.get('/make-server-c2dd9b9d/utilities-consumption', async (c) => {
       }
     }
 
+    // Items moved from the store to an event stall (events.ts) left the store's stock too.
+    const toEvents = await eventTransfersForStore(kvWithRetry, storeId || undefined, startDate, endDate || undefined);
+    boxesUsed += toEvents.boxes;
+    traysUsed += toEvents.trays;
+    for (const [name, qty] of Object.entries(toEvents.beverages)) {
+      const canonical = normalizeBeverageName(name);
+      beverageConsumption[canonical] = (beverageConsumption[canonical] || 0) + qty;
+    }
+
     return c.json({
       success: true,
       startDate,
@@ -6183,6 +6267,7 @@ app.get('/make-server-c2dd9b9d/utilities-consumption', async (c) => {
       traysUsed,
       unattributedOrders,
       beverageConsumption,
+      movedToEvents: toEvents,
     });
   } catch (error) {
     console.log('Error computing utilities consumption:', error);
@@ -9950,6 +10035,12 @@ async function getAllProductionHeads() {
 // Helper to get store incharge for a specific store
 async function getStoreIncharge(storeId: string) {
   const allUsers = await kv.getByPrefix('unified-employee:');
+  // An event's stock request carries the event id as its storeId (events.ts): the event
+  // incharge gets the "shipped / delivered" news a store incharge would.
+  if (typeof storeId === 'string' && storeId.startsWith('EVENT-')) {
+    const ev = await kv.get(`event:${storeId}`);
+    return ev?.inchargeId ? allUsers.find((u: any) => u.employeeId === ev.inchargeId) : undefined;
+  }
   return allUsers.find((u: any) => u.designation === 'store_incharge' && u.storeId === storeId);
 }
 
@@ -11358,7 +11449,10 @@ async function creditStoreInventoryForDelivery(existingRequest: any, requestId: 
   try {
     // Stores live under `store:` (see /stores). This read `store_`, never found the store and
     // returned here, so neither the store credit nor the production-house deduction below ran.
-    const storeKey = `store:${existingRequest.storeId}`;
+    // An event's request (events.ts) has the event as its "store": the event record gets the
+    // credit and the request's own productionHouseId the deduction, exactly as for a store.
+    const isEvent = !!existingRequest.eventId;
+    const storeKey = isEvent ? `event:${existingRequest.eventId}` : `store:${existingRequest.storeId}`;
     const store = await kv.get(storeKey);
 
     if (!store) {
@@ -11397,7 +11491,7 @@ async function creditStoreInventoryForDelivery(existingRequest: any, requestId: 
 
     console.log('✅ Store inventory updated successfully:', currentInventory);
 
-    const productionHouseId = store.productionHouseId;
+    const productionHouseId = isEvent ? (existingRequest.productionHouseId || store.productionHouseId) : store.productionHouseId;
     if (productionHouseId) {
       console.log('🏭 Deducting from production house inventory:', productionHouseId);
 
@@ -11874,7 +11968,9 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/receive', async (c) => {
     }
     if (cleanReceipt.saucesMissing.length > 0) problems.push(`missing: ${cleanReceipt.saucesMissing.join(', ')}`);
     if (!cleanReceipt.hardFrozen) problems.push('momos arrived soft');
-    if (Object.keys(loss).length > 0) {
+    // An event's receipt (events.ts) keeps its loss on the request itself (receipt lines); a
+    // stock-wastage row would be keyed by the event id as if it were a store.
+    if (Object.keys(loss).length > 0 && !existingRequest.eventId) {
       await addReceiptLossToStockWastage(existingRequest.storeId, getTodayIST(), loss, id, receivedByName);
     }
 
@@ -15627,7 +15723,15 @@ async function runPosSync(targetDate?: string) {
       results.push(storeResult);
     }
 
-    return { success: true, date: today, results };
+    // Event stalls with their own Ciferon outlet (events.ts), into their own day rows.
+    let events: any[] = [];
+    try {
+      events = await runEventPosSync(eventsDeps, today);
+    } catch (eventError: any) {
+      console.error('[pos-sync] Event outlets failed:', eventError?.message || eventError);
+    }
+
+    return { success: true, date: today, results, events };
   } catch (error: any) {
     console.error('[pos-sync] Unexpected error:', error);
     return { success: false, error: error?.message || 'pos-sync failed', results, status: 500 };
@@ -16885,6 +16989,21 @@ app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
   }
 });
 
+// What events.ts needs from here (also used by runPosSync, which runs only after start-up).
+const eventsDeps: EventsDeps = {
+  kv: kvWithRetry,
+  verifyUser,
+  getAllByPrefix: getAllByPrefixWithRetry,
+  getTodayIST,
+  notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate),
+  getAllClusterHeads,
+  getOperationsManagers,
+  cascadeRecomputePaytmBalances,
+  inPosQuietHours,
+  ciferonOrderDate: getCiferonOrderDate,
+  afterResponse,
+};
+
 // Full backup / restore and the nightly encrypted copy to Google Drive (backup.ts).
 registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: LATEST_APP_VERSION, notifyClusterHeads: async (title, message) => { let sent = 0; for (const head of await getAllClusterHeads()) if (head.authUserId) { await notifyUser(head.authUserId, 'backup_failed', title, message); sent++; } return sent; } });
 
@@ -16894,6 +17013,8 @@ registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllB
 registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
 // Shift clock-in/out, team KPIs and variable pay (attendance.ts, kpi.ts).
 registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
+// Event stalls: their own P&L, stock, cash, staff and sales (events.ts).
+registerEventsRoutes(app, eventsDeps);
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

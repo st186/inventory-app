@@ -15,7 +15,7 @@
 // rather than blocked. Riders have no fixed workplace, so they are exempt from the geofence.
 
 import {
-  DEFAULT_RADIUS_M, addDays, atWorkplace, istDate, nearestPin, resolveSettings, roleGroupOf, shiftWindow,
+  DEFAULT_RADIUS_M, addDays, atWorkplace, eventPinsFor, istDate, nearestPin, resolveSettings, roleGroupOf, shiftWindow,
   suspicionFlags, workplaceKindOf, workplacePins, hoursBetween, isWorkingDay,
   type KpiSettings, type Pin, type PunchEvent, type PunchRecord, type PunchSuggestion, type RoleGroup, type WorkplaceKind,
 } from './kpiCore.ts';
@@ -77,11 +77,12 @@ export async function loadConfig(kv: Kv) {
   };
 }
 
-export type Places = { stores: Set<string>; houses: Set<string>; pins: Pin[]; storeHouse: Map<string, string | null> };
+// events: event stalls (events.ts) - an assigned person's pins include the stall during its days.
+export type Places = { stores: Set<string>; houses: Set<string>; pins: Pin[]; storeHouse: Map<string, string | null>; events?: any[]; today?: string };
 
 export async function loadPlaces(kv: Kv): Promise<Places> {
-  const [stores, houses, raw] = await Promise.all([
-    kv.getByPrefix<any>('store:'), kv.getByPrefix<any>('production_house_'), kv.getByPrefix<any>('rider-place:'),
+  const [stores, houses, raw, events] = await Promise.all([
+    kv.getByPrefix<any>('store:'), kv.getByPrefix<any>('production_house_'), kv.getByPrefix<any>('rider-place:'), kv.getByPrefix<any>('event:'),
   ]);
   const names = new Map<string, string>();
   for (const s of stores || []) if (s?.id) names.set(`store:${s.id}`, s.name);
@@ -94,6 +95,8 @@ export async function loadPlaces(kv: Kv): Promise<Places> {
     houses: new Set((houses || []).filter((h: any) => h?.id).map((h: any) => String(h.id))),
     pins,
     storeHouse: new Map((stores || []).filter((s: any) => s?.id).map((s: any) => [String(s.id), s.productionHouseId || null])),
+    events: (events || []).filter((e: any) => e?.id && String(e.id).startsWith('EVENT-')),
+    today: istDate(Date.now()),
   };
 }
 
@@ -105,7 +108,7 @@ export function profileOf(emp: any, places: Places, saved: any): Profile {
   return {
     kind, group,
     settings: resolveSettings(saved, String(emp.employeeId), kind, group),
-    pins: workplacePins(emp, kind, places.pins),
+    pins: [...workplacePins(emp, kind, places.pins), ...eventPinsFor(emp, places.events || [], places.today || istDate(Date.now()))],
     exempt: group === 'rider',
   };
 }
@@ -141,7 +144,8 @@ function finish(rec: PunchRecord): PunchRecord {
 function placeCheck(lat: number, lng: number, accuracyM: number | undefined, profile: Profile, radiusM: number) {
   const near = nearestPin(lat, lng, profile.pins);
   if (!near) return { distanceM: undefined, verified: false, outside: false, noPin: true } as const;
-  const ok = atWorkplace(near.distanceM, accuracyM, radiusM);
+  // An event stall's pin carries its own radius (set on the event).
+  const ok = atWorkplace(near.distanceM, accuracyM, near.pin.radiusM || radiusM);
   return { distanceM: Math.round(near.distanceM), verified: ok, outside: !ok, placeKind: near.pin.kind, placeId: near.pin.id, noPin: false } as const;
 }
 
@@ -158,7 +162,8 @@ function istClock(ms: number) {
 export function suggestionMessage(kind: 'arrival' | 'exit', atMs: number, placeKind?: string) {
   const t = istClock(atMs);
   if (kind === 'exit') return { title: 'Check out?', message: `You left at ${t.en} - check out? · ${t.bn}-এ বেরিয়েছেন - চেক আউট করবেন?` };
-  const place = placeKind === 'production' ? { en: 'production house', bn: 'প্রোডাকশন হাউসে' } : { en: 'store', bn: 'দোকানে' };
+  const place = placeKind === 'production' ? { en: 'production house', bn: 'প্রোডাকশন হাউসে' }
+    : placeKind === 'event' ? { en: 'event stall', bn: 'ইভেন্টের স্টলে' } : { en: 'store', bn: 'দোকানে' };
   return { title: 'Check in?', message: `You reached the ${place.en} at ${t.en} - check in? · ${place.bn} পৌঁছেছেন ${t.bn}-এ - চেক ইন করবেন?` };
 }
 
@@ -255,7 +260,7 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
         settings: { shiftStart: profile.settings.shiftStart, shiftEnd: profile.settings.shiftEnd, graceMin: profile.settings.graceMin, weeklyOff: profile.settings.weeklyOff },
         workingDay: isWorkingDay(date, profile.settings),
         window: { startAt: new Date(w.startMs).toISOString(), endAt: new Date(w.endMs).toISOString(), shiftStartAt: new Date(w.shiftStartMs).toISOString(), shiftEndAt: new Date(w.shiftEndMs).toISOString() },
-        pins: profile.exempt ? [] : profile.pins.map((p) => ({ kind: p.kind, id: p.id, name: p.name || null, lat: p.lat, lng: p.lng })),
+        pins: profile.exempt ? [] : profile.pins.map((p) => ({ kind: p.kind, id: p.id, name: p.name || null, lat: p.lat, lng: p.lng, ...(p.radiusM ? { radiusM: p.radiusM } : {}) })),
         radiusM: cfg.radiusM,
         consent: consent?.version === CONSENT_VERSION ? { accepted: !!consent.accepted, at: consent.at } : null,
       });

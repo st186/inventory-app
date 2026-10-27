@@ -314,8 +314,16 @@ export function registerAssetsRoutes(app: any, deps: Deps) {
       if (q.needsReview === '0') rows = rows.filter((a) => !a.needsReview && !a.expenseChanged);
       rows.sort((a, b) => Number(!!b.needsReview) - Number(!!a.needsReview) || a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
       const last = reconciled || (await deps.kv.get<any>(LAST_RUN_KEY));
+      // Items checked out to an event stall (events.ts, event_asset: rows) and not yet back:
+      // atEvents on each item says how many are out and where. The home location stays the same.
+      const out = new Map<string, { eventId: string; eventName: string; quantity: number; since: string }[]>();
+      for (const x of (await deps.kv.getByPrefix<any>('event_asset:')) || []) {
+        const left = (Number(x?.quantity) || 0) - (Number(x?.returnedQty) || 0);
+        if (!x?.assetId || x.voided || left <= 0) continue;
+        out.set(x.assetId, [...(out.get(x.assetId) || []), { eventId: x.eventId, eventName: x.eventName || 'Event', quantity: left, since: x.outAt }]);
+      }
       return c.json({
-        assets: await withPhotoUrls(rows),
+        assets: (await withPhotoUrls(rows)).map((a: any) => (out.has(a.id) ? { ...a, atEvents: out.get(a.id) } : a)),
         locations: actor.locations,
         permissions: {
           canEditAll: actor.canEditAll,
