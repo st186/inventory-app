@@ -80,6 +80,18 @@ export const payoutHitsPaytm = (p: Row): boolean => p?.paidFrom == null || p.pai
 // An approved loan adds its amount on its loanDate; a pending or rejected one never arrived.
 export const loanCountsTowardPaytm = (l: Row): boolean => l?.status === 'active' || l?.status === 'repaid';
 
+// ── Event stalls (events.ts / eventRules.ts) ──
+// A stall set to "same as the store's Paytm" collects into its parent store's Paytm: GET /sales
+// (and the server's cascade) put that day's stall collections on the store's own row as
+// eventPaytmIn, counted here like the store's own Paytm takings. A stall with its own account
+// never appears here.
+const eventPaytmIn = (s: Row): number => (typeof s?.eventPaytmIn === 'number' ? s.eventPaytmIn : 0);
+// An event's cash top-up (reason 'event_cash') drains Paytm only when the approver funded it from
+// the store's Paytm (fundingSource 'store_paytm', with paytmStoreId naming that store); one
+// funded from the production house's cash leaves Paytm alone.
+export const topupDrainsPaytm = (t: Row): boolean => t?.reason !== 'event_cash' || t?.fundingSource === 'store_paytm';
+const isEventPaytmTopup = (t: Row): boolean => t?.reason === 'event_cash' && t?.fundingSource === 'store_paytm';
+
 // Every repayment of a loan, each on its own date. Repayments made since `repayments` was added
 // are listed one by one. Older loans only kept a running repaidAmount plus, once fully repaid,
 // the final repaymentDate - the whole amount goes on that date. An older loan that was only
@@ -119,7 +131,8 @@ export function paytmSourcesForStore(src: PaytmSources, storeId: string | null |
     sales: src.sales.filter(own),
     settlements: src.settlements.filter(own),
     payouts: src.payouts.filter((p) => !p?.storeId || p.storeId === storeId),
-    topups: src.topups.filter(own),
+    // An event top-up has no storeId; paytmStoreId names the store whose Paytm paid for it.
+    topups: src.topups.filter((t) => own(t) || t?.paytmStoreId === storeId),
     loans: src.loans.filter(own),
     overheads: src.overheads.filter(own),
     recalibrations: src.recalibrations.filter(own),
@@ -137,6 +150,8 @@ export interface PaytmMovement {
   commission: number;        // always 0: payouts arrive net of commission (kept for older callers)
   loanRepayments: number;
   salaryPayouts: number;     // salaries/payouts paid from Paytm
+  eventPaytmReceived: number; // event stalls collecting into this store's Paytm (eventPaytmIn)
+  eventTopups: number;       // event cash top-ups the approver funded from this Paytm
   net: number;
 }
 
@@ -169,12 +184,16 @@ export function paytmMovement(src: PaytmSources, afterDate: string, throughDate:
   const commission = 0;
   const loanRepaid = sumOf(repayments.filter((r) => inRange(r.date)), (r) => r.amount);
   const salaryPayouts = sumOf(src.payouts.filter((p) => payoutHitsPaytm(p) && inRange(p.date)), (p) => p.amount);
+  // The live day's saved row still carries the stalls' collections: the form only replaces the
+  // store's own Paytm takings and top-ups.
+  const eventPaytmReceived = sumOf(src.sales.filter((s) => inRange(s.date)), eventPaytmIn);
+  const eventTopups = sumOf(src.topups.filter((t) => t.status === 'approved' && isEventPaytmTopup(t) && inRange(t.date)), (t) => t.requestedAmount);
 
   return {
     paytmReceived, aggregatorPayouts, legacyPayouts, loansReceived, usedOnlineMoney, productionTopups, commission,
-    loanRepayments: loanRepaid, salaryPayouts,
-    net: paytmReceived + aggregatorPayouts + legacyPayouts + loansReceived
-      - usedOnlineMoney - productionTopups - loanRepaid - salaryPayouts,
+    loanRepayments: loanRepaid, salaryPayouts, eventPaytmReceived, eventTopups,
+    net: paytmReceived + aggregatorPayouts + legacyPayouts + loansReceived + eventPaytmReceived
+      - usedOnlineMoney - productionTopups - loanRepaid - salaryPayouts - eventTopups,
   };
 }
 
@@ -199,8 +218,10 @@ export function recalDayEndBalance(src: PaytmSources, recal: Row, live?: PaytmLi
     : sumOf(src.sales.filter((s) => s.date === date), (s) => s.paytmAmount);
   const aggregatorPayouts = sumOf(src.settlements.filter((s) => s.settlementDate === date), (s) => s.netPayout);
   const salaryPayouts = sumOf(src.payouts.filter((p) => payoutHitsPaytm(p) && p.date === date), (p) => p.amount);
-  const lateTopups = sumOf(src.topups.filter((t) => t.status === 'approved' && t.date === date && approvedAfterCount(t, recal)), (t) => t.requestedAmount);
-  return recal.actualBalance + paytmReceived + aggregatorPayouts - salaryPayouts - lateTopups;
+  const lateTopups = sumOf(src.topups.filter((t) => t.status === 'approved' && topupDrainsPaytm(t) && t.date === date && approvedAfterCount(t, recal)), (t) => t.requestedAmount);
+  // Stall collections have no time either, so like the store's own takings they're added in full.
+  const eventPaytmReceived = sumOf(src.sales.filter((s) => s.date === date), eventPaytmIn);
+  return recal.actualBalance + paytmReceived + aggregatorPayouts + eventPaytmReceived - salaryPayouts - lateTopups;
 }
 
 export interface PaytmAnchor {

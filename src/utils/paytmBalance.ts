@@ -12,8 +12,13 @@
 import { addDays } from './timezone';
 import {
   approvedAfterCount, expectedPaytmOn, isCommissionEntry, loanCountsTowardPaytm, loanRepayments,
-  paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalibrationOn, type PaytmSources,
+  paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalibrationOn, topupDrainsPaytm, type PaytmSources,
 } from './paytmRules';
+
+// Event stalls (eventRules.ts): a stall on the store's Paytm puts its collections on the store's
+// row (eventPaytmIn); an event cash top-up funded from this Paytm drains it.
+const topupLabel = (t: any) =>
+  t.reason === 'event_cash' ? `to event stall${t.eventName ? ` ${t.eventName}` : ''}` : t.reason === 'production_inventory' ? 'to production house' : 'to store till';
 
 export interface PaytmBalanceInput {
   salesData: any[];
@@ -166,6 +171,7 @@ export function computePaytmLedger(
         balance,
       });
       daySales.forEach((s) => credit(d, 'Paytm / UPI received (counter)', s.paytmAmount ?? 0));
+      daySales.forEach((s) => credit(d, 'Paytm / UPI received (event stall)', s.eventPaytmIn ?? 0));
       src.settlements
         .filter((s) => s.settlementDate === d)
         .forEach((s) => credit(d, aggregatorLabel(s), s.netPayout || 0));
@@ -173,14 +179,15 @@ export function computePaytmLedger(
         .filter((p) => payoutHitsPaytm(p) && p.date === d)
         .forEach((p) => debit(d, `Salary / payout — ${p.employeeName || p.employeeId || 'staff'}`, p.amount || 0));
       src.topups
-        .filter((t) => t.status === 'approved' && t.date === d && approvedAfterCount(t, recal))
-        .forEach((t) => debit(d, `Cash top-up ${t.reason === 'production_inventory' ? 'to production house' : 'to store till'} (approved after count)`, t.requestedAmount || 0));
+        .filter((t) => t.status === 'approved' && topupDrainsPaytm(t) && t.date === d && approvedAfterCount(t, recal))
+        .forEach((t) => debit(d, `Cash top-up ${topupLabel(t)} (approved after count)`, t.requestedAmount || 0));
       cursor = addDays(cursor, 1);
       continue;
     }
 
     // ── Credits ──
     daySales.forEach((s) => credit(d, 'Paytm / UPI received (counter)', s.paytmAmount ?? 0));
+    daySales.forEach((s) => credit(d, 'Paytm / UPI received (event stall)', s.eventPaytmIn ?? 0));
 
     src.settlements
       .filter((s) => s.settlementDate === d)
@@ -200,6 +207,10 @@ export function computePaytmLedger(
     src.topups
       .filter((t) => t.reason === 'production_inventory' && t.status === 'approved' && t.date === d)
       .forEach((t) => debit(d, 'Cash top-up to production house (from Paytm)', t.requestedAmount || 0));
+
+    src.topups
+      .filter((t) => t.reason === 'event_cash' && t.fundingSource === 'store_paytm' && t.status === 'approved' && t.date === d)
+      .forEach((t) => debit(d, `Cash top-up ${topupLabel(t)} (from Paytm)`, t.requestedAmount || 0));
 
     src.overheads
       .filter((o) => isCommissionEntry(o) && o.date === d)
