@@ -60,6 +60,9 @@ export const PAGE_LABELS: Record<string, string> = {
   'stock-outs': 'Out of stock',
   'advanced-inventory': 'Stock',
   'inventory-items': 'Item catalog',
+  // Not a private page: workplace photos are fine, people's names and the photo grid are marked
+  // data-ai-private on the screen itself.
+  workplace: 'Workplace checks',
 };
 
 export const TAB_LABELS: Record<string, string> = {

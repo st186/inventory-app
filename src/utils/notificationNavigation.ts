@@ -63,6 +63,10 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   // Home: the expiry banner with "Change now" is there. Plain employees and riders are moved on to
   // their own first screen by App.tsx, which shows the same banner.
   password_expiring: { view: 'analytics' },
+  // Workplace checks: staff land on their own list; "review" falls back to it for non-reviewers.
+  workplace_due: { view: 'workplace', tab: 'mine' },
+  workplace_missed: { view: 'workplace', tab: 'review' },
+  workplace_flag: { view: 'workplace', tab: 'review' },
 };
 
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {

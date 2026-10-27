@@ -1,0 +1,123 @@
+// Calls for Workplace checks (server workplace.ts). Kept beside the screens rather than in
+// utils/api.ts so this feature stays in its own files. Every call uses the current session token
+// (refreshed by the Supabase client), since photo uploads can come long after the screen opened.
+import { API_BASE } from '../../utils/api';
+import { currentAccessToken } from '../../utils/accessToken';
+
+export type LocationKind = 'store' | 'production';
+export type CheckStatus = 'done' | 'done_late' | 'upcoming' | 'due' | 'late' | 'missed';
+export type AiStatus = 'pending' | 'scored' | 'failed' | 'off';
+export type AiVerdict = 'clean' | 'needs_cleaning' | 'unclear_photo';
+
+export interface WorkplaceFlag { status: 'ok' | 'needs_cleaning'; note: string; by: string; at: string; auto?: boolean; fixedAt?: string }
+
+// What a screen gets about a photo (no storage ids).
+export interface PhotoView {
+  hasPhoto: boolean;
+  uploadedAt?: string;
+  late?: boolean;
+  retakes?: number;
+  onBehalf?: boolean;
+  uploadedByName?: string;
+  flag?: WorkplaceFlag | null;
+  aiStatus?: AiStatus;
+  aiScore?: number | null;
+  aiVerdict?: AiVerdict | null;
+  aiIssues?: string[];
+  aiIssuesBengali?: string[];
+  aiShown?: string;
+}
+
+export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; start: string; end: string; days: number[] }
+
+export interface MyCheck extends PhotoView {
+  id: string; name: string; nameBn: string; hint?: string; start: string; end: string;
+  locationKind: LocationKind; locationId: string; locationName: string; status: CheckStatus;
+}
+export interface MyChecks { date: string; earlyMinutes: number; employeeId?: string; items: MyCheck[] }
+
+export interface WorkplaceLocation { kind: LocationKind; id: string; name: string }
+export interface WorkplaceSettings { aiEnabled: boolean; aiThreshold: number }
+export interface WorkplaceAccess {
+  canSetup: boolean;
+  locations: WorkplaceLocation[];
+  settings: WorkplaceSettings;
+  storage?: 'drive' | 'bucket';
+  aiConfigured?: boolean;
+}
+
+export interface Person { id: string; name: string; designation: string | null; here: boolean }
+export interface TemplateResponse { template: { items: TemplateItem[]; updatedAt?: string; updatedBy?: string }; isDefault: boolean; people?: Person[] }
+
+export interface ReviewItem extends PhotoView {
+  date: string; employeeId: string; personName: string; itemId: string; name: string; nameBn: string; hint: string;
+  start: string; end: string; status: CheckStatus;
+}
+export interface ReviewResponse { from: string; to: string; location: WorkplaceLocation; items: ReviewItem[] }
+
+export interface SummaryPerson { employeeId: string; name: string; required: number; done: number; onTime: number; needsCleaning: number; avgScore: number | null }
+export interface SummaryResponse { from: string; to: string; people: SummaryPerson[] }
+
+async function call<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await currentAccessToken()}`, ...(init?.headers || {}) },
+    });
+  } catch {
+    // One retry for reads on a network blip (cold start, patchy mobile data).
+    if (retry && (!init?.method || init.method === 'GET')) return call<T>(path, init, false);
+    throw new Error('No connection - try again · নেটওয়ার্ক নেই, আবার চেষ্টা করুন');
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (retry && res.status >= 500 && (!init?.method || init.method === 'GET')) return call<T>(path, init, false);
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return body as T;
+}
+
+const q = (params: Record<string, string | undefined>) =>
+  Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&');
+
+export const getAccess = () => call<WorkplaceAccess>('/workplace/locations');
+export const saveSettings = (s: Partial<WorkplaceSettings>) => call<{ settings: WorkplaceSettings }>('/workplace/settings', { method: 'PUT', body: JSON.stringify(s) });
+export const getTemplate = (kind: LocationKind, id: string) => call<TemplateResponse>(`/workplace/template?${q({ kind, id })}`);
+export const saveTemplate = (kind: LocationKind, id: string, items: TemplateItem[]) =>
+  call<TemplateResponse>(`/workplace/template?${q({ kind, id })}`, { method: 'PUT', body: JSON.stringify({ items }) });
+export const getMyChecks = () => call<MyChecks>('/workplace/my');
+export const uploadPhoto = (p: { itemId: string; image: string; thumb?: string; forEmployeeId?: string }) =>
+  call<{ success: boolean; flagged: boolean; item: MyCheck }>('/workplace/upload', { method: 'POST', body: JSON.stringify(p) });
+export const rescorePhoto = (p: { date: string; employeeId: string; itemId: string }) =>
+  call<PhotoView & { success: boolean; flagged: boolean }>('/workplace/rescore', { method: 'POST', body: JSON.stringify(p) });
+export const getReview = (kind: LocationKind, id: string, from: string, to: string) => call<ReviewResponse>(`/workplace/review?${q({ kind, id, from, to })}`);
+export const setFlag = (p: { date: string; employeeId: string; itemId: string; status: 'ok' | 'needs_cleaning'; note: string }) =>
+  call<{ success: boolean; flag: WorkplaceFlag }>('/workplace/flag', { method: 'POST', body: JSON.stringify(p) });
+export const getSummary = (kind: LocationKind, id: string) => call<SummaryResponse>(`/workplace/summary?${q({ kind, id })}`);
+
+// Photos come through the server with the sign-in token (no public links), so an <img> can't load
+// them directly: fetch as a blob and hand back an object URL. Thumbnails are cached for the session.
+const blobCache = new Map<string, Promise<string>>();
+export function photoPath(date: string, employeeId: string, itemId: string, thumb: boolean) {
+  return `/workplace/photo/${date}/${encodeURIComponent(employeeId)}/${encodeURIComponent(itemId)}${thumb ? '?size=thumb' : ''}`;
+}
+export function loadPhotoUrl(path: string, version = ''): Promise<string> {
+  const key = `${path}#${version}`;
+  const hit = blobCache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${await currentAccessToken()}` } });
+    if (!res.ok) throw new Error(res.status === 404 ? 'Photo no longer kept' : 'Could not load the photo');
+    return URL.createObjectURL(await res.blob());
+  })();
+  p.catch(() => blobCache.delete(key));
+  blobCache.set(key, p);
+  // Keep memory bounded on long gallery sessions.
+  if (blobCache.size > 400) {
+    const oldest = blobCache.keys().next().value as string;
+    blobCache.get(oldest)?.then((u) => URL.revokeObjectURL(u)).catch(() => {});
+    blobCache.delete(oldest);
+  }
+  return p;
+}

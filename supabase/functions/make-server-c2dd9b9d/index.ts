@@ -11,6 +11,7 @@ import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
+import { registerWorkplaceRoutes } from './workplace.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -16682,6 +16683,7 @@ app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
 registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST });
+registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
 registerInsightsRoutes(app, {
   kv: kvWithRetry,
   verifyUser,
