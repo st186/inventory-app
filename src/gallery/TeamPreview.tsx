@@ -100,7 +100,7 @@ function useAutoClick(steps: string[]) {
         for (let tries = 0; tries < 40 && !target && !cancelled; tries++) {
           await new Promise((r) => setTimeout(r, 150));
           const all = [...document.querySelectorAll<HTMLElement>('button, a, [role="button"], label')];
-          target = all.reverse().find((el) => el.offsetParent !== null && (el.textContent || '').toLowerCase().includes(step.toLowerCase())) || null;
+          target = all.reverse().find((el) => el.getClientRects().length > 0 &&(el.textContent || '').toLowerCase().includes(step.toLowerCase())) || null;
         }
         if (cancelled || !target) return;
         target.click();

@@ -221,7 +221,9 @@ export function EmployeeTimesheet({ user, att }: EmployeeTimesheetProps) {
               ? t('team.ts.upcoming')
               : entry.startTime && entry.endTime
                 ? `${entry.startTime}–${entry.endTime} · ${t('team.att.hours', { h: entry.totalHours.toFixed(1).replace(/\.0$/, '') })}${entry.status === 'rejected' && entry.rejectionReason ? ` · ${entry.rejectionReason}` : ''}`
-                : t('team.att.notLogged');
+                : entry.startTime || entry.endTime
+                  ? `${entry.startTime || '–'}–${entry.endTime || '–'}`
+                  : t('team.att.notLogged');
           return (
             <ListRow
               key={dateStr}
