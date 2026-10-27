@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { DollarSign, Plus, Loader2, CreditCard, CheckCircle, XCircle, Clock, Ban } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
+import { toast } from 'sonner';
 import { ApplyLoanModal } from './ApplyLoanModal';
 import { RepayLoanModal } from './RepayLoanModal';
 
@@ -47,7 +48,7 @@ export function LoanManagementSection({
       await api.approveOnlineLoan(context.user.accessToken, loan.id);
       await onReload();
     } catch (error: any) {
-      alert(error?.message || 'Failed to approve loan');
+      toast.error(error?.message || 'Failed to approve loan');
     } finally {
       setDecidingLoanId(null);
     }
@@ -62,7 +63,7 @@ export function LoanManagementSection({
       setRejectionReason('');
       await onReload();
     } catch (error: any) {
-      alert(error?.message || 'Failed to reject loan');
+      toast.error(error?.message || 'Failed to reject loan');
     } finally {
       setDecidingLoanId(null);
     }

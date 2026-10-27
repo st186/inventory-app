@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { confirm } from './ui/confirm';
+import { ResponsiveModal } from './ui/responsive-modal';
 import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings, TrendingDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
@@ -118,7 +122,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIST());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const [dateRange, setDateRange] = useState({ 
+  const [dateRange, setDateRange] = useState({
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: getTodayIST()
   });
@@ -388,20 +392,20 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     try {
       setLoading(true);
       const response = await api.getSalesData(context.user?.accessToken || '');
-      
+
       let records: SalesRecord[] = response.data || [];
-      
+
       // Filter out null/undefined records and ensure storeId exists
       records = records.filter(r => !!r && !!r.storeId);
-      
+
       // Filter by resolved store scope if needed
       if (scopedStoreIds !== null) {
         records = records.filter(r => matchesStoreScope(r.storeId));
       }
-      
+
       // Sort by date descending
       records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      
+
       setSalesRecords(records);
     } catch (error) {
       console.error('Error loading sales data:', error);
@@ -418,7 +422,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     const XLSX = await import('xlsx');
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      
+
       reader.onload = (e) => {
         try {
           const data = e.target?.result;
@@ -426,7 +430,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
           const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
-          
+
           // Process the data using the Python logic
           const processedData = processItemData(jsonData);
           resolve(processedData);
@@ -434,7 +438,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           reject(error);
         }
       };
-      
+
       reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsBinaryString(file);
     });
@@ -451,18 +455,18 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       'Chicken Kurkure Momos': 0,
       'Veg Kurkure Momos': 0
     };
-    
+
     jsonData.forEach(item => {
       const itemName = String(item['Item'] || '');
       const qty = Number(item['Total Quantity'] || item['Total Qua'] || 0);
-      
+
       // Skip invalid or empty rows
       if (!qty || qty === 0 || !itemName) {
         return;
       }
-      
+
       const nameLower = itemName.toLowerCase();
-      
+
       // -------------------------------------------------
       // RULE 1: Mania Combos - 8 momos direct + 2 moburgers (2 momos each, so 4 more) of
       // that same momo type, plus a coke - 12 momos total per combo unit sold.
@@ -491,42 +495,42 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         }
         return; // Done processing this row
       }
-      
+
       // -------------------------------------------------
       // RULE 3: Determine Piece Count for Standard Items
       // -------------------------------------------------
       let piecesPerUnit = 6; // Default plate size
-      
+
       if (nameLower.includes('burger')) {
         // Base: 1 burger = 2 momos
         const momosPerBurger = 2;
         let burgersPerPlate = 1;
-        
+
         // Check for multi-burger plates (e.g., "2 pcs")
         const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
         if (pcsMatch) {
           burgersPerPlate = parseInt(pcsMatch[1]);
         }
-        
+
         piecesPerUnit = burgersPerPlate * momosPerBurger;
       } else {
         // Standard items: check for explicit counts like "8 pcs"
         const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
         if (pcsMatch) {
           let count = parseInt(pcsMatch[1]);
-          
+
           // Check for "pack of" multiplier
           const packMatch = itemName.match(/pack of\s*(\d+)/i);
           if (packMatch) {
             count *= parseInt(packMatch[1]);
           }
-          
+
           piecesPerUnit = count;
         }
       }
-      
+
       const totalPieces = qty * piecesPerUnit;
-      
+
       // -------------------------------------------------
       // RULE 4: Categorize Standard Items
       // -------------------------------------------------
@@ -534,7 +538,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       if (['drink', 'cola', 'campa', 'water', 'beverage', 'soup', 'samosa', 'nugget', 'popcorn', 'fries', 'mojito', 'mocktail', 'cake'].some(x => nameLower.includes(x))) {
         return;
       }
-      
+
       // Identify Category
       const category = classifyMomoCategory(nameLower);
 
@@ -543,20 +547,20 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         result[category] += totalPieces;
       }
     });
-    
+
     return result;
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    
+
     // Validate file type
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls') && !file.name.endsWith('.csv')) {
       toast.error('Please upload an Excel (.xlsx, .xls) or CSV file');
       return;
     }
-    
+
     // Try to extract date from filename
     // Supported formats:
     // 1. "Itemwise sales_StoreName_DD_MM_YYYY-DD_MM_YYYY.xlsx"
@@ -565,11 +569,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     // 4. "YYYY-MM-DD.xlsx"
     let extractedDate = ''; // Start with empty, will fall back to selectedDate if no match
     let dateSource = '';
-    
+
     // Pattern 1: DD_MM_YYYY-DD_MM_YYYY (range format)
     const rangePattern = /_(\d{2})_(\d{2})_(\d{4})-\d{2}_\d{2}_\d{4}\./;
     let match = file.name.match(rangePattern);
-    
+
     if (match) {
       const [, day, month, year] = match;
       extractedDate = `${year}-${month}-${day}`;
@@ -578,7 +582,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // Pattern 2: DD_MM_YYYY (single date)
       const singlePattern = /_(\d{2})_(\d{2})_(\d{4})\./;
       match = file.name.match(singlePattern);
-      
+
       if (match) {
         const [, day, month, year] = match;
         extractedDate = `${year}-${month}-${day}`;
@@ -587,48 +591,48 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         // Pattern 3: YYYY-MM-DD (ISO format)
         const isoPattern = /(\d{4})-(\d{2})-(\d{2})/;
         match = file.name.match(isoPattern);
-        
+
         if (match) {
           extractedDate = match[0]; // Already in YYYY-MM-DD format
           dateSource = 'ISO date format';
         }
       }
     }
-    
+
     // Use extracted date if found, otherwise fall back to manually selected date
     const finalDate = extractedDate || selectedDate;
-    
+
     if (extractedDate) {
       console.log(`📅 Extracted date from filename (${dateSource}): ${file.name} -> ${extractedDate}`);
       setSelectedDate(extractedDate);
-      toast.success(`📅 Using date from filename: ${extractedDate}`, { duration: 2000 });
+      toast.success(`Using the date from the file name: ${extractedDate}`, { duration: 2000 });
     } else {
       console.log(`📅 Using manually selected date: ${selectedDate}`);
-      toast.info(`📅 Using manually selected date: ${selectedDate}`, { duration: 2000 });
+      toast.info(`Using the date you picked: ${selectedDate}`, { duration: 2000 });
     }
-    
+
     if (!finalDate) {
       toast.error('Please select a date before uploading');
       return;
     }
-    
+
     if (!effectiveStoreId) {
       toast.error('Store ID not found');
       return;
     }
-    
+
     try {
       setUploading(true);
       toast.info('Processing file...', { duration: 2000 });
-      
+
       // Process the file
       const categoryData = await processXLSXFile(file);
-      
+
       toast.info('Uploading to server...', { duration: 2000 });
-      
+
       // Get store name - safely handle undefined stores array
       const storeName = context.stores?.find(s => s.id === effectiveStoreId)?.name || 'Unknown Store';
-      
+
       // Create sales record with the extracted date
       const record: SalesRecord = {
         id: `SALES-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
@@ -639,18 +643,18 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         uploadedBy: context.user?.name || 'Unknown',
         uploadedAt: new Date().toISOString()
       };
-      
+
       // Save to backend
       await api.saveSalesData(record, context.user?.accessToken || '');
-      
-      toast.success(`✅ Sales data uploaded for ${finalDate}!`);
-      
+
+      toast.success(`Sales data uploaded for ${finalDate}`);
+
       // Reload data
       await loadSalesData();
-      
+
       // Reset file input
       event.target.value = '';
-      
+
     } catch (error) {
       console.error('Error uploading file:', error);
       toast.error(`Failed to process file: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -660,10 +664,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   };
 
   const handleDelete = async (recordId: string) => {
-    if (!window.confirm('Are you sure you want to delete this sales record?')) {
+    if (!(await confirm({ title: 'Delete this sales record?', confirmLabel: 'Delete record', tone: 'danger' }))) {
       return;
     }
-    
+
     try {
       await api.deleteSalesData(recordId, context.user?.accessToken || '');
       toast.success('Sales record deleted');
@@ -680,13 +684,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
   const getChartColor = (index: number): string => {
     const colors = [
-      '#ef4444', // red - Chicken Momos
-      '#f97316', // orange - Chicken Cheese Momos
-      '#22c55e', // green - Veg Momos
-      '#3b82f6', // blue - Paneer Momos
-      '#eab308', // yellow - Corn Cheese Momos
-      '#14b8a6', // purple - Chicken Kurkure Momos
-      '#06b6d4'  // cyan - Veg Kurkure Momos
+      'var(--danger)', // red - Chicken Momos
+      'var(--chart-1)', // orange - Chicken Cheese Momos
+      'var(--chart-2)', // green - Veg Momos
+      'var(--chart-4)', // blue - Paneer Momos
+      'var(--chart-3)', // yellow - Corn Cheese Momos
+      'var(--chart-2)', // purple - Chicken Kurkure Momos
+      'var(--chart-4)'  // cyan - Veg Kurkure Momos
     ];
     return colors[index % colors.length];
   };
@@ -711,10 +715,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const getDateRange = (filter: TimeFilter, customRange?: { from: string; to: string }): { start: string; end: string } => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     let start: Date;
     let end: Date;
-    
+
     switch (filter) {
       case 'today':
         start = new Date(today);
@@ -785,10 +789,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   const getComparisonRange = (filter: TimeFilter, customRange?: { from: string; to: string }): { start: string; end: string } => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     let start: Date;
     let end: Date;
-    
+
     switch (filter) {
       case 'today':
         // Compare with yesterday
@@ -807,7 +811,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         const currentWeekStart = new Date(today);
         currentWeekStart.setDate(today.getDate() - today.getDay());
         const daysIntoWeek = today.getDay(); // How many days into the week we are
-        
+
         start = new Date(currentWeekStart);
         start.setDate(currentWeekStart.getDate() - 7); // Previous week's Sunday
         end = new Date(start);
@@ -824,7 +828,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         // Compare with same date range in previous month (e.g., Feb 1-4 compares with Jan 1-4)
         const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
         const daysIntoMonth = today.getDate(); // How many days into the month we are
-        
+
         start = new Date(today.getFullYear(), today.getMonth() - 1, 1); // 1st of previous month
         end = new Date(today.getFullYear(), today.getMonth() - 1, daysIntoMonth); // Same date in previous month
         break;
@@ -837,7 +841,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         // Compare with same date range in previous year (e.g., Jan 1-Feb 4 2025 compares with Jan 1-Feb 4 2024)
         const currentYearStart = new Date(today.getFullYear(), 0, 1);
         const daysIntoYear = Math.floor((today.getTime() - currentYearStart.getTime()) / (1000 * 60 * 60 * 24));
-        
+
         start = new Date(today.getFullYear() - 1, 0, 1); // Jan 1 of previous year
         end = new Date(start);
         end.setDate(start.getDate() + daysIntoYear); // Same number of days into previous year
@@ -852,12 +856,12 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           const fromDate = new Date(customRange.from);
           const toDate = new Date(customRange.to);
           const daysDiff = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
-          
+
           const compStart = new Date(fromDate);
           compStart.setDate(fromDate.getDate() - daysDiff - 1);
           const compEnd = new Date(fromDate);
           compEnd.setDate(fromDate.getDate() - 1);
-          
+
           return {
             start: compStart.toISOString().split('T')[0],
             end: compEnd.toISOString().split('T')[0]
@@ -869,7 +873,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         start.setDate(today.getDate() - 1);
         end = new Date(start);
     }
-    
+
     return {
       start: start.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0]
@@ -912,7 +916,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               onChange={setSelectedDate}
               max={getTodayIST()}
             />
-            
+
             <button
               onClick={() => setShowPlateConfig(!showPlateConfig)}
               className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
@@ -955,7 +959,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             </label>
           </div>
         </div>
-        
+
         {/* Info Banner */}
         <div className="mt-4 bg-info-soft border border-info-border rounded-xl p-4">
           <div className="flex gap-3">
@@ -973,25 +977,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       </div>
 
       {/* Plate Configuration Modal */}
-      {showPlateConfig && (
-        <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-surface border border-border p-6 text-text rounded-t-2xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
-                  <p className="text-sm text-text-2">Set how many pieces are in each plate for each momo type</p>
-                </div>
-                <button
-                  onClick={() => setShowPlateConfig(false)}
-                  className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
-                >
-                  <AlertCircle className="w-6 h-6" />
-                </button>
-              </div>
-            </div>
-            
-            <div className="p-6 space-y-4">
+      <ResponsiveModal
+        open={showPlateConfig}
+        onOpenChange={setShowPlateConfig}
+        title="Plate configuration"
+        description="How many pieces make a plate, and a plate's price, for each momo type"
+        size="detail"
+        footer={<Button size="lg" variant="secondary" fullWidth onClick={() => setShowPlateConfig(false)}>Done</Button>}
+      >
+            <div className="space-y-4">
               {(Object.keys(piecesPerPlate) as Array<keyof CategoryData>).map((category, index) => (
                 <div key={category} className="flex items-center justify-between p-4 bg-surface-2 rounded-xl border-2 border-border">
                   <div className="flex items-center gap-3">
@@ -1030,32 +1024,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               ))}
               {isSavingPlateConfig && <p className="text-xs text-text-3">Saving...</p>}
             </div>
-            
-            <div className="p-6 bg-info-soft border-t-2 border-info-border">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-info">
-                  <p className="font-medium mb-1">How it works:</p>
-                  <p>
-                    This configuration determines how pieces are converted to plates in the display.
-                    For example, if Chicken Momos has 6 pieces/plate and you sold 262 pieces,
-                    it will show as <span className="font-mono bg-surface px-2 py-1 rounded">262 pcs / 44 plates</span>.
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-surface-2 rounded-b-2xl flex justify-end">
-              <button
-                onClick={() => setShowPlateConfig(false)}
-                className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all shadow-lg"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
+            <Callout tone="info" title="How it works" className="mt-4">
+              Pieces are shown as plates with this. With 6 pieces a plate, 262 chicken momos sold show as 262 pcs / 44 plates.
+            </Callout>
+      </ResponsiveModal>
 
       {/* Menu Item Prices Modal - real Offline vs Online price per menu item, keyed by
           Ciferon's ProductId. Zomato and Swiggy share one Online price (Ciferon pushes the
@@ -1071,27 +1044,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         })).filter(g => g.items.length > 0);
 
         return (
-          <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50 p-4">
-            <div className="bg-surface rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="bg-surface border border-border p-6 text-text rounded-t-2xl sticky top-0 z-10">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-2xl font-bold mb-2">Menu Item Prices</h3>
-                    <p className="text-sm text-text-2">
-                      Offline (in-store) and Online (Zomato/Swiggy) list price per real menu item
-                      {!isClusterHead && ' - view only'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowMenuItemPrices(false)}
-                    className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
-                  >
-                    <AlertCircle className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-6 space-y-6">
+          <ResponsiveModal
+            open
+            onOpenChange={(open) => { if (!open) setShowMenuItemPrices(false); }}
+            title="Menu item prices"
+            description={`Counter and online (Zomato / Swiggy) price for each menu item${!isClusterHead ? ' - view only' : ''}`}
+            size="detail"
+            footer={<Button size="lg" variant="secondary" fullWidth onClick={() => setShowMenuItemPrices(false)}>Done</Button>}
+          >
+              <div className="space-y-6">
                 {isClusterHead && (
                   <div className="border border-dashed border-success-border rounded-xl p-4 bg-success-soft">
                     {!showAddMenuItem ? (
@@ -1245,16 +1206,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 )}
               </div>
 
-              <div className="p-4 bg-surface-2 rounded-b-2xl flex justify-end sticky bottom-0">
-                <button
-                  onClick={() => setShowMenuItemPrices(false)}
-                  className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all shadow-lg"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          </div>
+          </ResponsiveModal>
         );
       })()}
 
@@ -1271,7 +1223,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 <p className="text-sm text-text-3">Analyze momo sales patterns across different time periods</p>
               </div>
             </div>
-            
+
             {/* Time Filter */}
             <div className="flex gap-2 flex-wrap">
               {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'thisYear', 'lastYear', 'custom'] as TimeFilter[]).map((filter) => (
@@ -1311,15 +1263,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           {/* Metrics Grid with Comparisons */}
           {(() => {
             const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
-            
+
             // Get date ranges for current and comparison periods
             const currentRange = getDateRange(timeFilter, dateRange);
             const comparisonRange = getComparisonRange(timeFilter, dateRange);
-            
+
             // Calculate totals for current period
             const currentTotals: Record<string, number> = {};
             categories.forEach(cat => currentTotals[cat] = 0);
-            
+
             salesRecords.forEach(r => {
               if (r.date >= currentRange.start && r.date <= currentRange.end) {
                 Object.entries(r.data).forEach(([category, count]) => {
@@ -1329,11 +1281,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 });
               }
             });
-            
+
             // Calculate totals for comparison period
             const comparisonTotals: Record<string, number> = {};
             categories.forEach(cat => comparisonTotals[cat] = 0);
-            
+
             salesRecords.forEach(r => {
               if (r.date >= comparisonRange.start && r.date <= comparisonRange.end) {
                 Object.entries(r.data).forEach(([category, count]) => {
@@ -1343,13 +1295,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 });
               }
             });
-            
+
             return (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {categories.map((category, index) => {
                   const current = currentTotals[category] || 0;
                   const previous = comparisonTotals[category] || 0;
-                  
+
                   // Calculate percentage change
                   let percentChange = 0;
                   if (previous > 0) {
@@ -1357,32 +1309,32 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   } else if (current > 0) {
                     percentChange = 100; // If no previous data but we have current, it's 100% increase
                   }
-                  
+
                   const isIncrease = percentChange > 0;
                   const isDecrease = percentChange < 0;
                   const color = getChartColor(index);
-                  
+
                   return (
-                    <div 
+                    <div
                       key={category}
                       className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
                       style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                     >
                       <div className="flex items-start justify-between mb-3">
                         <h3 className="text-sm font-semibold text-text-2">{category}</h3>
-                        <div 
-                          className="w-3 h-3 rounded-full" 
+                        <div
+                          className="w-3 h-3 rounded-full"
                           style={{ backgroundColor: color }}
                         />
                       </div>
-                      
+
                       <div className="mb-3">
                         <p className="text-4xl font-bold text-text mb-1">
                           {current.toLocaleString()}
                         </p>
                         <p className="text-xs text-text-3">pieces sold</p>
                       </div>
-                      
+
                       {previous > 0 && (
                         <div className="flex items-center gap-2">
                           <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
@@ -1401,13 +1353,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           </span>
                         </div>
                       )}
-                      
+
                       {previous === 0 && current > 0 && (
                         <div className="text-xs text-info font-medium">
                           New sales in this period
                         </div>
                       )}
-                      
+
                       {previous === 0 && current === 0 && (
                         <div className="text-xs text-text-3">
                           No data for both periods
@@ -1869,7 +1821,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         salesRecords.forEach(record => {
           const date = new Date(record.date);
           const dayOfWeek = date.getDay().toString();
-          
+
           Object.entries(record.data).forEach(([category, count]) => {
             if (dayOfWeekData[dayOfWeek].counts[category]) {
               dayOfWeekData[dayOfWeek].counts[category].push(count);
@@ -1880,21 +1832,21 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         // Calculate averages for all days
         const allDaysData = Object.entries(dayOfWeekData).map(([dayNum, day]) => {
           const avgData: any = { day: day.dayName, dayNum: parseInt(dayNum) };
-          
+
           categories.forEach(category => {
             const values = day.counts[category];
-            const avg = values.length > 0 
+            const avg = values.length > 0
               ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
               : 0;
             avgData[category] = avg;
           });
-          
+
           return avgData;
         });
 
         // Get data for selected day only - restructure so each category is its own row
         const selectedDayData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-        
+
         // Transform data: instead of one row with 7 columns, create 7 rows with category and average
         const chartData = selectedDayData ? categories.map((category, index) => ({
           category,
@@ -1925,7 +1877,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <p className="text-sm text-text-2 mb-4">
                 Average momo sales by day of the week across all records
               </p>
-              
+
               {/* Day Toggle Buttons */}
               <div className="flex gap-2 flex-wrap">
                 {daysOfWeek.map((day) => (
@@ -1948,64 +1900,64 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             {(() => {
               // Find best day for each category (across all days) for comparison
               const bestDays: Record<string, { day: string, avg: number }> = {};
-              
+
               categories.forEach(category => {
                 let maxAvg = 0;
                 let bestDay = '';
-                
+
                 allDaysData.forEach(dayData => {
                   if (dayData[category] > maxAvg) {
                     maxAvg = dayData[category];
                     bestDay = dayData.day;
                   }
                 });
-                
+
                 bestDays[category] = { day: bestDay, avg: maxAvg };
               });
 
               const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-              
+
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {categories.map((category, index) => {
                     const current = selectedDayFullData?.[category] || 0;
                     const bestDay = bestDays[category];
-                    
+
                     // Calculate percentage compared to best day
                     let percentDiff = 0;
                     const isBestDay = selectedDayFullData?.day === bestDay.day;
-                    
+
                     if (bestDay.avg > 0 && current > 0) {
                       percentDiff = ((current - bestDay.avg) / bestDay.avg) * 100;
                     }
-                    
+
                     const color = getChartColor(index);
-                    
+
                     return (
-                      <div 
+                      <div
                         key={category}
                         className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
                         style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                       >
                         <div className="flex items-start justify-between mb-3">
                           <h3 className="text-sm font-semibold text-text-2">{category}</h3>
-                          <div 
-                            className="w-3 h-3 rounded-full" 
+                          <div
+                            className="w-3 h-3 rounded-full"
                             style={{ backgroundColor: color }}
                           />
                         </div>
-                        
+
                         <div className="mb-3">
                           <p className="text-4xl font-bold text-text mb-1">
                             {Math.round(current).toLocaleString()}
                           </p>
                           <p className="text-xs text-text-3">avg pieces/day</p>
                         </div>
-                        
+
                         {isBestDay ? (
                           <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-warning-soft">
                             <span className="text-xs font-semibold text-warning">
-                              🏆 Best day
+                              <TrendingUp className="size-3.5" aria-hidden="true" /> Best day
                             </span>
                           </div>
                         ) : current > 0 && bestDay.avg > 0 ? (
@@ -2046,18 +1998,18 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               {(() => {
                 // Find best day for each category (across all days)
                 const bestDays: Record<string, { day: string, avg: number }> = {};
-                
+
                 categories.forEach(category => {
                   let maxAvg = 0;
                   let bestDay = '';
-                  
+
                   allDaysData.forEach(dayData => {
                     if (dayData[category] > maxAvg) {
                       maxAvg = dayData[category];
                       bestDay = dayData.day;
                     }
                   });
-                  
+
                   bestDays[category] = { day: bestDay, avg: maxAvg };
                 });
 
@@ -2067,7 +2019,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
                   return currTotal > prevTotal ? curr : prev;
                 });
-                
+
                 const busiestDayTotal = categories.reduce((sum, cat) => sum + (busiestDay[cat] || 0), 0);
 
                 // Find quietest day
@@ -2076,12 +2028,12 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
                   return currTotal < prevTotal ? curr : prev;
                 });
-                
+
                 const quietestDayTotal = categories.reduce((sum, cat) => sum + (quietestDay[cat] || 0), 0);
 
                 // Find most popular item on the CURRENTLY SELECTED day
                 const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-                const topItemOnSelectedDay = selectedDayFullData ? 
+                const topItemOnSelectedDay = selectedDayFullData ?
                   Object.entries(selectedDayFullData)
                     .filter(([key]) => categories.includes(key))
                     .sort((a, b) => (b[1] as number) - (a[1] as number))[0]
@@ -2090,21 +2042,21 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 return (
                   <>
                     <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">🔥 Busiest Day</p>
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Busiest day</p>
                       <p className="text-xl font-semibold">
                         {busiestDay.day}
                       </p>
                       <p className="text-xs text-text-2 mt-1">{busiestDayTotal.toLocaleString()} pcs avg</p>
                     </div>
                     <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">📉 Quietest Day</p>
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Quietest day</p>
                       <p className="text-xl font-semibold">
                         {quietestDay.day}
                       </p>
                       <p className="text-xs text-text-2 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
                     </div>
                     <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">⭐ Top Seller Today</p>
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Top seller today</p>
                       <p className="text-base font-semibold">
                         {topItemOnSelectedDay?.[0] || 'N/A'}
                       </p>
@@ -2194,16 +2146,16 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             const totalPieces = getTotalPieces(record.data);
             const recordDate = new Date(record.date);
             const isCollapsed = collapsedRecords.has(record.id);
-            
+
             // Resolve store name - fallback to context.stores if record.storeName is missing or "Unknown Store"
             const displayStoreName = record.storeName && record.storeName !== 'Unknown Store'
               ? record.storeName
               : (context.stores?.find(s => s.id === record.storeId)?.name || record.storeName || 'Unknown Store');
-            
+
             return (
               <div key={record.id} className="bg-surface rounded-2xl shadow-lg border border-border overflow-hidden hover:shadow-xl transition-shadow duration-300">
                 {/* Header */}
-                <div 
+                <div
                   className="bg-surface border border-border p-4 text-text cursor-pointer"
                   onClick={() => toggleRecordCollapse(record.id)}
                 >
@@ -2212,11 +2164,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                       <Calendar className="w-5 h-5" />
                       <div>
                         <h3 className="font-semibold">
-                          {recordDate.toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
+                          {recordDate.toLocaleDateString('en-US', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
                           })}
                         </h3>
                         <p className="text-sm text-text-2">
@@ -2224,7 +2176,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         </p>
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
                       <button
                         onClick={(e) => {
@@ -2240,10 +2192,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         className="p-2 hover:bg-surface rounded-lg transition-all duration-300"
                         title={isCollapsed ? "Expand" : "Collapse"}
                       >
-                        <svg 
+                        <svg
                           className={`w-5 h-5 transform transition-transform duration-300 ${isCollapsed ? '' : 'rotate-180'}`}
-                          fill="none" 
-                          stroke="currentColor" 
+                          fill="none"
+                          stroke="currentColor"
                           viewBox="0 0 24 24"
                         >
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -2252,7 +2204,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Category Grid */}
                 {!isCollapsed && (
                   <div className="p-6">
@@ -2263,10 +2215,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         const color = getChartColor(index);
                         const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
                         const plates = Math.floor(safeCount / piecesPerPlateValue);
-                        
+
                         return (
-                          <div 
-                            key={category} 
+                          <div
+                            key={category}
                             className="bg-surface-2 rounded-xl p-4 border-2 border-border hover:shadow-md transition-all duration-300"
                             style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                           >
@@ -2289,12 +2241,12 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         );
                       })}
                     </div>
-                    
+
                     {/* Upload Info */}
                     <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-sm text-text-3">
                       {record.uploadedBy === 'pos-sync' ? (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-info-soft text-info text-xs font-medium rounded-full border border-info-border">
-                          ✓ Auto-synced from Ciferon POS
+                          <CheckCircle className="size-3.5" aria-hidden="true" /> Synced from the POS
                         </span>
                       ) : (
                         <span>Uploaded by {record.uploadedBy}</span>

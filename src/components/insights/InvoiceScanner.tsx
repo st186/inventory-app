@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '../ui/button';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { SegmentedControl } from '../ui/segmented-control';
 import { Camera, ImageUp, Loader2, X, AlertTriangle, ScanText } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from '../../utils/api';
@@ -168,17 +171,25 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
     }
   };
 
-  const field = 'w-full px-2.5 py-2 border border-border-strong rounded-lg text-sm bg-surface';
+  const field = 'w-full h-11 px-2.5 py-2 border border-border-strong rounded-md text-body bg-surface text-text';
 
   return (
-    <div className="fixed inset-0 bg-scrim flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className="bg-surface rounded-t-2xl sm:rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h2 className="font-bold text-text flex items-center gap-2"><ScanText className="w-5 h-5 text-info" /> Scan an invoice</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-surface-2 rounded-lg" aria-label="Close"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="p-4 overflow-y-auto space-y-4">
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Scan an invoice"
+      size="detail"
+      dirty={step === 'review' && !saving}
+      footer={step === 'review' ? (
+        <>
+          <Button variant="secondary" size="lg" onClick={() => { setStep('pick'); setInvoice(null); setLines([]); }}>Rescan</Button>
+          <Button size="lg" className="flex-1" loading={saving} onClick={save}>
+            {`Save ${included.length} expense${included.length === 1 ? '' : 's'}`}
+          </Button>
+        </>
+      ) : undefined}
+    >
+        <div className="space-y-4">
           {step === 'pick' && (
             <>
               <p className="text-sm text-text-2">Take a clear photo of the whole bill - printed or handwritten, English or Bengali. AI reads the lines; you check every one before anything is saved.</p>
@@ -210,11 +221,13 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
               {invoice.note && <p className="text-xs text-warning bg-warning-soft rounded-lg px-3 py-2 flex gap-2"><AlertTriangle className="w-4 h-4 flex-shrink-0" />{invoice.note}</p>}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div className="flex bg-surface-2 rounded-xl p-1 sm:col-span-1">
-                  {(['store', 'production_house'] as const).map((opt) => (
-                    <button key={opt} type="button" onClick={() => setEntity(opt)} className={`flex-1 text-xs font-medium py-2 rounded-lg ${entity === opt ? 'bg-primary text-white' : 'text-text-2'}`}>{opt === 'store' ? 'Store' : 'Production'}</button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  aria-label="Store or production"
+                  className="sm:col-span-1"
+                  value={entity}
+                  onValueChange={setEntity}
+                  options={[{ value: 'store', label: 'Store' }, { value: 'production_house', label: 'Production' }]}
+                />
                 {entity === 'store' && storeOptions && storeOptions.length > 1 ? (
                   <select value={pickedStore} onChange={(e) => setPickedStore(e.target.value)} className={field} aria-label="Which store">
                     {storeOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
@@ -265,16 +278,6 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
             </>
           )}
         </div>
-
-        {step === 'review' && (
-          <div className="p-4 border-t border-border flex gap-2">
-            <button onClick={() => { setStep('pick'); setInvoice(null); setLines([]); }} className="px-4 py-3 border border-border-strong rounded-lg text-sm">Rescan</button>
-            <button onClick={save} disabled={saving} className="flex-1 px-4 py-3 bg-primary text-white rounded-lg font-semibold disabled:opacity-60">
-              {saving ? 'Saving...' : `Save ${included.length} expense${included.length === 1 ? '' : 's'}`}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+    </ResponsiveModal>
   );
 }

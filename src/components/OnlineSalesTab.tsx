@@ -1,4 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
+import { confirm } from './ui/confirm';
+import { Button } from './ui/button';
+import { ResponsiveModal } from './ui/responsive-modal';
 import { InventoryContextType } from '../App';
 import { DollarSign, TrendingUp, TrendingDown, Wallet, Upload, X, CheckCircle, ChevronDown, ChevronUp, AlertCircle, Trash2, FileSpreadsheet, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
@@ -276,13 +280,13 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
   const handleDelete = async (id: string) => {
     if (!context.user?.accessToken) return;
-    if (!confirm('Delete this settlement? This will reduce Online Cash in Hand (Paytm) for its settlement date.')) return;
+    if (!(await confirm({ title: 'Delete this settlement?', body: 'The Paytm balance for its settlement date goes down by its payout.', confirmLabel: 'Delete settlement', tone: 'danger' }))) return;
     setDeletingId(id);
     try {
       await api.deleteAggregatorSettlement(context.user.accessToken, id);
       if (context.refreshData) await context.refreshData();
     } catch (error: any) {
-      alert(error?.message || 'Failed to delete settlement');
+      toast.error(error?.message || 'Failed to delete settlement');
     } finally {
       setDeletingId(null);
     }
@@ -505,12 +509,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   // elsewhere in this app rather than a false zero.
   const guessItemColor = (itemName: string): string => {
     const n = itemName.toLowerCase();
-    if (n.includes('kurkure')) return n.includes('veg') ? '#0ea5e9' : '#6366f1';
-    if (n.includes('paneer')) return '#eab308';
-    if (n.includes('corn') && n.includes('cheese')) return '#facc15';
-    if (n.includes('chicken') && n.includes('cheese')) return '#fb923c';
-    if (n.includes('chicken')) return '#f97316';
-    return '#16a34a'; // veg / anything else
+    if (n.includes('kurkure')) return n.includes('veg') ? 'var(--chart-4)' : 'var(--chart-4)';
+    if (n.includes('paneer')) return 'var(--chart-3)';
+    if (n.includes('corn') && n.includes('cheese')) return 'var(--chart-3)';
+    if (n.includes('chicken') && n.includes('cheese')) return 'var(--chart-1)';
+    if (n.includes('chicken')) return 'var(--chart-1)';
+    return 'var(--chart-2)'; // veg / anything else
   };
   // Same bracket/paren-pieces stripping as the backend's normalizeItemName, applied to
   // catalog product names so "Chicken Steamed Momos [6 Pieces]" and "...In Butter Makhni
@@ -1114,14 +1118,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={trend}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} unit="%" />
+                    <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} unit="%" />
                     <Tooltip formatter={(value: number, name: string) => [value === null ? 'N/A' : `${value}%`, name]} />
                     <Legend />
                     {hasPayoutPct && (
-                      <Line type="monotone" dataKey="payoutPct" stroke="#059669" strokeWidth={2} name="Payout %" dot={{ r: 3 }} connectNulls />
+                      <Line type="monotone" dataKey="payoutPct" stroke="var(--chart-2)" strokeWidth={2} name="Payout %" dot={{ r: 3 }} connectNulls />
                     )}
-                    <Line type="monotone" dataKey="commissionPct" stroke="#ea580c" strokeWidth={2} name="Commission %" dot={{ r: 3 }} connectNulls />
+                    <Line type="monotone" dataKey="commissionPct" stroke="var(--chart-1)" strokeWidth={2} name="Commission %" dot={{ r: 3 }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
@@ -1146,10 +1150,10 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={discountChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} unit="%" />
+                  <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} unit="%" />
                   <Tooltip formatter={(value: number) => [`${value}%`, 'Discount']} />
-                  <Line type="monotone" dataKey="discountPct" stroke="#9333ea" strokeWidth={2} name="Discount %" dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="discountPct" stroke="var(--chart-4)" strokeWidth={2} name="Discount %" dot={{ r: 3 }} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -1167,12 +1171,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={discountChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="promoDiscount" stackId="disc" fill="#f97316" name="Promo" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="flatOffDiscount" stackId="disc" fill="#a855f7" name="Flat-off" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="promoDiscount" stackId="disc" fill="var(--chart-1)" name="Promo" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="flatOffDiscount" stackId="disc" fill="var(--chart-4)" name="Flat-off" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -1344,13 +1348,13 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   <ResponsiveContainer width="100%" height={240}>
                     <LineChart data={channelEconomicsData.chartData}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
+                      <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
                       <Tooltip formatter={(value: number, name: string) => [`₹${value.toLocaleString('en-IN')}`, name]} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line type="monotone" dataKey="theoreticalOffline" stroke="#16a34a" strokeWidth={2} name="Counter Price" dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="itemSubtotal" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 3" name={`${platformName} Menu Price`} dot={false} />
-                      <Line type="monotone" dataKey="netPayout" stroke="#f59e0b" strokeWidth={2} name={`${platformName} Paid You`} dot={{ r: 3 }} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Line type="monotone" dataKey="theoreticalOffline" stroke="var(--chart-2)" strokeWidth={2} name="Counter Price" dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="itemSubtotal" stroke="var(--chart-5)" strokeWidth={1.5} strokeDasharray="4 3" name={`${platformName} Menu Price`} dot={false} />
+                      <Line type="monotone" dataKey="netPayout" stroke="var(--chart-3)" strokeWidth={2} name={`${platformName} Paid You`} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
@@ -1492,14 +1496,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                     </div>
                     <p className="text-caption text-text-3 mt-2">Sorted by online pieces sold, most first{rowsWithData.length > chartRows.length ? ` - chart below shows the top ${chartRows.length}` : ''}</p>
                     <ResponsiveContainer width="100%" height={180}>
-                      <BarChart data={chartRows.map(r => ({ name: r.label, marginPct: r.marginPct !== null ? Math.round(r.marginPct * 10) / 10 : 0, color: (r.marginPct ?? 0) < 0 ? '#dc2626' : '#059669' }))} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <BarChart data={chartRows.map(r => ({ name: r.label, marginPct: r.marginPct !== null ? Math.round(r.marginPct * 10) / 10 : 0, color: (r.marginPct ?? 0) < 0 ? 'var(--danger)' : 'var(--chart-2)' }))} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={70} />
-                        <YAxis tick={{ fontSize: 11 }} unit="%" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12 }} interval={0} angle={-30} textAnchor="end" height={70} />
+                        <YAxis tick={{ fontSize: 12 }} unit="%" />
                         <Tooltip formatter={(value: number) => [`${value}%`, 'Margin vs dine-in price']} />
                         <Bar dataKey="marginPct" radius={[4, 4, 0, 0]}>
                           {chartRows.map((r, i) => (
-                            <Cell key={i} fill={(r.marginPct ?? 0) < 0 ? '#dc2626' : '#059669'} />
+                            <Cell key={i} fill={(r.marginPct ?? 0) < 0 ? 'var(--danger)' : 'var(--chart-2)'} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1588,22 +1592,18 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       </div>
 
       {/* Upload Settlement Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50" onClick={() => setShowUploadModal(false)}>
-          <div className="bg-surface rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-surface border border-border p-6 text-text">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <FileSpreadsheet className="w-5 h-5" />
-                  Upload Settlement Report
-                </h2>
-                <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-surface-2 rounded-lg transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-5">
+      <ResponsiveModal
+        open={showUploadModal}
+        onOpenChange={setShowUploadModal}
+        title="Upload settlement report"
+        size="detail"
+        footer={
+          <Button size="lg" fullWidth leadingIcon={<CheckCircle />} loading={isSaving} disabled={!parsedSettlements || parsedSettlements.length === 0} onClick={handleConfirmSave}>
+            Confirm and save
+          </Button>
+        }
+      >
+            <div className="space-y-5">
               <div>
                 <label className="block text-sm font-semibold text-text-2 mb-2">Store</label>
                 {defaultUploadStoreId ? (
@@ -1771,35 +1771,8 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </div>
               )}
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowUploadModal(false)}
-                  className="flex-1 px-4 py-2.5 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmSave}
-                  disabled={!parsedSettlements || parsedSettlements.length === 0 || isSaving}
-                  className="flex-1 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-medium   transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSaving ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="w-4 h-4" />
-                      Confirm & Save
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+      </ResponsiveModal>
     </div>
   );
 }

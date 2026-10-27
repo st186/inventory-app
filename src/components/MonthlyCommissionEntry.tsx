@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DollarSign, AlertCircle, CheckCircle, Percent } from 'lucide-react';
 import * as api from '../utils/api';
+import { toast } from 'sonner';
 
 type Props = {
   selectedDate: string;
@@ -92,7 +93,7 @@ export function MonthlyCommissionEntry({
 
   const handleSave = async () => {
     if (!commissionAmount || parseFloat(commissionAmount) <= 0) {
-      alert('Please enter a valid commission amount');
+      toast.error('Please enter a valid commission amount');
       return;
     }
 
@@ -103,7 +104,7 @@ export function MonthlyCommissionEntry({
       const total = parseFloat(commissionAmount);
       
       if (cash + online !== total) {
-        alert(`Cash (₹${cash}) + Online (₹${online}) must equal Total (₹${total})`);
+        toast.error(`Cash (₹${cash}) + Online (₹${online}) must equal Total (₹${total})`);
         return;
       }
     }
@@ -146,19 +147,19 @@ export function MonthlyCommissionEntry({
         // Update existing commission
         console.log('💾 Updating existing commission ID:', existingCommission.id);
         await api.updateOverhead(accessToken, existingCommission.id, commissionData);
-        alert(`Commission for ${currentMonthLabel} updated successfully!`);
+        toast.success(`Commission for ${currentMonthLabel} updated`);
       } else {
         // Create new commission entry
         console.log('💾 Creating new commission entry');
         const result = await api.addOverhead(accessToken, commissionData);
         console.log('💾 Commission saved successfully:', result);
-        alert(`Commission for ${currentMonthLabel} saved successfully!`);
+        toast.success(`Commission for ${currentMonthLabel} saved`);
       }
 
       onCommissionSaved();
     } catch (error) {
       console.error('❌ Error saving commission:', error);
-      alert('Failed to save commission. Please try again.');
+      toast.error('Failed to save commission. Please try again.');
     } finally {
       setIsSaving(false);
     }

@@ -1,5 +1,13 @@
 import { useState, useEffect } from 'react';
-import { DollarSign, Calendar, FileText, Save, XCircle, AlertCircle, User, Percent } from 'lucide-react';
+import { Save } from 'lucide-react';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { MoneyInput } from './ui/money';
+import { PickerField } from './ui/picker-sheet';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { Textarea } from './ui/textarea';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { getTodayIST } from '../utils/timezone';
@@ -54,29 +62,14 @@ export function ApplyLoanModal({
   // Check for missing store info on mount
   if (!effectiveStoreId || !store) {
     return (
-      <div 
-        className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
-        onClick={onClose}
+      <ResponsiveModal
+        open
+        onOpenChange={(open) => { if (!open) onClose(); }}
+        title="Pick a store first"
+        footer={<Button variant="secondary" size="lg" fullWidth onClick={onClose}>Close</Button>}
       >
-        <div
-          className="bg-surface rounded-2xl max-w-lg w-full shadow-2xl p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="text-center">
-            <AlertCircle className="w-12 h-12 text-danger mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-text tracking-tight mb-2">Store Not Selected</h3>
-            <p className="text-text-3 mb-4">
-              Please select a store from the dropdown at the top of the page before applying for a loan.
-            </p>
-            <button
-              onClick={onClose}
-              className="px-6 py-2 bg-surface border border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
+        <Callout tone="warning" title="No store selected">Pick a store with the store chip at the top before asking for a loan.</Callout>
+      </ResponsiveModal>
     );
   }
 
@@ -129,207 +122,54 @@ export function ApplyLoanModal({
   };
 
   return (
-    <div 
-      className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
-      onClick={onClose}
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Request a loan"
+      description={storeName}
+      dirty={!!loanAmount && !saving && !success}
+      footer={<Button type="submit" form="apply-loan-form" size="lg" fullWidth leadingIcon={<Save />} loading={saving} disabled={!loanAmount}>Apply for loan</Button>}
     >
-      <div
-        className="bg-surface rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-surface border border-border p-6 text-text">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 bg-surface-2 rounded-xl flex items-center justify-center border border-border flex-shrink-0">
-                <DollarSign className="w-6 h-6 text-text" />
-              </div>
-              <div>
-                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
-                  Request Loan
-                </h2>
-                <p className="text-text-2 mt-1 text-sm">{storeName}</p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
-            >
-              <XCircle className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
+      <form id="apply-loan-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {success && <Callout tone="success" title="Loan request sent">A cluster head reviews it. Once approved it is added to the Paytm balance.</Callout>}
+        {error && <Callout tone="danger" title={error} />}
 
-        {/* Success Message */}
-        {success && (
-          <div className="m-6 p-4 bg-success-soft border-2 border-success-border rounded-lg flex items-center gap-3">
-            <DollarSign className="w-6 h-6 text-success flex-shrink-0" />
-            <div>
-              <p className="font-semibold text-success">Loan Request Sent!</p>
-              <p className="text-sm text-success">A cluster head will review it. Once approved, it's added to Online Cash in Hand (Paytm).</p>
-            </div>
-          </div>
-        )}
+        <Field label="Loan amount" required helper="More than ₹5,000. Once a cluster head approves it, it is added to the Paytm balance.">
+          <MoneyInput value={loanAmount} onValueChange={(_, raw) => setLoanAmount(raw)} required />
+        </Field>
 
-        {/* Error Message */}
-        {error && (
-          <div className="m-6 p-4 bg-danger-soft border-2 border-danger-border rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-danger flex-shrink-0" />
-            <p className="text-danger">{error}</p>
-          </div>
-        )}
+        <Field label="Loan date" required>
+          <Input type="date" value={loanDate} onChange={(e) => setLoanDate(e.target.value)} required />
+        </Field>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Loan Amount */}
-          <div>
-            <label className="block text-sm font-semibold text-text-2 mb-2">
-              Loan Amount *
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 text-lg">₹</span>
-              <input
-                type="number"
-                step="0.01"
-                value={loanAmount}
-                onChange={(e) => setLoanAmount(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary text-lg"
-                placeholder="Enter loan amount"
-                required
-              />
-            </div>
-            <p className="text-xs text-text-2 mt-1">
-              Must be more than ₹5,000. Once a cluster head approves this request, it's added to Online Cash in Hand (Paytm).
-            </p>
-          </div>
+        <Field label="Purpose" optional>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Purpose, source, repayment terms" />
+        </Field>
 
-          {/* Loan Date */}
-          <div>
-            <label className="block text-sm font-semibold text-text-2 mb-2">
-              Loan Date *
-            </label>
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
-              <input
-                type="date"
-                value={loanDate}
-                onChange={(e) => setLoanDate(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
-                required
-              />
-            </div>
-          </div>
+        <Field label="Investor" required helper={loadingInvestors ? 'Loading investors' : undefined}>
+          <PickerField
+            title="Investor"
+            items={investors.map((investor) => ({ value: investor.id, label: investor.name }))}
+            value={investorId || null}
+            onValueChange={setInvestorId}
+            placeholder="Select investor"
+            disabled={loadingInvestors}
+          />
+        </Field>
 
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-semibold text-text-2 mb-2">
-              Notes / Purpose
-            </label>
-            <div className="relative">
-              <FileText className="absolute left-3 top-3 text-text-3 w-5 h-5" />
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
-                placeholder="Purpose of loan, source, repayment terms, etc."
-              />
-            </div>
-          </div>
+        <Field label="Interest rate (%)" required>
+          <Input type="number" inputMode="decimal" step="0.01" value={interestRate} onChange={(e) => setInterestRate(e.target.value)} placeholder="Enter interest rate" required className="num" />
+        </Field>
 
-          {/* Investor Selection */}
-          <div>
-            <label className="block text-sm font-semibold text-text-2 mb-2">
-              Investor *
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
-              <select
-                value={investorId}
-                onChange={(e) => setInvestorId(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
-                required
-              >
-                <option value="">Select Investor</option>
-                {loadingInvestors ? (
-                  <option value="">Loading...</option>
-                ) : (
-                  investors.map(investor => (
-                    <option key={investor.id} value={investor.id}>
-                      {investor.name}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-          </div>
-
-          {/* Interest Rate */}
-          <div>
-            <label className="block text-sm font-semibold text-text-2 mb-2">
-              Interest Rate *
-            </label>
-            <div className="relative">
-              <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
-              <input
-                type="number"
-                step="0.01"
-                value={interestRate}
-                onChange={(e) => setInterestRate(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
-                placeholder="Enter interest rate"
-                required
-              />
-            </div>
-          </div>
-
-          {/* Info Box */}
-          <div className="bg-info-soft border-2 border-info-border rounded-lg p-4">
-            <div className="flex gap-3">
-              <AlertCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-info">
-                <p className="font-semibold mb-1">💡 How Loans Work</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Only requests over ₹5,000 can be raised, for heavy expenses</li>
-                  <li>A cluster head must approve the request first</li>
-                  <li>Once approved, the amount is <strong>added</strong> to Online Cash in Hand (Paytm)</li>
-                  <li>Use "Repay Loan" to pay back (reduces Online Cash in Hand)</li>
-                  <li>Supports partial and full repayments</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 pt-4 border-t">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-6 py-3 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !loanAmount}
-              className="flex-1 px-6 py-3 bg-primary text-on-primary rounded-lg   transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="w-5 h-5" />
-                  Apply for Loan
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Callout tone="info" title="How loans work">
+          <span className="flex flex-col gap-0.5">
+            <span>Only requests over ₹5,000, for heavy expenses.</span>
+            <span>A cluster head approves the request first.</span>
+            <span>Once approved, the amount is added to the Paytm balance.</span>
+            <span>Repay loan pays it back (taken off the Paytm balance); part payments are fine.</span>
+          </span>
+        </Callout>
+      </form>
+    </ResponsiveModal>
   );
 }

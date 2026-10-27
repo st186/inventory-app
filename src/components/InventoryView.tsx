@@ -366,8 +366,8 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                       key={item.id}
                       className="rounded-xl border border-border bg-background p-3 flex items-center gap-3"
                     >
-                      <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 text-lg">
-                        📦
+                      <div className="w-9 h-9 rounded-md bg-surface-2 flex items-center justify-center flex-shrink-0 text-text-2">
+                        <Package className="size-5" aria-hidden="true" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-foreground truncate">
