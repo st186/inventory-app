@@ -419,7 +419,7 @@ export function InventoryList({
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-card rounded-2xl max-w-md w-full p-6">
             <h3 className="text-foreground font-bold mb-3">Delete this entry?</h3>
             <p className="text-muted-foreground mb-6 text-sm">

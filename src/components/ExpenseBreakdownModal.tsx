@@ -163,7 +163,7 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 text-white p-6 flex justify-between items-center flex-shrink-0">
@@ -182,7 +182,7 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
           </div>
           <button
             onClick={onClose}
-            className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors flex-shrink-0"
+            className="text-white hover:bg-white/20 rounded-lg p-2 transition-colors flex-shrink-0"
           >
             <X className="w-6 h-6" />
           </button>

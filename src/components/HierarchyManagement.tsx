@@ -414,7 +414,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
 
         {/* Assign Cluster Head Modal */}
         {showAssignClusterHead && selectedManager && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
               <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Cluster Head to Manager</h3>
               <p className="text-sm text-gray-600 mb-4">
@@ -467,7 +467,7 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
 
         {/* Assign Manager Modal */}
         {showAssignManager && selectedEmployee && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
               <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Manager to Employee</h3>
               <p className="text-sm text-gray-600 mb-4">

@@ -361,7 +361,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
 
       {/* Create Form Modal */}
       {showCreateForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
             <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-4">Create New Production House</h2>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -430,7 +430,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
 
       {/* Transfer Inventory Dialog */}
       {showTransferDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-6 flex items-center gap-2">
               <Package className="w-6 h-6 text-blue-600" />

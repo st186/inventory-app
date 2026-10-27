@@ -2158,7 +2158,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
       {/* Salary Advance Modal for Managers */}
       {showAdvanceModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Apply for Salary Advance</h2>
@@ -2228,7 +2228,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
       {/* Edit Employee Modal */}
       {showEditEmployee && editingEmployee && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Edit Employee</h2>
@@ -2361,7 +2361,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
       {/* Add Payout Modal */}
       {showPayoutModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Add Payout</h2>
@@ -2583,7 +2583,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
 
       {/* Edit Payout Modal */}
       {showEditPayout && editingPayout && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Edit Payout</h2>

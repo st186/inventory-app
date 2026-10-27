@@ -493,7 +493,7 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
 
       {/* Detail Modal */}
       {showDetailModal && selectedRecalibration && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="bg-gradient-to-r from-orange-600 to-red-600 p-6 text-white">
               <h3 className="text-xl mb-1">{selectedRecalibration.locationName}</h3>

@@ -3744,7 +3744,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
       {/* Shipping Confirmation Dialog */}
       {showShippingDialog && shippingRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
             <div className="bg-gradient-to-r from-orange-500 to-rose-500 p-6 text-white">
               <div className="flex items-center justify-between">

@@ -820,7 +820,7 @@ New Password: ${result.credentials.password}
 
         {/* Create Employee Form */}
         {showCreateForm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
               <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Create New {isClusterHead ? 'Employee/Manager' : 'Employee'}</h2>
@@ -1105,7 +1105,7 @@ New Password: ${result.credentials.password}
 
         {/* Edit Employee Form */}
         {showEditForm && editingEmployee && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
               <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Edit Employee</h2>
@@ -1648,7 +1648,7 @@ New Password: ${result.credentials.password}
 
         {/* Employee Details Modal */}
         {selectedEmployee && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
               <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Employee Details</h2>
@@ -1775,7 +1775,7 @@ New Password: ${result.credentials.password}
 
         {/* Migration Status Modal */}
         {showMigrationStatus && migrationResult && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
               <div className="sticky top-0 bg-gradient-to-r from-green-600 to-teal-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Store Migration Complete</h2>
@@ -1912,7 +1912,7 @@ New Password: ${result.credentials.password}
 
         {/* Assign Manager Modal */}
         {showAssignManager && assigningManagerTo && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
               <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Assign Supervisor</h2>
@@ -2030,7 +2030,7 @@ New Password: ${result.credentials.password}
 
         {/* Change Store Modal */}
         {showChangeStore && changingStoreFor && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
               <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Change Employee Store</h2>
@@ -2120,7 +2120,7 @@ New Password: ${result.credentials.password}
             houses here; this is the source of truth screens should read going forward
             instead of guessing from the single (and ambiguous) storeId field. */}
         {showManageAccess && managingAccessFor && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[85vh] overflow-y-auto">
               <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Manage Access</h2>
@@ -2201,7 +2201,7 @@ New Password: ${result.credentials.password}
 
         {/* Assign Designation Modal */}
         {showAssignDesignation && assigningDesignationTo && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
               <div className="sticky top-0 bg-stone-800 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Assign Employee Designation</h2>
@@ -2310,7 +2310,7 @@ New Password: ${result.credentials.password}
 
         {/* Reset Password Modal */}
         {showResetPassword && resettingPasswordFor && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
               <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
                 <h2 className="text-2xl">Reset Password</h2>
