@@ -175,7 +175,7 @@ export function EquipmentRegister() {
         <div className={locations.length === 1 ? 'flex items-center gap-2' : 'flex w-full items-center gap-2'}>
           <IconButton label={t('shell.refresh')} icon={<RefreshCw />} loading={loading} onClick={load} variant="secondary" />
           {perms?.canImport && (
-            <Button variant="secondary" leadingIcon={<History />} onClick={() => setImportOpen(true)} className={locations.length === 1 ? '' : 'flex-1 sm:flex-none'}>
+            <Button variant="secondary" leadingIcon={<History />} onClick={() => setImportOpen(true)} className="hidden sm:inline-flex">
               {t('assets.importPast')}
             </Button>
           )}
@@ -325,6 +325,12 @@ export function EquipmentRegister() {
       )}
 
       {/* Items taken off as "not equipment", for the people who can bring them back */}
+      {perms?.canImport && (
+        <ListGroup className="sm:hidden">
+          <ListRow icon={History} title={t('assets.importPast')} onClick={() => setImportOpen(true)} />
+        </ListGroup>
+      )}
+
       {canAddHere && (
         <ListGroup>
           <ListRow
