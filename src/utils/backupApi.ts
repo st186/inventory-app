@@ -8,6 +8,7 @@
 // function's 2 s CPU limit however big the backup is.
 import { API_BASE } from './api';
 import { currentAccessToken } from './accessToken';
+import { regionHeaders } from './http';
 
 const MAGIC = 'BNYBKUP1';
 const T_ROWS = 1;
@@ -78,7 +79,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   const token = await currentAccessToken();
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.headers || {}) } });
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...regionHeaders(), ...(init.headers || {}) } });
   } catch {
     throw new Error('No connection to the server. Check the internet and try again.');
   }

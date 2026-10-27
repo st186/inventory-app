@@ -3,6 +3,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { API_BASE } from '../../utils/api';
 import { getSupabaseClient } from '../../utils/supabase/client';
+import { regionHeaders } from '../../utils/http';
 
 async function token(refresh = false): Promise<string> {
   const supabase = getSupabaseClient();
@@ -15,7 +16,7 @@ async function token(refresh = false): Promise<string> {
 // the phone notices someone arriving - so there the native HTTP client is used (as for riders).
 async function send(method: string, path: string, body?: any, retried = false): Promise<any> {
   const t = await token(retried);
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` };
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${t}`, ...regionHeaders() };
   let status: number;
   let data: any;
   if (Capacitor.isNativePlatform()) {

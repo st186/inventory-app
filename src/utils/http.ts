@@ -35,6 +35,12 @@ let features: Set<string> | null = null;
 let latestVersion: string | null = null;
 let featuresPromise: Promise<void> | null = null;
 let featuresFailedAt = 0;
+// The startup requests leave before /app-version answers, so without a memory of the last
+// session they all ran in Mumbai, far from the Tokyo database. Only `cors-v2` (the x-region
+// header) is taken from last time; everything else waits for this session's answer.
+const FEATURES_KEY = 'bunnyServerFeatures';
+let rememberedCorsV2 = false;
+try { rememberedCorsV2 = (JSON.parse(localStorage.getItem(FEATURES_KEY) || '[]') as string[]).includes('cors-v2'); } catch { /* storage blocked */ }
 
 export function loadServerFeatures(force = false): Promise<void> {
   if (features) return Promise.resolve();
@@ -50,6 +56,7 @@ export function loadServerFeatures(force = false): Promise<void> {
       const data = await response.json();
       latestVersion = typeof data?.latestVersion === 'string' ? data.latestVersion : null;
       features = new Set(Array.isArray(data?.features) ? data.features.filter((f: unknown) => typeof f === 'string') : []);
+      try { localStorage.setItem(FEATURES_KEY, JSON.stringify([...features])); } catch { /* storage blocked */ }
       markReachable();
     } catch {
       featuresFailedAt = Date.now();
@@ -61,8 +68,13 @@ export function loadServerFeatures(force = false): Promise<void> {
 }
 
 export function hasFeature(feature: ServerFeature): boolean {
+  if (!features && feature === 'cors-v2') return rememberedCorsV2;
   return !!features?.has(feature);
 }
+
+// For modules that make their own requests (kpi, workplace, assets, backup): run the function
+// next to the database too.
+export const regionHeaders = (): Record<string, string> => (hasFeature('cors-v2') ? { 'x-region': 'ap-northeast-1' } : {});
 
 // Waits for /app-version, but never longer than `maxWaitMs` (then: no optional features).
 export async function whenFeaturesKnown(maxWaitMs: number): Promise<void> {

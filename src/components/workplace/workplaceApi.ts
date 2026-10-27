@@ -3,6 +3,7 @@
 // (refreshed by the Supabase client), since photo uploads can come long after the screen opened.
 import { API_BASE } from '../../utils/api';
 import { currentAccessToken } from '../../utils/accessToken';
+import { regionHeaders } from '../../utils/http';
 
 export type LocationKind = 'store' | 'production';
 export type CheckStatus = 'done' | 'done_late' | 'upcoming' | 'due' | 'late' | 'missed';
@@ -63,7 +64,7 @@ async function call<T>(path: string, init?: RequestInit, retry = true): Promise<
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await currentAccessToken()}`, ...(init?.headers || {}) },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await currentAccessToken()}`, ...regionHeaders(), ...(init?.headers || {}) },
     });
   } catch {
     // One retry for reads on a network blip (cold start, patchy mobile data).
@@ -107,7 +108,7 @@ export function loadPhotoUrl(path: string, version = ''): Promise<string> {
   const hit = blobCache.get(key);
   if (hit) return hit;
   const p = (async () => {
-    const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${await currentAccessToken()}` } });
+    const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${await currentAccessToken()}`, ...regionHeaders() } });
     if (!res.ok) throw new Error(res.status === 404 ? 'Photo no longer kept' : 'Could not load the photo');
     return URL.createObjectURL(await res.blob());
   })();

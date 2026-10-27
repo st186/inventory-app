@@ -4,6 +4,7 @@ import { API_BASE } from '../../utils/api';
 import { currentAccessToken } from '../../utils/accessToken';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import type { Asset, AssetCategory, AssetCondition, AssetLocationKind } from '../../utils/assetRules';
+import { regionHeaders } from '../../utils/http';
 
 export type AssetRow = Asset & { photoUrl: string | null };
 export interface AssetLocation { kind: AssetLocationKind; id: string; name: string }
@@ -38,7 +39,7 @@ async function call<T>(path: string, init?: RequestInit, retried = false): Promi
   const token = await currentAccessToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...regionHeaders(), ...(init?.headers || {}) },
   });
   // An access token that expired while the app sat in the background: refresh once and retry.
   if (res.status === 401 && !retried) {
