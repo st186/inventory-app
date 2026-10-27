@@ -1,4 +1,9 @@
-import * as XLSX from 'xlsx';
+import type { WorkBook, WorkSheet } from 'xlsx';
+
+// The spreadsheet library (~420 KB) loads only when a settlement file is actually read, not
+// with the screens that offer the upload. readWorkbook() fills this in, and every helper
+// below runs only after it.
+let XLSX: typeof import('xlsx');
 import { extractSettlementPeriodFromText } from './settlementPeriod';
 
 export type ParsedSettlementOrder = {
@@ -44,7 +49,8 @@ export type ParsedSettlement = {
   gstCollected?: number;
 };
 
-function readWorkbook(file: File): Promise<XLSX.WorkBook> {
+async function readWorkbook(file: File): Promise<WorkBook> {
+  XLSX = await import('xlsx');
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -60,7 +66,7 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   });
 }
 
-function findSheet(workbook: XLSX.WorkBook, ...nameCandidates: string[]): XLSX.WorkSheet | null {
+function findSheet(workbook: WorkBook, ...nameCandidates: string[]): WorkSheet | null {
   for (const candidate of nameCandidates) {
     const exact = workbook.SheetNames.find(n => n.trim().toLowerCase() === candidate.toLowerCase());
     if (exact) return workbook.Sheets[exact];
@@ -72,7 +78,7 @@ function findSheet(workbook: XLSX.WorkBook, ...nameCandidates: string[]): XLSX.W
   return null;
 }
 
-function sheetToRows(sheet: XLSX.WorkSheet): any[][] {
+function sheetToRows(sheet: WorkSheet): any[][] {
   // These reports' worksheet XML often declares a used-range ("!ref", from the <dimension>
   // tag) that starts several rows below where the real content actually begins - the title
   // and header rows still physically exist as cells (A1, B7, etc.), but sheet_to_json only
@@ -213,7 +219,7 @@ function findLabeledValue(rows: any[][], label: string): any {
 // reports use the same header wording ("Delivered Orders" / "Total"), so one anchor label
 // works for both. Returns the absolute value since these are always shown as a deduction
 // (negative). Returns null if the sheet, header, or matching row isn't found.
-function extractAdSpendFromPayoutBreakup(workbook: XLSX.WorkBook, labelSubstring: string): number | null {
+function extractAdSpendFromPayoutBreakup(workbook: WorkBook, labelSubstring: string): number | null {
   const sheet = findSheet(workbook, 'Payout Breakup');
   if (!sheet) return null;
   const rows = sheetToRows(sheet);
@@ -243,7 +249,7 @@ function extractAdSpendFromPayoutBreakup(workbook: XLSX.WorkBook, labelSubstring
 // fixed once this session for the section-total case). Falls back to summing every matching
 // sub-line only when the total row itself isn't found, so a file that DOES have the total
 // row is never double-counted by also summing its own sub-lines.
-function extractSwiggyAdSpend(workbook: XLSX.WorkBook): number | null {
+function extractSwiggyAdSpend(workbook: WorkBook): number | null {
   const total = extractAdSpendFromPayoutBreakup(workbook, 'growth investment in ads');
   if (total !== null) return total;
 
@@ -283,7 +289,7 @@ function rowText(row: any[]): string {
 // under the "A) Investments in growth services" section's "Total Ads & miscellaneous
 // services" rows, "Total amount" column. Some reports repeat that total row once per
 // day/section, so sum every matching row instead of returning the first one.
-function extractZomatoAdSpend(workbook: XLSX.WorkBook): number | null {
+function extractZomatoAdSpend(workbook: WorkBook): number | null {
   const sheet = findSheet(workbook, 'Addition Deductions Details', 'Addition/Deductions Details');
   if (sheet) {
     const rows = sheetToRows(sheet);

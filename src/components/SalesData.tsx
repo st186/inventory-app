@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings, TrendingDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
@@ -413,7 +412,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   };
 
   // Process XLSX file using the Python logic
-  const processXLSXFile = (file: File): Promise<CategoryData> => {
+  const processXLSXFile = async (file: File): Promise<CategoryData> => {
+    // The spreadsheet library (~420 KB) loads only when a file is actually uploaded - it
+    // used to be part of the Analytics home screen's code for everyone.
+    const XLSX = await import('xlsx');
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       
