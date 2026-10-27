@@ -1,10 +1,18 @@
 import { useState, useMemo, useEffect } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { Package, TrendingUp, TrendingDown, Calendar, Factory, Info } from 'lucide-react';
-import { Card } from './ui/card';
+import { Factory, Package } from 'lucide-react';
+import { Button } from './ui/button';
+import { EmptyState } from './ui/empty-state';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { ListGroup } from './ui/list-row';
+import { Progress } from './ui/progress';
+import { NativeSelect } from './ui/select';
+import { SkeletonListRows, SkeletonStatTiles } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
 import { getSupabaseClient } from '../utils/supabase/client';
-import { QuickAddInventoryItem } from './QuickAddInventoryItem';
 import { getTodayIST, addDays, formatDateIST } from '../utils/timezone';
 import { SENT_STATUSES, shippedAtIST, shippedPieces, toISTTimestamp } from '../utils/requestStock';
 import { eventsApi, type EventMomoReturn } from '../utils/eventsApi';
@@ -273,209 +281,86 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     : productionHouseStocks;
 
   const productLabels: Record<string, string> = {
-    chicken: 'Chicken Momos',
-    chickenCheese: 'Chicken Cheese Momos',
-    veg: 'Veg Momos',
-    cheeseCorn: 'Cheese Corn Momos',
-    paneer: 'Paneer Momos',
-    vegKurkure: 'Veg Kurkure Momos',
-    chickenKurkure: 'Chicken Kurkure Momos',
-    schezwan: 'Schezwan Momos',
+    chicken: 'Chicken',
+    chickenCheese: 'Chicken cheese',
+    veg: 'Veg',
+    cheeseCorn: 'Cheese corn',
+    paneer: 'Paneer',
+    vegKurkure: 'Veg kurkure',
+    chickenKurkure: 'Chicken kurkure',
+    schezwan: 'Schezwan',
   };
-
-  const getStockColor = (percentage: number) => {
-    if (percentage >= 80) return { bg: 'bg-orange-50', border: 'border-orange-200', bar: 'bg-orange-500', text: 'text-orange-700' };
-    if (percentage >= 60) return { bg: 'bg-rose-50', border: 'border-rose-200', bar: 'bg-rose-500', text: 'text-rose-700' };
-    if (percentage >= 40) return { bg: 'bg-green-50', border: 'border-green-200', bar: 'bg-green-500', text: 'text-green-700' };
-    if (percentage >= 20) return { bg: 'bg-yellow-50', border: 'border-yellow-200', bar: 'bg-yellow-500', text: 'text-yellow-700' };
-    return { bg: 'bg-red-50', border: 'border-red-200', bar: 'bg-red-500', text: 'text-red-700' };
-  };
+  // Share of this period's stock still at the house: a status only when it is running out.
+  const levelChip = (percentage: number) =>
+    percentage < 20 ? <StatusChip tone="danger" size="sm">Low</StatusChip> : percentage < 40 ? <StatusChip tone="warning" size="sm">Getting low</StatusChip> : undefined;
 
   return (
-    <div className="space-y-6">
-      {/* Info Banner about Dynamic Inventory Items */}
-      <Card className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200">
-        <div className="flex items-start gap-3">
-          <Info className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h3 className="font-semibold text-orange-900 mb-1">Dynamic Inventory Items</h3>
-            <p className="text-sm text-orange-700 mb-2">
-              You can now add custom production items beyond the default 7 momo types! 
-              Manage all items from the <strong>"Manage Items"</strong> page in the navigation.
-            </p>
-            <p className="text-xs text-orange-600">
-              💡 Items can be production house-specific or global (available to all facilities)
-            </p>
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex min-w-0 flex-col">
+          <h2 className="text-title font-semibold text-text">Production house stock</h2>
+          <p className="text-body-sm text-text-2">Last stock count + made since − sent to stores since</p>
         </div>
-      </Card>
-
-      {/* Header with Date Selector */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
-            <Factory className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production House Stock Status</h1>
-            <p className="text-sm sm:text-base text-gray-500">
-              Last stock count + produced since - sent to stores since (shipped requests)
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              max={getTodayIST()}
-              className="px-3 py-2 border rounded-lg bg-background"
-            />
-          </div>
-          <select
-            value={selectedProductionHouse || 'all'}
-            onChange={(e) => setSelectedProductionHouse(e.target.value === 'all' ? null : e.target.value)}
-            className="px-4 py-2 border rounded-lg bg-background"
-          >
-            <option value="all">All Production Houses</option>
-            {productionHouses.map(house => (
-              <option key={house.id} value={house.id}>{house.name}</option>
-            ))}
-          </select>
-          {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
-            <button
-              onClick={onNavigateToManageItems}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
-            >
-              <Package className="w-4 h-4" />
-              <span className="text-sm font-semibold">Manage Items</span>
-            </button>
-          )}
-        </div>
+        {onNavigateToManageItems && (context.user?.role === 'manager' || context.user?.role === 'cluster_head') && (
+          <Button variant="secondary" size="sm" leadingIcon={<Package />} onClick={onNavigateToManageItems}>Manage items</Button>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Day">
+          <Input type="date" value={selectedDate} max={getTodayIST()} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} />
+        </Field>
+        <Field label="Production house">
+          <NativeSelect value={selectedProductionHouse || 'all'} onChange={(e) => setSelectedProductionHouse(e.target.value === 'all' ? null : e.target.value)}>
+            <option value="all">All production houses</option>
+            {productionHouses.map((house) => <option key={house.id} value={house.id}>{house.name}</option>)}
+          </NativeSelect>
+        </Field>
       </div>
 
-      {filteredStocks.map(houseStock => (
-        <div key={houseStock.productionHouseId} className="space-y-4">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-              <div className="flex items-center gap-2 mb-2">
-                <Package className="h-5 w-5" />
-                <div className="text-xs uppercase tracking-wide text-orange-100">Total Production</div>
-              </div>
-              <div className="text-2xl font-semibold">{houseStock.totalProduced.toLocaleString()}</div>
-              <div className="text-xs text-orange-100 mt-1">pieces</div>
-            </div>
-
-            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingDown className="h-5 w-5" />
-                <div className="text-xs uppercase tracking-wide text-red-100">Total Wastage</div>
-              </div>
-              <div className="text-2xl font-semibold">{houseStock.totalWastage.toFixed(2)}</div>
-              <div className="text-xs text-red-100 mt-1">kg</div>
-            </div>
-
-            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="h-5 w-5" />
-                <div className="text-xs uppercase tracking-wide text-emerald-100">Approved Entries</div>
-              </div>
-              <div className="text-2xl font-semibold">{houseStock.approvedEntries}</div>
-              <div className="text-xs text-emerald-100 mt-1">records</div>
-            </div>
-
-            <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 shadow-lg shadow-yellow-500/20 text-white">
-              <div className="flex items-center gap-2 mb-2">
-                <Calendar className="h-5 w-5" />
-                <div className="text-xs uppercase tracking-wide text-yellow-100">Pending Approval</div>
-              </div>
-              <div className="text-2xl font-semibold">{houseStock.pendingApproval}</div>
-              <div className="text-xs text-yellow-100 mt-1">records</div>
-            </div>
-          </div>
-
-          {/* Stock Status Section */}
-          <Card className="p-6 rounded-2xl">
-            <div className="flex items-center gap-3 mb-4">
-              <Factory className="h-5 w-5 text-orange-600" />
-              <h3 className="text-lg font-bold text-gray-900 tracking-tight">
-                {houseStock.productionHouseName} - Stock Status
-              </h3>
-            </div>
-            <p className="text-xs text-muted-foreground -mt-2 mb-4">
-              {houseStock.countedOn
-                ? `From the stock count on ${formatDateIST(houseStock.countedOn)}`
-                : 'No stock count on or before this date - from all production and shipments on record'}
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {Object.entries(houseStock.stock).map(([product, data]) => {
-                const colors = getStockColor(data.percentage);
-
-                return (
-                  <div
-                    key={product}
-                    className={`p-4 rounded-xl border-2 ${colors.bg} ${colors.border}`}
-                  >
-                    <h4 className="text-sm font-semibold mb-3">{productLabels[product]}</h4>
-                    
-                    <div className="space-y-2 text-sm">
-                      {houseStock.countedOn && (
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Counted:</span>
-                          <span>{data.opening}</span>
-                        </div>
-                      )}
-
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">{houseStock.countedOn ? 'Produced since:' : 'Produced:'}</span>
-                        <span className={colors.text}>{data.produced}</span>
-                      </div>
-
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Sent to Stores:</span>
-                        <span className="text-red-600">{data.sent}</span>
-                      </div>
-                      
-                      <div className="border-t pt-2">
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="">Stock Available:</span>
-                          <span className={`text-lg ${colors.text}`}>{data.available}</span>
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span>{data.percentage.toFixed(0)}% remaining</span>
-                          </div>
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className={`h-full ${colors.bar} transition-all duration-300`}
-                              style={{ width: `${Math.min(data.percentage, 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+      {loading ? (
+        <>
+          <SkeletonStatTiles count={4} />
+          <SkeletonListRows count={5} leading="none" />
+        </>
+      ) : filteredStocks.length === 0 ? (
+        <div className="rounded-lg border border-border bg-surface">
+          <EmptyState icon={Factory} title="No production data" body="Nothing for this day and production house." />
         </div>
-      ))}
-
-      {/* Empty State */}
-      {filteredStocks.length === 0 && (
-        <Card className="p-12 rounded-2xl text-center">
-          <Factory className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-2">No Production Data</h3>
-          <p className="text-muted-foreground">
-            No production data available for the selected date and production house
-          </p>
-        </Card>
+      ) : (
+        filteredStocks.map((houseStock) => (
+          <section key={houseStock.productionHouseId} className="flex flex-col gap-3">
+            <StatGrid>
+              <StatTile label="Made this day" value={<span className="num">{houseStock.totalProduced.toLocaleString('en-IN')}</span>} caption="pieces" />
+              <StatTile label="Wastage" value={<span className="num">{houseStock.totalWastage.toFixed(2)}</span>} caption="kg" />
+              <StatTile label="Approved entries" value={<span className="num">{houseStock.approvedEntries}</span>} />
+              <StatTile label="Waiting for approval" value={<span className="num">{houseStock.pendingApproval}</span>} />
+            </StatGrid>
+            <ListGroup
+              title={houseStock.productionHouseName}
+              footer={houseStock.countedOn ? `From the stock count on ${formatDateIST(houseStock.countedOn)}` : 'No stock count on or before this day: from all production and shipments on record'}
+            >
+              {Object.entries(houseStock.stock).map(([product, data]) => (
+                <div key={product} className="flex flex-col gap-2 px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-body-md font-medium text-text">{productLabels[product]}</span>
+                      <span className="num text-label text-text-3">
+                        {houseStock.countedOn ? `Counted ${data.opening} · made since ${data.produced}` : `Made ${data.produced}`} · sent {data.sent}
+                      </span>
+                    </span>
+                    {levelChip(data.percentage)}
+                    <span className="num text-body-md font-semibold text-text">{data.available.toLocaleString('en-IN')}</span>
+                  </div>
+                  <Progress
+                    value={Math.min(data.percentage, 100)}
+                    tone={data.percentage < 20 ? 'danger' : data.percentage < 40 ? 'warning' : 'primary'}
+                    aria-label={`${productLabels[product]}: ${data.percentage.toFixed(0)}% left`}
+                  />
+                </div>
+              ))}
+            </ListGroup>
+          </section>
+        ))
       )}
     </div>
   );

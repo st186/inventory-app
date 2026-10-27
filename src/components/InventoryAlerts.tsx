@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { AlertTriangle, Bell, TrendingDown, Package, Clock, ArrowRight } from 'lucide-react';
-import { Card } from './ui/card';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
+import { AlertTriangle, Bell, TrendingDown, Package, Clock } from 'lucide-react';
+import { FilterChips } from './ui/chip';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
 
 type Props = {
   context: InventoryContextType;
@@ -134,136 +135,48 @@ export function InventoryAlerts({ context, stores }: Props) {
     ? alerts 
     : alerts.filter(a => a.severity === filter);
 
-  const getSeverityColor = (severity: Alert['severity']) => {
-    switch (severity) {
-      case 'high': return 'bg-red-100 text-red-800 border-red-300';
-      case 'medium': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'low': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  const getAlertIcon = (type: Alert['type']) => {
-    switch (type) {
-      case 'out_of_stock': return <Package className="h-5 w-5" />;
-      case 'low_stock': return <TrendingDown className="h-5 w-5" />;
-      case 'pending_request': return <Clock className="h-5 w-5" />;
-      default: return <AlertTriangle className="h-5 w-5" />;
-    }
-  };
-
+  const severityTone = (severity: Alert['severity']) => (severity === 'high' ? 'danger' : 'warning') as 'danger' | 'warning';
+  const severityLabel = (severity: Alert['severity']) => (severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low');
+  const alertIcon = (type: Alert['type']) => (type === 'out_of_stock' ? Package : type === 'low_stock' ? TrendingDown : type === 'pending_request' ? Clock : AlertTriangle);
   const productLabels: Record<string, string> = {
-    chicken: 'Chicken Momos',
-    chickenCheese: 'Chicken Cheese',
-    veg: 'Veg Momos',
-    cheeseCorn: 'Cheese Corn',
-    paneer: 'Paneer Momos',
-    vegKurkure: 'Veg Kurkure',
-    chickenKurkure: 'Chicken Kurkure',
+    chicken: 'Chicken',
+    chickenCheese: 'Chicken cheese',
+    veg: 'Veg',
+    cheeseCorn: 'Cheese corn',
+    paneer: 'Paneer',
+    vegKurkure: 'Veg kurkure',
+    chickenKurkure: 'Chicken kurkure',
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center shadow-lg shadow-red-500/30 flex-shrink-0">
-            <Bell className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Alerts</h2>
-            <p className="text-sm sm:text-base text-gray-500">
-              {alerts.length} active alert{alerts.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant={filter === 'all' ? 'default' : 'outline'}
-            onClick={() => setFilter('all')}
-            size="sm"
-          >
-            All ({alerts.length})
-          </Button>
-          <Button
-            variant={filter === 'high' ? 'default' : 'outline'}
-            onClick={() => setFilter('high')}
-            size="sm"
-          >
-            High ({alerts.filter(a => a.severity === 'high').length})
-          </Button>
-          <Button
-            variant={filter === 'medium' ? 'default' : 'outline'}
-            onClick={() => setFilter('medium')}
-            size="sm"
-          >
-            Medium ({alerts.filter(a => a.severity === 'medium').length})
-          </Button>
-          <Button
-            variant={filter === 'low' ? 'default' : 'outline'}
-            onClick={() => setFilter('low')}
-            size="sm"
-          >
-            Low ({alerts.filter(a => a.severity === 'low').length})
-          </Button>
-        </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col">
+        <h2 className="text-title font-semibold text-text">Alerts</h2>
+        <p className="num text-body-sm text-text-2">{alerts.length} active</p>
       </div>
-
-      {/* Alerts List */}
-      <div className="space-y-3">
-        {filteredAlerts.map(alert => (
-          <Card key={alert.id} className="p-4 rounded-2xl hover:shadow-md transition-shadow">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 flex-1">
-                <div className={`p-2 rounded-lg ${
-                  alert.severity === 'high' ? 'bg-red-100 text-red-600' :
-                  alert.severity === 'medium' ? 'bg-orange-100 text-orange-600' :
-                  'bg-yellow-100 text-yellow-600'
-                }`}>
-                  {getAlertIcon(alert.type)}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="text-sm font-bold text-gray-900">{alert.storeName}</h4>
-                    {alert.product && (
-                      <>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">
-                          {productLabels[alert.product] || alert.product}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  <p className="text-sm mb-2">{alert.message}</p>
-                  <p className="text-xs text-muted-foreground">{alert.actionRequired}</p>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                <Badge className={`${getSeverityColor(alert.severity)} border`}>
-                  {alert.severity.toUpperCase()}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {new Date(alert.timestamp).toLocaleDateString()}
-                </span>
-              </div>
-            </div>
-          </Card>
+      <FilterChips
+        aria-label="Severity"
+        value={filter}
+        onValueChange={(v) => setFilter(v)}
+        options={[
+          { value: 'all', label: 'All', count: alerts.length },
+          { value: 'high', label: 'High', count: alerts.filter((a) => a.severity === 'high').length },
+          { value: 'medium', label: 'Medium', count: alerts.filter((a) => a.severity === 'medium').length },
+          { value: 'low', label: 'Low', count: alerts.filter((a) => a.severity === 'low').length },
+        ]}
+      />
+      <ListGroup empty={<EmptyState icon={Bell} title="No alerts" body={filter === 'all' ? 'Stock looks fine everywhere.' : `No ${filter} alerts right now.`} />}>
+        {filteredAlerts.map((alert) => (
+          <ListRow
+            key={alert.id}
+            icon={alertIcon(alert.type)}
+            iconTone={severityTone(alert.severity)}
+            title={alert.product ? `${alert.storeName} · ${productLabels[alert.product] || alert.product}` : alert.storeName}
+            subtitle={`${alert.message} · ${alert.actionRequired} · ${new Date(alert.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}
+            trailing={<StatusChip tone={severityTone(alert.severity)} size="sm">{severityLabel(alert.severity)}</StatusChip>}
+          />
         ))}
-      </div>
-
-      {/* Empty State */}
-      {filteredAlerts.length === 0 && (
-        <Card className="p-12 rounded-2xl text-center">
-          <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-bold text-gray-900 mb-2">No Alerts</h3>
-          <p className="text-muted-foreground">
-            {filter === 'all' 
-              ? 'All inventory levels are healthy'
-              : `No ${filter} severity alerts at this time`
-            }
-          </p>
-        </Card>
-      )}
+      </ListGroup>
     </div>
   );
 }
