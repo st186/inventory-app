@@ -28,7 +28,7 @@ export function fmtNum(n: number | null | undefined, dp = 2): string {
 export function fmtG(g: number | null | undefined): string {
   if (g === null || g === undefined || !Number.isFinite(g)) return '–';
   if (Math.abs(g) >= 1000) return `${fmtNum(g / 1000, 2)} kg`;
-  return `${fmtNum(g, g < 10 ? 1 : 0)} g`;
+  return `${fmtNum(g, g < 100 ? 1 : 0)} g`;
 }
 export const fmtPct = (n: number | null | undefined, dp = 1) => (n === null || n === undefined || !Number.isFinite(n) ? '–' : `${fmtNum(n, dp)}%`);
 export const fmtRs = (n: number | null | undefined, dp?: number) =>

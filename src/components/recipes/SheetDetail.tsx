@@ -13,7 +13,7 @@ import { SkeletonListRows } from '../ui/skeleton';
 import { StatusChip } from '../ui/status-chip';
 import { toast } from '../ui/sonner';
 import { useT, type I18nKey } from '../../utils/i18n';
-import { HOW_TO, INGREDIENT_BY_ID, SHEET_BY_ID } from '../../utils/recipeCatalog';
+import { HOW_TO, INGREDIENT_BY_ID, SHEET_BY_ID, defaultScale } from '../../utils/recipeCatalog';
 import { TRIALS, batchFacts, countingBatches, type Batch } from '../../utils/recipeRules';
 import { useDrafts, useRecipesApi, type Draft, type SheetDetail as Detail } from '../../utils/recipesApi';
 import { fmtDay, fmtG, fmtNum, fmtPct, fmtTime, ingName, issueText, pick, sheetName, statusView } from './recipeText';
@@ -122,7 +122,7 @@ export function SheetDetail({ sheetId, refreshKey, onBack, onStart, onOpenDraft,
                     density="compact"
                     title={ingName(lang, k)}
                     subtitle={d.prepLoss ? t('recipes.sheet.beforeAfter') : d.component ? t('recipes.form.fromSheet', { code: SHEET_BY_ID[d.component].code }) : undefined}
-                    trailing={<span className="text-label text-text-3">{d.scale === 'B' ? t('recipes.sheet.bigScale') : t('recipes.sheet.smallScale')}</span>}
+                    trailing={<span className="text-label text-text-3">{defaultScale(sheet, d) === 'B' ? t('recipes.sheet.bigScale') : t('recipes.sheet.smallScale')}</span>}
                   />
                 );
               })}

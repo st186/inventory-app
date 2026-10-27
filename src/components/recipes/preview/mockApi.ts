@@ -51,11 +51,11 @@ const PNR = { paneer: 1750, onion: 1300, cabbage: 750, capsicum: 150, carrot: 35
 const VEG = { cabbage: 7250, carrot: 1200, onion: 600, butter: 250, garlic: 100, ginger: 100, gchilli: 100, coriander: 150, salt: 180, aromatic: 100, msg: 60, pepper: 20, sugar: 20 };
 const SEEDS: Seed[] = [
   { sheet: 'dough', daysAgo: 12, out: 7.33, g: DOUGH, portions: P(10.2), count: 718, minutes: 45, who: 'Ravi (head)' },
-  { sheet: 'dough', daysAgo: 10, out: 7.36, g: { ...DOUGH, water: 2260 }, portions: P(10.4), count: 706, minutes: 40, who: 'Tapas' },
+  { sheet: 'dough', daysAgo: 10, out: 7.36, g: { ...DOUGH, water: 2260 }, portions: P(10.4), count: 706, minutes: 44, who: 'Tapas' },
   { sheet: 'dough', daysAgo: 8, out: 7.30, g: { ...DOUGH, oil: 105 }, portions: P(10.1), count: 721, minutes: 45, who: 'Ravi (head)' },
   { sheet: 'st_chicken', daysAgo: 11, out: 9.86, g: CHK, before: { onion: 6.2, garlic: 0.118 }, portions: P(20.6, 1), count: 476, minutes: 95, who: 'Ravi (head)' },
-  { sheet: 'st_chicken', daysAgo: 9, out: 9.91, g: { ...CHK, onion: 5600 }, before: { onion: 6.25 }, portions: P(20.3, 1), count: 486, minutes: 90, who: 'Sunil' },
-  { sheet: 'st_chicken', daysAgo: 7, out: 9.74, g: { ...CHK, chicken: 3150 }, before: { onion: 6.15 }, portions: P(20.5, 1), count: 470, minutes: 100, who: 'Ravi (head)' },
+  { sheet: 'st_chicken', daysAgo: 9, out: 9.91, g: { ...CHK, onion: 5600 }, before: { onion: 6.25 }, portions: P(20.3, 1), count: 486, minutes: 93, who: 'Sunil' },
+  { sheet: 'st_chicken', daysAgo: 7, out: 9.74, g: { ...CHK, chicken: 3150 }, before: { onion: 6.15 }, portions: P(20.5, 1), count: 470, minutes: 97, who: 'Ravi (head)' },
   { sheet: 'st_paneer', daysAgo: 6, out: 4.88, g: PNR, portions: P(18.2), count: 266, minutes: 70, who: 'Tapas' },
   { sheet: 'st_paneer', daysAgo: 4, out: 4.91, g: { ...PNR, onion: 1050 }, portions: P(18.4), count: 262, minutes: 65, who: 'Sunil' },
   { sheet: 'st_paneer', daysAgo: 2, out: 4.85, g: { ...PNR, paneer: 1800 }, portions: P(21.0), count: 229, minutes: 75, who: 'Ravi (head)' },
@@ -105,7 +105,8 @@ export function createMockRecipesApi() {
     clock = Date.parse(`${addDaysISO(today, -7)}T12:00:00.000Z`);
     for (const sheetId of ['dough', 'st_chicken']) {
       const ids = (await core.review(owner, sheetId, null)).body.selected;
-      await core.setStandard(owner, sheetId, { batchIds: ids, note: 'Preview: set from the first three batches' });
+      const r = await core.setStandard(owner, sheetId, { batchIds: ids, note: 'Preview: set from the first three batches' });
+      if (r.status >= 300) console.warn('preview standard failed', sheetId, r.body);
     }
     clock = Date.now();
   })();

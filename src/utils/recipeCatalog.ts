@@ -121,6 +121,11 @@ export const SHEETS: SheetDef[] = [
 
 export const SHEET_BY_ID: Record<string, SheetDef> = Object.fromEntries(SHEETS.map((s) => [s.id, s]));
 
+// The scale an ingredient starts on in a sheet: the big scale only for the sacks and crates of
+// the big batches (dough, stuffings); 100 g of maida in the coating goes on the small one.
+export const defaultScale = (sheet: SheetDef, ing: IngredientDef): Scale =>
+  ing.scale === 'B' && (sheet.kind === 'dough' || sheet.kind === 'stuffing') ? 'B' : 'S';
+
 export const GROUPS: (Lang3 & { id: SheetGroup })[] = [
   { id: 'dough', en: 'Dough and kurkure coat', bn: 'ডো ও কুরকুরে কোট', hi: 'आटा और कुरकुरे कोट' },
   { id: 'stuffing', en: 'Stuffings', bn: 'পুর', hi: 'भरावन' },

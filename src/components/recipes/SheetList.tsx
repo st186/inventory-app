@@ -78,7 +78,7 @@ export function SheetGroups({ overview, filter, onOpen, drafts }: { overview: Ov
                   leading={<CodeBadge code={s.code} />}
                   title={sheetName(lang, s.id)}
                   subtitle={onPhone ? `${weigh(s.id)} · ${t('recipes.list.draftsHere', { n: onPhone })}` : weigh(s.id)}
-                  trailing={view ? <StatusChip tone={view.tone}>{view.label}</StatusChip> : undefined}
+                  trailing={view ? <StatusChip size="sm" tone={view.tone}>{view.label}</StatusChip> : undefined}
                   chevron
                   onClick={() => onOpen(s.id)}
                 />

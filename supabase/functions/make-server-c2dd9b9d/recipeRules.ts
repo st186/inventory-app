@@ -246,7 +246,7 @@ export function validateBatch(sheet: SheetDef, b: BatchInput, history: (BatchInp
       const fits = share2 / usual <= FIX_RATIO && share2 / usual >= 1 / FIX_RATIO;
       add('warning', 'unusual', {
         lineKey: l.key,
-        vars: { qty: l.line.qty ?? 0, unit: l.line.unit, pct: round(share * 100, 1), usualPct: round(usual * 100, 1) },
+        vars: { qty: l.line.qty ?? 0, unit: l.line.unit, pct: round(share * 100, share < 0.01 ? 2 : 1), usualPct: round(usual * 100, usual < 0.01 ? 2 : 1) },
         fix: fits ? { target: 'line', lineKey: l.key, unit: otherUnit(l.line.unit) } : undefined,
       });
     }

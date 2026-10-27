@@ -12,7 +12,7 @@ import { ErrorState } from '../ui/error-state';
 import { PageHeader } from '../ui/page-header';
 import { SkeletonListRows } from '../ui/skeleton';
 import { useT } from '../../utils/i18n';
-import { INGREDIENT_BY_ID, SHEETS, SHEET_BY_ID } from '../../utils/recipeCatalog';
+import { INGREDIENT_BY_ID, SHEETS, SHEET_BY_ID, defaultScale } from '../../utils/recipeCatalog';
 import { countingBatches, type BatchInput } from '../../utils/recipeRules';
 import { isNetworkError } from '../../utils/http';
 import {
@@ -49,7 +49,8 @@ export function blankBatch(sheetId: string, today: string, time: string, madeBy:
     madeByName: madeBy?.name ?? '',
     lines: s.ingredients.map((key) => {
       const d = INGREDIENT_BY_ID[key];
-      return { key, qty: null, unit: d.scale === 'B' ? 'kg' : 'g', scale: d.scale };
+      const scale = defaultScale(s, d);
+      return { key, qty: null, unit: scale === 'B' ? 'kg' : 'g', scale };
     }),
     output: { qty: null, unit: 'kg' },
     count: null,
