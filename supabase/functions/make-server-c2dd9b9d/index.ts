@@ -15061,12 +15061,15 @@ async function runPosSync(targetDate?: string) {
             complimentaryCount,
             complimentaryAmount
           });
-          if (existingSale.storeId && existingSale.date) {
-            // The corrected total can change what "should" have been collected after a
-            // day was already reconciled - re-run the Paytm cascade so
-            // actualPaytmBalance reflects it instead of going stale. Placeholders too: their
-            // Paytm takings were just re-synced, and their saved balance is what the next
-            // day carries forward.
+          // Re-run the Paytm cascade only when this write actually moved the day's Paytm
+          // takings (a placeholder or POS-only row getting fresh figures). A counted day keeps
+          // its human split, so its Paytm is unchanged - and recomputing from an old date
+          // rewrites every saved balance after it up to the next recalibration: the 27 Oct
+          // 2026 re-sync of 17 Jan replaced 227 days of saved balances, many typed in after
+          // checking the Paytm app, with a chain that ran to -₹1.8 lakh (restored from
+          // backup:paytm-balances-before-resync:2026-10-27).
+          const paytmMoved = !hasHumanSplit && Math.abs((Number(existingSale.paytmAmount) || 0) - paytmTotal) > 0.005;
+          if (paytmMoved && existingSale.storeId && existingSale.date) {
             await cascadeRecomputePaytmBalances(existingSale.storeId, existingSale.date);
           }
         } else {
