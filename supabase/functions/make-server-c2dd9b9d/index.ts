@@ -2580,16 +2580,13 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
     }
     return approvedEvent;
   }
-  if (existingRequest.reason === 'production_inventory' && existingRequest.productionHouseId) {
+  const forProductionCash = existingRequest.reason === 'production_inventory' && existingRequest.productionHouseId;
+  if (forProductionCash) {
     // Destined for the production cash ledger (§4 of the cash split plan), not the
-    // store's usedOnlineMoney. Nothing needs to be written to production-cash directly
-    // here - GET /production-cash and the cascade both already sum approved
-    // production_inventory topups live from cash-topup: records for the matching
-    // date/productionHouseId (see computeProductionCashExpected), so simply marking
-    // this request 'approved' below is enough for it to count. The cascade call just
-    // refreshes an already-saved day's derived fields if one exists yet - a no-op if
-    // nobody has opened the Cash tab for that house/date at all.
-    await cascadeRecomputeProductionCash(existingRequest.productionHouseId, existingRequest.date);
+    // store's usedOnlineMoney. Nothing needs to be written to production-cash directly -
+    // computeProductionCashExpected sums approved production_inventory top-ups from the
+    // cash-topup: records, and the cascade after the approval is saved (below) refreshes a
+    // day that already has a saved count.
   } else {
     // Find that day's sales record for the store and bump usedOnlineMoney - this is the
     // exact lever expectedCashInHand/calculatePaytmBalance already use to move money
@@ -2684,6 +2681,13 @@ async function applyCashTopupApproval(existingRequest: any, approvedByEmail: str
     approvedAtIsUtc: true
   };
   await kv.set(`cash-topup:${existingRequest.id}`, approvedRequest);
+
+  // After the save: the cascade reads the request's status from the store, and run before it
+  // (as it was) it still saw 'pending' and credited nothing - a day already counted kept
+  // "Today's cash top-up ₹0" (27 Oct 2026, and the second top-up of 31 Aug and 6 Sep).
+  if (forProductionCash) {
+    await cascadeRecomputeProductionCash(existingRequest.productionHouseId, existingRequest.date);
+  }
 
   // Refresh actualPaytmBalance from this date forward now that Paytm just moved -
   // every other Paytm-affecting write (recalibration save/edit/delete, settlement

@@ -1263,7 +1263,9 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
           {/* Production cash in hand: counted by the production incharge / operations manager,
               approved by the cluster head; read-only for everyone else. Lives with the other
               cash figures (Cash & Paytm), and doesn't wait for the store's day close - it sat
-              inside the day review, so it couldn't be counted until the store had closed. */}
+              inside the day review, so it couldn't be counted until the store had closed. On
+              its own tab it brings the day picker with it, to look back at an earlier day. */}
+          {productionHouseIdForTotal && activeTab === 'cash' && <DayBand value={selectedDate} onChange={setSelectedDate} />}
           {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && (
             <Section title="Production cash in hand">
               {productionCashLoading ? (
