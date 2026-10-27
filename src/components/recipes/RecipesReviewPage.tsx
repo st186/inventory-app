@@ -10,21 +10,25 @@ import { PageHeader } from '../ui/page-header';
 import { SkeletonListRows, SkeletonStatTiles } from '../ui/skeleton';
 import { StatGrid, StatTile } from '../ui/stat-tile';
 import { useT } from '../../utils/i18n';
-import { MOMO_TYPES } from '../../utils/recipeCatalog';
+import { MOMO_TYPES, SHEET_BY_ID } from '../../utils/recipeCatalog';
 import { useRecipesApi, type Overview } from '../../utils/recipesApi';
 import { ReviewDetail } from './ReviewDetail';
 import { PerMomoGroup, SheetFilterChips, SheetGroups, type SheetFilter } from './SheetList';
 import { latestPriceDate } from './RecipesPage';
 
-export type RecipesReviewPageProps = { header?: boolean };
+export type RecipesReviewPageProps = {
+  header?: boolean;
+  /** Open this sheet's review straight away (a notification or deep link). */
+  initialSheetId?: string | null;
+};
 
-export function RecipesReviewPage({ header = true }: RecipesReviewPageProps) {
+export function RecipesReviewPage({ header = true, initialSheetId = null }: RecipesReviewPageProps) {
   const { t, lang } = useT();
   const api = useRecipesApi();
   const [overview, setOverview] = React.useState<Overview | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState<SheetFilter | null>(null);
-  const [open, setOpen] = React.useState<string | null>(null);
+  const [open, setOpen] = React.useState<string | null>(initialSheetId && SHEET_BY_ID[initialSheetId] ? initialSheetId : null);
   const [refreshKey, setRefreshKey] = React.useState(0);
 
   const load = React.useCallback(() => {

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { BarChart3, ClipboardList, Plus, RotateCcw } from 'lucide-react';
+import { BarChart3, ClipboardList, CloudOff, Plus, RotateCcw } from 'lucide-react';
 
 import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
@@ -15,9 +15,19 @@ import { toast } from '../ui/sonner';
 import { useT, type I18nKey } from '../../utils/i18n';
 import { HOW_TO, INGREDIENT_BY_ID, SHEET_BY_ID, defaultScale } from '../../utils/recipeCatalog';
 import { TRIALS, batchFacts, countingBatches, type Batch } from '../../utils/recipeRules';
-import { useDrafts, useRecipesApi, type Draft, type SheetDetail as Detail } from '../../utils/recipesApi';
+import { readRecipesCache, useDrafts, useRecipesApi, writeRecipesCache, type Draft, type SheetDetail as Detail } from '../../utils/recipesApi';
+import { isNetworkError } from '../../utils/http';
 import { fmtDay, fmtG, fmtNum, fmtPct, fmtTime, ingName, issueText, pick, sheetName, statusView } from './recipeText';
 import { CodeBadge } from './SheetList';
+
+const offlineDetail = (sheetId: string): Detail => ({
+  sheetId,
+  status: { code: 'todo', n: 0, version: null, newSince: 0 },
+  batches: [],
+  standard: null,
+  access: { canView: true, canEnter: true, canReview: false, canApprove: false, canManageCrew: false, canSeeCosts: false, canEditPrices: false, isCrew: false },
+  today: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10),
+});
 
 type Props = {
   sheetId: string;
@@ -34,13 +44,23 @@ export function SheetDetail({ sheetId, refreshKey, onBack, onStart, onOpenDraft,
   const drafts = useDrafts().filter((d) => d.sheetId === sheetId);
   const [data, setData] = React.useState<Detail | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [stale, setStale] = React.useState(false);
   const [open, setOpen] = React.useState<Batch | null>(null);
   const [standardOpen, setStandardOpen] = React.useState(false);
   const sheet = SHEET_BY_ID[sheetId];
 
   const load = React.useCallback(() => {
     setError(null);
-    api.sheet(sheetId).then(setData, (e) => setError(e instanceof Error ? e.message : String(e)));
+    api.sheet(sheetId).then(
+      (d) => { setData(d); setStale(false); writeRecipesCache(`sheet:${sheetId}`, d); },
+      async (e) => {
+        // No signal: the last saved answer, or an empty sheet - a batch can still be started.
+        if (!isNetworkError(e)) { setError(e instanceof Error ? e.message : String(e)); return; }
+        const cached = await readRecipesCache<Detail>(`sheet:${sheetId}`);
+        setData(cached || offlineDetail(sheetId));
+        setStale(true);
+      },
+    );
   }, [api, sheetId]);
   React.useEffect(load, [load, refreshKey]);
 
@@ -54,6 +74,7 @@ export function SheetDetail({ sheetId, refreshKey, onBack, onStart, onOpenDraft,
       <PageHeader title={`${sheet.code} · ${sheetName(lang, sheetId)}`} caption={view?.label} onBack={onBack} />
       <main className="mx-auto flex w-full max-w-[720px] flex-col gap-5 p-4 pb-6 lg:px-8">
         {error && <ErrorState title={t('error.title')} body={error} onRetry={load} />}
+        {stale && <Callout tone="warning" icon={CloudOff} title={t('recipes.offlineTitle')}>{t('recipes.offlineBody')}</Callout>}
         {!data && !error && <SkeletonListRows count={4} />}
         {data && (
           <>

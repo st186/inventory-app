@@ -64,11 +64,13 @@ export function blankBatch(sheetId: string, today: string, time: string, madeBy:
 export type RecipesPageProps = {
   /** Show a page title (when the page is not already under a Production header with tabs). */
   header?: boolean;
+  /** Open this sheet straight away (a notification or deep link). */
+  initialSheetId?: string | null;
   /** The signed-in person's employee id (pre-fills "Made by"). */
   employeeId?: string | null;
 };
 
-export function RecipesPage({ header = false, employeeId }: RecipesPageProps) {
+export function RecipesPage({ header = false, employeeId, initialSheetId = null }: RecipesPageProps) {
   const { t, lang } = useT();
   const api = useRecipesApi();
   const drafts = useDrafts();
@@ -76,7 +78,7 @@ export function RecipesPage({ header = false, employeeId }: RecipesPageProps) {
   const [stale, setStale] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState<SheetFilter>('all');
-  const [view, setView] = React.useState<View>({ kind: 'list' });
+  const [view, setView] = React.useState<View>(initialSheetId && SHEET_BY_ID[initialSheetId] ? { kind: 'sheet', sheetId: initialSheetId } : { kind: 'list' });
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [crewOpen, setCrewOpen] = React.useState(false);
   const details = React.useRef(new Map<string, Detail>());

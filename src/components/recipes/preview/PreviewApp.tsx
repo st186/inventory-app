@@ -23,6 +23,7 @@ function readParams() {
     role: (role === 'crew' || role === 'ops' || role === 'owner' ? role : 'head') as PreviewRole,
     screen: (screen === 'more' ? 'more' : 'production') as Screen,
     chrome: p.get('chrome') !== '0',
+    open: p.get('open'),
   };
 }
 
@@ -75,8 +76,8 @@ export function PreviewApp() {
           <RecipesApiProvider api={mock.api}>
             <div lang={lang} key={`${screen}-${role}-${version}`}>
               {screen === 'production'
-                ? <RecipesPage header employeeId={role === 'head' ? 'PV-01' : role === 'crew' ? 'PV-11' : null} />
-                : <RecipesReviewPage />}
+                ? <RecipesPage header employeeId={role === 'head' ? 'PV-01' : role === 'crew' ? 'PV-11' : null} initialSheetId={initial.open} />
+                : <RecipesReviewPage initialSheetId={initial.open} />}
             </div>
           </RecipesApiProvider>
         </ConfirmProvider>
