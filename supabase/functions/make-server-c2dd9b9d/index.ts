@@ -8,7 +8,7 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerProfileRoutes } from './profile.ts';
-import { registerPasswordRoutes, passwordGate } from './passwords.ts';
+import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
 import { registerWorkplaceRoutes } from './workplace.ts';
@@ -318,6 +318,7 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   const cronSecret = Deno.env.get('CRON_SYNC_SECRET');
   if (cronSecret && c.req.header('X-Cron-Secret') === cronSecret) return next();
 
+  warmPasswordPolicy();
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) return c.json({ error: auth.error }, auth.status);
   // Password rotation (passwords.ts): a password past 90 days, or one the owner force-reset, only
@@ -443,63 +444,114 @@ const kvWithRetry = {
   mdel: (keys: string[]) => retryWithBackoff(() => kv.mdel(keys), `kv.mdel`)
 };
 
-const verifiedTokens = new Map<string, { at: number; result: any }>();
+// ---- Login check (speed work, 28 Oct 2026) ----
+// Each answer is kept per server copy for up to a minute (never past the token's own expiry),
+// and the login gate, the route and anything else in the same request share one check while it
+// runs. On a fresh copy the check costs one call to the auth server: getUser already returns
+// the stored user (current roles, ban and app_metadata), so the second getUserById call it used
+// to make bought nothing. The archived-record read starts alongside it.
+const VERIFIED_TOKEN_TTL_MS = 60_000;
+const verifiedTokens = new Map<string, { at: number; until: number; result: any }>();
+const verifyingTokens = new Map<string, Promise<any>>();
+
+// The token's claims, read without checking the signature: only a hint for the archived-record
+// read started in parallel, used only once getUser has vouched for the same login.
+function unverifiedClaims(accessToken: string): any {
+  try {
+    const part = accessToken.split('.')[1];
+    if (!part) return null;
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function rememberVerified(accessToken: string, result: any, claims: any) {
+  const now = Date.now();
+  const expiresMs = typeof claims?.exp === 'number' ? claims.exp * 1000 : now + VERIFIED_TOKEN_TTL_MS;
+  const until = Math.min(now + VERIFIED_TOKEN_TTL_MS, expiresMs);
+  if (until <= now) return;
+  if (verifiedTokens.size > 500) {
+    for (const [token, entry] of verifiedTokens) if (entry.until <= now) verifiedTokens.delete(token);
+    if (verifiedTokens.size > 500) verifiedTokens.clear();
+  }
+  verifiedTokens.set(accessToken, { at: now, until, result });
+}
+
+// Auth server unreachable or failing (as opposed to "this token is no good"): supabase-js hands
+// these back as an error value rather than throwing, and they used to answer 401, which signs
+// the person out on a network blip.
+function isTransientAuthError(error: any): boolean {
+  if (!error) return false;
+  if (error.name === 'AuthRetryableFetchError') return true;
+  const status = typeof error.status === 'number' ? error.status : undefined;
+  return status === 0 || (status !== undefined && status >= 500);
+}
 
 // Middleware to verify user authentication with retry logic
-async function verifyUser(authHeader: string | null, retryCount = 0): Promise<any> {
+async function verifyUser(authHeader: string | null): Promise<any> {
   if (!authHeader) {
     return { error: 'Unauthorized', status: 401 };
   }
-  
+
   const accessToken = authHeader.split(' ')[1];
+  if (!accessToken) return { error: 'Unauthorized', status: 401 };
   // The login gate and the route itself both verify the same token: reuse a fresh answer.
   const cachedAuth = verifiedTokens.get(accessToken);
-  if (cachedAuth && Date.now() - cachedAuth.at < 30000) return cachedAuth.result;
+  if (cachedAuth && Date.now() < cachedAuth.until) return cachedAuth.result;
+  const running = verifyingTokens.get(accessToken);
+  if (running) return running;
+  const check = verifyAccessToken(accessToken).finally(() => verifyingTokens.delete(accessToken));
+  verifyingTokens.set(accessToken, check);
+  return check;
+}
+
+async function verifyAccessToken(accessToken: string, retryCount = 0): Promise<any> {
   const maxRetries = 3;
   const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000); // Exponential backoff, max 5s
-  
+
+  // Start the archived-record read now, by the employee id the token itself names, so it
+  // overlaps the auth call. (Never for the owner - see below.)
+  const claims = unverifiedClaims(accessToken);
+  const claimedEmployeeId = claims?.app_metadata?.employeeId || claims?.user_metadata?.employeeId;
+  const archivedEarly = typeof claims?.sub === 'string' && typeof claimedEmployeeId === 'string' && claims?.app_metadata?.role !== 'cluster_head'
+    ? isArchivedLogin(claimedEmployeeId, claims.sub)
+    : null;
+
   try {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    
+    if (isTransientAuthError(error)) throw error;
+
     if (error || !user?.id) {
       return { error: 'Unauthorized', status: 401 };
     }
-    
-    // Fetch the latest user data from Supabase to ensure we have current role
-    try {
-      const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
-      if (!userError && userData?.user) {
-        // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
-        // token issued before that stays valid until it expires - refuse it here so leaving
-        // takes effect at once. 401 makes the app sign them out.
-        // Someone archived before archiving switched logins off has no ban yet: catch them
-        // by their archived record and ban them now. (Never the owner - a stray archived
-        // copy of their record must not lock the business out.)
-        const employeeIdHint = userData.user.app_metadata?.employeeId || userData.user.user_metadata?.employeeId;
-        const isOwner = userData.user.app_metadata?.role === 'cluster_head';
-        if (isLoginBlocked(userData.user) || (!isOwner && (await isArchivedLogin(employeeIdHint, user.id)))) {
-          if (!isLoginBlocked(userData.user)) await setEmployeeLoginBlocked(user.id, true);
-          const result = { error: 'This login has been switched off', status: 401 };
-          verifiedTokens.set(accessToken, { at: Date.now(), result });
-          return result;
-        }
-        // Fresh metadata, with roles from app_metadata only (see withTrustedRoles).
-        const result = { user: withTrustedRoles({ ...user, user_metadata: userData.user.user_metadata, app_metadata: userData.user.app_metadata }) };
-        if (verifiedTokens.size > 500) verifiedTokens.clear();
-        verifiedTokens.set(accessToken, { at: Date.now(), result });
-        return result;
-      }
-    } catch (e) {
-      console.log('Error fetching fresh user data:', e);
-    }
 
-    if (isLoginBlocked(user)) return { error: 'This login has been switched off', status: 401 };
-    return { user: withTrustedRoles(user) };
+    // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
+    // token issued before that stays valid until it expires - refuse it here so leaving
+    // takes effect at once. 401 makes the app sign them out.
+    // Someone archived before archiving switched logins off has no ban yet: catch them
+    // by their archived record and ban them now. (Never the owner - a stray archived
+    // copy of their record must not lock the business out.)
+    const employeeIdHint = user.app_metadata?.employeeId || user.user_metadata?.employeeId;
+    const isOwner = user.app_metadata?.role === 'cluster_head';
+    const archived = !isOwner && (archivedEarly && user.id === claims.sub && employeeIdHint === claimedEmployeeId
+      ? await archivedEarly
+      : await isArchivedLogin(employeeIdHint, user.id));
+    if (isLoginBlocked(user) || archived) {
+      if (!isLoginBlocked(user)) await setEmployeeLoginBlocked(user.id, true);
+      const result = { error: 'This login has been switched off', status: 401 };
+      rememberVerified(accessToken, result, claims);
+      return result;
+    }
+    // Roles from app_metadata only (see withTrustedRoles).
+    const result = { user: withTrustedRoles(user) };
+    rememberVerified(accessToken, result, claims);
+    return result;
   } catch (error: any) {
-    // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
-    // is returned as a normal { error } value above (line ~179), not thrown. So anything
-    // landing here is an infra/network hiccup talking to Supabase Auth itself (timeout,
-    // connection reset, transient unavailability), not proof the user's session is bad.
+    // Only an infra/network hiccup talking to Supabase Auth lands here (a thrown exception,
+    // or a retryable/5xx error re-thrown above) - not proof the user's session is bad. A
+    // genuinely invalid/expired token is answered with 401 above.
     // Retry generously, and if retries are exhausted, return 503 (not 401) so the
     // frontend's retry-on-5xx logic kicks in instead of force-logging the user out -
     // treating "we couldn't verify" as "verification failed" was logging people out
@@ -508,7 +560,7 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
       const delay = retryDelay(retryCount);
       console.log(`⚠️ Transient error in verifyUser (${error?.message || error}), retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      return verifyUser(authHeader, retryCount + 1);
+      return verifyAccessToken(accessToken, retryCount + 1);
     }
 
     console.error('❌ Error in verifyUser after retries:', error);
@@ -531,8 +583,8 @@ function isLoginBlocked(user: any): boolean {
 
 // True when this login belongs to an archived employee record and to no active one. Ids
 // were reused in the past, so the archived record must carry this very login. One primary
-// key read on the common path (verifyUser answers are cached for 30s); a read failure
-// never locks anyone out.
+// key read on the common path (verifyUser answers are cached for a minute and the read runs
+// alongside the auth call); a read failure never locks anyone out.
 async function isArchivedLogin(employeeId: string | undefined, authUserId: string): Promise<boolean> {
   if (!employeeId) return false;
   try {

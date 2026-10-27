@@ -31,7 +31,7 @@ type Deps = {
   verifyUser: (authHeader: string | null) => Promise<any>;
   kv: Kv;
   notifyUser: (userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<any>;
-  // index.ts caches verified tokens for 30 s; after a change that cache would still show the old
+  // index.ts caches verified tokens for up to a minute; after a change that cache would still show the old
   // app_metadata (and keep someone blocked who has just fixed their password).
   forgetVerifiedTokens?: () => void;
 };
@@ -65,6 +65,7 @@ const OPEN_WHILE_EXPIRED = [
 
 let deps: Deps | null = null;
 let firstSeenAt: string | null = null;
+let firstSeenLoading: Promise<string> | null = null;
 
 export type PasswordStatus = {
   changedAt: string;
@@ -85,11 +86,30 @@ const istDate = (ms: number) => new Date(ms + IST_OFFSET_MS).toISOString().slice
 
 async function firstSeen(kv: Kv): Promise<string> {
   if (firstSeenAt) return firstSeenAt;
-  const stored = await kv.get<any>(FIRST_SEEN_KEY);
-  if (validIso(stored?.at)) return (firstSeenAt = stored.at);
-  const now = new Date().toISOString();
-  await kv.set(FIRST_SEEN_KEY, { at: now, note: 'Password rotation started; logins with no recorded change count as changed at this time' });
-  return (firstSeenAt = now);
+  // One read per server copy, shared by everything that asks while it runs.
+  if (!firstSeenLoading) {
+    firstSeenLoading = (async () => {
+      const stored = await kv.get<any>(FIRST_SEEN_KEY);
+      if (validIso(stored?.at)) return (firstSeenAt = stored.at);
+      const now = new Date().toISOString();
+      await kv.set(FIRST_SEEN_KEY, { at: now, note: 'Password rotation started; logins with no recorded change count as changed at this time' });
+      return (firstSeenAt = now);
+    })().finally(() => { firstSeenLoading = null; });
+  }
+  return firstSeenLoading;
+}
+
+// The stand-in date only matters for a login with no recorded change; one that has a
+// passwordChangedAt skips the read (statusOf ignores `since` for it).
+function sinceFor(user: any, kv: Kv): Promise<string> {
+  const recorded = user?.app_metadata?.passwordChangedAt;
+  return validIso(recorded) ? Promise.resolve(recorded) : firstSeen(kv);
+}
+
+// Called by the login gate before it verifies the token, so on a fresh server copy the
+// first-seen read overlaps the auth call instead of following it.
+export function warmPasswordPolicy(): void {
+  if (deps && !firstSeenAt) firstSeen(deps.kv).catch(() => {});
 }
 
 function statusOf(user: any, since: string, now = Date.now()): PasswordStatus {
@@ -117,13 +137,13 @@ export async function passwordGate(path: string, user: any): Promise<{ error: st
   if (!deps || !user?.id || OPEN_WHILE_EXPIRED.some((r) => r.test(path))) return null;
   let status: PasswordStatus;
   try {
-    status = statusOf(user, await firstSeen(deps.kv));
+    status = statusOf(user, await sinceFor(user, deps.kv));
     if (!status.mustChange) return null;
-    // verifyUser answers from a 30-second cache per server copy, so someone who changed their
+    // verifyUser answers from a cache of up to a minute per server copy, so someone who changed their
     // password a moment ago (perhaps through another copy) can still look expired here. Check the
     // live record before blocking - this extra read only ever happens for blocked people.
     const { data } = await deps.supabase.auth.admin.getUserById(user.id);
-    if (data?.user) status = statusOf(data.user, await firstSeen(deps.kv));
+    if (data?.user) status = statusOf(data.user, await sinceFor(data.user, deps.kv));
   } catch (e) {
     // A database hiccup must not lock the whole team out: the sign-in itself was already checked
     // by the gate, and expiry is a rotation policy on top of it.
@@ -270,7 +290,7 @@ export function registerPasswordRoutes(app: any, d: Deps) {
     const auth = await verifyUser(c.req.header('Authorization'));
     if ('error' in auth) return c.json({ error: auth.error }, auth.status);
     try {
-      const status = statusOf(auth.user, await firstSeen(kv));
+      const status = statusOf(auth.user, await sinceFor(auth.user, kv));
       return c.json({ ...status, policy: { maxAgeDays: PASSWORD_MAX_AGE_DAYS, warnDays: PASSWORD_WARN_DAYS, minLength: MIN_LENGTH, maxBytes: MAX_BYTES } });
     } catch (e) {
       console.error('password-status failed:', e instanceof Error ? e.message : String(e));
