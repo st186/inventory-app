@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PackageCheck, Truck, RefreshCw, Loader2, FileText } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { FileText, PackageCheck, RefreshCw, Truck } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { Button } from '../ui/button';
+import { EmptyState } from '../ui/empty-state';
+import { ErrorState } from '../ui/error-state';
+import { IconButton } from '../ui/icon-button';
+import { SkeletonListRows } from '../ui/skeleton';
+import { StatusChip } from '../ui/status-chip';
+import { t as tSaved, useT } from '../../utils/i18n';
 import * as api from '../../utils/api';
 import type { ProductionRequest } from '../../utils/api';
 import { MOMO_TYPES } from '../../constants/momoTypes';
-import { bagsLabel } from '../../utils/batches';
 import { ReceiveDeliveryDialog, ReceiptSummary } from './ReceiveDeliveryDialog';
 import { DispatchSlipModal } from './DispatchSlip';
+import { StockPage, bagsText, dayLabel, momoName, timeLabel } from '../stock/stockShared';
 
 type Props = {
   accessToken: string;
@@ -21,11 +28,13 @@ function daysAgo(n: number) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// "Receive Stock" for store crew: deliveries on the way to their store, each counted with the
-// same receive dialog the store incharge uses, and the last few counts underneath.
+// "Receive" for store crew: deliveries on the way to their store, each counted with the same
+// receive sheet the store incharge uses, and the last few counts underneath.
 export function IncomingDeliveries({ accessToken, storeId }: Props) {
+  const { t, lang } = useT();
   const [requests, setRequests] = useState<ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [receiving, setReceiving] = useState<ProductionRequest | null>(null);
   const [slip, setSlip] = useState<ProductionRequest | null>(null);
 
@@ -34,8 +43,10 @@ export function IncomingDeliveries({ accessToken, storeId }: Props) {
     try {
       const all = await api.fetchProductionRequests(accessToken, daysAgo(7));
       setRequests(all.filter((r) => r.storeId === storeId));
-    } catch {
-      toast.error('Could not load deliveries');
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || tSaved('error.body'));
+      toast.error(tSaved('stock.recv.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -50,67 +61,70 @@ export function IncomingDeliveries({ accessToken, storeId }: Props) {
   );
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><PackageCheck className="w-6 h-6 text-green-600" /> Receive Stock</h1>
-          <p className="text-sm text-gray-500">Count the bags against the slip before anything goes in the freezer.</p>
+    <StockPage lang={lang}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col">
+          <h1 className="text-title font-semibold text-text">{t('stock.recv.title')}</h1>
+          <p className="text-body-sm text-text-2">{t('stock.recv.caption')}</p>
         </div>
-        <button onClick={load} disabled={loading} className="p-2 rounded-lg border border-gray-200 bg-white" aria-label="Refresh">
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <IconButton label={t('shell.refresh')} icon={<RefreshCw className={loading ? 'animate-spin' : undefined} />} disabled={loading} onClick={load} />
       </div>
 
-      <section>
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">On the way</h2>
+      <section className="flex flex-col gap-3" aria-labelledby="recv-on-the-way">
+        <h2 id="recv-on-the-way" className="text-subtitle font-semibold text-text">{t('stock.recv.onTheWay')}</h2>
         {loading && requests.length === 0 ? (
-          <div className="flex items-center gap-2 text-gray-500 text-sm py-6 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+          <SkeletonListRows count={2} />
+        ) : error && requests.length === 0 ? (
+          <ErrorState body={error} onRetry={load} retrying={loading} />
         ) : onTheWay.length === 0 ? (
-          <p className="text-sm text-gray-500 bg-white border border-gray-200 rounded-xl p-4">Nothing on the way right now.</p>
-        ) : (
-          <div className="space-y-3">
-            {onTheWay.map((r) => (
-              <div key={r.id} className="bg-white border-2 border-orange-200 rounded-xl p-4">
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div>
-                    <p className="font-semibold text-gray-900 flex items-center gap-2"><Truck className="w-4 h-4 text-orange-600" /> Request #{r.id.slice(0, 8).toUpperCase()}</p>
-                    <p className="text-xs text-gray-500">
-                      For {new Date(`${r.requestDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-                      {r.shippedAt ? ` · left ${new Date(r.shippedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}` : ''}
-                      {r.dispatch?.boxes ? ` · ${r.dispatch.boxes} box${r.dispatch.boxes === 1 ? '' : 'es'}` : ''}
-                    </p>
-                  </div>
-                  {r.dispatch && (
-                    <button onClick={() => setSlip(r)} className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700 flex-shrink-0"><FileText className="w-3.5 h-3.5" /> Slip</button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {PRODUCTS.filter(({ camelKey }) => (r.shippedQuantities?.[camelKey] || 0) > 0).map(({ camelKey, label }) => (
-                    <span key={camelKey} className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-800 border border-orange-100">
-                      {label.replace(/ Momo$/, '')} · {bagsLabel(r.shippedQuantities![camelKey], camelKey)}
-                    </span>
-                  ))}
-                </div>
-                <button onClick={() => setReceiving(r)} className="w-full px-4 py-3 bg-green-600 text-white rounded-lg font-semibold inline-flex items-center justify-center gap-2">
-                  <PackageCheck className="w-5 h-5" /> Receive &amp; count
-                </button>
-              </div>
-            ))}
+          <div className="rounded-lg border border-border bg-surface">
+            <EmptyState compact icon={Truck} title={t('stock.recv.nothing')} body={t('stock.recv.nothingBody')} />
           </div>
+        ) : (
+          onTheWay.map((r, index) => {
+            const lines = PRODUCTS.filter(({ camelKey }) => (r.shippedQuantities?.[camelKey] || 0) > 0);
+            return (
+              <article key={r.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-col">
+                    <span className="text-body-md font-semibold text-text">{t('stock.queue.forDay', { day: dayLabel(lang, r.requestDate) })}</span>
+                    <span className="num text-label text-text-3">
+                      {t('stock.recv.requestNo', { id: r.id.slice(0, 8).toUpperCase() })}
+                      {r.shippedAt ? ` · ${t('stock.queue.leftAt', { time: timeLabel(r.shippedAt) })}` : ''}
+                      {r.dispatch?.boxes ? ` · ${t('stock.slip.boxes', { n: r.dispatch.boxes })}` : ''}
+                    </span>
+                  </div>
+                  <StatusChip status="request.onTheWay" />
+                </div>
+                <ul className="flex flex-col rounded-md bg-surface-2 px-3 py-1.5">
+                  {lines.map(({ camelKey, label }) => (
+                    <li key={camelKey} className="flex items-baseline justify-between gap-3 py-1 text-body-sm">
+                      <span className="text-text">{momoName(lang, camelKey, label)}</span>
+                      <span className="num font-semibold text-text">{bagsText(lang, r.shippedQuantities![camelKey], camelKey)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex gap-2.5">
+                  {r.dispatch && (
+                    <Button variant="secondary" size="lg" leadingIcon={<FileText />} onClick={() => setSlip(r)}>{t('stock.slip.title')}</Button>
+                  )}
+                  <Button variant={index === 0 ? 'primary' : 'secondary'} size="lg" className="flex-1" leadingIcon={<PackageCheck />} onClick={() => setReceiving(r)}>{t('stock.req.receiveCount')}</Button>
+                </div>
+              </article>
+            );
+          })
         )}
       </section>
 
       {received.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">Recently counted</h2>
-          <div className="space-y-3">
-            {received.map((r) => (
-              <div key={r.id} className="bg-white border border-gray-200 rounded-xl p-4 -mt-0">
-                <p className="text-sm font-semibold text-gray-900">Request #{r.id.slice(0, 8).toUpperCase()}</p>
-                <ReceiptSummary request={r} products={PRODUCTS} accessToken={accessToken} />
-              </div>
-            ))}
-          </div>
+        <section className="flex flex-col gap-4">
+          <h2 className="text-subtitle font-semibold text-text">{t('stock.recv.recent')}</h2>
+          {received.map((r) => (
+            <div key={r.id} className="flex flex-col gap-1">
+              <span className="mx-1 text-label font-medium text-text-2">{t('stock.queue.forDay', { day: dayLabel(lang, r.requestDate) })} · {t('stock.recv.requestNo', { id: r.id.slice(0, 8).toUpperCase() })}</span>
+              <ReceiptSummary request={r} products={PRODUCTS} accessToken={accessToken} />
+            </div>
+          ))}
         </section>
       )}
 
@@ -124,6 +138,6 @@ export function IncomingDeliveries({ accessToken, storeId }: Props) {
         />
       )}
       {slip && <DispatchSlipModal request={slip} products={PRODUCTS} onClose={() => setSlip(null)} />}
-    </div>
+    </StockPage>
   );
 }

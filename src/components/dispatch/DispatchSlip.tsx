@@ -1,5 +1,10 @@
-import { X, Copy, Send, FileText } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import * as React from 'react';
+import { FileText, Send } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { Button } from '../ui/button';
+import { ListRow } from '../ui/list-row';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { useT } from '../../utils/i18n';
 import type { ProductionRequest } from '../../utils/api';
 import { bagSize, bagsLabel } from '../../utils/batches';
 
@@ -55,6 +60,39 @@ export function buildSlipText(request: ProductionRequest, products: Labels): str
   return lines.join('\n');
 }
 
+/** Copy and WhatsApp for a slip. */
+export function useSlipActions(request: ProductionRequest | null, products: Labels) {
+  const { t } = useT();
+  const text = request ? buildSlipText(request, products) : '';
+  return {
+    text,
+    whatsappHref: `https://wa.me/?text=${encodeURIComponent(text)}`,
+    copy: async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success(t('stock.slip.copied'));
+      } catch {
+        toast.error(t('stock.slip.copyFailed'));
+      }
+    },
+  };
+}
+
+/** The slip as text, the note about the paper copy, and a WhatsApp link. */
+export function DispatchSlipBody({ request, products }: { request: ProductionRequest; products: Labels }) {
+  const { t } = useT();
+  const { text, whatsappHref } = useSlipActions(request, products);
+  return (
+    <div className="flex flex-col gap-3">
+      <pre className="num overflow-auto rounded-lg border border-border bg-surface p-4 font-mono text-label leading-relaxed whitespace-pre-wrap text-text">{text}</pre>
+      <p className="text-label text-text-3">{t('stock.slip.paperNote', { n: request.dispatch?.boxes || 'N' })}</p>
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        <ListRow icon={Send} title={t('stock.slip.whatsapp')} subtitle={t('stock.slip.whatsappHint')} href={whatsappHref} />
+      </div>
+    </div>
+  );
+}
+
 type ModalProps = {
   request: ProductionRequest;
   products: Labels;
@@ -62,41 +100,25 @@ type ModalProps = {
 };
 
 export function DispatchSlipModal({ request, products, onClose }: ModalProps) {
-  const text = buildSlipText(request, products);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success('Slip copied');
-    } catch {
-      toast.error('Could not copy - select the text and copy it');
-    }
-  };
-
+  const { t } = useT();
+  const { copy, whatsappHref } = useSlipActions(request, products);
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
-      <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl">
-        <div className="flex items-center justify-between gap-3 p-4 border-b">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><FileText className="w-5 h-5 text-orange-600" /> Dispatch slip</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100" aria-label="Close"><X className="w-5 h-5" /></button>
-        </div>
-        <pre className="p-4 overflow-auto text-[13px] leading-relaxed font-mono text-gray-900 whitespace-pre-wrap bg-amber-50/40 flex-1">{text}</pre>
-        <p className="px-4 pt-3 text-xs text-gray-500">Write the same on the paper slip taped to each box lid: Box 1 of {request.dispatch?.boxes || 'N'}, the bags inside, batch codes.</p>
-        <div className="p-4 flex gap-2">
-          <button onClick={copy} className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg font-medium text-gray-800 hover:bg-gray-50">
-            <Copy className="w-4 h-4" /> Copy
-          </button>
-          <a
-            href={`https://wa.me/?text=${encodeURIComponent(text)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
-          >
-            <Send className="w-4 h-4" /> WhatsApp
-          </a>
-        </div>
-      </div>
-    </div>
+    <ResponsiveModal
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title={t('stock.slip.title')}
+      size="detail"
+      footer={
+        <>
+          <Button variant="secondary" size="lg" className="flex-1" onClick={copy}>{t('stock.slip.copy')}</Button>
+          <Button asChild size="lg" className="flex-1">
+            <a href={whatsappHref} target="_blank" rel="noopener noreferrer">{t('stock.slip.whatsapp')}</a>
+          </Button>
+        </>
+      }
+    >
+      <DispatchSlipBody request={request} products={products} />
+    </ResponsiveModal>
   );
 }
 
@@ -106,36 +128,33 @@ type DetailsProps = {
   onOpenSlip: () => void;
 };
 
-// Compact dispatch summary for the request card: boxes, batch codes, who packed it.
+// Compact dispatch summary for the request sheet: boxes, batch codes, who packed it.
 export function DispatchDetails({ request, products, onOpenSlip }: DetailsProps) {
+  const { t } = useT();
   const d = request.dispatch;
   if (!d) return null;
+  const lines = products.filter(({ camelKey }) => (request.shippedQuantities?.[camelKey] || 0) > 0);
   return (
-    <div className="mt-4 pt-4 border-t border-gray-200">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <p className="text-xs font-semibold text-gray-600">
-          Dispatch{d.boxes ? ` · ${d.boxes} box${d.boxes === 1 ? '' : 'es'}` : ''}{d.containerNumbers ? ` · ${d.containerNumbers}` : ''}
-        </p>
-        <button type="button" onClick={onOpenSlip} className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700">
-          <FileText className="w-3.5 h-3.5" /> Slip
-        </button>
+    <section className="flex flex-col">
+      <div className="mx-1 mb-2 flex items-center justify-between gap-2">
+        <h3 className="overline-label">{t('stock.slip.dispatch')}{d.boxes ? ` · ${t('stock.slip.boxes', { n: d.boxes })}` : ''}</h3>
+        <Button variant="link" size="sm" leadingIcon={<FileText />} onClick={onOpenSlip}>{t('stock.slip.title')}</Button>
       </div>
-      <div className="space-y-1">
-        {products.map(({ camelKey, label }) => {
-          const shipped = request.shippedQuantities?.[camelKey] || 0;
-          if (shipped <= 0) return null;
+      <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface px-4 py-3">
+        {d.containerNumbers && <p className="text-label text-text-2">{d.containerNumbers}</p>}
+        {lines.map(({ camelKey, label }) => {
           const batches = d.batches?.[camelKey] || [];
           return (
-            <p key={camelKey} className="text-xs text-gray-700">
-              <span className="font-medium">{shortLabel(label)}</span> {bagsLabel(shipped, camelKey)}
-              {batches.length > 0 && <span className="font-mono text-gray-500"> · {batches.map((b) => `${b.code} (${b.pieces})`).join(', ')}</span>}
+            <p key={camelKey} className="text-body-sm text-text">
+              <span className="font-medium">{shortLabel(label)}</span> <span className="num">{bagsLabel(request.shippedQuantities![camelKey], camelKey)}</span>
+              {batches.length > 0 && <span className="num font-mono text-label text-text-3"> · {batches.map((b) => `${b.code} (${b.pieces})`).join(', ')}</span>}
             </p>
           );
         })}
+        {(d.packedBy || d.checkedBy) && (
+          <p className="text-label text-text-3">{t('stock.slip.packedChecked', { packed: d.packedBy || '-', checked: d.checkedBy || '-' })}</p>
+        )}
       </div>
-      {(d.packedBy || d.checkedBy) && (
-        <p className="text-[11px] text-gray-500 mt-1">Packed by {d.packedBy || '-'} · checked by {d.checkedBy || '-'}</p>
-      )}
-    </div>
+    </section>
   );
 }

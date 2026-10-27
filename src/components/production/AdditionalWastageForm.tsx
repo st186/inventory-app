@@ -2,6 +2,15 @@ import { useState, useMemo } from 'react';
 import { PlusCircle, Trash2 } from 'lucide-react';
 import { MOMO_TYPES } from '../../constants/momoTypes';
 import type { ProductionWastageNote } from '../../utils/api';
+import { Button } from '../ui/button';
+import { ChoiceChips } from '../ui/chip';
+import { Field } from '../ui/field';
+import { IconButton } from '../ui/icon-button';
+import { Input } from '../ui/input';
+import { ListRow } from '../ui/list-row';
+import { NativeSelect } from '../ui/select';
+import { useT } from '../../utils/i18n';
+import { reasonLabel } from '../stock/stockShared';
 import { WASTE_REASONS, isPhase1Live } from '../../utils/batches';
 
 const PRODUCTION_REASONS = WASTE_REASONS.filter((r) => r.where !== 'store');
@@ -41,6 +50,7 @@ type Props = {
 // rather than assuming everything is in kg. Free text is still allowed for anything not on
 // the list - the suggestions are a shortcut, not a restriction.
 export function AdditionalWastageForm({ productionHouseId, date, disabled, notes, onAdd, onDelete }: Props) {
+  const { t, lang } = useT();
   const [description, setDescription] = useState('');
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState<'kg' | 'g' | 'L' | 'ml' | 'pcs'>('kg');
@@ -78,114 +88,64 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
   const datalistId = `wastage-suggestions-${productionHouseId}-${date}`;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-1">Any More Wastage to Log?</h2>
-      <p className="text-sm text-gray-500 mb-4">
-        For anything wasted that isn't one of the pools above - a sauce, a chutney, a raw ingredient.
-      </p>
-
+    <section className="flex flex-col gap-4" lang={lang}>
       {notes.length > 0 && (
-        <div className="space-y-2 mb-4">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
           {notes.map((note) => (
-            <div key={note.id} className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
-              <div className="text-sm text-gray-900">
-                <span className="font-semibold">{note.description}</span>
-                <span className="text-gray-500"> · {note.quantity}{note.unit === 'pcs' ? ' pcs' : note.unit}</span>
-                {note.reason && <span className="ml-1 font-mono text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-700" title={PRODUCTION_REASONS.find((r) => r.code === note.reason)?.label}>{note.reason}</span>}
-                {note.loggedByName && <span className="text-gray-400 text-xs"> · by {note.loggedByName}</span>}
-              </div>
-              {!disabled && (
-                <button
-                  type="button"
-                  onClick={() => onDelete(note.id)}
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  title="Remove this entry"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
-            </div>
+            <ListRow
+              key={note.id}
+              density="compact"
+              title={note.description}
+              subtitle={[
+                `${note.quantity}${note.unit === 'pcs' ? ` ${t('stock.pcsUnit')}` : ` ${note.unit}`}`,
+                note.reason ? `${note.reason} · ${reasonLabel(lang, 'waste', note.reason, PRODUCTION_REASONS.find((r) => r.code === note.reason)?.label || note.reason)}` : null,
+                note.loggedByName ? t('stock.prod.byName', { name: note.loggedByName }) : null,
+              ].filter(Boolean).join(' · ')}
+              trailing={!disabled ? <IconButton label={t('stock.prod.remove')} icon={<Trash2 />} variant="danger-ghost" onClick={() => onDelete(note.id)} /> : undefined}
+            />
           ))}
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-2">What was wasted?</label>
-          <input
-            type="text"
-            list={datalistId}
-            value={description}
-            onChange={(e) => handleDescriptionChange(e.target.value)}
-            disabled={disabled}
-            placeholder="Start typing - e.g. Hot Garlic Sauce"
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          />
-          <datalist id={datalistId}>
-            {SUGGESTIONS.map((s) => (
-              <option key={s.label} value={s.label} />
-            ))}
-          </datalist>
-          {matchedSuggestion && (
-            <p className="text-xs text-emerald-700 mt-1">Matched - unit set to {matchedSuggestion.unit}</p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
-          <input
-            type="number"
-            step="0.01"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            disabled={disabled}
-            placeholder="0.00"
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Unit</label>
-          <select
-            value={unit}
-            onChange={(e) => setUnit(e.target.value as typeof unit)}
-            disabled={disabled}
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          >
+      <Field label={t('stock.prod.whatWasted')} helper={matchedSuggestion ? t('stock.prod.matchedUnit', { unit: matchedSuggestion.unit }) : undefined}>
+        <Input list={datalistId} value={description} onChange={(e) => handleDescriptionChange(e.target.value)} disabled={disabled} placeholder={t('stock.prod.whatWastedPlaceholder')} />
+      </Field>
+      <datalist id={datalistId}>
+        {SUGGESTIONS.map((s) => <option key={s.label} value={s.label} />)}
+      </datalist>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={t('stock.prod.quantity')}>
+          <Input type="text" inputMode="decimal" className="num" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
+        </Field>
+        <Field label={t('stock.prod.unit')}>
+          <NativeSelect value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} disabled={disabled}>
             <option value="kg">kg</option>
             <option value="g">g</option>
             <option value="L">L</option>
             <option value="ml">ml</option>
-            <option value="pcs">pcs</option>
-          </select>
-        </div>
-        <div className="md:col-span-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">{reasonRequired ? 'Why? *' : 'Why?'}</label>
-          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Waste reason">
-            {PRODUCTION_REASONS.map((r) => (
-              <button
-                key={r.code}
-                type="button"
-                role="radio"
-                aria-checked={reason === r.code}
-                onClick={() => setReason(r.code)}
-                disabled={disabled}
-                className={`px-3 py-1.5 rounded-full text-sm border ${reason === r.code ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300'}`}
-              >
-                <span className="font-mono font-semibold">{r.code}</span> {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
+            <option value="pcs">{t('stock.pcsUnit')}</option>
+          </NativeSelect>
+        </Field>
       </div>
-
-      <button
-        type="button"
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-1.5 text-body-sm font-medium text-text">{t('stock.prod.why')}{reasonRequired && <span className="text-danger" aria-hidden="true"> *</span>}</legend>
+        <ChoiceChips
+          aria-label={t('stock.prod.why')}
+          value={reason}
+          onValueChange={(v) => setReason(v)}
+          options={PRODUCTION_REASONS.map((r) => ({ value: r.code, label: `${r.code} · ${reasonLabel(lang, 'waste', r.code, r.label)}`, disabled }))}
+        />
+      </fieldset>
+      <Button
+        variant="secondary"
+        className="self-start"
+        leadingIcon={<PlusCircle />}
+        loading={submitting}
+        disabled={disabled || !description.trim() || !quantity || (reasonRequired && !reason)}
         onClick={handleAdd}
-        disabled={disabled || submitting || !description.trim() || !quantity || (reasonRequired && !reason)}
-        className="mt-4 px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-semibold text-sm"
       >
-        <PlusCircle className="w-4 h-4" />
-        {submitting ? 'Logging…' : 'Log Wastage'}
-      </button>
-    </div>
+        {t('stock.prod.logWastage')}
+      </Button>
+    </section>
   );
 }

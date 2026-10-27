@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Trash2, Loader2, Plus } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { X, Trash2, Plus } from 'lucide-react';
+import { toast } from './ui/sonner';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Field } from './ui/field';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { NativeSelect } from './ui/select';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonListRows } from './ui/skeleton';
+import { Textarea } from './ui/textarea';
+import { t as tSaved, useT } from '../utils/i18n';
+import { KeyValue, momoName, reasonLabel } from './stock/stockShared';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { DatePicker } from './DatePicker';
@@ -36,6 +47,10 @@ const newLine = (type: string, qty = '', reason = ''): Line => ({ id: nextLineId
 // Pieces short or damaged at a delivery are added automatically under Q when the store
 // receives it. Tracked from this feature's launch (2026-08-30) forward only.
 export function StockWastageModal({ context, storeId, finishedProducts, onClose }: StockWastageModalProps) {
+  const { t, lang } = useT();
+  const [open, setOpen] = useState(true);
+  const [attempted, setAttempted] = useState(false);
+  const [touched, setTouched] = useState(false);
   const [date, setDate] = useState(todayISO());
   const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState('');
@@ -76,7 +91,7 @@ export function StockWastageModal({ context, storeId, finishedProducts, onClose 
         }
       })
       .catch(() => {
-        if (!cancelled) toast.error('Could not load existing wastage entry for this date');
+        if (!cancelled) toast.error(tSaved('stock.wastage.loadFailed'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -84,7 +99,11 @@ export function StockWastageModal({ context, storeId, finishedProducts, onClose 
     return () => { cancelled = true; };
   }, [accessToken, storeId, date, finishedProducts, defaultType]);
 
-  const updateLine = (id: number, patch: Partial<Line>) => setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const updateLine = (id: number, patch: Partial<Line>) => {
+    setTouched(true);
+    setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  };
+  const dirty = touched;
 
   const totals = useMemo(() => {
     let waste = 0;
@@ -100,7 +119,8 @@ export function StockWastageModal({ context, storeId, finishedProducts, onClose 
     const filled = lines.filter((l) => (parseInt(l.qty || '0', 10) || 0) > 0);
     // A reason on every line is required from Phase 1 go-live; optional before it.
     if (isPhase1Live(date) && filled.some((l) => !l.reason)) {
-      toast.error('Pick a reason for every line');
+      setAttempted(true);
+      toast.error(tSaved('stock.wastage.reasonEach'));
       return;
     }
     setSaving(true);
@@ -113,136 +133,80 @@ export function StockWastageModal({ context, storeId, finishedProducts, onClose 
         if (l.reason) reasons[l.type] = { ...(reasons[l.type] || {}), [l.reason]: (reasons[l.type]?.[l.reason] || 0) + n };
       });
       await api.saveStockWastageEntry(accessToken, storeId, date, wastage, notes, reasons);
-      toast.success(`Wastage saved for ${date}`);
+      toast.success(tSaved('stock.wastage.saved', { date }));
       onClose();
     } catch (error) {
       console.error('Error saving stock wastage:', error);
-      toast.error('Failed to save wastage entry');
+      toast.error(tSaved('stock.wastage.failed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full my-8">
-        <div className="relative overflow-hidden bg-gradient-to-r from-red-600 via-rose-500 to-red-600 p-6 rounded-t-2xl">
-          <div className="absolute inset-0 bg-white/10" />
-          <div className="relative flex items-center justify-between gap-3">
-            <div className="flex items-center gap-4 min-w-0">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-                <Trash2 className="w-6 h-6 text-white" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-white tracking-tight">Stock Wastage</h2>
-                <p className="text-white/80 text-xs">Pieces by momo type and reason</p>
-              </div>
-            </div>
-            <button onClick={onClose} className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-all flex-shrink-0" aria-label="Close">
-              <X className="w-5 h-5 text-white" />
-            </button>
-          </div>
-        </div>
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(o) => { if (!o) setOpen(false); }}
+      onClosed={onClose}
+      dirty={dirty && !saving}
+      title={t('stock.wastage.title')}
+      description={t('stock.wastage.caption')}
+      footer={
+        <Button size="lg" className="flex-1" leadingIcon={<Trash2 />} loading={saving} disabled={loading} onClick={handleSave}>
+          {t('stock.wastage.save')}
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-5" lang={lang}>
+        <DatePicker label={t('stock.wastage.date')} className="w-full" value={date} onChange={setDate} max={todayISO()} />
 
-        <div className="p-5 space-y-4">
-          <DatePicker label="Date" value={date} onChange={setDate} max={todayISO()} />
-
-          {loading ? (
-            <div className="flex items-center justify-center py-10 text-gray-500 gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Loading...</span>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                {lines.map((l) => (
-                  <div key={l.id} className="grid grid-cols-[1fr_4.5rem_auto] gap-2 items-center">
-                    <select
-                      value={l.type}
-                      onChange={(e) => updateLine(l.id, { type: e.target.value })}
-                      aria-label="Momo type"
-                      className="min-w-0 px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
-                    >
-                      {finishedProducts.map(({ camelKey, label }) => <option key={camelKey} value={camelKey}>{label}</option>)}
-                    </select>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      placeholder="pcs"
-                      value={l.qty}
-                      onChange={(e) => updateLine(l.id, { qty: e.target.value })}
-                      aria-label="Pieces"
-                      className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-right tabular-nums"
-                    />
-                    <button type="button" onClick={() => setLines((prev) => prev.filter((x) => x.id !== l.id))} className="p-1.5 text-gray-400 hover:text-red-600" aria-label="Remove line">
-                      <X className="w-4 h-4" />
-                    </button>
-                    <select
-                      value={l.reason}
-                      onChange={(e) => updateLine(l.id, { reason: e.target.value })}
-                      aria-label="Reason"
-                      className={`col-span-3 -mt-1 px-2 py-1.5 border rounded-lg text-sm ${l.reason || !isPhase1Live(date) ? 'border-gray-300' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
-                    >
-                      <option value="">{l.qty && existingId ? 'No reason saved - pick one' : 'Reason...'}</option>
-                      {STORE_REASONS.map((r) => <option key={r.code} value={r.code}>{r.code} · {r.label}</option>)}
-                    </select>
+        {loading ? (
+          <SkeletonListRows count={2} leading="none" />
+        ) : (
+          <>
+            <div className="flex flex-col gap-3">
+              {lines.map((l, index) => {
+                const needsReason = !l.reason && isPhase1Live(date);
+                return (
+                  <div key={l.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-end gap-2">
+                      <Field label={t('stock.wastage.type')} className="flex-1">
+                        <NativeSelect value={l.type} onChange={(e) => updateLine(l.id, { type: e.target.value })}>
+                          {finishedProducts.map(({ camelKey, label }) => <option key={camelKey} value={camelKey}>{momoName(lang, camelKey, label)}</option>)}
+                        </NativeSelect>
+                      </Field>
+                      <Field label={t('stock.wastage.pieces')} className="w-24">
+                        <Input type="text" inputMode="numeric" value={l.qty} placeholder="0" onChange={(e) => updateLine(l.id, { qty: e.target.value.replace(/[^\d]/g, '') })} className="num text-right" />
+                      </Field>
+                      <IconButton label={t('stock.wastage.removeLine')} icon={<X />} onClick={() => setLines((prev) => prev.filter((x) => x.id !== l.id))} />
+                    </div>
+                    <Field label={t('stock.wastage.reason')} required={isPhase1Live(date)} error={needsReason && (parseInt(l.qty || '0', 10) || 0) > 0 && attempted ? t('stock.wastage.reasonEach') : undefined}>
+                      <NativeSelect value={l.reason} onChange={(e) => updateLine(l.id, { reason: e.target.value })}>
+                        <option value="">{l.qty && existingId ? t('stock.wastage.noReasonSaved') : t('stock.wastage.pickReason')}</option>
+                        {STORE_REASONS.map((r) => <option key={r.code} value={r.code}>{r.code} · {reasonLabel(lang, 'waste', r.code, r.label)}</option>)}
+                      </NativeSelect>
+                    </Field>
                   </div>
-                ))}
-                <button type="button" onClick={() => setLines((prev) => [...prev, newLine(defaultType)])} className="inline-flex items-center gap-1 text-sm font-medium text-red-700">
-                  <Plus className="w-4 h-4" /> Add line
-                </button>
-              </div>
+                );
+              })}
+              <Button variant="secondary" leadingIcon={<Plus />} className="self-start" onClick={() => setLines((prev) => [...prev, newLine(defaultType)])}>
+                {t('stock.wastage.addLine')}
+              </Button>
+            </div>
 
-              <div className="pt-2 border-t border-gray-100 text-sm space-y-1">
-                <div className="flex items-center justify-between font-semibold text-gray-900">
-                  <span>Total wasted</span>
-                  <span className="tabular-nums">{totals.waste} pcs</span>
-                </div>
-                {totals.meals > 0 && (
-                  <div className="flex items-center justify-between text-gray-600">
-                    <span>Staff meals</span>
-                    <span className="tabular-nums">{totals.meals} pcs</span>
-                  </div>
-                )}
-              </div>
+            <div className="rounded-lg border border-border bg-surface px-4 py-1.5">
+              <KeyValue label={t('stock.wastage.total')} value={t('stock.pcs', { n: totals.waste })} />
+              {totals.meals > 0 && <KeyValue label={t('stock.wastage.meals')} value={t('stock.pcs', { n: totals.meals })} />}
+            </div>
 
-              <div>
-                <label htmlFor="wastage-notes" className="text-xs font-medium text-gray-600">Notes (optional)</label>
-                <textarea
-                  id="wastage-notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="What happened, in a few words"
-                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none"
-                />
-              </div>
+            <Field label={t('stock.req.notes')} optional>
+              <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('stock.wastage.notesPlaceholder')} />
+            </Field>
 
-              {existingId && (
-                <p className="text-xs text-amber-600">An entry already exists for this date - saving will overwrite it.</p>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="flex gap-3 p-5 pt-0">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm font-semibold"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-            {saving ? 'Saving...' : 'Save Wastage'}
-          </button>
-        </div>
+            {existingId && <Callout tone="warning" title={t('stock.wastage.overwrite')} />}
+          </>
+        )}
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }

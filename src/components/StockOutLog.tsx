@@ -1,12 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PackageX, RefreshCw, Loader2, Plus, CheckCircle2, AlertTriangle, Trash2, Pencil, X } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { AlertTriangle, CheckCircle2, PackageX, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { toast } from './ui/sonner';
+import { confirm } from './ui/confirm';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Checkbox } from './ui/checkbox';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { Field } from './ui/field';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { ListGroup, ListRow } from './ui/list-row';
+import { NativeSelect } from './ui/select';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonListRows } from './ui/skeleton';
+import { cn } from './ui/utils';
+import { t as tSaved, useT } from '../utils/i18n';
 import * as api from '../utils/api';
+import { isNetworkError, isOnline } from '../utils/http';
 import { getTodayIST, addDays } from '../utils/timezone';
 import {
   STOCK_OUT_ITEMS, STOCK_OUT_REASONS, StockOutEntry, StockOutReason, categoryForItem, istClock, istDate, istTime, istToISO,
-  stockOutDuration, stockOutReasonLabel,
+  stockOutDuration,
 } from '../utils/stockOuts';
+import { StickyActions, StockPage, dayLabel, reasonLabel } from './stock/stockShared';
 
 type Props = {
   accessToken: string;
@@ -17,7 +34,6 @@ type Props = {
 
 const OTHER_ITEM = '__other__';
 const nowIso = () => new Date().toISOString();
-const shortDay = (iso: string) => new Date(`${istDate(iso)}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
 
 type FormValues = {
   item: string;
@@ -52,13 +68,28 @@ function formFromEntry(e: StockOutEntry): FormValues {
   };
 }
 
+/** A whole-row tappable tick (44 px+). */
+function CheckRow({ id, checked, onChange, children }: { id: string; checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode }) {
+  return (
+    <label htmlFor={id} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border border-border bg-surface px-3 py-2">
+      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} />
+      <span className="text-body-sm text-text">{children}</span>
+    </label>
+  );
+}
+
 // Out-of-stock log for whoever is billing (store SOP ST-28): mark an item out with the reason
 // and the time it ran out, then mark it back when stock arrives. Zomato/Swiggy are switched
 // off in Ciferon; counter customers are told and offered something else.
+//
+// Offline: these entries go straight to the server. With no signal the form stays filled and
+// says nothing was saved; a phone-side queue needs a 'stock-out' kind in utils/outbox.ts.
 export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: Props) {
+  const { t, lang } = useT();
   const [storeId, setStoreId] = useState(defaultStoreId || stores[0]?.id || '');
   const [entries, setEntries] = useState<StockOutEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<StockOutEntry | null>(null);
   const [form, setForm] = useState<FormValues>(emptyForm);
@@ -68,8 +99,8 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
 
   // Keeps the "since" durations moving.
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 60000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setTick((n) => n + 1), 60000);
+    return () => clearInterval(timer);
   }, []);
 
   const load = async () => {
@@ -78,8 +109,10 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
     try {
       const today = getTodayIST();
       setEntries(await api.getStockOuts(accessToken, storeId, addDays(today, -6), today));
-    } catch {
-      toast.error('Could not load the out-of-stock list');
+      setLoadError(null);
+    } catch (err: any) {
+      setLoadError(err?.message || tSaved('error.body'));
+      toast.error(tSaved('stock.so.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -89,8 +122,16 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
 
   const open = useMemo(() => entries.filter((e) => !e.endAt), [entries]);
   const recent = useMemo(() => entries.filter((e) => !!e.endAt), [entries]);
-
   const set = (patch: Partial<FormValues>) => setForm((f) => ({ ...f, ...patch }));
+  const reasonOf = (e: StockOutEntry) => {
+    const def = STOCK_OUT_REASONS.find((r) => r.id === e.reason);
+    return `${def ? reasonLabel(lang, 'soReason', def.id, def.label) : reasonLabel(lang, 'soReason', 'other', 'No reason')}${e.reasonNote ? ` - ${e.reasonNote}` : ''}`;
+  };
+  const failed = (err: any) => {
+    // No signal: the server never saw it, so say so plainly and keep what was typed.
+    if (isNetworkError(err) || !isOnline()) toast.error(tSaved('stock.so.offline'));
+    else toast.error(err?.message || tSaved('stock.so.saveFailed'));
+  };
 
   const startNew = () => {
     setEditing(null);
@@ -106,15 +147,15 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
 
   const submit = async () => {
     const item = form.item === OTHER_ITEM ? form.otherItem.trim() : form.item;
-    if (!item) return toast.error('Pick the item that ran out');
-    if (!form.reason) return toast.error('Pick why it ran out');
-    if (form.reason === 'other' && !form.reasonNote.trim()) return toast.error('Write why it ran out');
+    if (!item) return toast.error(tSaved('stock.so.pickItemErr'));
+    if (!form.reason) return toast.error(tSaved('stock.so.pickReasonErr'));
+    if (form.reason === 'other' && !form.reasonNote.trim()) return toast.error(tSaved('stock.so.writeReasonErr'));
     const startAt = istToISO(form.startDate, form.startTime);
-    if (startAt > nowIso()) return toast.error('The start time is in the future');
+    if (startAt > nowIso()) return toast.error(tSaved('stock.so.futureStart'));
     const endAt = form.ended ? istToISO(form.endDate, form.endTime) : null;
-    if (endAt && endAt < startAt) return toast.error('Back-in-stock time is before the start time');
+    if (endAt && endAt < startAt) return toast.error(tSaved('stock.so.endBeforeStart'));
     if (!editing && open.some((e) => e.item.toLowerCase() === item.toLowerCase())) {
-      return toast.error(`${item} is already marked out of stock`);
+      return toast.error(tSaved('stock.so.alreadyOut', { item }));
     }
     setSaving(true);
     try {
@@ -124,16 +165,16 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
       };
       if (editing) {
         await api.updateStockOut(accessToken, storeId, editing.id, payload);
-        toast.success('Updated');
+        toast.success(tSaved('stock.so.updated'));
       } else {
         await api.createStockOut(accessToken, { storeId, ...payload });
-        toast.success(endAt ? `${item} logged` : `${item} marked out of stock`);
+        toast.success(endAt ? tSaved('stock.so.logged', { item }) : tSaved('stock.so.markedOut', { item }));
       }
       setFormOpen(false);
       setEditing(null);
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not save');
+      failed(err);
     } finally {
       setSaving(false);
     }
@@ -144,228 +185,223 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
     const entry = entries.find((e) => e.id === closing.id);
     if (!entry) return;
     const endAt = istToISO(closing.date, closing.time);
-    if (endAt < entry.startAt) return toast.error('Back-in-stock time is before it ran out');
-    if (endAt > nowIso()) return toast.error('That time is in the future');
+    if (endAt < entry.startAt) return toast.error(tSaved('stock.so.endBeforeStart'));
+    if (endAt > nowIso()) return toast.error(tSaved('stock.so.futureEnd'));
     setSaving(true);
     try {
       await api.updateStockOut(accessToken, storeId, entry.id, { endAt, backOnline: closing.backOnline });
-      toast.success(`${entry.item} is back in stock`);
+      toast.success(tSaved('stock.so.backToast', { item: entry.item }));
       setClosing(null);
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not save');
+      failed(err);
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async (e: StockOutEntry) => {
-    if (!window.confirm(`Delete the ${e.item} entry? Only do this if it was logged by mistake.`)) return;
+    const ok = await confirm({ title: t('stock.so.deleteTitle', { item: e.item }), body: t('stock.so.deleteBody'), confirmLabel: t('stock.so.deleteConfirm'), tone: 'danger' });
+    if (!ok) return;
     try {
       await api.deleteStockOut(accessToken, storeId, e.id);
-      toast.success('Deleted');
+      toast.success(tSaved('stock.so.deleted'));
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not delete');
+      failed(err);
     }
   };
 
-  const field = 'w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white';
+  const closingEntry = closing ? entries.find((e) => e.id === closing.id) || null : null;
+  const formDirty = formOpen && (editing ? JSON.stringify(form) !== JSON.stringify(formFromEntry(editing)) : !!(form.item || form.reason || form.reasonNote));
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><PackageX className="w-6 h-6 text-rose-600" /> Out of Stock</h1>
-          <p className="text-sm text-gray-500">Log every item that runs out, why, and when it is back.</p>
+    <StockPage lang={lang}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col">
+          <h1 className="text-title font-semibold text-text">{t('stock.so.title')}</h1>
+          {!loading && <p className="num text-body-sm text-text-2">{t('stock.so.summary', { open: open.length, logged: entries.length })}</p>}
         </div>
-        <button onClick={load} disabled={loading} className="p-2 rounded-lg border border-gray-200 bg-white" aria-label="Refresh">
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <IconButton label={t('shell.refresh')} icon={<RefreshCw className={loading ? 'animate-spin' : undefined} />} disabled={loading} onClick={load} />
       </div>
 
       {stores.length > 1 && (
-        <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={field} aria-label="Store">
-          {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <Field label={t('stock.so.store')}>
+          <NativeSelect value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+            {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </NativeSelect>
+        </Field>
       )}
 
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 space-y-1">
-        <p><span className="font-semibold">Online:</span> switch the item off in Ciferon so Zomato and Swiggy stop taking it.</p>
-        <p><span className="font-semibold">Counter:</span> tell the customer and offer another item.</p>
-        <p><span className="font-semibold">Then</span> log it here, and mark it back the moment stock arrives.</p>
-      </div>
+      <Callout tone="neutral" title={t('stock.so.howTitle')}>{t('stock.so.howBody')}</Callout>
 
-      <section>
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">Out right now</h2>
+      <section className="flex flex-col gap-3" aria-labelledby="so-open">
+        <h2 id="so-open" className="text-subtitle font-semibold text-text">{t('stock.so.outNow')}</h2>
         {loading && entries.length === 0 ? (
-          <div className="flex items-center gap-2 text-gray-500 text-sm py-6 justify-center"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+          <SkeletonListRows count={2} />
+        ) : loadError && entries.length === 0 ? (
+          <ErrorState body={loadError} onRetry={load} retrying={loading} />
         ) : open.length === 0 ? (
-          <p className="text-sm text-gray-500 bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-600" /> Everything is in stock.</p>
-        ) : (
-          <div className="space-y-3">
-            {open.map((e) => (
-              <div key={e.id} className="bg-white border-2 border-rose-200 rounded-xl p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-gray-900">{e.item}</p>
-                    <p className="text-sm text-gray-600">
-                      Since {istClock(e.startAt)}{istDate(e.startAt) !== getTodayIST() ? ` ${shortDay(e.startAt)}` : ''} · <span className="font-semibold text-rose-700">{stockOutDuration(e.startAt)}</span>
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">{stockOutReasonLabel(e.reason)}{e.reasonNote ? ` - ${e.reasonNote}` : ''} · by {e.createdByName}</p>
-                  </div>
-                  <button onClick={() => startEdit(e)} className="p-1.5 text-gray-500 flex-shrink-0" aria-label={`Edit ${e.item}`}><Pencil className="w-4 h-4" /></button>
-                </div>
-                {!e.offOnline && (
-                  <p className="mt-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Not marked as switched off in Ciferon - online orders may still come in.</p>
-                )}
-                {closing?.id === e.id ? (
-                  <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                    <p className="text-sm font-medium text-gray-700">Back in stock at</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input type="date" value={closing.date} max={getTodayIST()} onChange={(ev) => setClosing({ ...closing, date: ev.target.value })} className={field} aria-label="Back in stock date" />
-                      <input type="time" value={closing.time} onChange={(ev) => setClosing({ ...closing, time: ev.target.value })} className={field} aria-label="Back in stock time" />
-                    </div>
-                    {e.offOnline && (
-                      <label className="flex items-center gap-2 text-sm text-gray-700">
-                        <input type="checkbox" checked={closing.backOnline} onChange={(ev) => setClosing({ ...closing, backOnline: ev.target.checked })} className="w-5 h-5" />
-                        Switched back on in Ciferon
-                      </label>
-                    )}
-                    <div className="flex gap-2">
-                      <button onClick={markBack} disabled={saving} className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-60">{saving ? 'Saving...' : 'Save'}</button>
-                      <button onClick={() => setClosing(null)} className="px-4 py-2.5 border border-gray-300 rounded-lg">Cancel</button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => { const now = nowIso(); setClosing({ id: e.id, date: istDate(now), time: istTime(now), backOnline: false }); }}
-                    className="mt-3 w-full px-4 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold inline-flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 className="w-5 h-5" /> Back in stock
-                  </button>
-                )}
-              </div>
-            ))}
+          <div className="rounded-lg border border-border bg-surface">
+            <EmptyState compact icon={CheckCircle2} title={t('stock.so.allInStock')} />
           </div>
+        ) : (
+          open.map((e) => (
+            <article key={e.id} className="flex flex-col gap-3 rounded-lg border border-danger-border bg-surface p-4">
+              <div className="flex items-start gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-danger-soft text-danger [&_svg]:size-5" aria-hidden="true"><PackageX /></span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-body-md font-semibold text-text">{e.item}</span>
+                  <span className="num text-label text-text-2">
+                    {t('stock.so.since', { time: `${istClock(e.startAt)}${istDate(e.startAt) !== getTodayIST() ? ` ${dayLabel(lang, istDate(e.startAt))}` : ''}` })} · <span className="font-semibold text-danger">{stockOutDuration(e.startAt)}</span>
+                  </span>
+                  <span className="text-label text-text-3">{reasonOf(e)} · {t('stock.so.by', { name: e.createdByName })}</span>
+                </div>
+                <IconButton label={t('stock.so.edit', { item: e.item })} icon={<Pencil />} onClick={() => startEdit(e)} />
+              </div>
+              {!e.offOnline && <Callout tone="warning" icon={AlertTriangle} title={t('stock.so.notOffline')} />}
+              <Button
+                variant="secondary"
+                size="lg"
+                leadingIcon={<CheckCircle2 />}
+                onClick={() => { const now = nowIso(); setClosing({ id: e.id, date: istDate(now), time: istTime(now), backOnline: false }); }}
+              >
+                {t('stock.so.backInStock')}
+              </Button>
+            </article>
+          ))
         )}
       </section>
 
-      {!formOpen ? (
-        <button onClick={startNew} className="w-full px-4 py-3 bg-rose-600 text-white rounded-xl font-semibold inline-flex items-center justify-center gap-2 shadow-sm">
-          <Plus className="w-5 h-5" /> Mark an item out of stock
-        </button>
-      ) : (
-        <section className="bg-white border border-gray-200 rounded-xl p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">{editing ? `Edit ${editing.item}` : 'Mark an item out of stock'}</h2>
-            <button onClick={() => { setFormOpen(false); setEditing(null); }} className="p-1.5 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>
-          </div>
+      <ListGroup title={t('stock.so.last7')} empty={!loading ? <EmptyState compact icon={PackageX} title={t('stock.so.noneLast7')} /> : undefined}>
+        {recent.map((e) => (
+          <ListRow
+            key={e.id}
+            title={e.item}
+            subtitle={`${dayLabel(lang, istDate(e.startAt))} · ${istClock(e.startAt)} - ${istClock(e.endAt!)}${istDate(e.endAt!) !== istDate(e.startAt) ? ` ${dayLabel(lang, istDate(e.endAt!))}` : ''} · ${stockOutDuration(e.startAt, e.endAt)} · ${reasonOf(e)}`}
+            trailing={
+              <span className="flex shrink-0 items-center">
+                <IconButton label={t('stock.so.edit', { item: e.item })} icon={<Pencil />} onClick={() => startEdit(e)} />
+                {canDelete && <IconButton label={t('stock.so.deleteConfirm')} icon={<Trash2 />} variant="danger-ghost" onClick={() => remove(e)} />}
+              </span>
+            }
+          />
+        ))}
+      </ListGroup>
 
-          <div>
-            <label htmlFor="so-item" className="block text-sm font-medium text-gray-700 mb-1">Item *</label>
-            <select id="so-item" value={form.item} onChange={(e) => set({ item: e.target.value })} className={field}>
-              <option value="">Pick the item...</option>
+      <StickyActions>
+        <Button size="lg" className="flex-1" leadingIcon={<Plus />} onClick={startNew}>{t('stock.so.markOut')}</Button>
+      </StickyActions>
+
+      {/* Mark out of stock / edit */}
+      <ResponsiveModal
+        open={formOpen}
+        onOpenChange={(o) => { if (!o) { setFormOpen(false); setEditing(null); } }}
+        dirty={formDirty && !saving}
+        title={editing ? t('stock.so.edit', { item: editing.item }) : t('stock.so.markOut')}
+        footer={
+          <Button size="lg" className="flex-1" loading={saving} onClick={submit}>
+            {editing ? t('stock.so.saveChanges') : form.ended ? t('stock.so.logIt') : t('stock.so.markOutButton')}
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-5" lang={lang}>
+          <Field label={t('stock.so.item')} required>
+            <NativeSelect value={form.item} onChange={(e) => set({ item: e.target.value })}>
+              <option value="">{t('stock.so.pickItem')}</option>
               {STOCK_OUT_ITEMS.map((g) => (
                 <optgroup key={g.group} label={g.group}>
                   {g.items.map((i) => <option key={i} value={i}>{i}</option>)}
                 </optgroup>
               ))}
-              <option value={OTHER_ITEM}>Other item (type it)</option>
-            </select>
-            {form.item === OTHER_ITEM && (
-              <input value={form.otherItem} onChange={(e) => set({ otherItem: e.target.value })} placeholder="e.g. Chicken Momo Burger" className={`${field} mt-2`} aria-label="Item name" />
+              <option value={OTHER_ITEM}>{t('stock.so.otherItem')}</option>
+            </NativeSelect>
+          </Field>
+          {form.item === OTHER_ITEM && (
+            <Field label={t('stock.so.itemName')} required>
+              <Input value={form.otherItem} onChange={(e) => set({ otherItem: e.target.value })} placeholder="Chicken Momo Burger" />
+            </Field>
+          )}
+
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-1.5 text-body-sm font-medium text-text">{t('stock.so.why')} <span className="text-danger" aria-hidden="true">*</span></legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('stock.so.why')}>
+              {STOCK_OUT_REASONS.map((r) => {
+                const on = form.reason === r.id;
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => set({ reason: r.id })}
+                    className={cn(
+                      'flex min-h-12 flex-col rounded-md border px-3 py-2 text-left outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring',
+                      on ? 'border-primary bg-primary-soft' : 'border-border-strong bg-surface hover:bg-surface-2',
+                    )}
+                  >
+                    <span className={cn('text-body-sm font-semibold', on ? 'text-primary' : 'text-text')}>{reasonLabel(lang, 'soReason', r.id, r.label)}</span>
+                    <span className="text-caption text-text-3">{reasonLabel(lang, 'soReasonHint', r.id, r.hint)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+          <Field label={form.reason === 'other' ? t('stock.so.whyRequired') : t('stock.so.whyDetail')} required={form.reason === 'other'} optional={form.reason !== 'other'}>
+            <Input value={form.reasonNote} onChange={(e) => set({ reasonNote: e.target.value })} />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={`${t('stock.so.from')} · ${t('stock.so.date')}`} required>
+              <Input type="date" value={form.startDate} max={getTodayIST()} onChange={(e) => set({ startDate: e.target.value })} />
+            </Field>
+            <Field label={t('stock.so.time')} required>
+              <Input type="time" value={form.startTime} onChange={(e) => set({ startTime: e.target.value })} />
+            </Field>
+          </div>
+
+          <CheckRow id="so-off-online" checked={form.offOnline} onChange={(v) => set({ offOnline: v })}>{t('stock.so.offOnline')}</CheckRow>
+          <CheckRow id="so-ended" checked={form.ended} onChange={(v) => set({ ended: v })}>{t('stock.so.alreadyBack')}</CheckRow>
+          {form.ended && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={`${t('stock.so.backAt')} · ${t('stock.so.date')}`}>
+                  <Input type="date" value={form.endDate} max={getTodayIST()} onChange={(e) => set({ endDate: e.target.value })} />
+                </Field>
+                <Field label={t('stock.so.time')}>
+                  <Input type="time" value={form.endTime} onChange={(e) => set({ endTime: e.target.value })} />
+                </Field>
+              </div>
+              {form.offOnline && <CheckRow id="so-back-online" checked={form.backOnline} onChange={(v) => set({ backOnline: v })}>{t('stock.so.switchedBackOn')}</CheckRow>}
+            </>
+          )}
+        </div>
+      </ResponsiveModal>
+
+      {/* Back in stock */}
+      <ResponsiveModal
+        open={!!closing}
+        onOpenChange={(o) => { if (!o) setClosing(null); }}
+        title={t('stock.so.backInStock')}
+        description={closingEntry?.item}
+        footer={<Button size="lg" className="flex-1" loading={saving} onClick={markBack}>{t('common.save')}</Button>}
+      >
+        {closing && (
+          <div className="flex flex-col gap-4" lang={lang}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={`${t('stock.so.backAt')} · ${t('stock.so.date')}`}>
+                <Input type="date" value={closing.date} max={getTodayIST()} onChange={(ev) => setClosing({ ...closing, date: ev.target.value })} />
+              </Field>
+              <Field label={t('stock.so.time')}>
+                <Input type="time" value={closing.time} onChange={(ev) => setClosing({ ...closing, time: ev.target.value })} />
+              </Field>
+            </div>
+            {closingEntry?.offOnline && (
+              <CheckRow id="so-close-online" checked={closing.backOnline} onChange={(v) => setClosing({ ...closing, backOnline: v })}>{t('stock.so.switchedBackOn')}</CheckRow>
             )}
           </div>
-
-          <div>
-            <p className="block text-sm font-medium text-gray-700 mb-1">Why did it run out? *</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Reason">
-              {STOCK_OUT_REASONS.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.reason === r.id}
-                  onClick={() => set({ reason: r.id })}
-                  className={`text-left px-3 py-2 rounded-lg border text-sm ${form.reason === r.id ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-gray-800 border-gray-300'}`}
-                >
-                  <span className="font-semibold">{r.label}</span>
-                  <span className={`block text-xs ${form.reason === r.id ? 'text-rose-100' : 'text-gray-500'}`}>{r.hint}</span>
-                </button>
-              ))}
-            </div>
-            <input
-              value={form.reasonNote}
-              onChange={(e) => set({ reasonNote: e.target.value })}
-              placeholder={form.reason === 'other' ? 'Write why (required)' : 'More detail (optional)'}
-              className={`${field} mt-2`}
-              aria-label="Reason detail"
-            />
-          </div>
-
-          <div>
-            <p className="block text-sm font-medium text-gray-700 mb-1">Out of stock from *</p>
-            <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={form.startDate} max={getTodayIST()} onChange={(e) => set({ startDate: e.target.value })} className={field} aria-label="Out of stock date" />
-              <input type="time" value={form.startTime} onChange={(e) => set({ startTime: e.target.value })} className={field} aria-label="Out of stock time" />
-            </div>
-          </div>
-
-          <label className="flex items-start gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={form.offOnline} onChange={(e) => set({ offOnline: e.target.checked })} className="w-5 h-5 mt-0.5" />
-            <span>Switched off on Zomato and Swiggy in Ciferon</span>
-          </label>
-
-          <div className="border-t border-gray-100 pt-3 space-y-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.ended} onChange={(e) => set({ ended: e.target.checked })} className="w-5 h-5" />
-              Already back in stock
-            </label>
-            {form.ended && (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="date" value={form.endDate} max={getTodayIST()} onChange={(e) => set({ endDate: e.target.value })} className={field} aria-label="Back in stock date" />
-                  <input type="time" value={form.endTime} onChange={(e) => set({ endTime: e.target.value })} className={field} aria-label="Back in stock time" />
-                </div>
-                {form.offOnline && (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.backOnline} onChange={(e) => set({ backOnline: e.target.checked })} className="w-5 h-5" />
-                    Switched back on in Ciferon
-                  </label>
-                )}
-              </>
-            )}
-          </div>
-
-          <button onClick={submit} disabled={saving} className="w-full px-4 py-3 bg-rose-600 text-white rounded-lg font-semibold disabled:opacity-60">
-            {saving ? 'Saving...' : editing ? 'Save changes' : form.ended ? 'Log it' : 'Mark out of stock'}
-          </button>
-        </section>
-      )}
-
-      {recent.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">Last 7 days</h2>
-          <ul className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {recent.map((e) => (
-              <li key={e.id} className="p-3 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-900">{e.item}</p>
-                  <p className="text-xs text-gray-600 tabular-nums">
-                    {shortDay(e.startAt)} · {istClock(e.startAt)} - {istClock(e.endAt!)}{istDate(e.endAt!) !== istDate(e.startAt) ? ` ${shortDay(e.endAt!)}` : ''} · {stockOutDuration(e.startAt, e.endAt)}
-                  </p>
-                  <p className="text-xs text-gray-500">{stockOutReasonLabel(e.reason)}{e.reasonNote ? ` - ${e.reasonNote}` : ''} · by {e.createdByName}</p>
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => startEdit(e)} className="p-1.5 text-gray-500" aria-label={`Edit ${e.item}`}><Pencil className="w-4 h-4" /></button>
-                  {canDelete && <button onClick={() => remove(e)} className="p-1.5 text-gray-500 hover:text-red-600" aria-label={`Delete ${e.item}`}><Trash2 className="w-4 h-4" /></button>}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </div>
+        )}
+      </ResponsiveModal>
+    </StockPage>
   );
 }
