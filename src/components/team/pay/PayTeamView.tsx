@@ -69,7 +69,7 @@ export function PayTeamView({
     ) : monthView ? (
       <>
         <StatTile label={t('team.pay.toPay')} value={<Money value={view.permanent.toPay} />} caption={t('team.pay.toPayHint')} />
-        <StatTile label={t('team.pay.paid')} value={<Money value={paid} />} />
+        <StatTile label={t('team.pay.paid')} value={<Money value={paid} />} caption={seg === 'all' && view.contract.total ? t('team.pay.inclContract', { amount: formatINR(view.contract.total) }) : undefined} />
         <StatTile
           label={t('team.pay.stillDue')}
           value={<Money value={view.permanent.stillDue} className={view.permanent.stillDue > 0 ? 'text-warning' : undefined} />}
