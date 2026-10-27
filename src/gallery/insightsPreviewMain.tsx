@@ -137,6 +137,8 @@ const clickByText = (selector: string, text: string) => () => {
   const all = [...document.querySelectorAll<HTMLElement>(selector)];
   const el = /^\d+$/.test(text) ? all[Number(text)] : all.find((x) => x.textContent?.trim() === text);
   if (!el) return false;
+  // Radix tabs switch on mouse-down, not click.
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
   el.click();
   return true;
 };

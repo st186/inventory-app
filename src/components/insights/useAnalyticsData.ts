@@ -156,6 +156,10 @@ export const settlementAnalyticsReportingDate = (settlement: SettlementPeriodLik
  // Production date range selector
  export type DateRangeType = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'previousYear' | 'custom';
 
+// Category labels from utils/inventoryData.ts carry an emoji; Insights shows the words only
+// (warm-ledger rule: no emoji in data labels).
+export const plainLabel = (label: string) => label.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim();
+
 export function useAnalyticsData({ context, selectedStoreId, highlightRequestId, initialTab, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
  // Online sales/payout/settlement data now lives in context (see the Analytics page
  // redesign) - Analytics.tsx, OnlineSalesTab.tsx, and SalesData.tsx all read the same
@@ -2777,7 +2781,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  // Combine Meat and Dairy into a single display category for Analytics
  const displayName = bucket === 'food' && (canonical === 'meat' || canonical === 'dairy')
  ? 'Meat & Dairy'
- : expenseCategoryLabel(category);
+ : plainLabel(expenseCategoryLabel(category));
  if (!categoryExpenses[displayName]) {
  categoryExpenses[displayName] = 0;
  categoryItems[displayName] = [];
@@ -2806,7 +2810,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  // This period's share of equipment purchases, yearly subscriptions and bulk packaging stock
  Object.entries(metrics.spreadByCategory || {}).forEach(([category, amount]) => {
  if (amount <= 0) return;
- const displayName = expenseCategoryLabel(category);
+ const displayName = plainLabel(expenseCategoryLabel(category));
  categoryExpenses[displayName] = (categoryExpenses[displayName] || 0) + amount;
  categoryItems[displayName] = categoryItems[displayName] || [];
  categoryTypes[displayName] = category === 'packaging_bulk' ? 'inventory' : 'fixed';
@@ -2871,7 +2875,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  g.entries.push(entry);
  groups.set(groupLabel, g);
  };
- const label = (category?: string) => expenseCategoryLabel(category || 'Other');
+ const label = (category?: string) => plainLabel(expenseCategoryLabel(category || 'Other'));
  const fromInventory = (x: any) => ({ id: `inv-${x.id}`, date: x.date, name: x.itemName || label(x.category), detail: x.quantity ? `${x.quantity} ${x.unit || ''}`.trim() : undefined, amount: x.totalCost || 0 });
  const fromOverhead = (x: any) => ({ id: `ovh-${x.id}`, date: x.date, name: x.description || label(x.category), detail: x.employeeName || undefined, amount: x.amount || 0 });
  const fromFixed = (x: any) => ({ id: `fix-${x.id}`, date: x.date, name: x.description || label(x.category), amount: x.amount || 0 });

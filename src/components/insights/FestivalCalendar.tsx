@@ -127,7 +127,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
           </div>
         </div>
         {canManage && (
-          <button onClick={draft} disabled={drafting} className="px-3 py-2 rounded-lg bg-info text-on-primary text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-60">
+          <button onClick={draft} disabled={drafting} className="min-h-11 px-3 py-2 rounded-md border border-border-strong bg-surface text-text hover:bg-surface-2 text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-60">
             {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} {drafting ? 'Checking dates...' : 'Draft next 60 days with AI'}
           </button>
         )}
@@ -144,7 +144,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
                   <p className="text-caption text-text-2"><span className={`px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[s.effect]}`}>{effectLabel(s.effect)}</span> {s.reason}{s.confidence !== 'high' ? ' · date not confirmed' : ''}</p>
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
-                  <button onClick={() => answer(s, true)} disabled={busyDate === s.date} className="p-2.5 rounded-lg bg-success text-on-primary disabled:opacity-60" aria-label={`Add ${s.name}`}><Check className="w-4 h-4" /></button>
+                  <button onClick={() => answer(s, true)} disabled={busyDate === s.date} className="size-11 inline-flex items-center justify-center rounded-md bg-success-soft text-success border border-success-border disabled:opacity-60" aria-label={`Add ${s.name}`}><Check className="w-4 h-4" /></button>
                   <button onClick={() => answer(s, false)} disabled={busyDate === s.date} className="p-2.5 rounded-lg border border-border-strong text-text-2 disabled:opacity-60" aria-label={`Skip ${s.name}`}><X className="w-4 h-4" /></button>
                 </div>
               </li>
@@ -167,7 +167,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
               {DAY_EFFECTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
             </select>
           </label>
-          <button onClick={add} disabled={saving} className="px-3 py-2 rounded-lg bg-text text-on-primary text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60"><Plus className="w-4 h-4" /> Add</button>
+          <button onClick={add} disabled={saving} className="min-h-11 px-3 py-2 rounded-md bg-primary text-on-primary hover:bg-primary-hover text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60"><Plus className="w-4 h-4" /> Add</button>
         </div>
       )}
 

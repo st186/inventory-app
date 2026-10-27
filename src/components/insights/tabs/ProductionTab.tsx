@@ -1794,7 +1794,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
  className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
  wastageTimeFilter === filter
- ? 'bg-text text-on-primary'
+ ? 'bg-primary-soft text-primary border-primary'
  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
  }`}
  >
@@ -1927,7 +1927,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempDiversionPercent(sopDiversionPercent);
  setEditingSop(true);
  }}
- className="px-4 py-2 bg-info text-on-primary rounded-lg hover:bg-info transition-colors flex items-center gap-2"
+ className="min-h-11 px-4 py-2 border border-border-strong bg-surface text-text hover:bg-surface-2 rounded-md transition-colors flex items-center gap-2"
  >
  <Edit className="w-4 h-4" />
  Edit SOP
@@ -1942,7 +1942,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  // TODO: Save to backend
  toast.success('SOP thresholds and diversion limit updated successfully');
  }}
- className="px-4 py-2 bg-success text-on-primary rounded-lg hover:bg-success transition-colors flex items-center gap-2"
+ className="min-h-11 px-4 py-2 bg-primary text-on-primary rounded-md hover:bg-primary-hover transition-colors flex items-center gap-2"
  >
  <Check className="w-4 h-4" />
  Save

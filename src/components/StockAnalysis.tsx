@@ -699,7 +699,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
             key={p}
             onClick={() => setPeriod(p)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              period === p ? 'bg-info text-on-primary' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
+              period === p ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
             }`}
           >
             {PERIOD_LABELS[p]}

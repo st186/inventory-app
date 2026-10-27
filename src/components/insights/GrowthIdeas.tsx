@@ -62,7 +62,7 @@ export function GrowthIdeas({ accessToken, storeId, canManage }: { accessToken: 
           </div>
         </div>
         {canManage && (
-          <button onClick={generate} disabled={generating} className="px-3 py-2 rounded-lg bg-info text-on-primary text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-60">
+          <button onClick={generate} disabled={generating} className="min-h-11 px-3 py-2 rounded-md border border-border-strong bg-surface text-text hover:bg-surface-2 text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-60">
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} {generating ? 'Thinking it through...' : "Get this week's ideas"}
           </button>
         )}
