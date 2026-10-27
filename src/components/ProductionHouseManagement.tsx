@@ -419,7 +419,7 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-3">
               <span className="text-subtitle font-semibold text-text">How many to move</span>
-              <Button variant="link" onClick={handleTransferAll}>Move all</Button>
+              <Button variant="secondary" size="sm" onClick={handleTransferAll}>Move all</Button>
             </div>
             {FLAVOURS.map((f) => (
               <div key={f.key} className="flex items-center justify-between gap-3">
