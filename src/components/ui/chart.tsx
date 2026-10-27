@@ -4,6 +4,11 @@ import * as React from "react";
 import * as RechartsPrimitive from "recharts@2.15.2";
 
 import { cn } from "./utils";
+import { formatNumberIN } from "./money";
+
+// Recharts wrapper. Colours only from --chart-* / --channel-* (chart-theme.tsx has the shared
+// axis, grid, tooltip and legend settings). Horizontal gridlines, 12 px text-3 axis labels,
+// a surface tooltip with tabular figures, the legend as chips.
 
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const;
@@ -55,7 +60,7 @@ function ChartContainer({
         data-slot="chart"
         data-chart={chartId}
         className={cn(
-          "[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border flex aspect-video justify-center text-xs [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden",
+          "flex aspect-video justify-center text-caption [&_.recharts-cartesian-axis-tick_text]:fill-text-3 [&_.recharts-cartesian-axis-line]:stroke-border [&_.recharts-cartesian-grid_line]:stroke-chart-grid [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border-strong [&_.recharts-polar-grid_line]:stroke-chart-grid [&_.recharts-polar-grid_polygon]:stroke-chart-grid [&_.recharts-radial-bar-background-sector]:fill-surface-2 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-surface-2 [&_.recharts-reference-line_line]:stroke-border-strong [&_.recharts-dot]:stroke-surface [&_.recharts-layer]:outline-hidden [&_.recharts-sector]:stroke-surface [&_.recharts-sector]:outline-hidden [&_.recharts-surface]:outline-hidden",
           className,
         )}
         {...props}
@@ -173,7 +178,7 @@ function ChartTooltipContent({
   return (
     <div
       className={cn(
-        "border-border/50 bg-background grid min-w-[8rem] items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-xl",
+        "grid min-w-[9rem] items-start gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-label text-text shadow-e2",
         className,
       )}
     >
@@ -188,7 +193,7 @@ function ChartTooltipContent({
             <div
               key={item.dataKey}
               className={cn(
-                "[&>svg]:text-muted-foreground flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5",
+                "[&>svg]:text-text-3 flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5",
                 indicator === "dot" && "items-center",
               )}
             >
@@ -228,13 +233,13 @@ function ChartTooltipContent({
                   >
                     <div className="grid gap-1.5">
                       {nestLabel ? tooltipLabel : null}
-                      <span className="text-muted-foreground">
+                      <span className="text-text-2">
                         {itemConfig?.label || item.name}
                       </span>
                     </div>
                     {item.value && (
-                      <span className="text-foreground font-mono font-medium tabular-nums">
-                        {item.value.toLocaleString()}
+                      <span className="num font-semibold text-text">
+                        {typeof item.value === "number" ? formatNumberIN(item.value) : item.value}
                       </span>
                     )}
                   </div>
@@ -270,7 +275,7 @@ function ChartLegendContent({
   return (
     <div
       className={cn(
-        "flex items-center justify-center gap-4",
+        "flex flex-wrap items-center justify-start gap-2",
         verticalAlign === "top" ? "pb-3" : "pt-3",
         className,
       )}
@@ -283,7 +288,7 @@ function ChartLegendContent({
           <div
             key={item.value}
             className={cn(
-              "[&>svg]:text-muted-foreground flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3",
+              "[&>svg]:text-text-3 inline-flex h-6 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 text-caption font-medium text-text-2 [&>svg]:h-3 [&>svg]:w-3",
             )}
           >
             {itemConfig?.icon && !hideIcon ? (

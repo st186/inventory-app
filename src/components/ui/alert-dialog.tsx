@@ -6,6 +6,9 @@ import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog@1.1.6";
 import { cn } from "./utils";
 import { buttonVariants } from "./button";
 
+// A question that needs an answer before going on (role="alertdialog"). Most screens should use
+// the promise helper in confirm.tsx instead of building one of these by hand.
+
 function AlertDialog({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
@@ -36,7 +39,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-gray-900/30",
+        "fixed inset-0 z-(--z-toast) bg-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         className,
       )}
       {...props}
@@ -54,7 +57,8 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
+          "fixed top-1/2 left-1/2 z-(--z-toast) grid w-[calc(100%-2rem)] max-w-[400px] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-surface p-5 text-text shadow-e3 outline-none",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-98 data-[state=open]:zoom-in-98",
           className,
         )}
         {...props}
@@ -70,7 +74,7 @@ function AlertDialogHeader({
   return (
     <div
       data-slot="alert-dialog-header"
-      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      className={cn("flex flex-col gap-1.5 text-left", className)}
       {...props}
     />
   );
@@ -83,10 +87,7 @@ function AlertDialogFooter({
   return (
     <div
       data-slot="alert-dialog-footer"
-      className={cn(
-        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-        className,
-      )}
+      className={cn("flex flex-col-reverse gap-2.5 min-[360px]:flex-row min-[360px]:justify-end", className)}
       {...props}
     />
   );
@@ -99,7 +100,7 @@ function AlertDialogTitle({
   return (
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
-      className={cn("text-lg font-semibold", className)}
+      className={cn("text-title font-semibold text-text", className)}
       {...props}
     />
   );
@@ -112,7 +113,7 @@ function AlertDialogDescription({
   return (
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("text-body-sm text-text-2", className)}
       {...props}
     />
   );
@@ -136,7 +137,7 @@ function AlertDialogCancel({
 }: React.ComponentProps<typeof AlertDialogPrimitive.Cancel>) {
   return (
     <AlertDialogPrimitive.Cancel
-      className={cn(buttonVariants({ variant: "outline" }), className)}
+      className={cn(buttonVariants({ variant: "secondary" }), className)}
       {...props}
     />
   );
