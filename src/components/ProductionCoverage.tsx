@@ -106,7 +106,7 @@ export function ProductionCoverage({
       defaultOpen={gaps.length > 0}
       icon={<span className={`flex size-9 shrink-0 items-center justify-center rounded-md [&_svg]:size-5 ${gaps.length ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-text-2'}`} aria-hidden="true">{gaps.length ? <AlertCircle /> : <CalendarCheck />}</span>}
       title={t('stock.prod.logCheck')}
-      subtitle={`${gaps.length > 0 ? t('stock.prod.gaps', { n: gaps.length }) : t('stock.prod.noGaps')}${pending > 0 ? ` ${pending} waiting for approval.` : ''}`}
+      subtitle={`${gaps.length > 0 ? t(gaps.length === 1 ? 'stock.prod.gapsOne' : 'stock.prod.gaps', { n: gaps.length }) : t('stock.prod.noGaps')}${pending > 0 ? ` ${pending} waiting for approval.` : ''}`}
     >
       <div className="flex flex-col gap-3 p-4" lang={lang}>
         <p className="num text-label text-text-3">{t('stock.prod.loggedDays', { logged: loggedDays.length, days: cells.length, pieces: inr(loggedDays.reduce((s, c) => s + c.pieces, 0)) })}</p>

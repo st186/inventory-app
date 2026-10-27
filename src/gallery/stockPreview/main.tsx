@@ -31,7 +31,7 @@ const requests = seedRequests(view === 'request-sent' ? 'sent' : '');
 const USERS = {
   store: { email: 'store@example.test', name: 'Nabendu', role: 'manager', designation: 'store_incharge', employeeId: 'BM001', accessToken: 'preview', storeId: 'STORE-1' },
   production: { email: 'kitchen@example.test', name: 'Sohel', role: 'manager', designation: 'production_incharge', employeeId: 'BM020', accessToken: 'preview', storeId: 'PH-1', assignedStoreIds: ['STORE-1', 'STORE-2'], assignedProductionHouseIds: ['PH-1'] },
-  ops: { email: 'ops@example.test', name: 'Subrata', role: 'manager', designation: 'operations_manager', employeeId: 'BM002', accessToken: 'preview', storeId: null },
+  ops: { email: 'ops@example.test', name: 'Subrata', role: 'manager', designation: 'operations_manager', employeeId: 'BM002', accessToken: 'preview', storeId: null, assignedStoreIds: ['STORE-1', 'STORE-2'] },
 } as const;
 
 function contextFor(user: (typeof USERS)[keyof typeof USERS]): any {

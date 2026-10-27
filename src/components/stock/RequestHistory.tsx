@@ -88,7 +88,7 @@ export function AllRequests({ vm, defaultOpen = false }: { vm: StockRequestsVM; 
               <ListGroup
                 key={date}
                 title={dayLabel(lang, date)}
-                meta={`${t('stock.queue.requestsCount', { n: dayRequests.length })} · ${t('stock.pcs', { n: formatCount(pieces) })}`}
+                meta={`${t(dayRequests.length === 1 ? 'stock.queue.requestsCountOne' : 'stock.queue.requestsCount', { n: dayRequests.length })} · ${t('stock.pcs', { n: formatCount(pieces) })}`}
                 footer={finishedProducts.filter(({ camelKey }) => totals[camelKey] > 0).map(({ camelKey, label }) => `${momoName(lang, camelKey, label)} ${formatCount(totals[camelKey])}`).join(' · ')}
               >
                 {dayRequests.map((r) => (

@@ -52,7 +52,7 @@ export function MomoTotalsToday({ vm }: { vm: StockRequestsVM }) {
   return (
     <ListGroup
       title={t('stock.queue.totalsToday')}
-      meta={todays.length ? t('stock.queue.requestsCount', { n: todays.length }) : undefined}
+      meta={todays.length ? t(todays.length === 1 ? 'stock.queue.requestsCountOne' : 'stock.queue.requestsCount', { n: todays.length }) : undefined}
       empty={<EmptyState compact icon={Inbox} title={t('stock.queue.noneToday')} />}
       footer={sum > 0 ? <span className="num">{t('stock.detail.totalPieces', { n: formatCount(sum) })}</span> : undefined}
     >
