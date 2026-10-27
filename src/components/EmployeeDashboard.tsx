@@ -1,1095 +1,160 @@
-import { useState, useEffect } from 'react';
-import { Wallet, Calendar, TrendingUp, DollarSign, FileText, Download, User, Phone, Mail, Briefcase, MapPin, CreditCard, AlertCircle, CheckCircle, Clock, XCircle } from 'lucide-react';
+// Pay (crew and riders): their own pay - what has been paid this month, payslips for the last
+// 12 months, the salary advance, and their details and manager (those move to Me → Profile once
+// the shell has that page). Same data as before: their payouts, salary advances and personal
+// expenses, matched to their staff record.
+import { useEffect, useState } from 'react';
+import { UserX } from 'lucide-react';
 import * as api from '../utils/api';
-import { generatePayslip, computeMonthlyPay, monthlySalaryOf, payoutMonth, personalExpensesForMonth } from '../utils/payslip';
+import { useT } from '../utils/i18n';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { Skeleton, SkeletonListRows, SkeletonStatTile } from './ui/skeleton';
+import { toast } from './ui/sonner';
+import { formatINR } from './ui/money';
+import { teamApi } from './team/teamApi';
+import { TeamPage, errorText } from './team/shared';
+import { advanceRequestProblem, buildAdvanceRequest, type PayOverhead, type PayPayout } from './team/payrollMath';
+import { MyPay, type ContactCard } from './team/pay/MyPay';
+import type { I18nKey } from '../utils/i18n';
 
 interface EmployeeDashboardProps {
   employeeId: string;
 }
 
-export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
-  const [employee, setEmployee] = useState<any>(null);
-  const [payouts, setPayouts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'payouts' | 'manager' | 'advance'>('payouts');
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const [managerDetails, setManagerDetails] = useState<any>(null);
-  const [seniorManagerDetails, setSeniorManagerDetails] = useState<any>(null);
-  const [salaryAdvances, setSalaryAdvances] = useState<api.SalaryAdvance[]>([]);
-  // Personal expenses (advance cash handed over) come off net pay, same as in Payroll.
-  const [overheads, setOverheads] = useState<any[]>([]);
-  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
-  const [advanceAmount, setAdvanceAmount] = useState('');
+type Person = Omit<api.Employee, 'type'> & { id: string; type?: 'contract' | 'fulltime'; dailyRate?: number; monthlySalary?: number };
 
-  useEffect(() => {
-    loadEmployeeData();
-  }, [employeeId]);
+const DESIGNATION_KEYS: Record<string, I18nKey> = {
+  operations_incharge: 'team.designation.operations_incharge',
+  store_incharge: 'team.designation.store_incharge',
+  production_incharge: 'team.designation.production_incharge',
+  operations_manager: 'team.designation.operations_manager',
+  store_ops: 'team.designation.store_ops',
+  production_ops: 'team.designation.production_ops',
+  rider: 'team.designation.rider',
+};
+
+export function EmployeeDashboard({ employeeId }: EmployeeDashboardProps) {
+  const { t } = useT();
+  const [employee, setEmployee] = useState<Person | null>(null);
+  const [payouts, setPayouts] = useState<PayPayout[]>([]);
+  const [salaryAdvances, setSalaryAdvances] = useState<api.SalaryAdvance[]>([]);
+  // Personal expenses (advance cash handed over) come off net pay, as in Payroll.
+  const [overheads, setOverheads] = useState<PayOverhead[]>([]);
+  const [manager, setManager] = useState<Person | null>(null);
+  const [seniorManager, setSeniorManager] = useState<Person | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadEmployeeData = async () => {
     try {
       setLoading(true);
-      const employees = await api.getEmployees();
-      const currentEmployee = employees.find((emp: any) => emp.employeeId === employeeId);
-      
-      if (currentEmployee) {
-        setEmployee(currentEmployee);
-        
-        // Load payouts for this employee
-        const allPayouts = await api.getPayouts();
-        const employeePayouts = allPayouts.filter(
-          (payout: any) => payout.employeeId === currentEmployee.id
-        );
-        setPayouts(employeePayouts);
-
-        // Load salary advances for this employee
-        const allAdvances = await api.getSalaryAdvances();
-        const employeeAdvances = allAdvances.filter(
-          (advance: api.SalaryAdvance) => advance.employeeId === currentEmployee.id
-        );
-        setSalaryAdvances(employeeAdvances);
-
-        try {
-          const allOverheads = await api.getOverheads();
-          setOverheads(allOverheads.filter((o: any) => o.category === 'personal_expense' && o.employeeId === currentEmployee.employeeId));
-        } catch (overheadError) {
-          console.error('Error loading personal expenses:', overheadError);
-        }
-
-        // Load manager details if employee has an incharge
-        if (currentEmployee.inchargeId) {
-          const manager = employees.find((emp: any) => emp.id === currentEmployee.inchargeId);
-          if (manager) {
-            setManagerDetails(manager);
-            
-            // Load senior manager (manager's manager) if exists
-            if (manager.inchargeId) {
-              const seniorManager = employees.find((emp: any) => emp.id === manager.inchargeId);
-              if (seniorManager) {
-                setSeniorManagerDetails(seniorManager);
-              }
-            }
-          }
-        }
+      setLoadError(null);
+      const employees = (await teamApi.getEmployees()) as Person[];
+      const current = employees.find((emp) => emp.employeeId === employeeId) || null;
+      setEmployee(current);
+      if (!current) return;
+      const allPayouts = (await teamApi.getPayouts()) as unknown as PayPayout[];
+      setPayouts(allPayouts.filter((p) => p.employeeId === current.id));
+      const allAdvances = await teamApi.getSalaryAdvances();
+      setSalaryAdvances(allAdvances.filter((a) => a.employeeId === current.id));
+      try {
+        const allOverheads = (await teamApi.getOverheads()) as unknown as PayOverhead[];
+        setOverheads(allOverheads.filter((o) => o.category === 'personal_expense' && o.employeeId === current.employeeId));
+      } catch (overheadError) {
+        console.error('Error loading personal expenses:', overheadError);
       }
+      // Their incharge, and the incharge's own incharge.
+      const boss = current.inchargeId ? employees.find((e) => e.id === current.inchargeId) || null : null;
+      setManager(boss);
+      setSeniorManager(boss?.inchargeId ? employees.find((e) => e.id === boss.inchargeId) || null : null);
     } catch (error) {
       console.error('Error loading employee data:', error);
+      setLoadError(errorText(error, t('team.pay.loadFailed')));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleApplySalaryAdvance = async () => {
+  useEffect(() => {
+    loadEmployeeData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeId]);
+
+  const handleApplySalaryAdvance = async (amount: number): Promise<boolean> => {
+    if (!employee) return false;
+    const problem = advanceRequestProblem(employee, amount, salaryAdvances, { requirePermanent: false });
+    if (problem) {
+      toast.error(problem.code === 'overSalary' ? t('team.my.err.overSalary', { amount: problem.salary?.toLocaleString('en-IN') || '' }) : t(`team.my.err.${problem.code}` as I18nKey));
+      return false;
+    }
     try {
-      const amount = parseFloat(advanceAmount);
-      
-      if (!amount || amount <= 0) {
-        alert('Please enter a valid amount');
-        return;
-      }
-
-      // No form ever writes monthlySalary, so this used to refuse everyone; the cap is the
-      // fixed salary structure the owner sets in Employee Management.
-      const monthlySalary = monthlySalaryOf(employee);
-      if (!monthlySalary) {
-        alert('Your salary structure is not set up yet. Please ask the owner to add it in Employee Management.');
-        return;
-      }
-
-      if (amount > monthlySalary) {
-        alert(`Advance amount cannot exceed your monthly salary (₹${monthlySalary.toLocaleString('en-IN')})`);
-        return;
-      }
-
-      // Check if there's already a pending or active advance
-      const activeAdvance = salaryAdvances.find(
-        adv => adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
-      );
-
-      if (activeAdvance) {
-        alert('You already have an active or pending salary advance. Please wait for it to be processed or completed.');
-        return;
-      }
-
-      // Calculate deduction schedule
-      const monthlyDeduction = amount / 4;
-      const now = new Date();
-      const startMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      
-      const deductions: api.SalaryAdvanceDeduction[] = [];
-      for (let i = 0; i < 4; i++) {
-        const deductionDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
-        const monthStr = `${deductionDate.getFullYear()}-${String(deductionDate.getMonth() + 1).padStart(2, '0')}`;
-        deductions.push({
-          month: monthStr,
-          amount: monthlyDeduction,
-          deducted: false
-        });
-      }
-
-      const endDate = new Date(now.getFullYear(), now.getMonth() + 3, 1);
-      const endMonth = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}`;
-
-      const newAdvance: Omit<api.SalaryAdvance, 'id' | 'createdAt'> = {
-        employeeId: employee.id,
-        employeeName: employee.name,
-        employeeEmployeeId: employee.employeeId,
-        amount,
-        requestDate: new Date().toISOString(),
-        status: 'pending',
-        installments: 4,
-        monthlyDeduction,
-        remainingAmount: amount,
-        startMonth,
-        endMonth,
-        deductions
-      };
-
-      await api.createSalaryAdvance(newAdvance);
-      
-      alert('Salary advance request submitted successfully! Your request will be reviewed by the Cluster Head.');
-      setShowAdvanceModal(false);
-      setAdvanceAmount('');
+      await teamApi.createSalaryAdvance(buildAdvanceRequest(employee, amount));
+      toast.success(t('team.my.advanceSent'));
       loadEmployeeData();
+      return true;
     } catch (error) {
       console.error('Error applying for salary advance:', error);
-      alert('Failed to submit salary advance request. Please try again.');
+      toast.error(t('team.my.advanceFailed'));
+      return false;
     }
   };
 
-  const getFilteredPayouts = () => {
-    if (!selectedMonth) return payouts;
-
-    // A payout's forMonth (when set) is which month it's actually FOR - e.g. a payout
-    // dated June 3rd with forMonth "2026-05" is May's backlogged salary, paid late.
-    // Older payouts without forMonth fall back to the payment date's own month.
-    return payouts.filter((payout) => payoutMonth(payout) === selectedMonth);
-  };
-
-  const filteredPayouts = getFilteredPayouts();
-  const totalPayouts = filteredPayouts.reduce((sum, payout) => sum + payout.amount, 0);
-
-  // Add this helper function after the state declarations
-  const formatDesignation = (designation?: string, role?: string) => {
-    if (!designation && !role) return 'N/A';
-    
-    if (designation) {
-      const designationMap: Record<string, string> = {
-        'operations_incharge': 'Operations Incharge',
-        'store_incharge': 'Store Incharge',
-        'production_incharge': 'Production Incharge',
-        'operations_manager': 'Operations Manager',
-        'store_ops': 'Store Operations',
-        'production_ops': 'Production Operations',
-        'rider': 'Rider',
-      };
-      
-      return designationMap[designation] || designation;
-    }
-    
-    // Fallback to role if no designation (legacy data)
-    const roleMap: Record<string, string> = {
-      'cluster_head': 'Cluster Head',
-      'manager': 'Manager',
-      'employee': 'Employee'
-    };
-    
-    return roleMap[role || ''] || role || 'N/A';
-  };
-
-  const getMonthName = (monthNumber: number) => {
-    const monthNames = [
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December"
-    ];
-    return monthNames[monthNumber];
-  };
-
-  // Generate monthly payslips data (last 12 months)
-  const getMonthlyPayslips = () => {
-    const now = new Date();
-    const slips = [];
-    
-    for (let i = 0; i < 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const month = getMonthName(date.getMonth());
-      const year = date.getFullYear().toString();
-      
-      // Get payouts for this month - forMonth (when set) is which month a payout is
-      // actually FOR, not when it was paid, so a backlogged salary paid late lands on
-      // its real month's payslip instead of inflating whatever month it was paid in.
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const monthPayouts = payouts.filter(payout => payoutMonth(payout) === monthKey);
-
-      // Net pay for the month - the same function Payroll's My Payouts and the payslip
-      // use (this screen used to ignore personal expenses and show a different figure).
-      const personalExpenses = personalExpensesForMonth(overheads, employee?.employeeId || '', monthKey);
-      const total = computeMonthlyPay(monthPayouts, personalExpenses).net;
-
-      // Available as soon as a payout for this month is actually logged - no arbitrary
-      // date-based waiting period.
-      const isAvailable = monthPayouts.length > 0;
-
-      slips.push({
-        month,
-        year,
-        payouts: monthPayouts,
-        total,
-        personalExpenses,
-        isAvailable
-      });
-    }
-    
-    return slips;
-  };
-
-  const monthlyPayslips = getMonthlyPayslips();
-
-  // Generate available months
-  const getAvailableMonths = () => {
-    const months = [];
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      months.push({
-        value: monthStr,
-        label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      });
-    }
-    return months;
-  };
-
-  if (loading) {
+  if (loading && !employee) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your data...</p>
-        </div>
-      </div>
+      <TeamPage aria-busy="true">
+        <SkeletonStatTile hero />
+        <Skeleton className="h-5 w-32" />
+        <SkeletonListRows count={5} />
+      </TeamPage>
     );
   }
-
+  if (loadError) {
+    return (
+      <TeamPage>
+        <ErrorState body={loadError} onRetry={loadEmployeeData} retrying={loading} />
+      </TeamPage>
+    );
+  }
   if (!employee) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-3xl">⚠️</span>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Employee Not Found</h2>
-          <p className="text-gray-600">
-            Your employee profile hasn't been set up yet. Please contact your manager or cluster head.
-          </p>
+      <TeamPage>
+        <div className="rounded-lg border border-border bg-surface">
+          <EmptyState icon={UserX} title={t('team.my.notFound')} body={t('team.my.notFoundBody')} />
         </div>
-      </div>
+      </TeamPage>
     );
   }
 
-  const firstName = employee.name.split(' ')[0];
-  const initials = employee.name
-    .split(' ')
-    .map((n: string) => n[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-  const greeting = (() => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  })();
+  const designation = (d?: string | null, role?: string) =>
+    d && DESIGNATION_KEYS[d] ? t(DESIGNATION_KEYS[d]) : role === 'cluster_head' ? t('role.owner') : role === 'manager' ? t('team.details.manager') : role ? t('role.staff') : '–';
+  const contact = (title: string, p: Person): ContactCard => ({
+    title,
+    name: p.name,
+    rows: [
+      { label: t('team.details.phone'), value: p.phone || '–' },
+      { label: t('team.details.email'), value: p.email || '–' },
+      { label: t('team.details.role'), value: designation(p.designation, p.role) },
+      { label: t('team.details.employeeId'), value: p.employeeId || '–' },
+    ],
+  });
+  const type = employee.type === 'fulltime' ? 'fulltime' : 'contract';
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/30 flex-shrink-0 text-white font-semibold">
-              {initials}
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">{greeting}</p>
-              <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight">{firstName}</h1>
-            </div>
-          </div>
-        </div>
-
-        {/* Employee Info Card */}
-        <div className="bg-card rounded-2xl border border-border p-5 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-xs text-muted-foreground uppercase tracking-wide">Your details</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-muted-foreground">Employee ID</div>
-              <div className="text-sm text-foreground mt-0.5">{employee.employeeId}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Type</div>
-              <div className="text-sm text-foreground mt-0.5">
-                {employee.type === 'fulltime' ? 'Permanent' : 'Contract'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Role</div>
-              <div className="text-sm text-foreground mt-0.5">{employee.role || 'N/A'}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Phone</div>
-              <div className="text-sm text-foreground mt-0.5">{employee.phone}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Email</div>
-              <div className="text-sm text-foreground mt-0.5">{employee.email || 'N/A'}</div>
-            </div>
-            {employee.dailyRate && (
-              <div>
-                <div className="text-xs text-muted-foreground">Daily rate</div>
-                <div className="text-sm text-foreground mt-0.5">₹{employee.dailyRate}</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* My Details Section with Tabs */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">My Details</h2>
-            
-            {/* Tab Navigation */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setActiveTab('payouts')}
-                className={`px-6 py-2 rounded-lg transition-colors ${
-                  activeTab === 'payouts'
-                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Wallet className="w-4 h-4" />
-                  <span>My Payouts</span>
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('advance')}
-                className={`px-6 py-2 rounded-lg transition-colors ${
-                  activeTab === 'advance'
-                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4" />
-                  <span>Salary Advance</span>
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('manager')}
-                className={`px-6 py-2 rounded-lg transition-colors ${
-                  activeTab === 'manager'
-                    ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  <span>My Manager</span>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Tab Content */}
-          <div className="p-6">
-            {/* My Payouts Tab */}
-            {activeTab === 'payouts' && (
-              <div>
-                {/* Month Selector */}
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                      <Calendar className="w-5 h-5 text-blue-600" />
-                      Select Month
-                    </h3>
-                  </div>
-                  <select
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value)}
-                    className="w-full md:w-auto px-4 py-2 border border-gray-300 rounded-lg"
-                  >
-                    {getAvailableMonths().map((month) => (
-                      <option key={month.value} value={month.value}>
-                        {month.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Statistics */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 shadow-lg shadow-emerald-500/20 text-white">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-emerald-100">Total Payouts</div>
-                      <DollarSign className="w-5 h-5 text-emerald-100" />
-                    </div>
-                    <div className="text-2xl font-semibold">₹{totalPayouts.toLocaleString()}</div>
-                    <div className="text-xs text-emerald-100 mt-1">
-                      {filteredPayouts.length} payment{filteredPayouts.length !== 1 ? 's' : ''}
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg shadow-blue-500/20 text-white">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-blue-100">Average Payout</div>
-                      <TrendingUp className="w-5 h-5 text-blue-100" />
-                    </div>
-                    <div className="text-2xl font-semibold">
-                      ₹{filteredPayouts.length > 0 ? Math.round(totalPayouts / filteredPayouts.length).toLocaleString() : 0}
-                    </div>
-                    <div className="text-xs text-blue-100 mt-1">Per payment</div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-6 shadow-lg shadow-teal-500/20 text-white">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-teal-100">Payment Days</div>
-                      <Wallet className="w-5 h-5 text-teal-100" />
-                    </div>
-                    <div className="text-2xl font-semibold">{filteredPayouts.length}</div>
-                    <div className="text-xs text-teal-100 mt-1">This month</div>
-                  </div>
-                </div>
-
-                {/* Payout History Table */}
-                <div className="bg-gray-50 rounded-2xl overflow-hidden mb-6">
-                  <div className="p-4 bg-white border-b border-gray-200">
-                    <h3 className="text-lg font-bold text-gray-900">Payout History</h3>
-                  </div>
-                  
-                  {filteredPayouts.length === 0 ? (
-                    <div className="p-12 text-center bg-white">
-                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Wallet className="w-8 h-8 text-gray-400" />
-                      </div>
-                      <h4 className="text-lg font-bold text-gray-900 mb-2">No Payouts Yet</h4>
-                      <p className="text-gray-600">No payouts recorded for the selected month.</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto bg-white">
-                      <table className="w-full">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs text-gray-600">Date</th>
-                            <th className="px-6 py-3 text-left text-xs text-gray-600">Amount</th>
-                            <th className="px-6 py-3 text-left text-xs text-gray-600">Type</th>
-                            <th className="px-6 py-3 text-left text-xs text-gray-600">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {filteredPayouts
-                            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                            .map((payout) => (
-                              <tr key={payout.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 text-sm text-gray-900">
-                                  {new Date(payout.date).toLocaleDateString('en-IN', {
-                                    day: 'numeric',
-                                    month: 'short',
-                                    year: 'numeric'
-                                  })}
-                                </td>
-                                <td className="px-6 py-4 text-sm font-medium text-green-600">
-                                  ₹{payout.amount.toLocaleString()}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-gray-600">
-                                  {employee.type === 'fulltime' ? 'Salary' : 'Daily Wage'}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                    ✓ Paid
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                {/* Monthly Payslips Section */}
-                <div className="bg-gray-50 rounded-2xl overflow-hidden">
-                  <div className="p-4 bg-white border-b border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-teal-600" />
-                      <h3 className="text-lg font-bold text-gray-900">Monthly Payslips</h3>
-                    </div>
-                    <p className="text-sm text-gray-600 mt-2">
-                      Payslips are available for download after the 4th of each month
-                    </p>
-                  </div>
-                  
-                  <div className="p-6 bg-white">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {monthlyPayslips.map((slip, index) => (
-                        <div 
-                          key={index}
-                          className={`border-2 rounded-xl p-4 transition-all ${
-                            slip.isAvailable && slip.payouts.length > 0
-                              ? 'border-teal-300 bg-gradient-to-br from-teal-50 to-rose-50 hover:shadow-lg'
-                              : 'border-gray-200 bg-gray-50 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <h4 className="text-gray-900 font-semibold">{slip.month} {slip.year}</h4>
-                              <p className="text-sm text-gray-600 mt-1">
-                                {slip.payouts.length} payment{slip.payouts.length !== 1 ? 's' : ''}
-                              </p>
-                            </div>
-                            {slip.isAvailable && slip.payouts.length > 0 ? (
-                              <button
-                                onClick={() => generatePayslip(
-                                  employee.name,
-                                  employee.employeeId,
-                                  slip.month,
-                                  slip.year,
-                                  slip.payouts,
-                                  employee.type,
-                                  slip.personalExpenses,
-                                  employee.salaryStructure
-                                )}
-                                className="flex items-center gap-2 px-3 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm"
-                                title="Download Payslip"
-                              >
-                                <Download className="w-4 h-4" />
-                                Download
-                              </button>
-                            ) : (
-                              <div className="px-3 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed">
-                                {slip.payouts.length === 0 ? 'No Data' : 'Not Available'}
-                              </div>
-                            )}
-                          </div>
-                          <div className="pt-3 border-t border-gray-300">
-                            <p className="text-sm text-gray-600 mb-1">Total Amount</p>
-                            <p className="text-xl text-gray-900 font-semibold">
-                              ₹{slip.total.toLocaleString('en-IN')}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Salary Advance Tab */}
-            {activeTab === 'advance' && (
-              <div className="space-y-6">
-                {/* Apply for Advance Button */}
-                <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h3 className="text-lg text-gray-900 font-semibold">Salary Advance</h3>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Apply for salary advance with automatic 4-month recovery
-                    </p>
-                  </div>
-                  {employee.type === 'fulltime' && (
-                    <button
-                      onClick={() => setShowAdvanceModal(true)}
-                      disabled={salaryAdvances.some(adv => 
-                        adv.status === 'pending' || (adv.status === 'approved' && adv.remainingAmount > 0)
-                      )}
-                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <CreditCard className="w-5 h-5" />
-                      <span>Apply for Advance</span>
-                    </button>
-                  )}
-                </div>
-
-                {employee.type !== 'fulltime' && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
-                      <div>
-                        <p className="text-yellow-800 font-medium">Not Available</p>
-                        <p className="text-sm text-yellow-700 mt-1">
-                          Salary advance is only available for permanent employees
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Salary Advances List */}
-                {salaryAdvances.length > 0 ? (
-                  <div className="space-y-4">
-                    {salaryAdvances.map((advance) => (
-                      <div 
-                        key={advance.id}
-                        className={`border-2 rounded-2xl p-6 ${
-                          advance.status === 'pending' ? 'border-yellow-300 bg-yellow-50' :
-                          advance.status === 'approved' ? 'border-green-300 bg-green-50' :
-                          'border-red-300 bg-red-50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between mb-4">
-                          <div>
-                            <div className="flex items-center gap-2 mb-2">
-                              <h4 className="text-lg font-semibold text-gray-900">
-                                ₹{advance.amount.toLocaleString('en-IN')} Advance
-                              </h4>
-                              {advance.status === 'pending' && (
-                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">
-                                  <Clock className="w-3 h-3" />
-                                  Pending Approval
-                                </span>
-                              )}
-                              {advance.status === 'approved' && (
-                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                                  <CheckCircle className="w-3 h-3" />
-                                  Approved
-                                </span>
-                              )}
-                              {advance.status === 'rejected' && (
-                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
-                                  <XCircle className="w-3 h-3" />
-                                  Rejected
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-gray-600">
-                              Applied on {new Date(advance.requestDate).toLocaleDateString('en-IN', {
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric'
-                              })}
-                            </p>
-                          </div>
-                        </div>
-
-                        {advance.status === 'rejected' && advance.rejectionReason && (
-                          <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-4">
-                            <p className="text-sm font-medium text-red-800 mb-1">Rejection Reason:</p>
-                            <p className="text-sm text-red-700">{advance.rejectionReason}</p>
-                          </div>
-                        )}
-
-                        {advance.status === 'approved' && (
-                          <div className="space-y-4">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                              <div className="bg-white rounded-lg p-3">
-                                <p className="text-xs text-gray-600 mb-1">Monthly Deduction</p>
-                                <p className="text-lg font-semibold text-gray-900">
-                                  ₹{advance.monthlyDeduction.toLocaleString('en-IN')}
-                                </p>
-                              </div>
-                              <div className="bg-white rounded-lg p-3">
-                                <p className="text-xs text-gray-600 mb-1">Remaining Balance</p>
-                                <p className="text-lg font-semibold text-orange-600">
-                                  ₹{advance.remainingAmount.toLocaleString('en-IN')}
-                                </p>
-                              </div>
-                              <div className="bg-white rounded-lg p-3">
-                                <p className="text-xs text-gray-600 mb-1">Start Month</p>
-                                <p className="text-sm font-medium text-gray-900">
-                                  {(() => {
-                                    const [year, month] = advance.startMonth.split('-');
-                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-                                    return date.toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      year: 'numeric'
-                                    });
-                                  })()}
-                                </p>
-                              </div>
-                              <div className="bg-white rounded-lg p-3">
-                                <p className="text-xs text-gray-600 mb-1">End Month</p>
-                                <p className="text-sm font-medium text-gray-900">
-                                  {(() => {
-                                    const [year, month] = advance.endMonth.split('-');
-                                    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-                                    return date.toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      year: 'numeric'
-                                    });
-                                  })()}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Deduction Schedule */}
-                            <div className="bg-white rounded-lg p-4">
-                              <h5 className="text-sm font-semibold text-gray-900 mb-3">Deduction Schedule</h5>
-                              <div className="space-y-2">
-                                {advance.deductions.map((deduction, idx) => (
-                                  <div 
-                                    key={idx}
-                                    className={`flex items-center justify-between p-3 rounded-lg ${
-                                      deduction.deducted 
-                                        ? 'bg-green-50 border border-green-200' 
-                                        : 'bg-gray-50 border border-gray-200'
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-3">
-                                      {deduction.deducted ? (
-                                        <CheckCircle className="w-5 h-5 text-green-600" />
-                                      ) : (
-                                        <Clock className="w-5 h-5 text-gray-400" />
-                                      )}
-                                      <div>
-                                        <p className="text-sm font-medium text-gray-900">
-                                          {new Date(deduction.month + '-01').toLocaleDateString('en-US', {
-                                            month: 'long',
-                                            year: 'numeric'
-                                          })}
-                                        </p>
-                                        {deduction.deducted && deduction.deductedDate && (
-                                          <p className="text-xs text-gray-600">
-                                            Deducted on {new Date(deduction.deductedDate).toLocaleDateString('en-IN')}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <p className={`text-sm font-semibold ${
-                                      deduction.deducted ? 'text-green-700' : 'text-gray-700'
-                                    }`}>
-                                      ₹{deduction.amount.toLocaleString('en-IN')}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-                    <CreditCard className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-600 font-medium mb-1">No Salary Advances Yet</p>
-                    <p className="text-sm text-gray-500">
-                      {employee.type === 'fulltime' 
-                        ? 'Click "Apply for Advance" to request a salary advance'
-                        : 'Salary advance is only available for permanent employees'
-                      }
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* My Manager Details Tab */}
-            {activeTab === 'manager' && (
-              <div>
-                {managerDetails ? (
-                  <div className="space-y-6">
-                    {/* Manager Profile Card */}
-                    <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-2xl p-6 border-2 border-teal-200">
-                      <div className="flex items-start gap-4">
-                        <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
-                          {managerDetails.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="text-2xl font-bold text-gray-900 mb-1">{managerDetails.name}</h3>
-                          <p className="text-sm text-teal-700 font-medium mb-3">Your Manager / Incharge</p>
-                          <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
-                            {managerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Manager Contact Details */}
-                    <div className="bg-white border border-gray-200 rounded-2xl p-6">
-                      <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                        <Phone className="w-5 h-5 text-blue-600" />
-                        Contact Information
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                          <Phone className="w-5 h-5 text-blue-600 mt-0.5" />
-                          <div>
-                            <div className="text-sm text-gray-600 mb-1">Phone Number</div>
-                            <div className="font-medium text-gray-900">{managerDetails.phone || 'N/A'}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                          <Mail className="w-5 h-5 text-blue-600 mt-0.5" />
-                          <div>
-                            <div className="text-sm text-gray-600 mb-1">Email Address</div>
-                            <div className="font-medium text-gray-900">{managerDetails.email || 'N/A'}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                          <Briefcase className="w-5 h-5 text-blue-600 mt-0.5" />
-                          <div>
-                            <div className="text-sm text-gray-600 mb-1">Role / Position</div>
-                            <div className="font-medium text-gray-900">{formatDesignation(managerDetails.designation, managerDetails.role) || 'N/A'}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                          <User className="w-5 h-5 text-blue-600 mt-0.5" />
-                          <div>
-                            <div className="text-sm text-gray-600 mb-1">Employee ID</div>
-                            <div className="font-medium text-gray-900">{managerDetails.employeeId || 'N/A'}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Info Box */}
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <span className="text-white text-sm">ℹ️</span>
-                        </div>
-                        <div>
-                          <h4 className="font-medium text-blue-900 mb-1">About Your Manager</h4>
-                          <ul className="text-sm text-blue-800 space-y-1">
-                            <li>• Your manager is responsible for processing your payouts and leave requests</li>
-                            <li>• For any work-related queries or concerns, please contact your manager</li>
-                            <li>• Your manager has been assigned by the cluster head to oversee your work</li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Senior Manager Profile Card */}
-                    {seniorManagerDetails && (
-                      <div className="bg-gradient-to-br from-teal-50 to-rose-50 rounded-2xl p-6 border-2 border-teal-200">
-                        <div className="flex items-start gap-4">
-                          <div className="w-20 h-20 bg-gradient-to-br from-orange-600 to-red-600 rounded-full flex items-center justify-center text-white text-2xl flex-shrink-0">
-                            {seniorManagerDetails.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="flex-1">
-                            <h3 className="text-2xl font-bold text-gray-900 mb-1">{seniorManagerDetails.name}</h3>
-                            <p className="text-sm text-teal-700 font-medium mb-3">Senior Manager / Incharge</p>
-                            <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
-                              {seniorManagerDetails.type === 'fulltime' ? 'Permanent Employee' : 'Contract Employee'}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Senior Manager Contact Details */}
-                    {seniorManagerDetails && (
-                      <div className="bg-white border border-gray-200 rounded-2xl p-6">
-                        <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                          <Phone className="w-5 h-5 text-blue-600" />
-                          Contact Information
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                            <Phone className="w-5 h-5 text-blue-600 mt-0.5" />
-                            <div>
-                              <div className="text-sm text-gray-600 mb-1">Phone Number</div>
-                              <div className="font-medium text-gray-900">{seniorManagerDetails.phone || 'N/A'}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                            <Mail className="w-5 h-5 text-blue-600 mt-0.5" />
-                            <div>
-                              <div className="text-sm text-gray-600 mb-1">Email Address</div>
-                              <div className="font-medium text-gray-900">{seniorManagerDetails.email || 'N/A'}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                            <Briefcase className="w-5 h-5 text-blue-600 mt-0.5" />
-                            <div>
-                              <div className="text-sm text-gray-600 mb-1">Role / Position</div>
-                              <div className="font-medium text-gray-900">{formatDesignation(seniorManagerDetails.designation, seniorManagerDetails.role) || 'N/A'}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                            <User className="w-5 h-5 text-blue-600 mt-0.5" />
-                            <div>
-                              <div className="text-sm text-gray-600 mb-1">Employee ID</div>
-                              <div className="font-medium text-gray-900">{seniorManagerDetails.employeeId || 'N/A'}</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Info Box */}
-                    {seniorManagerDetails && (
-                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <span className="text-white text-sm">ℹ️</span>
-                          </div>
-                          <div>
-                            <h4 className="font-medium text-blue-900 mb-1">About Your Senior Manager</h4>
-                            <ul className="text-sm text-blue-800 space-y-1">
-                              <li>• Your senior manager is responsible for processing your payouts and leave requests</li>
-                              <li>• For any work-related queries or concerns, please contact your senior manager</li>
-                              <li>• Your senior manager has been assigned by the cluster head to oversee your work</li>
-                            </ul>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-12">
-                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <User className="w-10 h-10 text-gray-400" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">No Manager Assigned</h3>
-                    <p className="text-gray-600 max-w-md mx-auto">
-                      You don't have a manager or incharge assigned yet. Please contact your cluster head for more information.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Info Box - Only show on Payouts tab */}
-        {activeTab === 'payouts' && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span className="text-white text-sm">ℹ️</span>
-              </div>
-              <div>
-                <h4 className="font-medium text-blue-900 mb-1">About Your Payouts</h4>
-                <ul className="text-sm text-blue-800 space-y-1">
-                  <li>• All payouts are processed and recorded by your manager or cluster head</li>
-                  <li>• This dashboard shows only your personal payout history</li>
-                  <li>• For any discrepancies, please contact your manager</li>
-                  <li>• Payment history is available for the last 12 months</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Salary Advance Application Modal */}
-        {showAdvanceModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">Apply for Salary Advance</h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Amount will be deducted over 4 months
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowAdvanceModal(false);
-                    setAdvanceAmount('');
-                  }}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <XCircle className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="space-y-4 mb-6">
-                {/* Monthly Salary Info */}
-                <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
-                  <p className="text-sm text-teal-700 mb-1">Your Monthly Salary</p>
-                  <p className="text-2xl font-semibold text-teal-900">
-                    {monthlySalaryOf(employee) ? `₹${monthlySalaryOf(employee).toLocaleString('en-IN')}` : 'Not set up yet'}
-                  </p>
-                </div>
-
-                {/* Advance Amount Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Advance Amount (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={advanceAmount}
-                    onChange={(e) => setAdvanceAmount(e.target.value)}
-                    placeholder="Enter amount"
-                    max={monthlySalaryOf(employee)}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Maximum: ₹{monthlySalaryOf(employee).toLocaleString('en-IN')}
-                  </p>
-                </div>
-
-                {/* Deduction Preview */}
-                {advanceAmount && parseFloat(advanceAmount) > 0 && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <p className="text-sm font-medium text-blue-900 mb-2">Deduction Schedule:</p>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-blue-800">Monthly Deduction:</span>
-                        <span className="font-semibold text-blue-900">
-                          ₹{(parseFloat(advanceAmount) / 4).toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-blue-800">Duration:</span>
-                        <span className="font-semibold text-blue-900">4 Months</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-blue-800">Total Amount:</span>
-                        <span className="font-semibold text-blue-900">
-                          ₹{parseFloat(advanceAmount).toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Important Note */}
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                    <div className="text-sm text-yellow-800">
-                      <p className="font-medium mb-1">Important:</p>
-                      <ul className="list-disc list-inside space-y-1 text-xs">
-                        <li>Your request will be sent to Cluster Head for approval</li>
-                        <li>The amount will be deducted equally over 4 months</li>
-                        <li>Deductions will start from your next salary payment</li>
-                        <li>You cannot apply for another advance until this one is recovered</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowAdvanceModal(false);
-                    setAdvanceAmount('');
-                  }}
-                  className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleApplySalaryAdvance}
-                  disabled={!advanceAmount || parseFloat(advanceAmount) <= 0 || parseFloat(advanceAmount) > monthlySalaryOf(employee)}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                >
-                  Submit Request
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    <MyPay
+      person={{ id: employee.id, employeeId: employee.employeeId, name: employee.name, type, salaryStructure: employee.salaryStructure, monthlySalary: employee.monthlySalary }}
+      payouts={payouts}
+      overheads={overheads}
+      advances={salaryAdvances}
+      onRequestAdvance={handleApplySalaryAdvance}
+      details={[
+        { label: t('team.details.employeeId'), value: employee.employeeId },
+        { label: t('team.details.type'), value: type === 'fulltime' ? t('team.type.fulltime') : t('team.type.contract') },
+        { label: t('team.details.role'), value: designation(employee.designation, employee.role) },
+        { label: t('team.details.phone'), value: employee.phone || '–' },
+        { label: t('team.details.email'), value: employee.email || '–' },
+        ...(employee.dailyRate ? [{ label: t('team.pay.dailyRate'), value: formatINR(employee.dailyRate) }] : []),
+      ]}
+      contacts={[...(manager ? [contact(t('team.details.yourManager'), manager)] : []), ...(seniorManager ? [contact(t('team.details.seniorManager'), seniorManager)] : [])]}
+    />
   );
 }
