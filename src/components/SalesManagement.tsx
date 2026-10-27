@@ -1365,7 +1365,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  )}
 
  {/* Ask for approval once a big difference is saved (until someone approves or it's asked). */}
- {canEnter && isEditing && editingId && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+ {canEnter && isEditing && editingId && countedToday !== null && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
  <Button variant="secondary" leadingIcon={<AlertTriangle />} onClick={handleRequestApproval} className="self-start">{t('dc.askApproval')}</Button>
  )}
  </Section>
@@ -1454,7 +1454,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  <StickyFooter>
  <Button variant="secondary" size="lg" onClick={handleSaveDraft}>{t('dayClose.saveDraft')}</Button>
  <Button type="submit" form="day-close-form" size="lg" className="flex-1" loading={isSubmitting}>
- {isEditing ? t('dc.sendAgain') : t('dayClose.send')}
+ {isEditing && countedToday !== null ? t('dc.sendAgain') : t('dayClose.send')}
  </Button>
  </StickyFooter>
  )}

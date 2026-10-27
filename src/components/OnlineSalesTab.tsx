@@ -912,7 +912,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           {canEdit && (
             <button
               onClick={() => { setShowUploadModal(true); setUploadStoreId(defaultUploadStoreId); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
-              className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-semibold   transition-all shadow-lg"
+              className="min-h-11 flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-semibold   transition-all shadow-lg"
             >
               <Upload className="w-4 h-4" />
               Upload Settlement
@@ -928,7 +928,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
             <button
               key={value}
               onClick={() => setFilterPreset(value)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              className={`hit-44 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                 filterPreset === value ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
@@ -943,19 +943,19 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               type="date"
               value={draftCustomStart}
               onChange={(e) => setDraftCustomStart(e.target.value)}
-              className="px-3 py-1.5 border border-border-strong rounded-lg text-sm"
+              className="min-h-11 px-3 py-1.5 border border-border-strong rounded-lg text-sm"
             />
             <span className="text-text-3 text-sm">to</span>
             <input
               type="date"
               value={draftCustomEnd}
               onChange={(e) => setDraftCustomEnd(e.target.value)}
-              className="px-3 py-1.5 border border-border-strong rounded-lg text-sm"
+              className="min-h-11 px-3 py-1.5 border border-border-strong rounded-lg text-sm"
             />
             <button
               onClick={() => { setAppliedCustomStart(draftCustomStart); setAppliedCustomEnd(draftCustomEnd); }}
               disabled={!draftCustomStart || !draftCustomEnd}
-              className="px-4 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="min-h-11 px-4 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Apply
             </button>
@@ -1236,7 +1236,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   <button
                     key={agg}
                     onClick={() => setEconPlatform(agg)}
-                    className={`px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-border' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-danger text-white' : 'bg-primary text-white') : 'bg-surface text-text-2 hover:bg-surface-2'}`}
+                    className={`min-h-11 px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-border' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-danger text-white' : 'bg-primary text-white') : 'bg-surface text-text-2 hover:bg-surface-2'}`}
                   >
                     {agg}
                   </button>
@@ -1523,7 +1523,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       <div className="bg-surface rounded-2xl border border-border shadow-sm">
         <button
           onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-          className="w-full flex items-center justify-between p-6 text-left"
+          className="min-h-11 w-full flex items-center justify-between p-6 text-left"
         >
           <h3 className="text-lg sm:text-xl font-bold text-text tracking-tight">Settlement History</h3>
           {isHistoryOpen ? <ChevronUp className="w-5 h-5 text-text-3" /> : <ChevronDown className="w-5 h-5 text-text-3" />}
@@ -1574,7 +1574,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                             <button
                               onClick={() => handleDelete(s.id)}
                               disabled={deletingId === s.id}
-                              className="p-1.5 text-text-3 hover:text-danger hover:bg-danger-soft rounded transition-colors disabled:opacity-50"
+                              className="min-h-11 p-1.5 text-text-3 hover:text-danger hover:bg-danger-soft rounded transition-colors disabled:opacity-50"
                               title="Delete settlement"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1614,7 +1614,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   <select
                     value={uploadStoreId}
                     onChange={(e) => { setUploadStoreId(e.target.value); setSaveError(null); }}
-                    className="w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text focus:ring-2 focus:ring-ring focus:border-primary"
+                    className="min-h-11 w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text focus:ring-2 focus:ring-ring focus:border-primary"
                   >
                     <option value="">Select store</option>
                     {availableStores.map(store => (
@@ -1631,7 +1631,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                     <button
                       key={agg}
                       onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
-                      className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium capitalize transition-colors ${
+                      className={`min-h-11 flex-1 px-4 py-2.5 rounded-lg text-sm font-medium capitalize transition-colors ${
                         uploadAggregator === agg ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                       }`}
                     >
@@ -1721,7 +1721,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                         <span className="text-xs text-text-3 truncate">{s.sourceFileName}</span>
                         <button
                           onClick={() => setParsedSettlements(prev => (prev || []).filter((_, idx) => idx !== i))}
-                          className="p-1 text-text-3 hover:text-danger rounded flex-shrink-0"
+                          className="min-h-11 p-1 text-text-3 hover:text-danger rounded flex-shrink-0"
                           title="Remove this settlement from the queue"
                         >
                           <X className="w-3.5 h-3.5" />

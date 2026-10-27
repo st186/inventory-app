@@ -52,7 +52,9 @@ export function StickyFooter({ children, className }: { children: React.ReactNod
   return (
     <div
       className={cn(
-        'sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] z-(--z-sticky) -mx-4 border-t border-border bg-surface px-4 py-3 md:bottom-0 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8',
+        // Phones: a full-width bar above the bottom navigation. Wider screens: a floating bar
+        // the width of the page column.
+        'sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] z-(--z-sticky) -mx-4 border-t border-border bg-surface px-4 py-3 md:bottom-4 md:mx-0 md:rounded-lg md:border md:shadow-e2',
         className,
       )}
     >

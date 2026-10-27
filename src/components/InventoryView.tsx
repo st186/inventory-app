@@ -240,7 +240,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+            className={`min-h-11 flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
               activeTab === tab
                 ? tab === 'combined'
                   ? 'bg-primary text-white shadow-sm'
@@ -320,12 +320,12 @@ export function InventoryView({ context, selectedStoreId }: Props) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search for an item..."
-          className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="min-h-11 w-full pl-10 pr-9 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
         {searchQuery && (
           <button
             onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-secondary"
+            className="hit-44 absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-secondary"
           >
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
@@ -454,14 +454,14 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       {isClusterHead && (
         <div className="mt-2 mb-4 flex flex-wrap gap-2">
           <button
-            className="flex items-center gap-2 bg-primary hover:opacity-90 text-primary-foreground py-2.5 px-4 rounded-xl text-sm transition-opacity"
+            className="min-h-11 flex items-center gap-2 bg-primary hover:opacity-90 text-primary-foreground py-2.5 px-4 rounded-xl text-sm transition-opacity"
             onClick={() => setShowRecalibration(true)}
           >
             <Calendar className="w-4 h-4" />
             Monthly stock recalibration
           </button>
           <button
-            className="flex items-center gap-2 bg-text hover:bg-text text-white py-2.5 px-4 rounded-xl text-sm transition-colors"
+            className="min-h-11 flex items-center gap-2 bg-text hover:bg-text text-white py-2.5 px-4 rounded-xl text-sm transition-colors"
             onClick={() => setShowCategoryManager(true)}
           >
             <Package className="w-4 h-4" />

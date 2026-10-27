@@ -84,7 +84,7 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
         <select
           value={selectedStoreId}
           onChange={(e) => setSelectedStoreId(e.target.value)}
-          className="px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
+          className="min-h-11 px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
         >
           {stores.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
@@ -95,11 +95,11 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
           value={selectedDate}
           max={today}
           onChange={(e) => setSelectedDate(e.target.value)}
-          className="px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
+          className="min-h-11 px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
         />
         <button
           onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:opacity-90 transition-opacity"
+          className="min-h-11 inline-flex items-center gap-1.5 px-3 py-2 border border-border-strong bg-surface text-text rounded-lg text-sm hover:bg-surface-2 transition-colors"
         >
           <Smartphone className="w-4 h-4" /> Log Paytm Balance
         </button>

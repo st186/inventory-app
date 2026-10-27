@@ -90,7 +90,7 @@ export function LoanManagementSection({
         {canApply && (
           <button
             onClick={() => setShowApplyLoanModal(true)}
-            className="flex-shrink-0 px-3.5 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover transition-colors flex items-center gap-1.5 text-xs font-medium"
+            className="min-h-11 flex-shrink-0 px-3.5 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover transition-colors flex items-center gap-1.5 text-xs font-medium"
           >
             <Plus className="w-3.5 h-3.5" />
             Request loan
@@ -188,20 +188,20 @@ export function LoanManagementSection({
                         value={rejectionReason}
                         onChange={(e) => setRejectionReason(e.target.value)}
                         placeholder="Reason for rejecting (optional)"
-                        className="w-full px-3 py-2 border border-border-strong rounded-lg text-xs"
+                        className="min-h-11 w-full px-3 py-2 border border-border-strong rounded-lg text-xs"
                         autoFocus
                       />
                       <div className="flex gap-2">
                         <button
                           onClick={() => { setRejectingLoanId(null); setRejectionReason(''); }}
-                          className="flex-1 px-3 py-2 border border-border text-text-2 rounded-lg text-xs hover:bg-surface-2"
+                          className="min-h-11 flex-1 px-3 py-2 border border-border text-text-2 rounded-lg text-xs hover:bg-surface-2"
                         >
                           Cancel
                         </button>
                         <button
                           onClick={() => handleReject(loan)}
                           disabled={decidingLoanId === loan.id}
-                          className="flex-1 px-3 py-2 bg-danger text-white rounded-lg text-xs hover:bg-danger-hover disabled:opacity-50"
+                          className="min-h-11 flex-1 px-3 py-2 bg-danger text-white rounded-lg text-xs hover:bg-danger-hover disabled:opacity-50"
                         >
                           Confirm reject
                         </button>
@@ -212,7 +212,7 @@ export function LoanManagementSection({
                       <button
                         onClick={() => setRejectingLoanId(loan.id)}
                         disabled={decidingLoanId === loan.id}
-                        className="flex-1 px-3 py-2 bg-surface border border-border text-text-2 rounded-lg hover:bg-surface-2 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50"
+                        className="min-h-11 flex-1 px-3 py-2 bg-surface border border-border text-text-2 rounded-lg hover:bg-surface-2 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50"
                       >
                         <Ban className="w-3.5 h-3.5" />
                         Reject
@@ -220,7 +220,7 @@ export function LoanManagementSection({
                       <button
                         onClick={() => handleApprove(loan)}
                         disabled={decidingLoanId === loan.id}
-                        className="flex-1 px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50"
+                        className="min-h-11 flex-1 px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50"
                       >
                         {decidingLoanId === loan.id ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -246,7 +246,7 @@ export function LoanManagementSection({
                       setSelectedLoanForRepayment(loan);
                       setShowRepayLoanModal(true);
                     }}
-                    className="w-full px-4 py-2 bg-surface border border-border text-text-2 rounded-lg hover:bg-surface-2 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium"
+                    className="min-h-11 w-full px-4 py-2 bg-surface border border-border text-text-2 rounded-lg hover:bg-surface-2 transition-colors flex items-center justify-center gap-1.5 text-xs font-medium"
                   >
                     <CreditCard className="w-3.5 h-3.5" />
                     Repay loan

@@ -194,8 +194,8 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
             <>
               <p className="text-sm text-text-2">Take a clear photo of the whole bill - printed or handwritten, English or Bengali. AI reads the lines; you check every one before anything is saved.</p>
               <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => cameraRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-info-border bg-info-soft text-info font-semibold flex flex-col items-center gap-2"><Camera className="w-7 h-7" /> Take a photo</button>
-                <button onClick={() => galleryRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-border-strong text-text-2 font-semibold flex flex-col items-center gap-2"><ImageUp className="w-7 h-7" /> Choose a photo</button>
+                <button onClick={() => cameraRef.current?.click()} className="min-h-11 px-4 py-6 rounded-xl border-2 border-dashed border-info-border bg-info-soft text-info font-semibold flex flex-col items-center gap-2"><Camera className="w-7 h-7" /> Take a photo</button>
+                <button onClick={() => galleryRef.current?.click()} className="min-h-11 px-4 py-6 rounded-xl border-2 border-dashed border-border-strong text-text-2 font-semibold flex flex-col items-center gap-2"><ImageUp className="w-7 h-7" /> Choose a photo</button>
               </div>
               <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
               <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
@@ -214,8 +214,8 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
               <div className="flex gap-3 items-start">
                 {preview && <img src={preview} alt="Scanned invoice" className="w-20 h-24 object-cover rounded-lg border border-border flex-shrink-0" />}
                 <div className="grid grid-cols-2 gap-2 flex-1">
-                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Shop / supplier<input value={vendor} onChange={(e) => setVendor(e.target.value)} className={`${field} mt-1`} /></label>
-                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Bill date<input type="date" value={date} max={getTodayIST()} onChange={(e) => setDate(e.target.value)} className={`${field} mt-1`} /></label>
+                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Shop / supplier<input value={vendor} onChange={(e) => setVendor(e.target.value)} className={`min-h-11 ${field} mt-1`} /></label>
+                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Bill date<input type="date" value={date} max={getTodayIST()} onChange={(e) => setDate(e.target.value)} className={`min-h-11 ${field} mt-1`} /></label>
                 </div>
               </div>
               {invoice.note && <p className="text-xs text-warning bg-warning-soft rounded-lg px-3 py-2 flex gap-2"><AlertTriangle className="w-4 h-4 flex-shrink-0" />{invoice.note}</p>}
@@ -253,7 +253,7 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
                           <input value={l.name} onChange={(e) => update(i, { name: e.target.value })} className={field} aria-label="Item name" />
                           <p className="text-caption text-text-3 mt-0.5">On the bill: {l.asWritten}{l.unsure ? ' · hard to read - check it' : ''}</p>
                         </div>
-                        <select value={l.kind} onChange={(e) => update(i, { kind: e.target.value })} className={`${field} col-span-6 sm:col-span-3 ${!l.kind ? 'border-warning' : ''}`} aria-label="Category">
+                        <select value={l.kind} onChange={(e) => update(i, { kind: e.target.value })} className={`min-h-11 ${field} col-span-6 sm:col-span-3 ${!l.kind ? 'border-warning' : ''}`} aria-label="Category">
                           <option value="">Pick a category...</option>
                           {KIND_GROUPS.map((g) => (
                             <optgroup key={g.type} label={g.label}>
@@ -261,9 +261,9 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
                             </optgroup>
                           ))}
                         </select>
-                        <input value={l.quantity} onChange={(e) => update(i, { quantity: e.target.value })} inputMode="decimal" placeholder="Qty" className={`${field} col-span-2`} aria-label="Quantity" />
-                        <input value={l.unit} onChange={(e) => update(i, { unit: e.target.value })} placeholder="Unit" className={`${field} col-span-2`} aria-label="Unit" />
-                        <input value={l.amount} onChange={(e) => update(i, { amount: e.target.value })} inputMode="decimal" placeholder="₹" className={`${field} col-span-2 text-right font-semibold`} aria-label="Amount" />
+                        <input value={l.quantity} onChange={(e) => update(i, { quantity: e.target.value })} inputMode="decimal" placeholder="Qty" className={`min-h-11 ${field} col-span-2`} aria-label="Quantity" />
+                        <input value={l.unit} onChange={(e) => update(i, { unit: e.target.value })} placeholder="Unit" className={`min-h-11 ${field} col-span-2`} aria-label="Unit" />
+                        <input value={l.amount} onChange={(e) => update(i, { amount: e.target.value })} inputMode="decimal" placeholder="₹" className={`min-h-11 ${field} col-span-2 text-right font-semibold`} aria-label="Amount" />
                       </div>
                     </div>
                   </li>

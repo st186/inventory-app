@@ -129,7 +129,7 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
     <div className="mt-4 pt-4 border-t border-border">
       <button
         onClick={() => setShow(!show)}
-        className="w-full flex items-center justify-between text-left"
+        className="min-h-11 w-full flex items-center justify-between text-left"
       >
         <span className="text-xs font-medium text-text-2">
           {title} ({filtered.length} of {decided.length})
@@ -144,7 +144,7 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                className={`hit-44 px-2.5 py-1 rounded-full text-xs transition-colors ${
                   filter === f ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                 }`}
               >

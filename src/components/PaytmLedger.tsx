@@ -69,7 +69,7 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
 
   return (
     <div className="mt-4 pt-4 border-t border-border">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between text-left">
+      <button onClick={() => setOpen(!open)} className="min-h-11 w-full flex items-center justify-between text-left">
         <span className="text-xs font-medium text-text-2">
           Paytm statement ({inWindow.length} entries)
         </span>
@@ -83,7 +83,7 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
               <button
                 key={k}
                 onClick={() => setRangeKey(k)}
-                className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                className={`hit-44 px-2.5 py-1 rounded-full text-xs transition-colors ${
                   rangeKey === k ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                 }`}
               >

@@ -919,7 +919,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
             <button
               onClick={() => setShowPlateConfig(!showPlateConfig)}
-              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
+              className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
             >
               <Settings className="w-4 h-4" />
               <span className="font-medium">Plate Config</span>
@@ -927,7 +927,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
             <button
               onClick={() => setShowMenuItemPrices(!showMenuItemPrices)}
-              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
+              className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
               title="Offline vs Online price per real menu item (Zomato/Swiggy share one Online price via Ciferon's Online Submenu)"
             >
               <Settings className="w-4 h-4" />
@@ -938,7 +938,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <button
                 onClick={handleSyncFromPOS}
                 disabled={isSyncingCategoryData}
-                className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                 title="Pull momo category counts for the selected period straight from Ciferon POS, instead of uploading an XLSX for each day"
               >
                 <Package className="w-4 h-4" />
@@ -1003,7 +1003,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         max="20"
                         value={piecesPerPlate[category]}
                         onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
-                        className="w-20 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
+                        className="min-h-11 w-20 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
                       />
                       <span className="text-text-2 text-sm">pcs/plate</span>
                     </div>
@@ -1015,7 +1015,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         step="1"
                         value={pricePerPlate[category]}
                         onChange={(e) => updatePriceConfig(category, parseFloat(e.target.value) || 0)}
-                        className="w-24 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
+                        className="min-h-11 w-24 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
                       />
                       <span className="text-text-2 text-sm">/plate</span>
                     </div>
@@ -1058,7 +1058,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     {!showAddMenuItem ? (
                       <button
                         onClick={() => setShowAddMenuItem(true)}
-                        className="text-sm font-medium text-success hover:text-success flex items-center gap-1.5"
+                        className="min-h-11 text-sm font-medium text-success hover:text-success flex items-center gap-1.5"
                       >
                         <span className="text-lg leading-none">+</span> Add New Item
                       </button>
@@ -1078,7 +1078,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                               value={newMenuItem.productId}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, productId: e.target.value }))}
                               placeholder="e.g. 1108056"
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
@@ -1088,7 +1088,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                               value={newMenuItem.productName}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, productName: e.target.value }))}
                               placeholder="e.g. Chicken Steamed Momos (8 pcs) - A"
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
@@ -1096,7 +1096,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                             <select
                               value={newMenuItem.momoCategory}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, momoCategory: e.target.value as keyof CategoryData }))}
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             >
                               {(Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => (
                                 <option key={cat} value={cat}>{cat}</option>
@@ -1109,7 +1109,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                               type="number"
                               value={newMenuItem.piecesPerUnit}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, piecesPerUnit: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
@@ -1118,7 +1118,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                               type="number"
                               value={newMenuItem.offlinePrice}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, offlinePrice: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
@@ -1127,14 +1127,14 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                               type="number"
                               value={newMenuItem.onlinePrice}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, onlinePrice: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button
                             onClick={() => setShowAddMenuItem(false)}
-                            className="px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2 rounded-lg transition-colors"
+                            className="min-h-11 px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2 rounded-lg transition-colors"
                             disabled={isSavingNewMenuItem}
                           >
                             Cancel
@@ -1142,7 +1142,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           <button
                             onClick={handleAddMenuItem}
                             disabled={isSavingNewMenuItem}
-                            className="px-4 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
+                            className="min-h-11 px-4 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
                           >
                             {isSavingNewMenuItem ? 'Saving...' : 'Save Item'}
                           </button>
@@ -1176,7 +1176,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                                       type="number"
                                       value={item.offlinePrice}
                                       onChange={(e) => handleMenuPriceChange(item, 'offlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
+                                      className="min-h-11 w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
                                       disabled={isSavingMenuPrice === item.productId}
                                     />
                                   ) : (
@@ -1189,7 +1189,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                                       type="number"
                                       value={item.onlinePrice}
                                       onChange={(e) => handleMenuPriceChange(item, 'onlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
+                                      className="min-h-11 w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
                                       disabled={isSavingMenuPrice === item.productId}
                                     />
                                   ) : (
@@ -1230,7 +1230,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
+                  className={`min-h-11 px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
                     timeFilter === filter
                       ? 'bg-surface border border-border   text-text shadow-lg'
                       : 'bg-surface-2 text-text-2 hover:bg-surface-3'
@@ -1605,7 +1605,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 <button
                   onClick={handleSyncFromPOS}
                   disabled={isSyncingCategoryData}
-                  className="px-4 py-2 bg-primary text-on-primary rounded-xl text-sm   transition-all shadow-lg disabled:opacity-50 flex items-center gap-2"
+                  className="min-h-11 px-4 py-2 bg-primary text-on-primary rounded-xl text-sm   transition-all shadow-lg disabled:opacity-50 flex items-center gap-2"
                 >
                   <Download className="w-4 h-4" />
                   {isSyncingCategoryData ? 'Syncing...' : 'Sync from POS'}
@@ -1625,7 +1625,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   <button
                     key={col}
                     onClick={() => toggleSort(col)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
+                    className={`hit-44 px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
                       itemChannelSort.col === col ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                     }`}
                   >
@@ -1884,7 +1884,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   <button
                     key={day.num}
                     onClick={() => setSelectedDayOfWeek(day.num)}
-                    className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
+                    className={`min-h-11 px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
                       selectedDayOfWeek === day.num
                         ? 'bg-surface border border-border   text-text shadow-lg'
                         : 'bg-surface-2 text-text-2 hover:bg-surface-3'
@@ -2079,7 +2079,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
           <button
             type="button"
             onClick={() => setShowRecordsFilter(!showRecordsFilter)}
-            className="w-full flex items-center justify-between gap-2 px-4 sm:px-6 py-3 text-left"
+            className="min-h-11 w-full flex items-center justify-between gap-2 px-4 sm:px-6 py-3 text-left"
           >
             <span className="text-sm font-semibold text-text-2 flex items-center gap-2">
               <Calendar className="w-4 h-4 text-text-3" />
@@ -2095,7 +2095,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <select
                 value={recordsDateFilter}
                 onChange={(e) => setRecordsDateFilter(e.target.value as TimeFilter)}
-                className="sm:hidden w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text mb-2"
+                className="min-h-11 sm:hidden w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text mb-2"
               >
                 {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'custom'] as TimeFilter[]).map((f) => (
                   <option key={f} value={f}>{f === 'previousWeek' ? 'Last Week' : f === 'previousMonth' ? 'Last Month' : f.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</option>
@@ -2107,7 +2107,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     key={f}
                     type="button"
                     onClick={() => setRecordsDateFilter(f)}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
+                    className={`min-h-11 px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
                       recordsDateFilter === f ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                     }`}
                   >
@@ -2183,13 +2183,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           e.stopPropagation();
                           handleDelete(record.id);
                         }}
-                        className="p-2 hover:bg-surface rounded-lg transition-colors"
+                        className="min-h-11 p-2 hover:bg-surface rounded-lg transition-colors"
                         title="Delete record"
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
                       <button
-                        className="p-2 hover:bg-surface rounded-lg transition-all duration-300"
+                        className="min-h-11 p-2 hover:bg-surface rounded-lg transition-all duration-300"
                         title={isCollapsed ? "Expand" : "Collapse"}
                       >
                         <svg
