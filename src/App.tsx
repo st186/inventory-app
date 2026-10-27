@@ -1,6 +1,6 @@
 // Bhandar-IMS - Performance optimized with lazy loading
 import { isPhase1Live, type ProductionBatch } from './utils/batches';
-import { useState, useEffect, useRef, lazy, Suspense, memo, startTransition, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense, memo, startTransition, useCallback } from 'react';
 const InventoryView = lazy(() => import('./components/InventoryView').then(module => ({ default: module.InventoryView })));
 const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
 const SalesView = lazy(() => import('./components/SalesView').then(module => ({ default: module.SalesView })));
@@ -62,7 +62,10 @@ import * as dataCache from './utils/dataCache';
 import { startAuthTracking, currentAccessToken, peekStoredSession } from './utils/accessToken';
 import { clearMemoryCache, loadServerFeatures, onConnectivity, requestJson } from './utils/http';
 import { ALL_DATASET_KEYS, DATASETS, DEDUPED_DATASETS, datasetsFor, dedupeById, keepsStaffList, loadDatasets, mergeDateWindow, needsBusinessData, profileFrom, stripEmployeeImages, type DatasetKey } from './utils/startupData';
-import { SyncStatus } from './components/SyncStatus';
+import { SyncStatus, useOutbox } from './components/SyncStatus';
+import * as outbox from './utils/outbox';
+import { toast } from 'sonner';
+
 import { useRiderLocationSharing } from './utils/riderLocationSharing';
 import { getTodayIST } from './utils/timezone';
 
@@ -317,6 +320,8 @@ export type ProductionData = {
  };
 };
 
+export type SaveOutcome = { queued: boolean };
+
 export type InventoryContextType = {
  inventory: InventoryItem[];
  overheads: OverheadItem[];
@@ -336,17 +341,19 @@ export type InventoryContextType = {
  managedProductionHouseIds?: string[];
  inventoryItems: api.DynamicInventoryItem[];
  loadInventoryItems: () => Promise<void>;
- addInventoryItem: (item: Omit<InventoryItem, 'id'>) => Promise<void>;
- addOverheadItem: (item: Omit<OverheadItem, 'id'>) => Promise<void>;
- addFixedCostItem: (item: Omit<FixedCostItem, 'id'>) => Promise<void>;
+ // The adds and the day close resolve { queued: true } when the entry is waiting on the phone
+ // (no signal) rather than saved - see saveViaOutbox. Older implementations resolve nothing.
+ addInventoryItem: (item: Omit<InventoryItem, 'id'>) => Promise<void | SaveOutcome>;
+ addOverheadItem: (item: Omit<OverheadItem, 'id'>) => Promise<void | SaveOutcome>;
+ addFixedCostItem: (item: Omit<FixedCostItem, 'id'>) => Promise<void | SaveOutcome>;
  updateInventoryItem: (id: string, item: Omit<InventoryItem, 'id'>) => Promise<void>;
  updateOverheadItem: (id: string, item: Omit<OverheadItem, 'id'>) => Promise<void>;
  updateFixedCostItem: (id: string, item: Omit<FixedCostItem, 'id'>) => Promise<void>;
  deleteInventoryItem: (id: string) => Promise<void>;
  deleteOverheadItem: (id: string) => Promise<void>;
  deleteFixedCostItem: (id: string) => Promise<void>;
- addSalesData: (item: Omit<SalesData, 'id'>) => Promise<void>;
- updateSalesData: (id: string, item: Omit<SalesData, 'id'>) => Promise<void>;
+ addSalesData: (item: Omit<SalesData, 'id'>) => Promise<void | SaveOutcome>;
+ updateSalesData: (id: string, item: Omit<SalesData, 'id'>) => Promise<void | SaveOutcome>;
  approveSalesData: (id: string) => Promise<void>;
  requestSalesApproval: (id: string, requestedCashInHand: number, requestedOffset: number) => Promise<void>;
  approveDiscrepancy: (id: string) => Promise<void>;
@@ -491,6 +498,7 @@ export default function App() {
  setUser(null);
  resetLoadedData();
  dataCache.setCacheUser(null);
+ outbox.setOwner(null); // kept on the phone; sent after they sign in again
  setAuthError('Your login has ended. Please sign in again.');
  }
  });
@@ -640,12 +648,20 @@ export default function App() {
   if (refreshInFlightRef.current) return refreshInFlightRef.current;
   const run = (async () => {
    setIsLoadingData(true);
+   const startedAt = Date.now();
    if (options.force) clearMemoryCache();
    const keys = datasetsFor(person);
    const result = await loadDatasets(keys, { force: options.force, hasSavedRows: (key) => loadedKeysRef.current.has(key) });
    if (userRef.current?.email !== person.email) return; // signed out or switched meanwhile
    for (const [key, value] of Object.entries(result.data)) applyDataset(key as DatasetKey, value, person);
    for (const [key, window] of Object.entries(result.windows)) applyWindow(key as DatasetKey, window!);
+   // Outbox entries that may or may not have reached the server: did they? (outbox.reconcile)
+   const reconcileKinds: [DatasetKey, outbox.OutboxKind][] = [['inventory', 'inventory'], ['overheads', 'overhead'], ['fixedCosts', 'fixed-cost'], ['salesData', 'sales']];
+   for (const [key, kind] of reconcileKinds) {
+    const window = result.windows[key];
+    if (result.data[key]) outbox.reconcile(kind, result.data[key], { fetchStartedAt: startedAt });
+    else if (window) outbox.reconcile(kind, window.rows, { fetchStartedAt: startedAt, from: window.from, to: window.to });
+   }
    const succeeded = keys.filter((key) => !result.failed.some((f) => f.key === key));
    dataCache.markFetched(succeeded, result.hashes as Record<string, string>, {
     etag: result.etag,
@@ -727,6 +743,8 @@ export default function App() {
   setFailedParts([]);
   userRef.current = person;
   setUser(person);
+  // Their entries still waiting on this phone (and sending them, if there is a signal).
+  outbox.setOwner(sessionUser.id);
   // Everything under 5 minutes old (reopened straight after closing): no refresh yet.
   if (wanted.length > 0 && wanted.every((key) => saved.data[key] !== undefined && dataCache.isCacheFresh(key))) {
    console.log('✅ Saved data is fresh - skipping API calls');
@@ -1116,6 +1134,10 @@ export default function App() {
  };
 
  const handleLogout = async () => {
+ // Entries still waiting to send stay on the phone and go out the next time this person signs
+ // in - but they should know before leaving.
+ const waiting = outbox.waitingCount();
+ if (waiting > 0 && !confirm(`${waiting} ${waiting === 1 ? 'entry is' : 'entries are'} still waiting to send from this phone. They will send the next time you sign in here. Log out anyway?`)) return;
  // Tell the server this phone no longer belongs to this account, so their notifications (and the
  // rider's loud ride-request alert) stop arriving here after sign-out.
  try {
@@ -1140,6 +1162,7 @@ export default function App() {
  }
  setUser(null);
  resetLoadedData();
+ outbox.setOwner(null);
  setActiveView('sales');
  dataCache.invalidateAllCaches(); // Clear all caches on logout
  dataCache.setCacheUser(null);
@@ -1239,54 +1262,42 @@ export default function App() {
  (window as any).checkAllKeys = checkAllKeys;
  (window as any).checkBackups = checkBackups;
 
+ // New expenses and the day close are saved through the outbox (utils/outbox.ts): on the phone
+ // first, then to the server. With no signal (or a signal that drops mid-save) the entry waits on
+ // the phone, shows in the lists at once, and sends by itself later - instead of "Failed to save"
+ // and the entry gone. A refusal from the server still throws, so the form shows the reason.
+ // The saved row goes on screen from the outbox's onSent (one path for the first try and later
+ // sends alike).
+ const saveViaOutbox = async (input: outbox.OutboxInput): Promise<SaveOutcome> => {
+  const result = await outbox.submit(input);
+  if (result.status === 'sent') return { queued: false };
+  if (result.entry.state === 'unsure') {
+   toast.warning(`Weak signal - couldn't confirm "${input.label}" reached the server. It is kept on this phone: check "waiting to send" at the top before entering it again.`, { duration: 8000 });
+  } else {
+   toast.message(`No signal - "${input.label}" is saved on this phone and will send by itself when the signal is back.`, { duration: 6000 });
+  }
+  return { queued: true };
+ };
+
+ const money = (amount: number | undefined) => `₹${Math.round((amount || 0) * 100) / 100}`;
+
  const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
  if (!user) {
  console.error('❌ [ADD INVENTORY] No user found');
  return;
  }
- 
- try {
- console.log('🚀 [ADD INVENTORY] Starting addInventoryItem...');
- console.log('📊 [ADD INVENTORY] Current inventory count:', inventory.length);
- 
  // The item's own storeId wins; the user's storeId only fills it in when missing (this
  // used to overwrite the store an operations manager or cluster head picked). Never for a
  // production-house-tagged item, which is identified by productionHouseId, not storeId.
  const itemWithStore = item.entityType === 'production_house'
  ? item
  : { ...item, storeId: item.storeId || user.storeId || undefined };
- console.log('📤 [ADD INVENTORY] Sending inventory item to backend:', {
- date: itemWithStore.date,
- itemName: itemWithStore.itemName,
- totalCost: itemWithStore.totalCost,
- storeId: itemWithStore.storeId
- });
- 
- const newItem = await api.addInventory(user.accessToken, itemWithStore);
- console.log('✅ [ADD INVENTORY] Received inventory item from backend:', {
- id: newItem.id,
- date: newItem.date,
- itemName: newItem.itemName
- });
- 
- // Built from the latest list, not the one captured at render: the invoice scanner adds
- // several lines in a row, and only the last one used to stay on screen.
- setInventory((prev) => [...prev, newItem]);
- 
- console.log('🗑️ [ADD INVENTORY] Invalidating inventory cache');
- dataCache.invalidateCache('inventory'); // Invalidate cache on data change
- 
- console.log('🎉 [ADD INVENTORY] Success! Item added to state');
- } catch (error) {
- console.error('❌ [ADD INVENTORY] Error adding inventory item:', error);
- console.error('❌ [ADD INVENTORY] Error details:', error instanceof Error ? error.message : 'Unknown error');
- throw error;
- }
+ console.log('📤 [ADD INVENTORY] Saving inventory item:', { date: itemWithStore.date, itemName: itemWithStore.itemName, totalCost: itemWithStore.totalCost, storeId: itemWithStore.storeId });
+ return saveViaOutbox({ kind: 'inventory', method: 'POST', path: '/inventory', body: itemWithStore, label: `${money(item.totalCost)} · ${item.itemName}` });
  };
 
  const addOverheadItem = async (item: Omit<OverheadItem, 'id'>) => {
  if (!user) return;
- try {
  console.log('💰 Adding Expense/Overhead item:', item.category, item.description);
  // The item's own storeId wins; the user's storeId only fills it in when missing (this
  // used to overwrite the store an operations manager or cluster head picked). Never for a
@@ -1294,36 +1305,43 @@ export default function App() {
  const itemWithStore = item.entityType === 'production_house'
  ? item
  : { ...item, storeId: item.storeId || user.storeId || undefined };
- const newItem = await api.addOverhead(user.accessToken, itemWithStore);
- setOverheads((prev) => [...prev, newItem]);
- dataCache.invalidateCache('overheads');
- console.log('✅ Expense/Overhead item added successfully');
- } catch (error) {
- console.error('❌ Error adding expense/overhead item:', error);
- throw error;
- }
+ return saveViaOutbox({ kind: 'overhead', method: 'POST', path: '/overheads', body: itemWithStore, label: `${money(item.amount)} · ${item.description || item.category}` });
  };
 
  const addFixedCostItem = async (item: Omit<FixedCostItem, 'id'>) => {
  if (!user) return;
- try {
  // The item's own storeId wins; the user's storeId only fills it in when missing (this
  // used to overwrite the store an operations manager or cluster head picked). Never for a
  // production-house-tagged item, which is identified by productionHouseId, not storeId.
  const itemWithStore = item.entityType === 'production_house'
  ? item
  : { ...item, storeId: item.storeId || user.storeId || undefined };
- const newItem = await api.addFixedCost(user.accessToken, itemWithStore);
- setFixedCosts((prev) => [...prev, newItem]);
- dataCache.invalidateCache('fixedCosts');
- } catch (error) {
- console.error('Error adding fixed cost item:', error);
- throw error;
- }
+ return saveViaOutbox({ kind: 'fixed-cost', method: 'POST', path: '/fixed-costs', body: itemWithStore, label: `${money(item.amount)} · ${item.description || item.category}` });
  };
+
+ // An entry sent from the outbox (first try or later): its saved row onto the screen. The
+ // provisional row disappears with the outbox entry in the same render.
+ useEffect(() => outbox.onSent((entry, response) => {
+  const saved = response?.item;
+  if (!saved?.id) return;
+  const upsert = <T extends { id: string }>(prev: T[]) => prev.some((row) => row.id === saved.id)
+   ? prev.map((row) => row.id === saved.id ? saved as T : row)
+   : [...prev, saved as T];
+  if (entry.kind === 'inventory') { setInventory(upsert); dataCache.invalidateCache('inventory'); }
+  if (entry.kind === 'overhead') { setOverheads(upsert); dataCache.invalidateCache('overheads'); }
+  if (entry.kind === 'fixed-cost') { setFixedCosts(upsert); dataCache.invalidateCache('fixedCosts'); }
+  // The server saves onto the day's existing row (e.g. the nightly POS sync's) when there is one,
+  // so this can come back as a row already in the list.
+  if (entry.kind === 'sales') { setSalesData(upsert); dataCache.invalidateCache('salesData'); dataCache.invalidateCache('categorySales'); }
+ }), []);
+
+ // An expense still waiting in the outbox (its provisional row was edited or deleted on screen)
+ // changes or removes the waiting entry - there is nothing on the server to change yet.
+ const fillStore = <T extends { entityType?: string; storeId?: string }>(item: T): T => item.entityType === 'production_house' ? item : { ...item, storeId: item.storeId || user?.storeId || undefined };
 
  const updateInventoryItem = async (id: string, item: Omit<InventoryItem, 'id'>) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.updateBody(outbox.entryIdOf(id), fillStore(item));
  try {
  // Keep the item's own storeId (editing someone else's entry used to move it to the
  // editor's store); only fill it in when missing. Never for a production-house-tagged item.
@@ -1341,6 +1359,7 @@ export default function App() {
 
  const updateOverheadItem = async (id: string, item: Omit<OverheadItem, 'id'>) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.updateBody(outbox.entryIdOf(id), fillStore(item));
  try {
  console.log('💰 Updating Expense/Overhead item:', id, item.category);
  // Keep the item's own storeId (editing someone else's entry used to move it to the
@@ -1360,6 +1379,7 @@ export default function App() {
 
  const updateFixedCostItem = async (id: string, item: Omit<FixedCostItem, 'id'>) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.updateBody(outbox.entryIdOf(id), fillStore(item));
  try {
  // Keep the item's own storeId (editing someone else's entry used to move it to the
  // editor's store); only fill it in when missing. Never for a production-house-tagged item.
@@ -1377,6 +1397,7 @@ export default function App() {
 
  const deleteInventoryItem = async (id: string) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.removeEntry(outbox.entryIdOf(id));
  try {
  await api.deleteInventory(user.accessToken, id);
  setInventory((prev) => prev.filter(inv => inv.id !== id));
@@ -1397,6 +1418,7 @@ export default function App() {
 
  const deleteOverheadItem = async (id: string) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.removeEntry(outbox.entryIdOf(id));
  try {
  console.log('🗑️ Deleting Expense/Overhead item:', id);
  await api.deleteOverhead(user.accessToken, id);
@@ -1418,6 +1440,7 @@ export default function App() {
 
  const deleteFixedCostItem = async (id: string) => {
  if (!user) return;
+ if (outbox.isPendingId(id)) return outbox.removeEntry(outbox.entryIdOf(id));
  try {
  await api.deleteFixedCost(user.accessToken, id);
  setFixedCosts((prev) => prev.filter(fc => fc.id !== id));
@@ -1436,42 +1459,34 @@ export default function App() {
  }
  };
 
- const addSalesData = async (item: Omit<SalesData, 'id'>) => {
- if (!user) return;
- try {
+ // The day close goes through the outbox too. It is safe to send again (the server saves onto the
+ // day's row either way), so a newer save for the same store and date replaces one still waiting,
+ // and a save for a day that only exists on this phone so far (provisional row) is sent as new.
+ const saveDayClose = (id: string | null, item: Omit<SalesData, 'id'>) => {
  // Auto-add storeId if user has one
  const itemWithStore = {
  ...item,
- storeId: user.storeId || item.storeId
+ storeId: user?.storeId || item.storeId
  };
- const newItem = await api.addSalesData(user.accessToken, itemWithStore);
- // The server saves onto the day's existing row (e.g. the nightly POS sync's) when there
- // is one, so this can come back as a row already in the list.
- setSalesData((prev) => prev.some(sd => sd.id === newItem.id) ? prev.map(sd => sd.id === newItem.id ? newItem : sd) : [...prev, newItem]);
- dataCache.invalidateCache('salesData');
- dataCache.invalidateCache('categorySales');
- } catch (error) {
- console.error('Error adding sales data:', error);
- throw error;
- }
+ const existsOnServer = !!id && !outbox.isPendingId(id);
+ return saveViaOutbox({
+ kind: 'sales',
+ method: existsOnServer ? 'PUT' : 'POST',
+ path: existsOnServer ? `/sales/${id}` : '/sales',
+ body: itemWithStore,
+ label: `Day close ${item.date}`,
+ coalesceKey: `sales:${itemWithStore.storeId || ''}:${item.date}`,
+ });
+ };
+
+ const addSalesData = async (item: Omit<SalesData, 'id'>) => {
+ if (!user) return;
+ return saveDayClose(null, item);
  };
 
  const updateSalesData = async (id: string, item: Omit<SalesData, 'id'>) => {
  if (!user) return;
- try {
- // Auto-add storeId if user has one (for consistency)
- const itemWithStore = {
- ...item,
- storeId: user.storeId || item.storeId
- };
- const updatedItem = await api.updateSalesData(user.accessToken, id, itemWithStore);
- setSalesData((prev) => prev.map(sd => sd.id === id ? updatedItem : sd));
- dataCache.invalidateCache('salesData');
- dataCache.invalidateCache('categorySales');
- } catch (error) {
- console.error('Error updating sales data:', error);
- throw error;
- }
+ return saveDayClose(id, item);
  };
 
  const approveSalesData = async (id: string) => {
@@ -1677,12 +1692,46 @@ export default function App() {
  }
  };
 
+ // Entries waiting in the outbox show in the lists at once as provisional rows (id
+ // 'pending:<entry id>'), so figures such as the day's cash in hand include them and nobody enters
+ // them twice. Refused entries are left out (listed under "waiting to send" with the reason).
+ // Edits and deletes of these rows change the waiting entry (see fillStore above).
+ const outboxEntries = useOutbox();
+ const pendingRows = useMemo(() => {
+  const rows = { inventory: [] as InventoryItem[], overheads: [] as OverheadItem[], fixedCosts: [] as FixedCostItem[], sales: [] as outbox.OutboxEntry[] };
+  for (const entry of outboxEntries) {
+   if (entry.state === 'failed') continue;
+   const row = { ...entry.body, id: outbox.PENDING_PREFIX + entry.id, createdBy: user?.employeeId || user?.email, createdByName: user?.name } as any;
+   if (entry.kind === 'inventory') rows.inventory.push(row);
+   else if (entry.kind === 'overhead') rows.overheads.push(row);
+   else if (entry.kind === 'fixed-cost') rows.fixedCosts.push(row);
+   else rows.sales.push(entry);
+  }
+  return rows;
+ }, [outboxEntries, user?.employeeId, user?.email, user?.name]);
+ const inventoryShown = useMemo(() => pendingRows.inventory.length ? [...inventory, ...pendingRows.inventory] : inventory, [inventory, pendingRows.inventory]);
+ const overheadsShown = useMemo(() => pendingRows.overheads.length ? [...overheads, ...pendingRows.overheads] : overheads, [overheads, pendingRows.overheads]);
+ const fixedCostsShown = useMemo(() => pendingRows.fixedCosts.length ? [...fixedCosts, ...pendingRows.fixedCosts] : fixedCosts, [fixedCosts, pendingRows.fixedCosts]);
+ // A waiting day close is laid over the day's row (by id for an edit, by store and date for a new
+ // save - the server saves onto that row too), or added when the day has no row yet.
+ const salesShown = useMemo(() => {
+  if (!pendingRows.sales.length) return salesData;
+  const next = [...salesData];
+  for (const entry of pendingRows.sales) {
+   const body = entry.body as Partial<SalesData>;
+   const targetId = entry.method === 'PUT' ? entry.path.split('/').pop() : null;
+   const index = next.findIndex((row) => targetId ? row.id === targetId : (row.storeId === body.storeId && row.date === body.date));
+   if (index >= 0) next[index] = { ...next[index], ...body, id: next[index].id };
+   else next.push({ ...body, id: outbox.PENDING_PREFIX + entry.id } as SalesData);
+  }
+  return next;
+ }, [salesData, pendingRows.sales]);
+
  const contextValue: InventoryContextType = {
- inventory,
- overheads,
- fixedCosts,
- salesData,
- categorySalesData, // NEW: Detailed category sales data
+ inventory: inventoryShown,
+ overheads: overheadsShown,
+ fixedCosts: fixedCostsShown,
+ salesData: salesShown, categorySalesData, // NEW: Detailed category sales data
  onlineCashRecalibrations,
  onlineSalesData,
  onlinePayoutData,

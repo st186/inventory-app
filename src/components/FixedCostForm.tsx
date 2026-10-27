@@ -4,6 +4,7 @@ import { X, Loader2 } from 'lucide-react';
 import { FIXED_COST_CATEGORIES, SELECTABLE_FIXED_COST_CATEGORIES } from '../utils/inventoryData';
 import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
 import type { CashCover } from '../utils/cashSource';
+import { WaitingToSend } from './SyncStatus';
 
 type Props = {
   selectedDate: string;
@@ -132,6 +133,8 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, al
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Fixed costs for this day saved on the phone without signal - so they aren't entered twice. */}
+          {!editingItem && <WaitingToSend kinds={['fixed-cost']} date={selectedDate} />}
           <div>
             <label className="block text-sm text-gray-700 mb-1">Category</label>
             <select

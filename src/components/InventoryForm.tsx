@@ -8,6 +8,7 @@ import { ProductionCashChoice, productionCashChoiceAvailable } from './Productio
 import type { CashCover } from '../utils/cashSource';
 import { PriceWarning } from './PriceCheck';
 import { checkPurchase, type PriceGuide } from '../utils/expenseChecks';
+import { WaitingToSend } from './SyncStatus';
 
 type Props = {
   selectedDate: string;
@@ -380,6 +381,8 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Purchases for this day saved on the phone without signal - so they aren't entered twice. */}
+          {!editingItem && <WaitingToSend kinds={['inventory']} date={selectedDate} />}
           <div>
             <label className="block text-sm text-gray-700 mb-1">Category</label>
             <select

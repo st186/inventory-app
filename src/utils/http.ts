@@ -117,10 +117,9 @@ function markNetworkFailure() {
   lastNetworkFailureAt = Date.now();
 }
 
-// Online as far as we can tell: the phone says it has a network, or the server answered within the
-// last minute (navigator.onLine is occasionally wrong; a real answer isn't).
+// False only when the phone says it has no network at all (navigator.onLine is reliable that way
+// round; "true" just means some network interface is up - lastRequestFailedOnNetwork tells more).
 export function isOnline(): boolean {
-  if (Date.now() - lastReachedAt < 60_000 && lastReachedAt >= lastNetworkFailureAt) return true;
   return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
 

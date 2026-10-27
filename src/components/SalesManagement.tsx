@@ -17,6 +17,8 @@ import { countedCashInHand, loanRepayments } from '../utils/paytmRules';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
 import { VoiceButton } from './VoiceButton';
+import { WaitingToSend, useOutbox } from './SyncStatus';
+import { isPendingId } from '../utils/outbox';
 
 type Props = {
  context: InventoryContextType;
@@ -124,6 +126,16 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Use selectedStoreId prop (from store selector) OR fallback to user's storeId
  // This allows cluster heads to view data for any selected store
  const effectiveStoreId = selectedStoreId || context.user?.storeId;
+
+ // This day's close still waiting to send from this phone (utils/outbox.ts - saved without signal,
+ // or the signal dropped). The form already shows it as saved; approvals wait until it has gone.
+ const outboxEntries = useOutbox();
+ const pendingDayClose = outboxEntries.find((e) => e.kind === 'sales' && e.body?.date === selectedDate && (!effectiveStoreId || !e.body?.storeId || e.body.storeId === effectiveStoreId));
+ const blockedByPendingSave = () => {
+ if (!pendingDayClose && !isPendingId(editingId)) return false;
+ alert('This day close is still waiting to send from this phone. Try again once it has been sent.');
+ return true;
+ };
 
  // The production house that supplies this store - its expenses now count against this
  // store's cash-in-hand too (reversing an earlier decision that kept them P&L-only),
@@ -1214,29 +1226,32 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  console.log('🔄 Step 1: Calling save API...');
  console.log('📋 Sales data to save:', salesData);
  
+ // With no signal (or one that drops mid-save) the day close waits on this phone and sends by
+ // itself later (App.tsx saveViaOutbox, which also says so) - `queued` then.
+ let outcome: Awaited<ReturnType<typeof context.addSalesData>>;
  if (isEditing && editingId) {
  console.log('📝 Mode: UPDATING existing sales data');
  console.log('🆔 Editing ID:', editingId);
  console.log('⏱️ Calling context.updateSalesData...');
- await context.updateSalesData(editingId, salesData);
+ outcome = await context.updateSalesData(editingId, salesData);
  console.log('✅ Update successful');
  } else {
  console.log('➕ Mode: ADDING new sales data');
  console.log('⏱️ Calling context.addSalesData...');
- await context.addSalesData(salesData);
+ outcome = await context.addSalesData(salesData);
  console.log('✅ Add successful');
  }
- 
+
+ // Not awaited: on a weak signal this read could hold the "saved" message for a minute.
  console.log('─────────────────────────────────────────────────────────────');
  console.log('🔄 Step 2: Reloading employee payouts...');
- await loadEmployeePayouts();
- console.log('✅ Employee payouts reloaded');
+ loadEmployeePayouts();
 
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('🎉 ALL SAVES COMPLETED SUCCESSFULLY!');
  console.log('═══════════════════════════════════════════════════════════════');
  clearDraft();
- alert('Sales data saved successfully!');
+ if (!outcome?.queued) alert('Sales data saved successfully!');
  } catch (error) {
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('❌ ERROR DURING SAVE PROCESS');
@@ -1253,6 +1268,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  const handleApprove = async () => {
  if (!editingId) return;
+ if (blockedByPendingSave()) return;
  try {
  await context.approveSalesData(editingId);
  alert('Sales data approved successfully!');
@@ -1263,6 +1279,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
 
  const handleRequestApproval = async () => {
  if (!editingId) return;
+ if (blockedByPendingSave()) return;
  const actualCash = parseFloat(formData.actualCashInHand) || 0;
  const offset = actualCash - expectedCashInHand;
  const actualPaytm = parseFloat(formData.actualPaytmBalance) || 0;
@@ -1932,6 +1949,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  1, read-only status summaries) either doesn't apply most days or needs no action. */}
  {(canEditSales || canReconcileCash) && (
  <div className="space-y-3">
+ {pendingDayClose && <WaitingToSend kinds={['sales']} date={selectedDate} />}
  <button
  type="submit"
  disabled={isSubmitting}

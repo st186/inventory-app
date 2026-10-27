@@ -26,6 +26,11 @@ import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
 import { AssetHint } from './assets/AssetHint';
+import { WaitingToSend } from './SyncStatus';
+import { idbGet, idbSet } from '../utils/idbStore';
+
+// The shared item catalog (same for everyone), kept on the phone for offline suggestions.
+const CUSTOM_ITEMS_KEY = 'shared:custom-items';
 import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
@@ -121,8 +126,17 @@ export function QuickAddExpense({
   const [manualType, setManualType] = useState<ExpenseEntryType>('inventory');
   const [manualCategory, setManualCategory] = useState('');
 
+  // The item catalog, from the copy saved on the phone first so suggestions work without signal.
   useEffect(() => {
-    api.getCustomItems().then(setCustomItems).catch(() => {});
+    let fresh = false;
+    idbGet<api.CustomItem[]>('cache', CUSTOM_ITEMS_KEY).then((saved) => {
+      if (!fresh && Array.isArray(saved)) setCustomItems(saved);
+    });
+    api.getCustomItems().then((items) => {
+      fresh = true;
+      setCustomItems(items);
+      idbSet('cache', CUSTOM_ITEMS_KEY, items);
+    }).catch(() => {});
   }, []);
 
   const candidates: ExpenseCandidate[] = useMemo(
@@ -335,11 +349,11 @@ export function QuickAddExpense({
       // unrecognized on every future attempt with no explanation why.
       if (!resolved) {
         if (canCreateNewItems) {
-          try {
-            await api.addCustomItem(category, query.trim(), entryType, entity);
-          } catch (err) {
+          // Not awaited: on a weak signal it held up saving the expense itself (which can wait on
+          // the phone if need be - this can't, and is only a convenience for next time).
+          api.addCustomItem(category, query.trim(), entryType, entity).catch((err) => {
             console.error('Failed to save custom item classification:', err);
-          }
+          });
         } else {
           pendingNotice = `"${query.trim()}" isn't in the catalog yet. This purchase will still be saved, but ask your cluster head to add it as a proper item so it's recognized automatically next time.`;
         }
@@ -419,6 +433,8 @@ export function QuickAddExpense({
             on-screen keyboard opened, scrolling the field you were actively typing into
             out of view with nothing to bring it back. */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+          {/* Expenses for this day saved on the phone without signal - so they aren't entered twice. */}
+          <WaitingToSend kinds={['inventory', 'overhead', 'fixed-cost']} date={selectedDate} />
           {accessToken && (
             <div className="flex items-center gap-3">
               <VoiceButton onText={fillFromVoice} busy={voiceBusy} label="বলুন" prompt="যেমন: আজকে ৩ কেজি চিকেন ৬০০ টাকা" />
