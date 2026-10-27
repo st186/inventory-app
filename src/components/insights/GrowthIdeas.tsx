@@ -89,7 +89,7 @@ export function GrowthIdeas({ accessToken, storeId, canManage }: { accessToken: 
                 {canManage && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {STATUS.filter((s) => s.id !== 'new' && s.id !== idea.status).map((s) => (
-                      <button key={s.id} onClick={() => setStatus(idea, s.id)} className="px-2.5 py-1 rounded-full border border-border-strong text-xs text-text-2 hover:bg-surface-2">{s.label}</button>
+                      <button key={s.id} onClick={() => setStatus(idea, s.id)} className="hit-44 min-h-9 px-3 py-1 rounded-full border border-border-strong text-label text-text-2 hover:bg-surface-2">{s.label}</button>
                     ))}
                   </div>
                 )}
@@ -99,7 +99,7 @@ export function GrowthIdeas({ accessToken, storeId, canManage }: { accessToken: 
         </ul>
       )}
       {ideas.some((i) => i.status === 'dropped') && (
-        <button onClick={() => setShowDropped((v) => !v)} className="mt-3 text-xs text-text-3 underline">{showDropped ? 'Hide dropped ideas' : 'Show dropped ideas'}</button>
+        <button onClick={() => setShowDropped((v) => !v)} className="mt-3 min-h-11 text-label text-text-2 underline">{showDropped ? 'Hide dropped ideas' : 'Show dropped ideas'}</button>
       )}
     </div>
   );

@@ -713,7 +713,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               value={customRange.from}
               max={customRange.to || undefined}
               onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))}
-              className="px-3 py-2 border border-border-strong rounded-lg text-sm bg-surface text-text"
+              className="min-h-11 px-3 py-2 border border-border-strong rounded-md text-body-sm bg-surface text-text"
             />
             <span className="text-sm text-text-3">to</span>
             <input
@@ -722,7 +722,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               value={customRange.to}
               min={customRange.from || undefined}
               onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))}
-              className="px-3 py-2 border border-border-strong rounded-lg text-sm bg-surface text-text"
+              className="min-h-11 px-3 py-2 border border-border-strong rounded-md text-body-sm bg-surface text-text"
             />
           </div>
         )}
@@ -1173,7 +1173,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               min={1}
               value={staleDays}
               onChange={(e) => setStaleDays(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-12 px-1.5 py-0.5 border border-border rounded text-center"
+              className="min-h-11 w-14 px-1.5 py-0.5 border border-border-strong rounded-md bg-surface text-center"
             />
             <span>days</span>
           </div>

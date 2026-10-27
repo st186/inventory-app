@@ -99,7 +99,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
     }
   };
 
-  const field = 'w-full px-3 py-2 border border-border-strong rounded-lg text-sm bg-surface';
+  const field = 'min-h-11 w-full px-3 py-2 border border-border-strong rounded-lg text-sm bg-surface';
   const Row = ({ e }: { e: CalendarEvent }) => (
     <li className="flex items-start justify-between gap-3 py-2">
       <div className="min-w-0">
@@ -111,7 +111,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
         </div>
       </div>
       {canManage && (
-        <button onClick={() => remove(e)} className="p-1.5 text-text-3 hover:text-danger flex-shrink-0" aria-label={`Remove ${e.name}`}><Trash2 className="w-4 h-4" /></button>
+        <button onClick={() => remove(e)} className="size-11 inline-flex items-center justify-center rounded-md text-text-3 hover:text-danger hover:bg-danger-soft flex-shrink-0" aria-label={`Remove ${e.name}`}><Trash2 className="w-4 h-4" /></button>
       )}
     </li>
   );
@@ -145,7 +145,7 @@ export function FestivalCalendar({ accessToken, events, canManage, onChanged }: 
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
                   <button onClick={() => answer(s, true)} disabled={busyDate === s.date} className="size-11 inline-flex items-center justify-center rounded-md bg-success-soft text-success border border-success-border disabled:opacity-60" aria-label={`Add ${s.name}`}><Check className="w-4 h-4" /></button>
-                  <button onClick={() => answer(s, false)} disabled={busyDate === s.date} className="p-2.5 rounded-lg border border-border-strong text-text-2 disabled:opacity-60" aria-label={`Skip ${s.name}`}><X className="w-4 h-4" /></button>
+                  <button onClick={() => answer(s, false)} disabled={busyDate === s.date} className="size-11 inline-flex items-center justify-center rounded-md border border-border-strong text-text-2 disabled:opacity-60" aria-label={`Skip ${s.name}`}><X className="w-4 h-4" /></button>
                 </div>
               </li>
             ))}

@@ -791,7 +791,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  const newValue = e.target.value === 'all' ? null : e.target.value;
  setSelectedProductionHouseId(newValue);
  }}
- className="px-3 py-2 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
+ className="min-h-11 px-3 py-2 border border-border-strong rounded-md bg-surface text-body-sm focus:ring-2 focus:ring-ring focus:border-transparent"
  >
  <option value="all">All Production Houses</option>
  {context.productionHouses.map(ph => (
@@ -1590,7 +1590,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <select
  value={activePoolId}
  onChange={(e) => setSelectedLedgerPoolId(e.target.value)}
- className="text-sm border border-border-strong rounded-lg px-2 py-1"
+ className="min-h-11 text-body-sm border border-border-strong rounded-md bg-surface px-2 py-1"
  >
  {utilizationRows.map((r) => (
  <option key={r.id} value={r.id}>{r.label}</option>

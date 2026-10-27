@@ -207,7 +207,7 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
         </div>
         {!focusCash && mode !== 'events' && (
           <Tabs value={activeView} onValueChange={(v) => setActiveView(v as View)}>
-            <div className="mx-auto max-w-7xl lg:px-4">
+            <div className="mx-auto w-full max-w-7xl lg:px-4">
               <TabsList aria-label={t('insights.sections')} className="border-b-0">
                 {tabs.map((view) => (
                   <TabsTrigger key={view} value={view}>{t(TAB_LABEL[view])}</TabsTrigger>
