@@ -1,5 +1,9 @@
+// Add expense sheet (wireframe AddExpense): say it, Store / Production, what it was for (with
+// suggestions from the item list), how much, the amount with a price check, who paid, the date;
+// Save expense or Save + another. Matching, voice fill, price checks and the saved payloads are
+// the same as before; saving goes through the outbox (App.tsx).
 import { useEffect, useMemo, useState } from 'react';
-import { X, Loader2, Check, AlertTriangle } from 'lucide-react';
+import { Check, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from '../utils/api';
 import {
@@ -10,11 +14,9 @@ import {
   RESTRICTED_OVERHEAD_CATEGORIES,
   SELECTABLE_OVERHEAD_CATEGORY_KEYS,
   SELECTABLE_FIXED_COST_CATEGORIES,
-  expenseCategoryLabel,
 } from '../utils/inventoryData';
 import {
   ExpenseCandidate,
-  ExpenseEntity,
   ExpenseEntryType,
   ExpenseSuggestion,
   buildExpenseCandidates,
@@ -26,12 +28,27 @@ import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
 import { AssetHint } from './assets/AssetHint';
-import { WaitingToSend } from './SyncStatus';
 import { idbGet, idbSet } from '../utils/idbStore';
+import { useT } from '../utils/i18n';
+import { formatDateIST, getTodayIST } from '../utils/timezone';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { ChoiceChips } from './ui/chip';
+import { DateStrip } from './ui/date-strip';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { MoneyInput, formatINR } from './ui/money';
+import { PickerField } from './ui/picker-sheet';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { MoneyWaiting } from './money/DayCloseParts';
+import { PaidFromField, SplitAmounts } from './money/PaidFromField';
+import { categoryText, stripEmoji } from './money/categoryDisplay';
+import { pricePerUnitLine } from './money/expenseHelpers';
+import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 // The shared item catalog (same for everyone), kept on the phone for offline suggestions.
 const CUSTOM_ITEMS_KEY = 'shared:custom-items';
-import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
   selectedDate: string;
@@ -64,10 +81,6 @@ type Props = {
   accessToken?: string; // for voice entry (server reads what was said)
 };
 
-const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
-  store: 'Store',
-  production_house: 'Production House',
-};
 
 export function QuickAddExpense({
   selectedDate,
@@ -89,7 +102,13 @@ export function QuickAddExpense({
 }: Props) {
   const [amount, setAmount] = useState('');
   // Default: the expense's own cash (store cash for a store bill, production cash for production).
-  const [paidFrom, setPaidFrom] = useState<'owner' | 'cash' | 'online'>('cash');
+  const [paidFrom, setPaidFrom] = useState<'owner' | 'cash' | 'online' | 'both'>('cash');
+  const [splitCash, setSplitCash] = useState('');
+  const [splitOnline, setSplitOnline] = useState('');
+  // The day this expense is for: the page's day unless changed here.
+  const [entryDate, setEntryDate] = useState(selectedDate);
+  const [keepOpen, setKeepOpen] = useState(false);
+  const { t, lang } = useT();
   const [pickedStoreId, setPickedStoreId] = useState(effectiveStoreId || storeOptions?.[0]?.id || '');
   const [query, setQuery] = useState('');
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
@@ -206,15 +225,17 @@ export function QuickAddExpense({
   const productionCashHouseId = ownerPaymentOption && entity === 'store' && storeIdForCash
     ? productionHouseForStore?.(storeIdForCash) || null
     : null;
-  const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, selectedDate);
+  const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, entryDate);
   const [fromProductionCash, setFromProductionCash] = useState(false);
   const enteredAmount = parseFloat(amount) || 0;
   const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId && productionShouldCover(cashCover, enteredAmount);
   const useProductionCash = productionCanCover && fromProductionCash;
 
-  // Everyone else's quick-add expense is paid from the cash in hand.
+  // Split: the two parts as typed (the same shape the edit forms save).
   const paymentFieldsFor = (amt: number) =>
-    paidFrom === 'online'
+    paidFrom === 'both'
+      ? { paymentMethod: 'both' as const, cashAmount: Math.round((parseFloat(splitCash) || 0) * 100) / 100, onlineAmount: Math.round((parseFloat(splitOnline) || 0) * 100) / 100 }
+      : paidFrom === 'online'
       ? { paymentMethod: 'online' as const, cashAmount: 0, onlineAmount: amt }
       : paidFrom === 'owner'
       ? { paymentMethod: 'owner' as const, cashAmount: 0, onlineAmount: 0 }
@@ -314,11 +335,15 @@ export function QuickAddExpense({
     e.preventDefault();
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) {
-      alert('Enter an amount');
+      toast.error(t('exp.enterAmount'));
       return;
     }
     if (!query.trim()) {
-      alert("Enter what this was for");
+      toast.error(t('exp.enterWhat'));
+      return;
+    }
+    if (paidFrom === 'both' && Math.abs((parseFloat(splitCash) || 0) + (parseFloat(splitOnline) || 0) - amt) > 0.01) {
+      toast.error(t('exp.splitMustMatch', { amount: formatINR(amt) }));
       return;
     }
 
@@ -326,15 +351,15 @@ export function QuickAddExpense({
     const category = currentCategory;
 
     if (!category) {
-      alert('Choose a category');
+      toast.error(t('exp.chooseCategory'));
       return;
     }
     if (isBeverage && beverageTotalPieces <= 0) {
-      alert('Enter how many pieces/cartons were bought');
+      toast.error(t('exp.enterPieces'));
       return;
     }
     if (isBundlePurchase && bundleTotalPieces <= 0) {
-      alert('Enter how many bundles and pieces per bundle were bought');
+      toast.error(t('exp.enterPacks'));
       return;
     }
 
@@ -355,14 +380,14 @@ export function QuickAddExpense({
             console.error('Failed to save custom item classification:', err);
           });
         } else {
-          pendingNotice = `"${query.trim()}" isn't in the catalog yet. This purchase will still be saved, but ask your cluster head to add it as a proper item so it's recognized automatically next time.`;
+          pendingNotice = t('exp.notInList', { name: query.trim() });
         }
       }
 
       if (entryType === 'inventory') {
         const qty = isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 1));
         await onSubmitInventory({
-          date: selectedDate,
+          date: entryDate,
           category,
           itemName: query.trim(),
           quantity: qty,
@@ -390,7 +415,7 @@ export function QuickAddExpense({
         });
       } else if (entryType === 'overhead') {
         await onSubmitOverhead({
-          date: selectedDate,
+          date: entryDate,
           category,
           description: query.trim(),
           amount: amt,
@@ -399,7 +424,7 @@ export function QuickAddExpense({
         });
       } else {
         await onSubmitFixedCost({
-          date: selectedDate,
+          date: entryDate,
           category,
           description: query.trim(),
           amount: amt,
@@ -407,10 +432,11 @@ export function QuickAddExpense({
           ...entityFieldsFor(entity),
         });
       }
-      if (pendingNotice) alert(pendingNotice);
-      onClose();
+      if (pendingNotice) toast.info(pendingNotice, { duration: 8000 });
+      if (keepOpen) resetForAnother();
+      else onClose();
     } catch (error: any) {
-      alert(error?.message || 'Failed to save expense');
+      toast.error(error?.message || 'Failed to save expense');
     } finally {
       setIsSubmitting(false);
     }
@@ -418,424 +444,253 @@ export function QuickAddExpense({
 
   const resolvedForDisplay = resolved;
 
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-gray-200 flex-shrink-0">
-          <h2 className="text-base font-bold text-gray-900 tracking-tight">Add expense</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
-        </div>
+  // Save + another: a clean form for the next bill (same place, day and way of paying).
+  const resetForAnother = () => {
+    setAmount('');
+    setQuery('');
+    setMatched(null);
+    setQuantity('1');
+    setUnit('pcs');
+    setIsBundleMode(false);
+    setCartonCount('');
+    setPiecesPerCarton('');
+    setPieceCount('');
+    setVolumeMl('');
+    setShowWeightField(false);
+    setWeightPerUnit('');
+    setSplitCash('');
+    setSplitOnline('');
+    setVoiceHeard(null);
+    setKeepOpen(false);
+  };
 
-        {/* Scrollable body - without this, the growing suggestion list under "What was
-            this for?" pushed the whole modal taller than the visible viewport once the
-            on-screen keyboard opened, scrolling the field you were actively typing into
-            out of view with nothing to bring it back. */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-          {/* Expenses for this day saved on the phone without signal - so they aren't entered twice. */}
-          <WaitingToSend kinds={['inventory', 'overhead', 'fixed-cost']} date={selectedDate} />
-          {accessToken && (
-            <div className="flex items-center gap-3">
-              <VoiceButton onText={fillFromVoice} busy={voiceBusy} label="বলুন" prompt="যেমন: আজকে ৩ কেজি চিকেন ৬০০ টাকা" />
-              <p className="text-[11px] text-gray-500 leading-snug">Say it instead - e.g. "ajke 3 kg chicken 600 taka"</p>
-            </div>
-          )}
-          {voiceHeard && <p className="text-[11px] text-violet-800 bg-violet-50 rounded-lg px-3 py-1.5">Heard: {voiceHeard}</p>}
-          <div className="flex bg-gray-100 rounded-xl p-1">
-            {(['store', 'production_house'] as const).map((opt) => (
+  // Unit pills: piece = loose pieces, pack = pieces bought in packs (same saved shape as before).
+  const activePill: UnitPill = unit === 'pcs' ? (isBundleMode ? 'pack' : 'piece') : (unit as UnitPill);
+  const pillOptions: { value: UnitPill; label: string }[] = [
+    { value: 'kg', label: 'kg' },
+    { value: 'g', label: 'g' },
+    { value: 'piece', label: t('unit.piece') },
+    { value: 'pack', label: t('unit.pack') },
+    { value: 'bundle', label: t('unit.bundle') },
+    { value: 'L', label: 'L' },
+    { value: 'mL', label: 'mL' },
+    ...(unit === 'units' ? [{ value: 'units' as const, label: t('unit.units') }] : []),
+  ];
+  const pickPill = (pill: UnitPill) => {
+    if (pill === 'piece') { setUnit('pcs'); setIsBundleMode(false); return; }
+    if (pill === 'pack') { setUnit('pcs'); setIsBundleMode(true); return; }
+    setUnit(pill);
+    if (pill !== 'units') setIsBundleMode(false);
+  };
+  const typeLabel = (type: ExpenseEntryType) => (type === 'inventory' ? t('exp.type.inventory') : type === 'overhead' ? t('exp.type.overhead') : t('exp.type.fixedcost'));
+  const qtyForLine = isBeverage ? beverageTotalPieces : isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 0);
+  const priceLine = currentEntryType === 'inventory' && query.trim() && !priceFlag
+    ? pricePerUnitLine(priceGuide, query, qtyForLine, isBeverage || isBundlePurchase ? 'pcs' : unit, enteredAmount)
+    : null;
+  const usualRef = resolvedForDisplay && currentEntryType === 'inventory' ? pricePerUnitLine(priceGuide, resolvedForDisplay.label, 1, unit, 1) : null;
+  const today = getTodayIST();
+  const dirty = !!(amount || query.trim());
+
+  return (
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={t('expense.add')}
+      dirty={dirty && !isSubmitting}
+      footer={
+        <>
+          <Button type="submit" form="add-expense-form" variant="secondary" size="lg" disabled={isSubmitting} onClick={() => setKeepOpen(true)}>{t('expense.saveAnother')}</Button>
+          <Button type="submit" form="add-expense-form" size="lg" className="flex-1" loading={isSubmitting} onClick={() => setKeepOpen(false)}>{t('expense.save')}</Button>
+        </>
+      }
+    >
+      <form id="add-expense-form" onSubmit={handleSubmit} className="flex flex-col gap-4" lang={lang}>
+        {/* Expenses for this day saved on the phone without signal - so they aren't entered twice. */}
+        <MoneyWaiting kinds={['inventory', 'overhead', 'fixed-cost']} date={entryDate} />
+        {accessToken && (
+          <VoiceButton variant="row" onText={fillFromVoice} busy={voiceBusy} label={t('voice.sayItInstead')} prompt={t('exp.sayExample')} />
+        )}
+        {voiceHeard && <p className="-mt-2 text-label text-text-2">{t('dc.heard', { text: voiceHeard })}</p>}
+
+        <SegmentedControl
+          aria-label={t('exp.where')}
+          value={entity}
+          onValueChange={setEntity}
+          options={[{ value: 'store', label: t('exp.store') }, { value: 'production_house', label: t('exp.production') }]}
+        />
+
+        {entity === 'store' && storeOptions && storeOptions.length > 1 && (
+          <Field label={t('exp.whichStore')}>
+            <PickerField title={t('exp.whichStore')} items={storeOptions.map((st) => ({ value: st.id, label: st.name }))} value={pickedStoreId} onValueChange={setPickedStoreId} />
+          </Field>
+        )}
+
+        <Field
+          label={t('exp.whatFor')}
+          required
+          helper={resolvedForDisplay
+            ? `${typeLabel(resolvedForDisplay.entryType)} · ${categoryText(resolvedForDisplay.category)}${usualRef?.usualText ? ` · ${t('exp.usually', { price: usualRef.usualText })}` : ''}${resolvedForDisplay.entity !== 'both' ? ` · ${t('exp.usuallyFiled', { place: resolvedForDisplay.entity === 'store' ? t('exp.store') : t('exp.productionHouse') })}` : ''}`
+            : undefined}
+        >
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-text-3" aria-hidden="true" />
+            <Input value={query} onChange={(e) => resetMatchIfTyping(e.target.value)} placeholder={t('exp.whatForPh')} className="pl-10" autoComplete="off" required />
+          </div>
+        </Field>
+        {!matched && query.trim() && suggestions.length > 0 && (
+          <div className="-mt-2 overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border" role="listbox" aria-label={t('exp.whatFor')}>
+            {suggestions.map((s, i) => (
               <button
-                key={opt}
+                key={`${s.entryType}-${s.category}-${s.label}-${i}`}
                 type="button"
-                onClick={() => setEntity(opt)}
-                className={`flex-1 text-xs font-medium py-2 rounded-lg transition-colors ${
-                  entity === opt ? 'bg-orange-600 text-white shadow-sm' : 'text-gray-600'
-                }`}
+                role="option"
+                aria-selected={false}
+                onClick={() => selectSuggestion(s)}
+                className="flex min-h-12 w-full items-center gap-3 px-4 py-2 text-left outline-none hover:bg-surface-2/60 focus-visible:bg-surface-2"
               >
-                {ENTITY_LABEL[opt]}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-body-md font-medium text-text">{s.label}{s.bengali ? <span className="font-normal text-text-3"> · {s.bengali}</span> : null}</span>
+                  <span className="text-label text-text-3">{typeLabel(s.entryType)} · {categoryText(s.category)}</span>
+                </span>
+                {i === 0 && s.score >= 0.85 && <Check className="size-5 text-success" aria-hidden="true" />}
               </button>
             ))}
           </div>
+        )}
+        <AssetHint name={query} category={currentCategory} source={currentEntryType} date={entryDate} />
 
-          {entity === 'store' && storeOptions && storeOptions.length > 1 && (
-            <div>
-              <label htmlFor="qa-store" className="block text-xs font-medium text-gray-600 mb-2">Which store</label>
-              <select id="qa-store" value={pickedStoreId} onChange={(e) => setPickedStoreId(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-white">
-                {storeOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Amount (₹)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-2xl font-semibold text-center focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-              placeholder="0"
-              autoFocus
-              required
+        {isNewItem && (
+          <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-soft p-3">
+            <p className="text-body-sm font-medium text-text">{t('exp.newItem')}</p>
+            <SegmentedControl
+              aria-label={t('dc.type')}
+              value={manualType}
+              onValueChange={(v) => { setManualType(v); setManualCategory(''); }}
+              options={(['inventory', 'overhead', 'fixedcost'] as const).map((v) => ({ value: v, label: typeLabel(v) }))}
             />
+            <Field label={t('exp.category')}>
+              <PickerField
+                title={t('exp.category')}
+                items={manualCategoryOptions.map(([key, label]) => ({ value: key, label: stripEmoji(label) }))}
+                value={manualCategory}
+                onValueChange={setManualCategory}
+              />
+            </Field>
           </div>
+        )}
 
-          {ownerPaymentOption && (
-            <div>
-              <label htmlFor="qa-paid-from" className="block text-xs font-medium text-gray-600 mb-2">Paid from</label>
-              <select id="qa-paid-from" value={paidFrom} onChange={(e) => setPaidFrom(e.target.value as 'owner' | 'cash' | 'online')} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-white">
-                <option value="cash">{entity === 'store' ? 'Store cash in hand' : 'Production cash in hand'}</option>
-                <option value="online">Business Paytm / online</option>
-                <option value="owner">My own money</option>
-              </select>
-              {!useProductionCash && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {paidFrom === 'owner'
-                    ? `Counts as a cost, but nothing comes off the ${entity === 'store' ? "store's" : "production house's"} cash or Paytm.`
-                    : paidFrom === 'cash'
-                    ? `Comes off the ${entity === 'store' ? "store's" : "production house's"} cash in hand for the day.`
-                    : 'Comes off the business Paytm balance.'}
-                </p>
-              )}
-              {productionCanCover && (
-                <div className="mt-2">
-                  <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} />
+        {currentEntryType === 'inventory' && (
+          isBeverage ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2 p-3">
+              <span className="text-body-sm font-medium text-text">{t('exp.packaging')}</span>
+              <SegmentedControl
+                aria-label={t('exp.packaging')}
+                value={packageType}
+                onValueChange={setPackageType}
+                options={[{ value: 'pieces', label: t('exp.pieces') }, { value: 'carton', label: t('exp.carton') }]}
+              />
+              {packageType === 'carton' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={t('exp.cartons')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={cartonCount} onChange={(e) => setCartonCount(e.target.value)} required className="num" />
+                  </Field>
+                  <Field label={t('exp.perCarton')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={piecesPerCarton} onChange={(e) => setPiecesPerCarton(e.target.value)} required className="num" />
+                  </Field>
                 </div>
+              ) : (
+                <Field label={t('exp.pieces')} required>
+                  <Input type="number" inputMode="numeric" step="1" value={pieceCount} onChange={(e) => setPieceCount(e.target.value)} required className="num" />
+                </Field>
               )}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">What was this for?</label>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => resetMatchIfTyping(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-              placeholder="e.g. Coke, Toto, Chicken"
-              required
-            />
-
-            {!matched && query.trim() && suggestions.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {suggestions.map((s, i) => (
-                  <button
-                    key={`${s.entryType}-${s.category}-${s.label}-${i}`}
-                    type="button"
-                    onClick={() => selectSuggestion(s)}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                      i === 0 && s.score >= 0.85
-                        ? 'bg-green-50 border-green-300 text-green-700 font-medium'
-                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    {s.label}{s.bengali ? ` (${s.bengali})` : ''} · {categoryLabel(s)}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {resolvedForDisplay && (
-              <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-start gap-2">
-                <Check className="w-3.5 h-3.5 text-green-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-green-800">
-                  Matched: <strong>{resolvedForDisplay.label}{resolvedForDisplay.bengali ? ` (${resolvedForDisplay.bengali})` : ''}</strong> → {categoryLabel(resolvedForDisplay)}
-                  {resolvedForDisplay.entity !== 'both' && (
-                    <span className="block text-green-700/80 mt-0.5">
-                      Filed under {ENTITY_LABEL[resolvedForDisplay.entity as 'store' | 'production_house']} - that's where this is usually bought.
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-            <AssetHint name={query} category={currentCategory} source={currentEntryType} date={selectedDate} />
-
-            {isNewItem && (
-              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2.5">
-                <p className="text-xs text-amber-800 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> New item - classify it once, and it'll be remembered next time.
-                </p>
-                <div className="flex bg-white rounded-lg p-1 border border-amber-200">
-                  {(['inventory', 'overhead', 'fixedcost'] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => { setManualType(t); setManualCategory(''); }}
-                      className={`flex-1 text-[11px] font-medium py-1.5 rounded-md transition-colors ${
-                        manualType === t ? 'bg-amber-500 text-white' : 'text-gray-600'
-                      }`}
-                    >
-                      {t === 'inventory' ? 'Inventory' : t === 'overhead' ? 'Overhead' : 'Fixed cost'}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  value={manualCategory}
-                  onChange={(e) => setManualCategory(e.target.value)}
-                  className="w-full px-3 py-2 border border-amber-200 bg-white rounded-lg text-xs"
-                >
-                  {manualCategoryOptions.map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-
-          {currentEntryType === 'inventory' && (
-            isBeverage ? (
-              <div className="space-y-3 bg-sky-50 border-2 border-sky-200 rounded-xl p-4">
-                <p className="text-xs font-semibold text-sky-900">Packaging</p>
+              <Field label={t('exp.volume')} optional helper={beverageTotalPieces > 0 ? `${beverageTotalPieces} pcs${volumeMl ? ` × ${volumeMl}${volumeUnit}` : ''}` : undefined}>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPackageType('pieces')}
-                    className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
-                      packageType === 'pieces' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
-                    }`}
-                  >
-                    Pieces
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPackageType('carton')}
-                    className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
-                      packageType === 'carton' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
-                    }`}
-                  >
-                    Carton
-                  </button>
+                  <Input type="number" inputMode="numeric" step="1" value={volumeMl} onChange={(e) => setVolumeMl(e.target.value)} placeholder="e.g. 750" className="num" />
+                  <SegmentedControl aria-label="Volume unit" className="w-32 shrink-0" value={volumeUnit} onValueChange={setVolumeUnit} options={[{ value: 'mL', label: 'mL' }, { value: 'L', label: 'L' }]} />
                 </div>
-
-                {packageType === 'carton' ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-sky-900 mb-1">Number of Cartons</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={cartonCount}
-                        onChange={(e) => setCartonCount(e.target.value)}
-                        className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-sky-900 mb-1">Pieces per Carton</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={piecesPerCarton}
-                        onChange={(e) => setPiecesPerCarton(e.target.value)}
-                        className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                        required
-                      />
-                    </div>
-                  </div>
+              </Field>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <span className="text-body-sm font-medium text-text">{t('exp.howMuch')}</span>
+              {isBundlePurchase ? (
+                // e.g. 5 packs of 4 buns, a bag of 20 foil sheets: packs x pieces in each.
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={t('exp.packs')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={cartonCount} onChange={(e) => setCartonCount(e.target.value)} placeholder="e.g. 1" required className="num" />
+                  </Field>
+                  <Field label={t('exp.perPack')} required helper={bundleTotalPieces > 0 ? t('exp.piecesInAll', { n: bundleTotalPieces }) : undefined}>
+                    <Input type="number" inputMode="numeric" step="1" value={piecesPerCarton} onChange={(e) => setPiecesPerCarton(e.target.value)} placeholder="e.g. 50" required className="num" />
+                  </Field>
+                </div>
+              ) : (
+                <Field label={t('exp.quantity')} hideLabel required>
+                  <Input type="number" inputMode="decimal" step="0.01" value={quantity} onChange={(e) => setQuantity(e.target.value)} required className="num" />
+                </Field>
+              )}
+              <ChoiceChips aria-label={t('exp.howMuch')} value={activePill} onValueChange={pickPill} options={pillOptions} />
+              {(unit === 'pcs' || unit === 'units') && !isBundleMode && (
+                !showWeightField ? (
+                  <Button variant="link" size="sm" className="self-start" leadingIcon={<Plus />} onClick={() => setShowWeightField(true)}>{t('exp.addWeight')}</Button>
                 ) : (
-                  <div>
-                    <label className="block text-xs text-sky-900 mb-1">Number of Pieces</label>
-                    <input
-                      type="number"
-                      step="1"
-                      value={pieceCount}
-                      onChange={(e) => setPieceCount(e.target.value)}
-                      className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                      required
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs text-sky-900 mb-1">Volume per Piece</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      step="1"
-                      value={volumeMl}
-                      onChange={(e) => setVolumeMl(e.target.value)}
-                      placeholder="e.g. 750"
-                      className="flex-1 px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                    />
-                    <select
-                      value={volumeUnit}
-                      onChange={(e) => setVolumeUnit(e.target.value as 'mL' | 'L')}
-                      className="px-3 py-2 border border-sky-300 rounded-lg bg-white text-sm"
-                    >
-                      <option value="mL">mL</option>
-                      <option value="L">L</option>
-                    </select>
-                  </div>
-                </div>
-
-                {beverageTotalPieces > 0 && (
-                  <p className="text-xs text-sky-800 font-medium">
-                    Total: {beverageTotalPieces} pcs{volumeMl ? ` × ${volumeMl}${volumeUnit}` : ''}
-                  </p>
-                )}
-                <PriceWarning flag={priceFlag} onFix={packageType === 'carton' ? undefined : applyPriceFix} />
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-xs font-medium text-gray-600">Quantity</label>
-                    {(unit === 'pcs' || unit === 'units') && (
-                      <button
-                        type="button"
-                        onClick={() => setIsBundleMode(!isBundleMode)}
-                        className="text-xs text-orange-600 hover:text-orange-700 font-medium"
-                      >
-                        {isBundleMode ? 'Enter as loose pieces instead' : 'Bought as a bundle/pack?'}
-                      </button>
-                    )}
-                  </div>
-                  {isBundlePurchase ? (
-                    // e.g. 1 bundle of 50 tissues, a bag of 20 foil sheets - same
-                    // "N containers x M pieces each" idea as the beverage carton UI.
-                    <div className="space-y-1.5">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[11px] text-gray-500 mb-1">Number of bundles</label>
-                          <input
-                            type="number"
-                            step="1"
-                            value={cartonCount}
-                            onChange={(e) => setCartonCount(e.target.value)}
-                            placeholder="e.g. 1"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-gray-500 mb-1">Pieces per bundle</label>
-                          <input
-                            type="number"
-                            step="1"
-                            value={piecesPerCarton}
-                            onChange={(e) => setPiecesPerCarton(e.target.value)}
-                            placeholder="e.g. 50"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            required
-                          />
-                        </div>
-                      </div>
-                      {bundleTotalPieces > 0 && (
-                        <p className="text-xs text-gray-500 font-medium">Total: {bundleTotalPieces} pcs</p>
-                      )}
+                  <Field
+                    label={t('exp.weight')}
+                    optional
+                    helper={weightPerUnit && parseFloat(quantity) > 0
+                      ? `${quantity} ${unit} × ${weightPerUnit}${weightUnit} = ${(((parseFloat(weightPerUnit) || 0) * (weightUnit === 'kg' ? 1000 : 1) * (parseFloat(quantity) || 0)) / 1000).toFixed(2)} kg`
+                      : "Skip it when the item has no real weight (tissues, cutlery)."}
+                  >
+                    <div className="flex gap-2">
+                      <Input type="number" inputMode="decimal" step="0.1" value={weightPerUnit} onChange={(e) => setWeightPerUnit(e.target.value)} placeholder="e.g. 200" className="num" />
+                      <SegmentedControl aria-label="Weight unit" className="w-28 shrink-0" value={weightUnit} onValueChange={setWeightUnit} options={[{ value: 'g', label: 'g' }, { value: 'kg', label: 'kg' }]} />
+                      <Button variant="ghost" onClick={() => { setShowWeightField(false); setWeightPerUnit(''); }}>{t('exp.remove')}</Button>
                     </div>
-                  ) : (
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      required
-                    />
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">Unit</label>
-                  {/* Pill buttons instead of a dropdown - a native <select>'s popup can render
-                      past the bottom of the screen inside the Android WebView. */}
-                  <div className="flex flex-wrap gap-2">
-                    {UNIT_PILLS.map((u) => (
-                      <button
-                        key={u}
-                        type="button"
-                        onClick={() => { setUnit(u); if (u !== 'pcs' && u !== 'units') setIsBundleMode(false); }}
-                        className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                          unit === u
-                            ? 'bg-orange-600 text-white border-orange-600'
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-orange-400'
-                        }`}
-                      >
-                        {u === 'bundle' ? 'bundle (আঁটি)' : u}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  </Field>
+                )
+              )}
+            </div>
+          )
+        )}
 
-                {(unit === 'pcs' || unit === 'units') && (
-                  <div>
-                    {!showWeightField ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowWeightField(true)}
-                        className="text-xs text-orange-600 hover:text-orange-700 font-medium"
-                      >
-                        + Add weight per {unit === 'pcs' ? 'piece' : 'unit'} (optional)
-                      </button>
-                    ) : (
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="block text-xs font-medium text-gray-600">
-                            Weight per {unit === 'pcs' ? 'piece' : 'unit'}
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => { setShowWeightField(false); setWeightPerUnit(''); }}
-                            className="text-xs text-gray-400 hover:text-gray-600"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={weightPerUnit}
-                            onChange={(e) => setWeightPerUnit(e.target.value)}
-                            placeholder="e.g. 200"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                          />
-                          <select
-                            value={weightUnit}
-                            onChange={(e) => setWeightUnit(e.target.value as 'g' | 'kg')}
-                            className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
-                          >
-                            <option value="g">g</option>
-                            <option value="kg">kg</option>
-                          </select>
-                        </div>
-                        {weightPerUnit && parseFloat(quantity) > 0 && (
-                          <p className="text-xs text-gray-500 mt-1.5">
-                            Total: {quantity} {unit} × {weightPerUnit}{weightUnit} ={' '}
-                            {(((parseFloat(weightPerUnit) || 0) * (weightUnit === 'kg' ? 1000 : 1) * (parseFloat(quantity) || 0)) / 1000).toFixed(2)} kg
-                          </p>
-                        )}
-                        <p className="text-[11px] text-gray-400 mt-1.5">Skip this if the item doesn't really have a meaningful weight (e.g. tissues, cutlery).</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <PriceWarning flag={priceFlag} onFix={isBundlePurchase ? undefined : applyPriceFix} />
-              </div>
-            )
+        <Field label={t('exp.amountPaid')} required>
+          <MoneyInput value={amount} onValueChange={(_, raw) => setAmount(raw)} required autoFocus={!accessToken} />
+        </Field>
+        {priceLine && (
+          <p className={priceLine.usual ? '-mt-2 flex items-center gap-1.5 text-label text-success' : '-mt-2 text-label text-text-3'}>
+            {priceLine.usual && <Check className="size-4" aria-hidden="true" />}
+            <span className="num">{priceLine.text}</span>
+            {priceLine.usual ? ` · ${t('exp.usualPrice')}` : priceLine.usualText ? ` · ${t('exp.usually', { price: priceLine.usualText })}` : ''}
+          </p>
+        )}
+        {currentEntryType === 'inventory' && (
+          <PriceWarning flag={priceFlag} onFix={isBeverage ? (packageType === 'carton' ? undefined : applyPriceFix) : (isBundlePurchase ? undefined : applyPriceFix)} />
+        )}
+
+        <PaidFromField value={paidFrom} onChange={setPaidFrom} showOwner={ownerPaymentOption} entity={entity === 'store' ? 'store' : 'production'}>
+          {productionCanCover && (
+            <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} />
           )}
+          {paidFrom === 'both' && (
+            <SplitAmounts cash={splitCash} online={splitOnline} total={enteredAmount} onChange={(next) => { setSplitCash(next.cash); setSplitOnline(next.online); }} />
+          )}
+        </PaidFromField>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors disabled:opacity-50 font-medium text-sm flex items-center justify-center gap-2"
-          >
-            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            Save {amount ? `₹${amount}` : ''} {query.trim() ? `· ${query.trim()}` : ''}
-          </button>
-        </form>
-      </div>
-    </div>
+        {/* The day this is for: the last week inline (no sheet on top of this sheet). */}
+        <Field label={t('exp.date')} helper={entryDate === today ? `${t('date.today')}, ${formatDateIST(entryDate)}` : formatDateIST(entryDate)}>
+          <div className="rounded-md border border-border-strong bg-surface px-1 pb-1">
+            <DateStrip value={entryDate} onChange={setEntryDate} max={today} today={today} hideCalendarButton />
+          </div>
+        </Field>
+      </form>
+    </ResponsiveModal>
   );
 }
 
 // Leafy greens (coriander, pudina, onion leaves) are bought by the bundle, not weighed.
 const UNIT_PILLS = ['kg', 'g', 'L', 'mL', 'pcs', 'units', 'bundle'];
+// What the pills show: 'pack' is pieces bought in packs (N packs x M pieces).
+type UnitPill = 'kg' | 'g' | 'L' | 'mL' | 'piece' | 'pack' | 'bundle' | 'units';
 
 function normalize(s: string) {
   return s.trim().toLowerCase();
-}
-
-function categoryLabel(c: { entryType: ExpenseEntryType; category: string }): string {
-  return expenseCategoryLabel(c.category);
 }

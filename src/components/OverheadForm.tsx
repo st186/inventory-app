@@ -1,13 +1,24 @@
+// Edit (or add) a running cost (overhead) in the same sheet as every other expense. Category
+// groups, staff meals, personal expenses and the payload are unchanged.
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
 import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES, SELECTABLE_OVERHEAD_CATEGORY_KEYS } from '../utils/inventoryData';
-import { X, Loader2 } from 'lucide-react';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
 import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
 import { AssetHint } from './assets/AssetHint';
 import type { CashCover } from '../utils/cashSource';
+import { useT } from '../utils/i18n';
+import { Button } from './ui/button';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { MoneyInput } from './ui/money';
+import { PickerField } from './ui/picker-sheet';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { DeleteAction, PaidFromField, SplitAmounts } from './money/PaidFromField';
+import { stripEmoji } from './money/categoryDisplay';
 
 type Props = {
   selectedDate: string;
@@ -27,6 +38,8 @@ type Props = {
   // day - production's cash is offered only when the store's can't cover the bill.
   productionCashHouseId?: string | null;
   productionCashCover?: CashCover | null;
+  /** Editing: delete this entry (confirm + Undo are the caller's). */
+  onDelete?: () => void;
 };
 
 const GROUP_LABELS: Record<OverheadCategoryGroup, string> = {
@@ -55,7 +68,7 @@ function isMealCategory(category: string): boolean {
   return (MEAL_CATEGORIES as string[]).includes(category);
 }
 
-export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [], entityScope, canUseRestrictedCategories = false, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null }: Props) {
+export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, employees, existingOverheads = [], entityScope, canUseRestrictedCategories = false, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null, onDelete }: Props) {
   const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   const selectableCategoriesByGroup = buildSelectableCategoriesByGroup(entityScope, canUseRestrictedCategories);
   const defaultCategory = (Object.values(selectableCategoriesByGroup).flat()[0]?.value || 'miscellaneous') as OverheadItem['category'];
@@ -67,7 +80,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     employeeName: editingItem?.employeeName || '',
     employeeIds: editingItem?.employeeIds || [] as string[],
     expenseMonth: editingItem?.expenseMonth || selectedDate.slice(0, 7), // Default to current month (YYYY-MM)
-    paymentMethod: editingItem?.paymentMethod || 'cash' as 'cash' | 'online' | 'both' | 'owner',
+    paymentMethod: (editingItem?.paymentMethod || 'cash') as 'cash' | 'online' | 'both' | 'owner',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
     onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
   });
@@ -130,7 +143,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
     }
 
     if (!splitAmountsValid()) {
-      alert('Cash and Online amounts must add up to the total amount!');
+      toast.error('Cash and Paytm amounts must add up to the total amount');
       return;
     }
     
@@ -186,315 +199,119 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
       ...paymentData
     };
 
-    console.log('💳 Overhead payment data being sent:', paymentData);
 
-    await onSubmit(finalSubmission);
-    setIsSubmitting(false);
+    try {
+      await onSubmit(finalSubmission);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const { t } = useT();
+  const categoryItems = [
+    ...(Object.entries(selectableCategoriesByGroup) as [OverheadCategoryGroup, { value: string; label: string }[]][])
+      .flatMap(([group, categories]) => categories.map((cat) => ({ value: cat.value, label: stripEmoji(cat.label), group: GROUP_LABELS[group] }))),
+    // A historical entry whose category is no longer offered for new entries stays visible.
+    ...(editingItem && OVERHEAD_CATEGORY_META[editingItem.category] && !Object.values(selectableCategoriesByGroup).flat().some((c) => c.value === editingItem.category)
+      ? [{ value: editingItem.category, label: `${stripEmoji(OVERHEAD_CATEGORY_META[editingItem.category].label)} (historical)` }]
+      : []),
+  ];
+  const dirty = editingItem
+    ? formData.amount !== editingItem.amount.toString() || formData.description !== editingItem.description || formData.category !== editingItem.category || formData.paymentMethod !== (editingItem.paymentMethod || 'cash')
+    : !!(formData.amount || formData.description);
+  // Split: typing one part fills the other with the rest of the total.
+  const onSplitChange = (next: { cash: string; online: string }) => {
+    if (next.cash !== formData.cashAmount) {
+      const cash = parseFloat(next.cash || '0');
+      setFormData({ ...formData, cashAmount: next.cash, onlineAmount: (totalAmount - cash).toFixed(2) });
+    } else {
+      const online = parseFloat(next.online || '0');
+      setFormData({ ...formData, onlineAmount: next.online, cashAmount: (totalAmount - online).toFixed(2) });
+    }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-md w-full p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-gray-900">{editingItem ? 'Edit' : 'Add'} Overhead Cost</h3>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={editingItem ? t('exp.edit') : t('exp.type.overhead')}
+      dirty={dirty && !isSubmitting}
+      headerActions={<DeleteAction onDelete={onDelete} />}
+      footer={<Button type="submit" form="overhead-form" size="lg" fullWidth loading={isSubmitting}>{t('expense.save')}</Button>}
+    >
+      <form id="overhead-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <Field label={t('exp.category')} required>
+          <PickerField
+            title={t('exp.category')}
+            items={categoryItems}
+            value={formData.category}
+            onValueChange={(v) => setFormData({
+              ...formData,
+              category: v as OverheadItem['category'],
+              // Reset employee fields when category changes
+              employeeId: '',
+              employeeName: '',
+              employeeIds: [],
+            })}
+          />
+        </Field>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">Category</label>
-            <select
-              value={formData.category}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  category: e.target.value as OverheadItem['category'],
-                  // Reset employee fields when category changes
-                  employeeId: '',
-                  employeeName: '',
-                  employeeIds: []
-                })
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              required
-            >
-              {(Object.entries(selectableCategoriesByGroup) as [OverheadCategoryGroup, { value: string; label: string }[]][]).map(
-                ([group, categories]) =>
-                  categories.length > 0 && (
-                    <optgroup key={group} label={GROUP_LABELS[group]}>
-                      {categories.map((cat) => (
-                        <option key={cat.value} value={cat.value}>
-                          {cat.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )
-              )}
-              {/* If editing a historical entry whose category is no longer offered for new entries, keep it visible */}
-              {editingItem && OVERHEAD_CATEGORY_META[editingItem.category] &&
-                !Object.values(selectableCategoriesByGroup).flat().some((c) => c.value === editingItem.category) && (
-                  <option value={editingItem.category}>
-                    {OVERHEAD_CATEGORY_META[editingItem.category].label} (historical)
-                  </option>
-                )}
-            </select>
-          </div>
+        {isMealCategory(formData.category) && (
+          <EmployeeMultiSelect
+            employees={employees}
+            selectedIds={formData.employeeIds}
+            onChange={(ids) => setFormData({ ...formData, employeeIds: ids })}
+          />
+        )}
 
-          {isMealCategory(formData.category) && (
-            <EmployeeMultiSelect
-              employees={employees}
-              selectedIds={formData.employeeIds}
-              onChange={(ids) => setFormData({ ...formData, employeeIds: ids })}
-            />
-          )}
-
-          {formData.category === 'personal_expense' && (
-            <>
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Employee ID</label>
-                <select
-                  value={formData.employeeId}
-                  onChange={(e) =>
-                    setFormData({ ...formData, employeeId: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  required
-                >
-                  <option value="">Select Employee</option>
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.employeeId}>
-                      {emp.employeeId}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {formData.employeeId && formData.employeeName && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Employee Name</label>
-                  <input
-                    type="text"
-                    value={formData.employeeName}
-                    readOnly
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
-                  />
-                </div>
-              )}
-              
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">
-                  Expense Month
-                  <span className="text-xs text-gray-500 ml-2">(For which month is this salary/advance?)</span>
-                </label>
-                <input
-                  type="month"
-                  value={formData.expenseMonth}
-                  onChange={(e) =>
-                    setFormData({ ...formData, expenseMonth: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  required
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  💡 Select the month this expense belongs to (useful for backlogged salaries)
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Expense Description</label>
-                <AutocompleteInput
-                  value={formData.description}
-                  onChange={(v) => setFormData({ ...formData, description: v })}
-                  suggestions={descriptionSuggestions}
-                  placeholder="What was the expense for?"
-                  required
-                />
-              </div>
-            </>
-          )}
-
-          {formData.category !== 'personal_expense' && (
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Description</label>
-              <AutocompleteInput
-                value={formData.description}
-                onChange={(v) => setFormData({ ...formData, description: v })}
-                suggestions={descriptionSuggestions}
-                required
+        {formData.category === 'personal_expense' && (
+          <>
+            <Field label="Employee" required helper={formData.employeeId && formData.employeeName ? formData.employeeName : undefined}>
+              <PickerField
+                title="Employee"
+                items={employees.map((emp) => ({ value: emp.employeeId, label: emp.employeeId, description: emp.name, keywords: emp.name }))}
+                value={formData.employeeId}
+                onValueChange={(v) => setFormData({ ...formData, employeeId: v })}
+                placeholder="Select employee"
               />
-              <AssetHint name={formData.description} category={formData.category} source="overhead" date={selectedDate} />
-            </div>
+            </Field>
+            <Field label="Expense month" required helper="The month this salary or advance belongs to (useful for late salaries)">
+              <Input type="month" value={formData.expenseMonth} onChange={(e) => setFormData({ ...formData, expenseMonth: e.target.value })} required />
+            </Field>
+          </>
+        )}
+
+        <Field label="Description" required>
+          <AutocompleteInput
+            value={formData.description}
+            onChange={(v) => setFormData({ ...formData, description: v })}
+            suggestions={descriptionSuggestions}
+            placeholder={formData.category === 'personal_expense' ? 'What was the expense for?' : undefined}
+            required
+          />
+        </Field>
+        {formData.category !== 'personal_expense' && (
+          <AssetHint name={formData.description} category={formData.category} source="overhead" date={selectedDate} />
+        )}
+
+        <Field label={t('money.amount')} required>
+          <MoneyInput value={formData.amount} onValueChange={(_, raw) => setFormData({ ...formData, amount: raw })} required />
+        </Field>
+
+        <PaidFromField
+          value={formData.paymentMethod}
+          onChange={(m) => setFormData({ ...formData, paymentMethod: m })}
+          showOwner={allowOwnerPayment || editingItem?.paymentMethod === 'owner'}
+          entity={entityScope}
+        >
+          {productionCashHouseId && formData.paymentMethod === 'cash' && (
+            <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={parseFloat(formData.amount) || 0} cover={productionCashCover} editingItem={editingItem} />
           )}
-
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">Amount (₹)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={formData.amount}
-              onChange={(e) =>
-                setFormData({ ...formData, amount: e.target.value })
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              required
-            />
-          </div>
-
-          {/* Payment Method Section */}
-          <div className="border-t border-gray-200 pt-4 mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Payment Method</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="cash"
-                  checked={formData.paymentMethod === 'cash'}
-                  onChange={(e) => setFormData({ ...formData, paymentMethod: 'cash' })}
-                  className="w-4 h-4 text-orange-600"
-                />
-                <div className="flex-1">
-                  <span className="text-gray-900">💵 Cash in Hand</span>
-                  <p className="text-xs text-gray-500">Will reduce Expected Cash in Hand</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="online"
-                  checked={formData.paymentMethod === 'online'}
-                  onChange={(e) => setFormData({ ...formData, paymentMethod: 'online' })}
-                  className="w-4 h-4 text-orange-600"
-                />
-                <div className="flex-1">
-                  <span className="text-gray-900">📱 Online Cash (Paytm)</span>
-                  <p className="text-xs text-gray-500">Will reduce Online Cash in Hand (Paytm)</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="both"
-                  checked={formData.paymentMethod === 'both'}
-                  onChange={(e) => setFormData({ ...formData, paymentMethod: 'both' })}
-                  className="w-4 h-4 text-orange-600"
-                />
-                <div className="flex-1">
-                  <span className="text-gray-900">💰 Both (Split Payment)</span>
-                  <p className="text-xs text-gray-500">Paid using both Cash and Online</p>
-                </div>
-              </label>
-              {(allowOwnerPayment || editingItem?.paymentMethod === 'owner') && (
-                <label className="flex items-center gap-2 p-3 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="paymentMethod"
-                    value="owner"
-                    checked={formData.paymentMethod === 'owner'}
-                    onChange={() => setFormData({ ...formData, paymentMethod: 'owner' })}
-                    className="w-4 h-4 text-orange-600"
-                  />
-                  <div className="flex-1">
-                    <span className="text-gray-900">🙋 My own money (cluster head)</span>
-                    <p className="text-xs text-gray-500">Counts as a cost, but takes nothing from the store's or production house's cash or Paytm</p>
-                  </div>
-                </label>
-              )}
-              {productionCashHouseId && formData.paymentMethod === 'cash' && (
-                <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={parseFloat(formData.amount) || 0} cover={productionCashCover} editingItem={editingItem} />
-              )}
-            </div>
-          </div>
-
-          {/* Split Payment Amounts */}
           {formData.paymentMethod === 'both' && totalAmount > 0 && (
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-medium text-orange-900">Split Payment Details</p>
-              
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Cash Amount (₹)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max={totalAmount}
-                  value={formData.cashAmount}
-                  onChange={(e) => {
-                    const cash = parseFloat(e.target.value || '0');
-                    setFormData({ 
-                      ...formData, 
-                      cashAmount: e.target.value,
-                      onlineAmount: (totalAmount - cash).toFixed(2)
-                    });
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Online Amount (₹)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max={totalAmount}
-                  value={formData.onlineAmount}
-                  onChange={(e) => {
-                    const online = parseFloat(e.target.value || '0');
-                    setFormData({ 
-                      ...formData, 
-                      onlineAmount: e.target.value,
-                      cashAmount: (totalAmount - online).toFixed(2)
-                    });
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-between text-sm pt-2 border-t border-orange-300">
-                <span className="text-gray-700">Total:</span>
-                <span className={`font-medium ${splitAmountsValid() ? 'text-green-600' : 'text-red-600'}`}>
-                  ₹{(parseFloat(formData.cashAmount || '0') + parseFloat(formData.onlineAmount || '0')).toFixed(2)} / ₹{totalAmount.toFixed(2)}
-                </span>
-              </div>
-              
-              {!splitAmountsValid() && (
-                <p className="text-xs text-red-600">⚠️ Amounts must add up to ₹{totalAmount.toFixed(2)}</p>
-              )}
-            </div>
+            <SplitAmounts cash={formData.cashAmount} online={formData.onlineAmount} total={totalAmount} onChange={onSplitChange} />
           )}
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              disabled={isSubmitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              disabled={isSubmitting}
-            >
-              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isSubmitting ? 'Saving...' : editingItem ? 'Update Overhead' : 'Add Overhead'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </PaidFromField>
+      </form>
+    </ResponsiveModal>
   );
 }
