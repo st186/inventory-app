@@ -107,34 +107,34 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
 
   return (
     <>
-    <div className="mt-4 pt-4 border-t border-gray-100">
-      <p className="text-xs font-medium text-gray-600 mb-2">Cash top-ups approved this month</p>
+    <div className="mt-4 pt-4 border-t border-border">
+      <p className="text-xs font-medium text-text-2 mb-2">Cash top-ups approved this month</p>
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
-          <p className="text-[11px] text-purple-700 font-medium">Store inventory</p>
-          <p className="text-lg font-bold text-purple-900 tabular-nums">₹{monthSummary.store.toLocaleString()}</p>
+        <div className="rounded-xl bg-info-soft border border-info-border p-3">
+          <p className="text-caption text-info font-medium">Store inventory</p>
+          <p className="text-lg font-bold text-info tabular-nums">₹{monthSummary.store.toLocaleString()}</p>
         </div>
-        <div className="rounded-xl bg-amber-50 border border-amber-100 p-3">
-          <p className="text-[11px] text-amber-700 font-medium">Production house</p>
-          <p className="text-lg font-bold text-amber-900 tabular-nums">₹{monthSummary.production.toLocaleString()}</p>
+        <div className="rounded-xl bg-warning-soft border border-warning-border p-3">
+          <p className="text-caption text-warning font-medium">Production house</p>
+          <p className="text-lg font-bold text-warning tabular-nums">₹{monthSummary.production.toLocaleString()}</p>
         </div>
       </div>
       {(monthSummary.other > 0 || monthSummary.total > 0) && (
-        <p className="text-[11px] text-gray-500 mt-1.5">
+        <p className="text-caption text-text-3 mt-1.5">
           {monthSummary.other > 0 ? `+ ₹${monthSummary.other.toLocaleString()} other · ` : ''}
           Total ₹{monthSummary.total.toLocaleString()} this month
         </p>
       )}
     </div>
-    <div className="mt-4 pt-4 border-t border-gray-100">
+    <div className="mt-4 pt-4 border-t border-border">
       <button
         onClick={() => setShow(!show)}
-        className="w-full flex items-center justify-between text-left"
+        className="min-h-11 w-full flex items-center justify-between text-left"
       >
-        <span className="text-xs font-medium text-gray-600">
+        <span className="text-xs font-medium text-text-2">
           {title} ({filtered.length} of {decided.length})
         </span>
-        {show ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        {show ? <ChevronUp className="w-4 h-4 text-text-3" /> : <ChevronDown className="w-4 h-4 text-text-3" />}
       </button>
 
       {show && (
@@ -144,8 +144,8 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                  filter === f ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                className={`hit-44 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                  filter === f ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                 }`}
               >
                 {FILTER_LABELS[f]}
@@ -161,32 +161,32 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
           )}
 
           {filtered.length === 0 ? (
-            <p className="text-sm text-gray-500">No decided top-up requests in this range.</p>
+            <p className="text-sm text-text-3">No decided top-up requests in this range.</p>
           ) : (
             <div className="space-y-2">
               {filtered.map(r => (
-                <div key={r.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                <div key={r.id} className="rounded-xl border border-border bg-surface-2 p-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                      <p className="text-sm text-gray-900">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
-                        <span className="text-[10px] font-mono text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
+                      <p className="text-sm text-text">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
+                        <span className="text-caption font-mono text-text-3 bg-surface-2 rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
                       </div>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-text-3">
                         {r.requestedByName} ({r.requestedByEntityName}) — {TOPUP_REASON_LABELS[r.reason]}
                       </p>
                     </div>
                     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs flex-shrink-0 ${
-                      r.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      r.status === 'approved' ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'
                     }`}>
                       {r.status === 'approved' ? <CheckCircle className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
                       {r.status === 'approved' ? 'Approved' : 'Rejected'}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1.5">
+                  <p className="text-xs text-text-3 mt-1.5">
                     Requested {formatDateTimeIST(r.requestDate, false)}
                   </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-text-3 mt-0.5">
                     {r.status === 'approved' && r.approvedBy ? `Approved by ${r.approvedBy}` : ''}
                     {r.status === 'rejected' && r.rejectedBy ? `Rejected by ${r.rejectedBy}` : ''}
                     {/* approvedAt is real UTC on approvals flagged approvedAtIsUtc, IST-with-Z before that. */}
@@ -195,7 +195,7 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
                     )}
                   </p>
                   {r.status === 'rejected' && r.rejectionReason && (
-                    <p className="text-xs text-red-600 mt-0.5">Reason: {r.rejectionReason}</p>
+                    <p className="text-xs text-danger mt-0.5">Reason: {r.rejectionReason}</p>
                   )}
                 </div>
               ))}

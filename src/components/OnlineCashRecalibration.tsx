@@ -1,5 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Calendar, AlertTriangle, Save, Smartphone, CheckCircle, XCircle, TrendingUp } from 'lucide-react';
+import { Calendar, AlertTriangle, Save, CheckCircle } from 'lucide-react';
+import { toast } from 'sonner';
+import { confirm } from './ui/confirm';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { Money, MoneyInput, formatINR } from './ui/money';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { SkeletonListRows } from './ui/skeleton';
+import { StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Textarea } from './ui/textarea';
 import * as api from '../utils/api';
 import { formatDateTimeIST, getTodayIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
@@ -146,299 +159,104 @@ export function OnlineCashRecalibration({
     }
   };
 
-  if (loading) {
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl p-8">
-          <div className="flex items-center gap-3">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
-            <p className="text-gray-700">Loading recalibration data...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const difference = actualBalance ? parseFloat(actualBalance) - systemBalance : 0;
+  const deleteRecalibration = async () => {
+    const ok = await confirm({ title: "Delete this week's recalibration?", body: 'The page reloads afterwards so every figure is worked out again.', confirmLabel: 'Delete recalibration', tone: 'danger' });
+    if (!ok) return;
+    try {
+      await api.deleteOnlineCashRecalibration(context.user!.accessToken, lastRecalibration.id);
+      toast.success('Recalibration deleted - reloading');
+      // Force a full page reload to clear all caches
+      window.setTimeout(() => window.location.reload(), 800);
+    } catch (err) {
+      console.error('Delete failed:', err);
+      toast.error('Failed to delete recalibration: ' + (err as Error).message);
+    }
+  };
 
   return (
-    <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
-      onClick={onClose}
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Paytm reconciliation"
+      description={`${storeName} · ${new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`}
+      dirty={!!actualBalance && !saving && !success}
+      footer={
+        <Button type="submit" form="paytm-recalibration-form" size="lg" fullWidth leadingIcon={<Save />} loading={saving} disabled={loading || !actualBalance}>
+          Save recalibration
+        </Button>
+      }
     >
-      <div 
-        className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <Smartphone className="w-6 h-6" />
-                Paytm Reconciliation
-              </h2>
-              <p className="text-orange-100 mt-1">
-                {storeName} - {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+      {loading ? (
+        <SkeletonListRows count={4} />
+      ) : (
+        <form id="paytm-recalibration-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {success && <Callout tone="success" title="Recalibration saved">The online cash balance has been updated.</Callout>}
+          {error && <Callout tone="danger" title={error} />}
+
+          {lastRecalibration && (
+            <Callout
+              tone="info"
+              title={`Already counted for ${new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`}
+              action={<Button variant="danger-ghost" size="sm" onClick={deleteRecalibration}>Delete</Button>}
             >
-              <XCircle className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
+              <span className="block">Created {lastRecalibration.createdAt ? formatDateTimeIST(lastRecalibration.createdAt) : 'N/A'} · date {lastRecalibration.date ? new Date(lastRecalibration.date).toLocaleDateString('en-IN') : 'N/A'}</span>
+              <span className="num block">
+                System {formatINR(lastRecalibration.systemBalance)} · counted {formatINR(lastRecalibration.actualBalance)} · difference {formatINR(lastRecalibration.difference, { sign: true })}
+              </span>
+              <span className="block">You can change the date, balance and notes below; saving updates this count.</span>
+            </Callout>
+          )}
 
-        {/* Success Message */}
-        {success && (
-          <div className="m-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg flex items-center gap-3">
-            <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
-            <div>
-              <p className="font-semibold text-green-900">Recalibration Saved Successfully!</p>
-              <p className="text-sm text-green-700">Your online cash balance has been updated.</p>
-            </div>
-          </div>
-        )}
+          <StatTile label="Worked out by the app" value={<Money value={systemBalance} />} caption="From every Paytm receipt, online payout, expense and commission up to today." />
 
-        {/* Error Message */}
-        {error && (
-          <div className="m-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center gap-3">
-            <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
-            <p className="text-red-900">{error}</p>
-          </div>
-        )}
+          <Field label="Balance in the Paytm app" required helper="Open the Paytm app and type the balance it shows">
+            <MoneyInput value={actualBalance} onValueChange={(_, raw) => setActualBalance(raw)} allowNegative required />
+          </Field>
 
-        {/* Last Recalibration Info */}
-        {lastRecalibration && (
-          <div className="m-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1">
-                <p className="text-sm text-blue-900">
-                  <strong>Existing Recalibration for {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}:</strong>
-                  <br />
-                  <strong>Created:</strong> {lastRecalibration.createdAt ? formatDateTimeIST(lastRecalibration.createdAt) : 'N/A'}
-                  <br />
-                  <strong>Date:</strong> {lastRecalibration.date ? new Date(lastRecalibration.date).toLocaleDateString('en-IN') : 'N/A'}
-                  <br />
-                  System Balance: ₹{lastRecalibration.systemBalance.toLocaleString()} | 
-                  Actual Balance: ₹{lastRecalibration.actualBalance.toLocaleString()} | 
-                  Difference: <span className={lastRecalibration.difference >= 0 ? 'text-green-700' : 'text-red-700'}>
-                    {lastRecalibration.difference >= 0 ? '+' : ''}₹{lastRecalibration.difference.toLocaleString()}
-                  </span>
-                  <br />
-                  <span className="text-xs text-blue-700 mt-1 inline-block">
-                    ℹ️ You can edit the date, balance, and notes below. Saving will update this recalibration.
-                  </span>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (window.confirm('Are you sure you want to delete this week\'s recalibration?')) {
-                    try {
-                      console.log('🗑️ [CLIENT] Deleting recalibration:', lastRecalibration.id);
-                      const response = await api.deleteOnlineCashRecalibration(context.user!.accessToken, lastRecalibration.id);
-                      console.log('✅ [CLIENT] Delete response:', response);
-                      alert('Recalibration deleted successfully! The page will reload.');
-                      // Force a full page reload to clear all caches
-                      window.location.reload();
-                    } catch (err) {
-                      console.error('❌ [CLIENT] Delete failed:', err);
-                      alert('Failed to delete recalibration: ' + (err as Error).message);
-                    }
-                  }
-                }}
-                className="px-3 py-1.5 bg-red-500 text-white text-xs font-medium rounded hover:bg-red-600 transition-colors whitespace-nowrap"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        )}
+          <Field label="Date of the count" required helper="Today unless you counted on another day">
+            <Input type="date" value={manualDate || today} onChange={(e) => setManualDate(e.target.value)} max={today} required />
+          </Field>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* System Balance (Read-only) */}
-          <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-xl p-6 border-2 border-orange-200">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-orange-600" />
-              <label className="text-sm font-semibold text-orange-900 uppercase tracking-wide">
-                System Calculated Balance
-              </label>
-            </div>
-            <p className="text-4xl font-bold text-orange-900">
-              ₹{systemBalance.toLocaleString()}
-            </p>
-            <p className="text-xs text-orange-700 mt-2">
-              This is the balance calculated from all your Paytm receipts, online sales, expenses, and commissions up to today.
-            </p>
-          </div>
-
-          {/* Actual Balance Input */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Actual Balance (Verified) *
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
-              <input
-                type="number"
-                step="0.01"
-                value={actualBalance}
-                onChange={(e) => setActualBalance(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
-                placeholder="Enter actual balance from Paytm app"
-                required
-              />
-            </div>
-            <p className="text-xs text-gray-600 mt-1">
-              Check your actual Paytm/online wallet balance and enter it here
-            </p>
-          </div>
-
-          {/* Recalibration Date */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Recalibration Date *
-            </label>
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
-              <input
-                type="date"
-                value={manualDate || today}
-                onChange={(e) => setManualDate(e.target.value)}
-                max={today}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
-                required
-              />
-            </div>
-            <p className="text-xs text-gray-600 mt-1">
-              Select the date for this recalibration (defaults to today)
-            </p>
-          </div>
-
-          {/* Difference Display */}
           {actualBalance && (
-            <div className={`p-4 rounded-lg border-2 ${
-              difference >= 0 
-                ? 'bg-green-50 border-green-200' 
-                : 'bg-red-50 border-red-200'
-            }`}>
-              <p className="text-sm font-semibold mb-1">
-                Difference (Actual - System):
-              </p>
-              <p className={`text-3xl font-bold ${
-                difference >= 0 ? 'text-green-700' : 'text-red-700'
-              }`}>
-                {difference >= 0 ? '+' : ''}₹{difference.toLocaleString()}
-              </p>
-              {Math.abs(difference) > 0 && (
-                <p className="text-xs mt-2 text-gray-700">
-                  {difference > 0 
-                    ? '✅ You have more cash than the system expected (surplus)'
-                    : '⚠️ You have less cash than the system expected (shortage)'}
-                </p>
-              )}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+              <span className="flex flex-col">
+                <span className="text-body-md font-medium text-text">Difference (counted − app)</span>
+                {Math.abs(difference) > 0 && (
+                  <span className="text-label text-text-3">{difference > 0 ? 'More on Paytm than the app expected (surplus)' : 'Less on Paytm than the app expected (shortage)'}</span>
+                )}
+              </span>
+              <StatusChip tone={difference === 0 ? 'success' : difference > 0 ? 'warning' : 'danger'} icon={difference === 0 ? CheckCircle : AlertTriangle}>
+                <span className="num">{formatINR(difference, { sign: true })}</span>
+              </StatusChip>
             </div>
           )}
 
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Notes / Explanation
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-              placeholder="Optional: Explain any discrepancies or special situations..."
+          <Field label="Notes" optional>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Explain any difference or anything unusual" />
+          </Field>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-body-sm font-medium text-text">What caused the difference</span>
+            <SegmentedControl
+              aria-label="What caused the difference"
+              value={discrepancyType}
+              onValueChange={setDiscrepancyType}
+              options={[{ value: 'none', label: 'Nothing' }, { value: 'mistake', label: 'A mistake' }, { value: 'loan', label: 'A loan' }]}
             />
           </div>
 
-          {/* Discrepancy Type */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Discrepancy Type
-            </label>
-            <select
-              value={discrepancyType}
-              onChange={(e) => setDiscrepancyType(e.target.value as 'none' | 'mistake' | 'loan')}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            >
-              <option value="none">None</option>
-              <option value="mistake">Mistake</option>
-              <option value="loan">Loan</option>
-            </select>
-          </div>
-
-          {/* Loan Amount */}
           {discrepancyType === 'loan' && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Loan Amount
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={loanAmount}
-                  onChange={(e) => setLoanAmount(e.target.value)}
-                  className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
-                  placeholder="Enter loan amount"
-                />
-              </div>
-            </div>
+            <Field label="Loan amount">
+              <MoneyInput value={loanAmount} onValueChange={(_, raw) => setLoanAmount(raw)} />
+            </Field>
           )}
 
-          {/* Info Box */}
-          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
-            <div className="flex gap-3">
-              <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-yellow-900">
-                <p className="font-semibold mb-1">📅 Weekly Recalibration</p>
-                <p>
-                  Check the actual Paytm wallet balance every Sunday and log it here. Comparing it
-                  against the system-calculated balance catches any missed entries, fees, or
-                  discrepancies before they pile up.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 pt-4 border-t">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !actualBalance}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="w-5 h-5" />
-                  Save Recalibration
-                </>
-              )}
-            </button>
-          </div>
+          <Callout tone="neutral" icon={Calendar} title="Count it every week">
+            Check the Paytm balance every Sunday and log it here. Comparing it with the app's figure catches missed entries, fees or differences before they pile up.
+          </Callout>
         </form>
-      </div>
-    </div>
+      )}
+    </ResponsiveModal>
   );
 }

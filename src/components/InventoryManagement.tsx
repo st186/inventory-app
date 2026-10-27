@@ -1,4 +1,7 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+// Expenses (Money > Expenses, wireframe Expenses): Store / Production / All, the day's spend,
+// price checks, the day's entries by type, and the Add expense button. Totals come from
+// money/expenseMath.ts; new entries go through the outbox (App.tsx saveViaOutbox).
+import { useState, useMemo, useCallback } from 'react';
 import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { Employee } from '../utils/api';
 import * as api from '../utils/api';
@@ -8,16 +11,29 @@ import { InventoryForm } from './InventoryForm';
 import { OverheadForm } from './OverheadForm';
 import { FixedCostForm } from './FixedCostForm';
 import { QuickAddExpense } from './QuickAddExpense';
-import { InventoryList } from './InventoryList';
-import { DateSelector } from './DateSelector';
-import { Plus, Search, Settings, Package, ScanText } from 'lucide-react';
+import { InventoryList, PaidByChip } from './InventoryList';
+import { Building2, Package, Plus, Receipt, ScanText, Search, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { getTodayIST, formatDateIST } from '../utils/timezone';
-import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 import { CategoryManagerModal } from './CategoryManagerModal';
 import { InvoiceScanner } from './insights/InvoiceScanner';
 import { PriceCheckPanel } from './PriceCheck';
 import { buildPriceGuide, checkPurchase, type PriceFlag } from '../utils/expenseChecks';
+import { belongsToTab, combinedDayExpenses, dayExpenses, makeScopeMatcher } from './money/expenseMath';
+import { useT } from '../utils/i18n';
+import { Button } from './ui/button';
+import { EmptyState } from './ui/empty-state';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { IconWell, ListGroup, ListRow } from './ui/list-row';
+import { Money, formatINR } from './ui/money';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { StatGrid, StatSplit, StatTile } from './ui/stat-tile';
+import { ExtendedFab, FabSpacer, MoneyPage } from './money/MoneyLayout';
+import { DayBand, MoneyWaiting } from './money/DayCloseParts';
+import { categoryIcon, categoryText, stripEmoji } from './money/categoryDisplay';
+import { useUndoableDelete } from './money/useUndoableDelete';
 
 // Invoice scanning is on (about ₹0.03 a bill on Haiku). The server can still switch it off with
 // its AI_INVOICE_SCAN secret set to "off" (see insights.ts).
@@ -59,17 +75,8 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [activeTab, setActiveTab] = useState<'store' | 'production' | 'combined'>(
  defaultsToProduction ? 'production' : 'store'
  );
- // Items saved before this split lack entityType — treat those as store expenses.
- // 'combined' matches nothing here - the combined summary tab computes its own totals
- // per entity directly (see combinedTotals below) rather than filtering by activeTab.
- const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: 'store' | 'production' | 'combined') =>
- tab === 'production' ? item.entityType === 'production_house' : tab === 'store' ? item.entityType !== 'production_house' : false;
+ // Items saved before this split lack entityType - treated as store expenses (money/expenseMath.ts).
 
- const changeDate = (days: number) => {
- const current = new Date(selectedDate);
- current.setDate(current.getDate() + days);
- setSelectedDate(current.toISOString().split('T')[0]);
- };
 
  const formatDate = (dateStr: string) => {
  return formatDateIST(dateStr);
@@ -137,82 +144,29 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  ? { entityType: 'production_house', productionHouseId: targetProductionHouseId }
  : { entityType: 'store', storeId: effectiveStoreId || existing?.storeId || defaultStoreForAdds || undefined };
 
- // Production-house-tagged items carry a productionHouseId, not a storeId (storeId is
- // null for them) - matching them against effectiveStoreId as if it were a storeId always
- // fails and silently zeroes out the Production House tab/summary. Match each item by
- // whichever id its own entityType actually uses.
- const matchesEffectiveScope = (item: { storeId?: string | null; productionHouseId?: string | null; entityType?: 'store' | 'production_house' }) => {
- if (!effectiveStoreId) return true;
- if (item.entityType === 'production_house') {
- return !targetProductionHouseId || item.productionHouseId === targetProductionHouseId;
- }
- return item.storeId === effectiveStoreId;
- };
+ // Production-house-tagged items are matched by productionHouseId, store items by storeId.
+ const matchesEffectiveScope = makeScopeMatcher(effectiveStoreId, targetProductionHouseId);
 
- console.log('🏪 InventoryManagement - effectiveStoreId:', effectiveStoreId);
- console.log('🏪 InventoryManagement - selectedStoreId prop:', selectedStoreId);
- console.log('🏪 InventoryManagement - user storeId:', context.user?.storeId);
 
- const filteredInventory = context.inventory.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
- const filteredOverheads = context.overheads.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
- const filteredFixedCosts = context.fixedCosts.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
-
- const totalInventoryCost = filteredInventory.reduce(
- (sum, item) => sum + item.totalCost,
- 0
- );
- const totalOverheadCost = filteredOverheads.reduce(
- (sum, item) => sum + item.amount,
- 0
- );
- const totalFixedCost = filteredFixedCosts.reduce(
- (sum, item) => sum + item.amount,
- 0
- );
+ const day = dayExpenses({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, tab: activeTab, matchesScope: matchesEffectiveScope,
+ });
+ const filteredInventory = day.inventory;
+ const filteredOverheads = day.overheads;
+ const filteredFixedCosts = day.fixedCosts;
+ const totalInventoryCost = day.inventoryTotal;
+ const totalOverheadCost = day.overheadTotal;
+ const totalFixedCost = day.fixedTotal;
 
  // Combined Store + Production House totals for the selected date, independent of
  // which single-entity tab is active - powers the "Total Purchases" summary tab.
- const combinedTotals = useMemo(() => {
- const forEntity = (entityType: 'store' | 'production_house') => {
- const inv = context.inventory.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const oh = context.overheads.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const fc = context.fixedCosts.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const inventoryCost = inv.reduce((sum, item) => sum + item.totalCost, 0);
- const overheadCost = oh.reduce((sum, item) => sum + item.amount, 0);
- const fixedCost = fc.reduce((sum, item) => sum + item.amount, 0);
- return {
- inventory: { total: inventoryCost, items: inv },
- overhead: { total: overheadCost, items: oh },
- fixedCost: { total: fixedCost, items: fc },
- total: inventoryCost + overheadCost + fixedCost,
- };
- };
- return { store: forEntity('store'), production: forEntity('production_house') };
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, targetProductionHouseId]);
+ const combinedTotals = useMemo(() => combinedDayExpenses({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, matchesScope: matchesEffectiveScope,
+ }),
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, targetProductionHouseId]);
 
  // What each item usually costs, from every purchase on record - powers the price warnings
  // while adding and the "purchases look wrong" list (utils/expenseChecks.ts).
@@ -266,190 +220,74 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  return { totalSpent, totalQty, minRate, maxRate, avgRate, count: searchResults.length };
  }, [searchResults]);
 
+ // ---- Expenses screen (wireframe Expenses) ------------------------------------------------
+ const { t, lang } = useT();
+ const { hidden, remove } = useUndoableDelete();
+ const tabOrder: ('store' | 'production' | 'combined')[] = defaultsToProduction ? ['production', 'store', 'combined'] : ['store', 'production', 'combined'];
+ const tabLabel = (tab: 'store' | 'production' | 'combined') => (tab === 'combined' ? t('exp.all') : tab === 'production' ? t('exp.production') : t('exp.store'));
+ const dateLabel = formatDateIST(selectedDate);
+ const visibleCount = [...filteredInventory, ...filteredOverheads, ...filteredFixedCosts].filter((x) => !hidden.has(x.id)).length;
+ const addDisabledReason = activeTab === 'combined' ? t('exp.cantAddAll') : activeTab === 'production' ? t('exp.cantAddProduction') : t('exp.cantAddStore');
+ const closeEdit = () => {
+ setShowInventoryForm(false);
+ setShowOverheadForm(false);
+ setShowFixedCostForm(false);
+ setEditingInventory(null);
+ setEditingOverhead(null);
+ setEditingFixedCost(null);
+ };
+ // Delete from inside the edit sheet: confirm, close the sheet, then a few seconds of Undo.
+ const deleteFromSheet = (id: string, what: string, doDelete: (id: string) => void | Promise<void>) => async () => {
+ const started = await remove(id, what, () => doDelete(id));
+ if (started) closeEdit();
+ };
+
  return (
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
- {/* Page Header */}
- <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
- <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
- <Package className="w-6 h-6 text-white" />
- </div>
- <div>
- <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Management</h1>
- <p className="text-sm sm:text-base text-gray-500">Track store and production house purchases</p>
- </div>
- </div>
+ <MoneyPage wide lang={lang}>
+ <DayBand value={selectedDate} onChange={setSelectedDate} />
 
- {/* Date Selector */}
- <DateSelector
- selectedDate={selectedDate}
- onDateChange={setSelectedDate}
+ <div className="flex items-center gap-2">
+ <SegmentedControl
+ aria-label={t('exp.where')}
+ className="flex-1"
+ value={activeTab}
+ onValueChange={setActiveTab}
+ options={tabOrder.map((tab) => ({ value: tab, label: tabLabel(tab) }))}
  />
-
- {/* Store vs Production House vs Total - one segmented control instead of three
- loose pill buttons. Whichever entity this user defaults to leads. */}
- <div className="flex bg-gray-100 rounded-xl p-1 mt-6">
- {(defaultsToProduction
- ? (['production', 'store', 'combined'] as const)
- : (['store', 'production', 'combined'] as const)
- ).map((tab) => (
- <button
- key={tab}
- onClick={() => setActiveTab(tab)}
- className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
- activeTab === tab
- ? tab === 'combined'
- ? 'bg-purple-600 text-white shadow-sm'
- : tab === 'production'
- ? 'bg-green-600 text-white shadow-sm'
- : 'bg-blue-600 text-white shadow-sm'
- : 'text-gray-600 hover:text-gray-900'
- }`}
- >
- {tab === 'combined' ? 'Total Purchases' : tab === 'production' ? 'Production House' : 'Store'}
- </button>
- ))}
+ <IconButton label={t('exp.search')} icon={<Search />} onClick={() => setShowSearchModal(true)} />
  </div>
+
+ <MoneyWaiting kinds={['inventory', 'overhead', 'fixed-cost']} date={selectedDate} />
 
  {activeTab === 'combined' ? (
- <div className="mt-6 space-y-6">
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
- {([
- { key: 'store' as const, label: 'Total Store Purchases', color: 'blue' },
- { key: 'production' as const, label: 'Total Production House Purchases', color: 'green' },
- ]).map(({ key, label, color }) => {
+ <>
+ <StatTile hero label={t('exp.spentOn', { date: dateLabel })} value={<Money value={combinedTotals.store.total + combinedTotals.production.total} />}>
+ <StatSplit items={[
+ { label: t('exp.storeSide'), value: formatINR(combinedTotals.store.total) },
+ { label: t('exp.productionSide'), value: formatINR(combinedTotals.production.total) },
+ ]} />
+ </StatTile>
+ {(['store', 'production'] as const).map((key) => {
  const data = combinedTotals[key];
  return (
- <div key={key} className={`rounded-2xl p-6 border shadow-sm bg-gradient-to-br ${color === 'blue' ? 'from-blue-50 to-blue-100/50 border-blue-200' : 'from-green-50 to-green-100/50 border-green-200'}`}>
- <div className="flex items-center justify-between mb-4">
- <h3 className={`font-semibold ${color === 'blue' ? 'text-blue-800' : 'text-green-800'}`}>{label}</h3>
- <p className={`text-2xl font-bold ${color === 'blue' ? 'text-blue-900' : 'text-green-900'}`}>₹{data.total.toLocaleString()}</p>
- </div>
- <div className="space-y-2">
- <div className="flex items-center justify-between bg-white/70 rounded-lg px-4 py-2.5">
- <span className="text-sm text-gray-600">Inventory ({data.inventory.items.length} item{data.inventory.items.length === 1 ? '' : 's'})</span>
- <span className="font-semibold text-gray-900">₹{data.inventory.total.toLocaleString()}</span>
- </div>
- <div className="flex items-center justify-between bg-white/70 rounded-lg px-4 py-2.5">
- <span className="text-sm text-gray-600">Overhead ({data.overhead.items.length} item{data.overhead.items.length === 1 ? '' : 's'})</span>
- <span className="font-semibold text-gray-900">₹{data.overhead.total.toLocaleString()}</span>
- </div>
- <div className="flex items-center justify-between bg-white/70 rounded-lg px-4 py-2.5">
- <span className="text-sm text-gray-600">Fixed Cost ({data.fixedCost.items.length} item{data.fixedCost.items.length === 1 ? '' : 's'})</span>
- <span className="font-semibold text-gray-900">₹{data.fixedCost.total.toLocaleString()}</span>
- </div>
- </div>
- {(data.inventory.items.length > 0 || data.overhead.items.length > 0 || data.fixedCost.items.length > 0) && (
- <details className="mt-4">
- <summary className={`text-xs cursor-pointer hover:underline ${color === 'blue' ? 'text-blue-700' : 'text-green-700'}`}>
- ▸ View item details
- </summary>
- <div className="mt-3 space-y-3 text-sm">
- {data.inventory.items.length > 0 && (
- <div>
- <p className="font-medium text-gray-700 mb-1">Inventory</p>
- {data.inventory.items.map(item => (
- <div key={item.id} className="flex items-center justify-between text-gray-600 py-1">
- <span>{item.itemName} ({item.quantity} {item.unit})</span>
- <span>₹{item.totalCost.toLocaleString()}</span>
- </div>
- ))}
- </div>
- )}
- {data.overhead.items.length > 0 && (
- <div>
- <p className="font-medium text-gray-700 mb-1">Overhead</p>
- {data.overhead.items.map(item => (
- <div key={item.id} className="flex items-center justify-between text-gray-600 py-1">
- <span>{item.description || item.category}</span>
- <span>₹{item.amount.toLocaleString()}</span>
- </div>
- ))}
- </div>
- )}
- {data.fixedCost.items.length > 0 && (
- <div>
- <p className="font-medium text-gray-700 mb-1">Fixed Cost</p>
- {data.fixedCost.items.map(item => (
- <div key={item.id} className="flex items-center justify-between text-gray-600 py-1">
- <span>{item.category}</span>
- <span>₹{item.amount.toLocaleString()}</span>
- </div>
- ))}
- </div>
- )}
- </div>
- </details>
- )}
- </div>
+ <ListGroup key={key} title={key === 'store' ? t('exp.storeSide') : t('exp.productionSide')} meta={formatINR(data.total)}>
+ <ListRow icon={Package} title={t('exp.ingredients')} subtitle={t('exp.itemsCount', { n: data.inventory.items.length })} amount={data.inventory.total} onClick={() => setActiveTab(key)} />
+ <ListRow icon={Receipt} title={t('exp.running')} subtitle={t('exp.itemsCount', { n: data.overhead.items.length })} amount={data.overhead.total} onClick={() => setActiveTab(key)} />
+ <ListRow icon={Building2} title={t('exp.fixedCosts')} subtitle={t('exp.itemsCount', { n: data.fixedCost.items.length })} amount={data.fixedCost.total} onClick={() => setActiveTab(key)} />
+ </ListGroup>
  );
  })}
- </div>
- <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl p-6 shadow-lg shadow-purple-500/30 text-center">
- <p className="text-sm text-purple-100 uppercase tracking-wide">Combined Total ({formatDate(selectedDate)})</p>
- <p className="text-white text-3xl font-bold mt-2">₹{(combinedTotals.store.total + combinedTotals.production.total).toLocaleString()}</p>
- </div>
- </div>
+ </>
  ) : (
  <>
- {/* Hero total - one number to glance at, with the inventory/overhead/fixed split
- tucked underneath instead of four equal-weight cards fighting for attention. */}
- <div className={`rounded-2xl p-6 mt-4 mb-6 shadow-sm bg-gradient-to-br ${activeTab === 'production' ? 'from-green-500 to-green-600' : 'from-blue-500 to-blue-600'}`}>
- <p className="text-xs text-white/80 uppercase tracking-wide">{activeTab === 'production' ? 'Production House' : 'Store'} spend · {formatDate(selectedDate)}</p>
- <p className="text-white text-3xl font-semibold mt-1">₹{(totalInventoryCost + totalOverheadCost + totalFixedCost).toLocaleString()}</p>
- <div className="grid grid-cols-3 gap-3 mt-4">
- <div className="bg-white/15 rounded-xl px-3 py-2">
- <p className="text-[11px] text-white/80 uppercase tracking-wide">Inventory</p>
- <p className="text-white text-sm font-semibold">₹{totalInventoryCost.toLocaleString()}</p>
- </div>
- <div className="bg-white/15 rounded-xl px-3 py-2">
- <p className="text-[11px] text-white/80 uppercase tracking-wide">Overhead</p>
- <p className="text-white text-sm font-semibold">₹{totalOverheadCost.toLocaleString()}</p>
- </div>
- <div className="bg-white/15 rounded-xl px-3 py-2">
- <p className="text-[11px] text-white/80 uppercase tracking-wide">Fixed</p>
- <p className="text-white text-sm font-semibold">₹{totalFixedCost.toLocaleString()}</p>
- </div>
- </div>
- </div>
-
- {/* Action Buttons */}
- <div className={`grid grid-cols-1 sm:grid-cols-3 ${context.user?.role === 'cluster_head' ? 'lg:grid-cols-4' : ''} gap-3 mb-6`}>
- <button
- onClick={() => setShowSearchModal(true)}
- className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
- >
- <Search className="w-4 h-4" />
- Search Items
- </button>
- <button
- onClick={() => setShowQuickAdd(true)}
- disabled={!canAddOnActiveTab}
- className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- title={!canAddOnActiveTab ? `Only ${activeTab === 'production' ? 'the production incharge or operations manager' : 'the store incharge (own store only) or operations manager'} can add ${activeTab === 'production' ? 'production' : 'store'} expenses` : ''}
- >
- <Plus className="w-4 h-4" />
- Add Expense
- </button>
- {INVOICE_SCAN_ENABLED && (
- <button
- onClick={() => setShowInvoiceScan(true)}
- disabled={!canAddOnActiveTab}
- className="flex items-center justify-center gap-2 px-4 py-3 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
- >
- <ScanText className="w-4 h-4" />
- Scan Invoice
- </button>
- )}
- {context.user?.role === 'cluster_head' && (
- <button
- onClick={() => setShowCategoryManager(true)}
- className="flex items-center justify-center gap-2 px-4 py-3 bg-stone-700 text-white rounded-lg hover:bg-stone-800 transition-colors font-medium"
- >
- <Settings className="w-4 h-4" />
- Manage Categories
- </button>
- )}
- </div>
+ {/* One number to glance at, with the type split under it. */}
+ <StatTile hero label={t('exp.spentOn', { date: dateLabel })} value={<Money value={totalInventoryCost + totalOverheadCost + totalFixedCost} />}>
+ <StatSplit items={[
+ { label: t('exp.ingredients'), value: formatINR(totalInventoryCost) },
+ { label: t('exp.running'), value: formatINR(totalOverheadCost) },
+ { label: t('exp.fixed'), value: formatINR(totalFixedCost) },
+ ]} />
+ </StatTile>
 
  {canAddOnActiveTab && (
  <PriceCheckPanel
@@ -463,142 +301,95 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  />
  )}
 
- {/* Lists */}
+ {visibleCount === 0 ? (
+ <EmptyState
+ icon={Receipt}
+ title={t('exp.empty', { date: dateLabel })}
+ body={t('exp.emptyBody')}
+ action={canAddOnActiveTab ? <Button variant="secondary" leadingIcon={<Plus />} onClick={() => setShowQuickAdd(true)}>{t('expense.add')}</Button> : undefined}
+ />
+ ) : (
  <InventoryList
  inventory={filteredInventory}
  overheads={filteredOverheads}
  fixedCosts={filteredFixedCosts}
+ hiddenIds={hidden}
  onEditInventory={(item) => {
  setEditingInventory(item);
  setShowInventoryForm(true);
  }}
- onDeleteInventory={context.deleteInventoryItem}
  onEditOverhead={(item) => {
  setEditingOverhead(item);
  setShowOverheadForm(true);
  }}
- onDeleteOverhead={context.deleteOverheadItem}
  onEditFixedCost={(item) => {
  setEditingFixedCost(item);
  setShowFixedCostForm(true);
  }}
- onDeleteFixedCost={context.deleteFixedCostItem}
  isManager={canAddOnActiveTab}
  priceFlags={dayPriceFlags}
  />
+ )}
  </>
  )}
 
- {/* Search Modal */}
- {showSearchModal && (
- <div className="fixed inset-0 bg-black/60 flex items-start justify-center p-4 z-50 overflow-y-auto">
- <div className="bg-white rounded-2xl max-w-3xl w-full my-8 shadow-2xl">
- {/* Header */}
- <div className="sticky top-0 bg-white rounded-t-2xl border-b border-gray-200 p-6 z-10">
- <div className="flex items-center justify-between mb-4">
- <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
- <Search className="w-5 h-5 text-orange-600" />
- Search Inventory Items
- </h2>
- <button
- onClick={() => { setShowSearchModal(false); setSearchQuery(''); }}
- className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
- >
- ✕
- </button>
- </div>
- <input
- type="text"
- value={searchQuery}
- onChange={(e) => setSearchQuery(e.target.value)}
- placeholder="Type item name... e.g. Chicken, Ajinomoto, Oil"
- className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-gray-900 placeholder-gray-400"
- autoFocus
- />
- </div>
+ {/* Categories live under More > Catalogue for the owner; kept one tap away here too. */}
+ {context.user?.role === 'cluster_head' && (
+ <ListGroup>
+ <ListRow icon={Settings} title={t('exp.manageCategories')} onClick={() => setShowCategoryManager(true)} />
+ </ListGroup>
+ )}
 
- {/* Content */}
- <div className="p-6 max-h-[60vh] overflow-y-auto">
+ <FabSpacer />
+ <ExtendedFab
+ label={t('expense.add')}
+ onClick={() => setShowQuickAdd(true)}
+ disabled={!canAddOnActiveTab}
+ disabledReason={addDisabledReason}
+ moreLabel={t('exp.moreWays')}
+ more={INVOICE_SCAN_ENABLED ? [{ label: t('exp.scanInvoice'), icon: <ScanText className="size-5 text-text-2" />, onSelect: () => setShowInvoiceScan(true) }] : undefined}
+ />
+
+ {/* Search every date for an item: how often it was bought and at what price. */}
+ <ResponsiveModal
+ open={showSearchModal}
+ onOpenChange={(open) => { setShowSearchModal(open); if (!open) setSearchQuery(''); }}
+ title={t('exp.search')}
+ size="detail"
+ >
+ <div className="flex flex-col gap-4">
+ <Input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={t('exp.searchPh')} aria-label={t('exp.search')} />
  {!searchQuery.trim() ? (
- <p className="text-center text-gray-400 py-12">Start typing to search across all dates...</p>
+ <EmptyState compact icon={Search} title={t('exp.searchStart')} />
  ) : searchResults.length === 0 ? (
- <p className="text-center text-gray-500 py-12">No items found for "{searchQuery}"</p>
+ <EmptyState compact icon={Search} title={t('exp.searchNone', { q: searchQuery })} />
  ) : (
  <>
- {/* Summary Card */}
  {searchSummary && (
- <div className="bg-gradient-to-br from-orange-50 to-rose-50 border border-orange-200 rounded-xl p-5 mb-6">
- <h3 className="font-semibold text-orange-900 mb-3">📊 Summary for "{searchQuery}"</h3>
- <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
- <div>
- <p className="text-gray-500">Occurrences</p>
- <p className="text-lg font-bold text-orange-700">{searchSummary.count}</p>
- </div>
- <div>
- <p className="text-gray-500">Total Spent</p>
- <p className="text-lg font-bold text-orange-700">₹{searchSummary.totalSpent.toLocaleString()}</p>
- </div>
- <div>
- <p className="text-gray-500">Rate Range</p>
- <p className="text-lg font-bold text-orange-700">
- ₹{Math.round(searchSummary.minRate)} - ₹{Math.round(searchSummary.maxRate)}
- </p>
- </div>
- <div>
- <p className="text-gray-500">Avg Rate</p>
- <p className="text-lg font-bold text-orange-700">₹{Math.round(searchSummary.avgRate)}</p>
- </div>
- </div>
- </div>
+ <StatGrid columns={4}>
+ <StatTile label={t('exp.timesBought')} value={searchSummary.count} />
+ <StatTile label={t('exp.totalSpent')} value={<Money value={searchSummary.totalSpent} />} />
+ <StatTile label={t('exp.rateRange')} value={`${formatINR(Math.round(searchSummary.minRate))}–${formatINR(Math.round(searchSummary.maxRate))}`} />
+ <StatTile label={t('exp.avgRate')} value={<Money value={Math.round(searchSummary.avgRate)} />} />
+ </StatGrid>
  )}
-
- {/* Results Table */}
- <div className="overflow-x-auto">
- <table className="w-full text-sm">
- <thead>
- <tr className="border-b border-gray-200 text-left text-gray-500">
- <th className="pb-3 font-medium">Date</th>
- <th className="pb-3 font-medium">Item</th>
- <th className="pb-3 font-medium">Category</th>
- <th className="pb-3 font-medium text-right">Qty</th>
- <th className="pb-3 font-medium text-right">Rate</th>
- <th className="pb-3 font-medium text-right">Total</th>
- <th className="pb-3 font-medium text-center">Payment</th>
- </tr>
- </thead>
- <tbody className="divide-y divide-gray-100">
+ <ListGroup>
  {searchResults.map((item) => (
- <tr key={item.id} className="hover:bg-gray-50 transition-colors">
- <td className="py-3 text-gray-600 whitespace-nowrap">{formatDate(item.date)}</td>
- <td className="py-3 font-medium text-gray-900">{item.itemName}</td>
- <td className="py-3 text-gray-500 text-xs">
- {expenseCategoryLabel(item.category)}
- </td>
- <td className="py-3 text-right text-gray-700">{item.quantity} {item.unit}</td>
- <td className="py-3 text-right text-gray-700">₹{item.costPerUnit?.toLocaleString()}</td>
- <td className="py-3 text-right font-semibold text-blue-600">₹{item.totalCost.toLocaleString()}</td>
- <td className="py-3 text-center">
- {item.paymentMethod === 'cash' && !item.paidFromProductionHouseId && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Cash</span>}
- {item.paymentMethod === 'cash' && item.paidFromProductionHouseId && <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded-full">Production cash</span>}
- {item.paymentMethod === 'online' && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Online</span>}
- {item.paymentMethod === 'both' && <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">Split</span>}
- {item.paymentMethod === 'owner' && <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded-full">Own money</span>}
- </td>
- </tr>
+ <ListRow
+ key={item.id}
+ leading={<IconWell icon={categoryIcon(item.category, 'inventory')} />}
+ title={item.itemName}
+ subtitle={`${formatDate(item.date)} · ${item.quantity} ${item.unit} · ${formatINR(item.costPerUnit || 0)}/${item.unit} · ${categoryText(item.category)}`}
+ chip={<PaidByChip item={item} />}
+ amount={item.totalCost}
+ />
  ))}
- </tbody>
- </table>
- </div>
+ </ListGroup>
  </>
  )}
  </div>
- </div>
- </div>
- )}
+ </ResponsiveModal>
 
- {/* Quick Add - the single smart entry point that replaces the old separate
- Inventory/Overhead/Fixed Cost "Add" buttons for new entries. Editing an existing
- item still goes through the type-specific forms below. */}
  {showInvoiceScan && (
  <InvoiceScanner
  context={context}
@@ -614,6 +405,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  />
  )}
 
+ {/* Add expense: the one smart entry point for new entries (Store / Production inside). */}
  {showQuickAdd && (
  <QuickAddExpense
  selectedDate={selectedDate}
@@ -631,20 +423,20 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  onClose={() => setShowQuickAdd(false)}
  onSubmitInventory={async (item) => {
  await context.addInventoryItem(item);
- toast.success('Inventory item added!');
+ toast.success(t('exp.saved'));
  }}
  onSubmitOverhead={async (item) => {
  await context.addOverheadItem(item);
- toast.success('Overhead cost added!');
+ toast.success(t('exp.saved'));
  }}
  onSubmitFixedCost={async (item) => {
  await context.addFixedCostItem(item);
- toast.success('Fixed cost added!');
+ toast.success(t('exp.saved'));
  }}
  />
  )}
 
- {/* Forms Modal */}
+ {/* Edit an entry: the type's own form in the same sheet look, with Delete in its header. */}
  {showInventoryForm && (
  <InventoryForm
  // An entry opened from the price-check list can be from another day - keep its own date.
@@ -656,6 +448,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  productionCashHouseId={productionCashHouseFor(editingInventory)}
  productionCashCover={editCashCover}
  priceGuide={priceGuide}
+ onDelete={editingInventory && canAddOnActiveTab ? deleteFromSheet(editingInventory.id, `${formatINR(editingInventory.totalCost)} · ${editingInventory.itemName} · ${formatDate(editingInventory.date)}`, context.deleteInventoryItem) : undefined}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields(editingInventory) };
@@ -663,20 +456,17 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  await context.updateInventoryItem(editingInventory.id, taggedItem);
  setShowInventoryForm(false);
  setEditingInventory(null);
- toast.success('Inventory item updated successfully!');
+ toast.success('Inventory item updated');
  } else {
  await context.addInventoryItem(taggedItem);
- // Don't close form for new items - let user add more
- toast.success('Inventory item added! You can add another item.');
+ // Don't close the form for new items - let the user add more
+ toast.success('Inventory item added - you can add another.');
  }
  } catch (error) {
  toast.error('Failed to save inventory item. Please try again.');
  }
  }}
- onClose={() => {
- setShowInventoryForm(false);
- setEditingInventory(null);
- }}
+ onClose={closeEdit}
  />
  )}
 
@@ -692,6 +482,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  allowOwnerPayment={isClusterHead}
  productionCashHouseId={productionCashHouseFor(editingOverhead)}
  productionCashCover={editCashCover}
+ onDelete={editingOverhead && canAddOnActiveTab ? deleteFromSheet(editingOverhead.id, `${formatINR(editingOverhead.amount)} · ${stripEmoji(editingOverhead.description) || categoryText(editingOverhead.category)} · ${formatDate(editingOverhead.date)}`, context.deleteOverheadItem) : undefined}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields(editingOverhead) };
@@ -702,17 +493,14 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  }
  setShowOverheadForm(false);
  setEditingOverhead(null);
- toast.success('Expense/Overhead cost saved successfully!');
+ toast.success('Running cost saved');
  } catch (error) {
- console.error('❌ Error saving expense/overhead:', error);
+ console.error('Error saving expense/overhead:', error);
  const errorMessage = error instanceof Error ? error.message : 'Failed to save expense/overhead cost. Please try again.';
  toast.error(errorMessage);
  }
  }}
- onClose={() => {
- setShowOverheadForm(false);
- setEditingOverhead(null);
- }}
+ onClose={closeEdit}
  />
  )}
 
@@ -724,6 +512,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  allowOwnerPayment={isClusterHead}
  productionCashHouseId={productionCashHouseFor(editingFixedCost)}
  productionCashCover={editCashCover}
+ onDelete={editingFixedCost && canAddOnActiveTab ? deleteFromSheet(editingFixedCost.id, `${formatINR(editingFixedCost.amount)} · ${categoryText(editingFixedCost.category)} · ${formatDate(editingFixedCost.date)}`, context.deleteFixedCostItem) : undefined}
  onSubmit={async (item) => {
  try {
  const taggedItem = { ...item, ...getEntityFields(editingFixedCost) };
@@ -734,21 +523,18 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  }
  setShowFixedCostForm(false);
  setEditingFixedCost(null);
- toast.success('Fixed cost saved successfully!');
+ toast.success('Fixed cost saved');
  } catch (error) {
- alert('Failed to save fixed cost. Please try again.');
+ toast.error('Failed to save fixed cost. Please try again.');
  }
  }}
- onClose={() => {
- setShowFixedCostForm(false);
- setEditingFixedCost(null);
- }}
+ onClose={closeEdit}
  />
  )}
 
  {showCategoryManager && (
  <CategoryManagerModal onClose={() => setShowCategoryManager(false)} />
  )}
- </div>
+ </MoneyPage>
  );
 }

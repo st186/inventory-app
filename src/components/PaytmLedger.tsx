@@ -68,12 +68,12 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
   const inWindowNewestFirst = [...inWindow].reverse();
 
   return (
-    <div className="mt-4 pt-4 border-t border-gray-100">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between text-left">
-        <span className="text-xs font-medium text-gray-600">
+    <div className="mt-4 pt-4 border-t border-border">
+      <button onClick={() => setOpen(!open)} className="min-h-11 w-full flex items-center justify-between text-left">
+        <span className="text-xs font-medium text-text-2">
           Paytm statement ({inWindow.length} entries)
         </span>
-        {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        {open ? <ChevronUp className="w-4 h-4 text-text-3" /> : <ChevronDown className="w-4 h-4 text-text-3" />}
       </button>
 
       {open && (
@@ -83,8 +83,8 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
               <button
                 key={k}
                 onClick={() => setRangeKey(k)}
-                className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                  rangeKey === k ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                className={`hit-44 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                  rangeKey === k ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                 }`}
               >
                 {RANGE_LABELS[k]}
@@ -99,29 +99,29 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
             </div>
           )}
 
-          <div className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-2">
-            <span className="text-gray-500">{ledger.anchorLabel}</span>
-            <span className="font-semibold text-gray-900 tabular-nums">₹{ledger.anchorBalance.toLocaleString()}</span>
+          <div className="flex items-center justify-between text-xs bg-surface-2 rounded-lg px-3 py-2">
+            <span className="text-text-3">{ledger.anchorLabel}</span>
+            <span className="font-semibold text-text tabular-nums">₹{ledger.anchorBalance.toLocaleString()}</span>
           </div>
 
           {inWindow.length === 0 ? (
-            <p className="text-sm text-gray-500">No Paytm movement in this range.</p>
+            <p className="text-sm text-text-3">No Paytm movement in this range.</p>
           ) : (
-            <div className="rounded-xl border border-gray-100 overflow-hidden">
+            <div className="rounded-xl border border-border overflow-hidden">
               {inWindowNewestFirst.map((l, i) => (
-                <div key={i} className="flex items-start gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0">
-                  <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${l.credit > 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                <div key={i} className="flex items-start gap-2 px-3 py-2 border-b border-border last:border-b-0">
+                  <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${l.credit > 0 ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'}`}>
                     {l.credit > 0 ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs text-gray-800 leading-snug">{l.label}</p>
-                    <p className="text-[10px] text-gray-400">{l.date}</p>
+                    <p className="text-xs text-text leading-snug">{l.label}</p>
+                    <p className="text-caption text-text-3">{l.date}</p>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className={`text-xs font-semibold tabular-nums ${l.credit > 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    <p className={`text-xs font-semibold tabular-nums ${l.credit > 0 ? 'text-success' : 'text-danger'}`}>
                       {l.credit > 0 ? '+' : '−'}₹{(l.credit > 0 ? l.credit : l.debit).toLocaleString()}
                     </p>
-                    <p className="text-[10px] text-gray-400 tabular-nums">₹{l.balance.toLocaleString()}</p>
+                    <p className="text-caption text-text-3 tabular-nums">₹{l.balance.toLocaleString()}</p>
                   </div>
                 </div>
               ))}
@@ -129,17 +129,17 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
           )}
 
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-lg bg-green-50 py-2">
-              <p className="text-[10px] text-green-700">In</p>
-              <p className="text-xs font-bold text-green-800 tabular-nums">+₹{totalIn.toLocaleString()}</p>
+            <div className="rounded-lg bg-success-soft py-2">
+              <p className="text-caption text-success">In</p>
+              <p className="text-xs font-bold text-success tabular-nums">+₹{totalIn.toLocaleString()}</p>
             </div>
-            <div className="rounded-lg bg-red-50 py-2">
-              <p className="text-[10px] text-red-700">Out</p>
-              <p className="text-xs font-bold text-red-800 tabular-nums">−₹{totalOut.toLocaleString()}</p>
+            <div className="rounded-lg bg-danger-soft py-2">
+              <p className="text-caption text-danger">Out</p>
+              <p className="text-xs font-bold text-danger tabular-nums">−₹{totalOut.toLocaleString()}</p>
             </div>
-            <div className="rounded-lg bg-gray-100 py-2">
-              <p className="text-[10px] text-gray-600">Closing</p>
-              <p className="text-xs font-bold text-gray-900 tabular-nums">₹{ledger.closingBalance.toLocaleString()}</p>
+            <div className="rounded-lg bg-surface-2 py-2">
+              <p className="text-caption text-text-2">Closing</p>
+              <p className="text-xs font-bold text-text tabular-nums">₹{ledger.closingBalance.toLocaleString()}</p>
             </div>
           </div>
         </div>
