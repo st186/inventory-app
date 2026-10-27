@@ -262,6 +262,7 @@ const en = {
   'event.nothingYet': 'Nothing here yet',
   'event.sold': 'Sold',
   'event.cashLedger': 'Event cash',
+  'event.orders': '{n} orders',
 } as const;
 
 export type I18nKey = keyof typeof en;
@@ -505,6 +506,7 @@ const bn: Dict = {
   'event.nothingYet': 'এখনও কিছু নেই',
   'event.sold': 'বিক্রি',
   'event.cashLedger': 'ইভেন্টের ক্যাশ',
+  'event.orders': '{n}টি অর্ডার',
 };
 
 const hi: Dict = {
@@ -745,6 +747,7 @@ const hi: Dict = {
   'event.nothingYet': 'अभी कुछ नहीं',
   'event.sold': 'बिका',
   'event.cashLedger': 'इवेंट नकद',
+  'event.orders': '{n} ऑर्डर',
 };
 
 const DICTIONARIES: Record<Lang, Dict> = { en, bn, hi };

@@ -18,7 +18,7 @@ import { VoiceButton } from '../VoiceButton';
 import { useT } from '../../utils/i18n';
 import type { EventBundle, EventDayRow } from '../../utils/eventsApi';
 import type { EventMomoKey } from '../../utils/eventRules';
-import { MOMO_KEYS, momoLabel, shortDate, useEventsApi } from './eventsShared';
+import { MOMO_KEYS, localNum, momoLabel, shortDate, useEventsApi } from './eventsShared';
 
 export function EventDayCloseSheet({ open, onOpenChange, bundle, row, onSaved }: {
   open: boolean;
@@ -145,7 +145,7 @@ export function EventDayCloseSheet({ open, onOpenChange, bundle, row, onSaved }:
                 <ListRow density="compact" title={t('event.cashSales')} amount={pos.cash} />
                 <ListRow density="compact" title={t('event.digitalSales', { name: accountLabel })} amount={pos.digital} />
                 {pos.online > 0 && <ListRow density="compact" title={t('event.onlineSales')} amount={pos.online} />}
-                <ListRow density="compact" title={`${pos.orders} orders`} subtitle={pos.syncedAt ? new Date(pos.syncedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : undefined} />
+                <ListRow density="compact" title={t('event.orders', { n: lang === 'bn' ? localNum(pos.orders, lang) : pos.orders })} subtitle={pos.syncedAt ? new Date(pos.syncedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : undefined} />
               </>
             ) : (
               <ListRow density="compact" title={day?.posError || t('event.nothingYet')} icon={day?.posError ? AlertTriangle : undefined} iconTone="warning" />
