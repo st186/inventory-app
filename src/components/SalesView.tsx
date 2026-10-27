@@ -1233,70 +1233,6 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
                 </Section>
               )}
 
-              {/* Production cash in hand: counted by the production incharge / operations manager,
-                  approved by the cluster head; read-only for everyone else. */}
-              {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && (
-                <Section title="Production cash in hand">
-                  {productionCashLoading ? (
-                    <SkeletonListRows count={4} />
-                  ) : (
-                    <>
-                      <FigureCard>
-                        <FigureRow label="Opening balance" value={formatINR(productionCashOpening)} />
-                        <FigureRow label="Today's cash top-up" value={formatINR(productionCashTopup)} />
-                        <FigureRow
-                          label="Today's production spend"
-                          caption={productionCashStoreBills > 0 ? `incl. ${formatINR(productionCashStoreBills)} of store bills paid from production cash` : undefined}
-                          value={formatINR(productionCashExpenses)}
-                        />
-                        <FigureRow label="Expected closing" value={formatINR(productionCashExpectedClosing)} emphasis />
-                        {!canReconcileProductionCash && (
-                          <FigureRow label="Counted" value={productionCashEntry?.actualCashInHand != null ? formatINR(productionCashEntry.actualCashInHand) : 'Not counted yet'} />
-                        )}
-                        <div className="flex min-h-13 items-center gap-3 px-4 py-2">
-                          <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
-                          <DiffChip diff={productionCashSavedDiscrepancy ?? 0} notCounted={productionCashSavedDiscrepancy === null} />
-                        </div>
-                      </FigureCard>
-
-                      {canReconcileProductionCash && (
-                        <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
-                          <Field label="Cash counted" helper={productionCashInput ? (productionCashDiscrepancy === 0 ? 'Matches exactly' : `${productionCashDiscrepancy > 0 ? 'Excess' : 'Short'} of ${formatINR(Math.abs(productionCashDiscrepancy))}`) : 'Count the physical cash and enter it'}>
-                            <MoneyInput value={productionCashInput} onValueChange={(_, raw) => setProductionCashInput(raw)} disabled={!!productionCashEntry?.approvedBy} />
-                          </Field>
-                          {productionCashNeedsApproval && <Callout tone="warning" title={t('dc.needsApproval')} />}
-                          {productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
-                            <StatusChip tone="warning" icon={Clock}>Approval asked - waiting for the cluster head</StatusChip>
-                          )}
-                          {productionCashEntry?.approvedBy && <StatusChip tone="success" icon={Check}>Approved by {productionCashEntry.approvedBy}</StatusChip>}
-                          {productionCashEntry?.rejectedBy && (
-                            <Callout tone="danger" title={`Rejected by ${productionCashEntry.rejectedBy}`}>{productionCashEntry.rejectionReason || ''}</Callout>
-                          )}
-                          <div className="flex flex-wrap gap-2">
-                            {productionCashEntry && productionCashNeedsApproval && !productionCashEntry.approvedBy && !productionCashEntry.approvalRequested && (
-                              <Button variant="secondary" onClick={handleRequestProductionCashApproval} disabled={productionCashSubmitting}>Ask for approval</Button>
-                            )}
-                            {!productionCashEntry?.approvedBy && (
-                              <Button variant="secondary" onClick={handleSaveProductionCash} loading={productionCashSubmitting} disabled={!productionCashInput}>
-                                {productionCashEntry ? 'Update production cash' : 'Save production cash'}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* The cluster head decides a pending production cash difference here. */}
-                      {isClusterHead && productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
-                        <div className="flex gap-2">
-                          <Button variant="danger-ghost" onClick={() => handleRejectProductionCash(productionCashEntry.id)}>Reject</Button>
-                          <Button variant="secondary" leadingIcon={<Check />} onClick={() => handleApproveProductionCash(productionCashEntry.id)}>Approve</Button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </Section>
-              )}
-
               {/* Store + production, for visibility only (nobody reconciles this total). */}
               {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && storeCashForTotal && (
                 <Section title="All cash in hand">
@@ -1324,6 +1260,71 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
 
       {showCashContent && (
         <>
+          {/* Production cash in hand: counted by the production incharge / operations manager,
+              approved by the cluster head; read-only for everyone else. Lives with the other
+              cash figures (Cash & Paytm), and doesn't wait for the store's day close - it sat
+              inside the day review, so it couldn't be counted until the store had closed. */}
+          {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && (
+            <Section title="Production cash in hand">
+              {productionCashLoading ? (
+                <SkeletonListRows count={4} />
+              ) : (
+                <>
+                  <FigureCard>
+                    <FigureRow label="Opening balance" value={formatINR(productionCashOpening)} />
+                    <FigureRow label="Today's cash top-up" value={formatINR(productionCashTopup)} />
+                    <FigureRow
+                      label="Today's production spend"
+                      caption={productionCashStoreBills > 0 ? `incl. ${formatINR(productionCashStoreBills)} of store bills paid from production cash` : undefined}
+                      value={formatINR(productionCashExpenses)}
+                    />
+                    <FigureRow label="Expected closing" value={formatINR(productionCashExpectedClosing)} emphasis />
+                    {!canReconcileProductionCash && (
+                      <FigureRow label="Counted" value={productionCashEntry?.actualCashInHand != null ? formatINR(productionCashEntry.actualCashInHand) : 'Not counted yet'} />
+                    )}
+                    <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+                      <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
+                      <DiffChip diff={productionCashSavedDiscrepancy ?? 0} notCounted={productionCashSavedDiscrepancy === null} />
+                    </div>
+                  </FigureCard>
+
+                  {canReconcileProductionCash && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                      <Field label="Cash counted" helper={productionCashInput ? (productionCashDiscrepancy === 0 ? 'Matches exactly' : `${productionCashDiscrepancy > 0 ? 'Excess' : 'Short'} of ${formatINR(Math.abs(productionCashDiscrepancy))}`) : 'Count the physical cash and enter it'}>
+                        <MoneyInput value={productionCashInput} onValueChange={(_, raw) => setProductionCashInput(raw)} disabled={!!productionCashEntry?.approvedBy} />
+                      </Field>
+                      {productionCashNeedsApproval && <Callout tone="warning" title={t('dc.needsApproval')} />}
+                      {productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
+                        <StatusChip tone="warning" icon={Clock}>Approval asked - waiting for the cluster head</StatusChip>
+                      )}
+                      {productionCashEntry?.approvedBy && <StatusChip tone="success" icon={Check}>Approved by {productionCashEntry.approvedBy}</StatusChip>}
+                      {productionCashEntry?.rejectedBy && (
+                        <Callout tone="danger" title={`Rejected by ${productionCashEntry.rejectedBy}`}>{productionCashEntry.rejectionReason || ''}</Callout>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {productionCashEntry && productionCashNeedsApproval && !productionCashEntry.approvedBy && !productionCashEntry.approvalRequested && (
+                          <Button variant="secondary" onClick={handleRequestProductionCashApproval} disabled={productionCashSubmitting}>Ask for approval</Button>
+                        )}
+                        {!productionCashEntry?.approvedBy && (
+                          <Button variant="secondary" onClick={handleSaveProductionCash} loading={productionCashSubmitting} disabled={!productionCashInput}>
+                            {productionCashEntry ? 'Update production cash' : 'Save production cash'}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* The cluster head decides a pending production cash difference here. */}
+                  {isClusterHead && productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
+                    <div className="flex gap-2">
+                      <Button variant="danger-ghost" onClick={() => handleRejectProductionCash(productionCashEntry.id)}>Reject</Button>
+                      <Button variant="secondary" leadingIcon={<Check />} onClick={() => handleApproveProductionCash(productionCashEntry.id)}>Approve</Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </Section>
+          )}
           {/* Cash top-ups: operations manager / production incharge request, the cluster head
               adds straight away and decides requests (event stall cash: from store Paytm or
               from production cash). */}
