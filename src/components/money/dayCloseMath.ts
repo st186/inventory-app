@@ -440,3 +440,14 @@ export function viewStoreCashCard(params: ViewScope & {
   const actualCashInHand = entry.actualCashInHand ?? 0;
   return { prevCash, cashTopup, cashReceived, todaysExpenses, expectedCash, notYetReconciled, actualCashInHand };
 }
+
+/**
+ * Live cash discrepancy on the day review, recomputed from today's figures (null until a real
+ * count is saved: a POS-sync placeholder is not a count).
+ */
+export function viewLiveCashReconciliation(params: Parameters<typeof viewStoreCashCard>[0]) {
+  const { entry } = params;
+  if (!entry || entry.createdBy === 'pos-sync' || entry.actualCashInHand === undefined || entry.actualCashInHand === null) return null;
+  const card = viewStoreCashCard(params);
+  return { expectedCash: card.expectedCash, actualCashInHand: card.actualCashInHand, discrepancy: card.actualCashInHand - card.expectedCash };
+}

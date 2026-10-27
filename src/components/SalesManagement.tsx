@@ -1,22 +1,21 @@
+// Day close (store incharge, either login type): POS sales, the cash/Paytm count, does it match,
+// then Save draft / Send. Wireframe DayClose. The calculations live in money/dayCloseMath.ts; the
+// offline outbox (App.tsx saveViaOutbox) keeps a day close made without signal on the phone.
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryContextType, SalesData } from '../App';
-import { DateSelector } from './DateSelector';
-import { DatePicker } from './DatePicker';
-import { MonthlyCommissionEntry } from './MonthlyCommissionEntry';
-import { OnlineCashRecalibration } from './OnlineCashRecalibration';
 import { LoanManagementSection } from './LoanManagementSection';
 import { OnlineSalesTab } from './OnlineSalesTab';
 import { CashTopupHistory } from './CashTopupHistory';
-import { DollarSign, Wallet, ShoppingBag, CheckCircle, Smartphone, AlertTriangle, CheckSquare, X, Loader2, Calendar, CreditCard, IndianRupee, PlusCircle, Clock, RefreshCw, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, CheckCircle, FileSpreadsheet, HandCoins, Plus, RefreshCw, Smartphone } from 'lucide-react';
 import * as api from '../utils/api';
-import { addDays, getTodayIST, formatDateIST, formatDateTimeIST } from '../utils/timezone';
+import { addDays, getTodayIST, formatDateIST } from '../utils/timezone';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
 import { countedCashInHand } from '../utils/paytmRules';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
 import { VoiceButton } from './VoiceButton';
-import { WaitingToSend, useOutbox } from './SyncStatus';
+import { useOutbox } from './SyncStatus';
 import { isPendingId } from '../utils/outbox';
 import {
  PRODUCTION_CASH_GO_LIVE_DATE,
@@ -28,6 +27,23 @@ import {
  offlinePaymentCheck,
  paytmDailyBreakdown as computePaytmDailyBreakdown,
 } from './money/dayCloseMath';
+import { useT, type I18nKey } from '../utils/i18n';
+import { confirm, promptText } from './ui/confirm';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Checkbox } from './ui/checkbox';
+import { ChoiceChips } from './ui/chip';
+import { EmptyState } from './ui/empty-state';
+import { Field } from './ui/field';
+import { IconWell, ListGroup, ListRow } from './ui/list-row';
+import { MoneyInput, formatINR } from './ui/money';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { StatusChip } from './ui/status-chip';
+import { Textarea } from './ui/textarea';
+import { cn } from './ui/utils';
+import { FigureCard, FigureRow, MoneyPage, Section, StickyFooter } from './money/MoneyLayout';
+import { DayBand, DayStatusBanner, DiffChip, FormulaSheet, MoneyWaiting, PaytmBreakdownSheet, TopupRow, TopupSheet, type DayStatus, type FormulaLine } from './money/DayCloseParts';
+import { posSyncTooEarly, toastPosSyncError, toastPosSyncResult, useShellHasMoneyTab } from './money/moneyShell';
 
 type Props = {
  context: InventoryContextType;
@@ -36,15 +52,10 @@ type Props = {
  initialTab?: 'entry' | 'payout' | 'loans';
 };
 
-const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
- store_inventory: 'Store Inventory',
- production_inventory: 'Production House Inventory',
- other: 'Other',
- event_cash: 'Event stall cash', // label only: event requests (events.ts) never touch this store's till
-};
 
 
 export function SalesManagement({ context, selectedStoreId, initialTab = 'entry' }: Props) {
+ const { t, lang } = useT();
  const [selectedDate, setSelectedDate] = useState<string>(
  getTodayIST()
  );
@@ -94,7 +105,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  // should count toward (a late vendor settlement, forgetting to switch the page's own
  // DateSelector first) used to silently apply to whatever date the page was showing.
  const [topupDate, setTopupDate] = useState(selectedDate);
- const [topupAmount, setTopupAmount] = useState('');
+ const [topupAmount, setTopupAmount] = useState<number | null>(null);
  const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
  const [isSyncingPos, setIsSyncingPos] = useState(false);
  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>(initialTab);
@@ -130,7 +141,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const pendingDayClose = outboxEntries.find((e) => e.kind === 'sales' && e.body?.date === selectedDate && (!effectiveStoreId || !e.body?.storeId || e.body.storeId === effectiveStoreId));
  const blockedByPendingSave = () => {
  if (!pendingDayClose && !isPendingId(editingId)) return false;
- alert('This day close is still waiting to send from this phone. Try again once it has been sent.');
+ toast.info('This day close is still waiting to send from this phone. Try again once it has been sent.');
  return true;
  };
 
@@ -239,19 +250,6 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  }
  };
 
- // Handle ESC key to close confirmation dialog
- useEffect(() => {
- const handleKeyDown = (e: KeyboardEvent) => {
- if (e.key === 'Escape' && showConfirmDialog) {
- handleCancelDialog();
- }
- };
-
- if (showConfirmDialog) {
- window.addEventListener('keydown', handleKeyDown);
- return () => window.removeEventListener('keydown', handleKeyDown);
- }
- }, [showConfirmDialog]);
 
  // Load last online cash recalibration (kept for backward compatibility with old data)
  useEffect(() => {
@@ -315,25 +313,20 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const result = (isClusterHead && isViewingPastDate)
  ? await api.backfillPosSync(context.user.accessToken, selectedDate)
  : await api.triggerPosSync(context.user.accessToken);
- if (result?.skipped) {
- alert(result.message || "Skipped - store hasn't opened yet");
- } else if (result?.success) {
- await context.refreshData();
- alert(isViewingPastDate ? `Re-synced ${selectedDate}` : 'POS sync complete');
- } else {
- alert(result?.error || 'POS sync ran but reported an error - check the results');
- }
+ if (!result?.skipped && result?.success) await context.refreshData();
+ // Between 11:50 PM and 6:10 AM the server pauses syncs and says so - a calm notice, not an error.
+ toastPosSyncResult(result, isViewingPastDate ? `Re-synced ${selectedDate}` : t('dc.syncedToast'));
  } catch (error: any) {
- alert(error?.message || 'Failed to trigger POS sync');
+ toastPosSyncError(error);
  } finally {
  setIsSyncingPos(false);
  }
  };
 
  const handleRequestTopup = async () => {
- const amount = parseFloat(topupAmount);
+ const amount = topupAmount ?? 0;
  if (!amount || amount <= 0) {
- alert('Please enter a valid amount');
+ toast.error('Please enter a valid amount');
  return;
  }
  if (!context.user?.accessToken) return;
@@ -341,13 +334,13 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  setIsSubmittingTopup(true);
  try {
  await api.requestCashTopup(context.user.accessToken, topupDate, amount, topupReason);
- alert('Cash top-up request sent to the cluster head');
+ toast.success(t('topup.sentToast'));
  setShowTopupModal(false);
- setTopupAmount('');
+ setTopupAmount(null);
  setTopupReason(defaultTopupReason);
  loadTopupRequests();
  } catch (error: any) {
- alert(error?.message || 'Failed to send cash top-up request');
+ toast.error(error?.message || 'Failed to send cash top-up request');
  } finally {
  setIsSubmittingTopup(false);
  }
@@ -745,7 +738,11 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const parts: string[] = [];
  if (needsApproval) parts.push(`cash ${cashDiscrepancy > 0 ? 'excess' : 'shortage'} of ₹${Math.abs(cashDiscrepancy).toFixed(2)}`);
  if (needsPaytmApproval) parts.push(`Paytm ${paytmDiscrepancy > 0 ? 'excess' : 'shortage'} of ₹${Math.abs(paytmDiscrepancy).toFixed(2)}`);
- const proceed = confirm(`There's a ${parts.join(' and ')}. This will need cluster head approval before it's final. Submit anyway?`);
+ const proceed = await confirm({
+ title: t('dc.bigDiffTitle'),
+ body: `There's a ${parts.join(' and ')}. This will need cluster head approval before it's final.`,
+ confirmLabel: t('dc.sendAnyway'),
+ });
  if (!proceed) return;
  }
 
@@ -807,7 +804,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  // Check permissions
  if (!canEditSales && !canReconcileCash && !isClusterHead) {
  console.log('⚠️⚠️⚠️ BLOCKED: User does not have permission to save sales data');
- alert('You do not have permission to save sales data.');
+ toast.error('You do not have permission to save sales data.');
  return;
  }
  
@@ -845,7 +842,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  
  if (!confirmationChecked) {
  console.log('⚠️⚠️⚠️ BLOCKED: Confirmation checkbox not checked');
- alert('⚠️ Please confirm that you take responsibility for this sales data.');
+ toast.error(t('dc.confirmCheckFirst'));
  return;
  }
  
@@ -962,7 +959,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  console.log('🎉 ALL SAVES COMPLETED SUCCESSFULLY!');
  console.log('═══════════════════════════════════════════════════════════════');
  clearDraft();
- if (!outcome?.queued) alert('Sales data saved successfully!');
+ if (!outcome?.queued) toast.success(t('dc.sentToast'));
  } catch (error) {
  console.log('═══════════════════════════════════════════════════════════════');
  console.log('❌ ERROR DURING SAVE PROCESS');
@@ -970,7 +967,7 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  console.error('💥 Error details:', error);
  console.error('💥 Error stack:', error instanceof Error ? error.stack : 'No stack trace');
  console.error('💥 Error message:', error instanceof Error ? error.message : String(error));
- alert('Failed to save sales data. Please try again.');
+ toast.error(t('dc.sendFailed'));
  } finally {
  console.log('🔓 Resetting isSubmitting to false');
  setIsSubmitting(false);
@@ -982,9 +979,9 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  if (blockedByPendingSave()) return;
  try {
  await context.approveSalesData(editingId);
- alert('Sales data approved successfully!');
+ toast.success('Sales data approved');
  } catch (error) {
- alert('Failed to approve sales data. Please try again.');
+ toast.error('Failed to approve sales data. Please try again.');
  }
  };
 
@@ -996,39 +993,39 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const actualPaytm = parseFloat(formData.actualPaytmBalance) || 0;
  const paytmOffset = actualPaytm - calculatePaytmBalance;
  
- if (!confirm(`Request approval for cash discrepancy of ₹${Math.abs(offset).toFixed(2)}?\n\nThis will notify the cluster head for approval.`)) {
+ if (!(await confirm({ title: t('dc.askApprovalTitle', { amount: formatINR(Math.abs(offset)) }), body: t('dc.askApprovalBody'), confirmLabel: t('dc.askApproval') }))) {
  return;
  }
  
  try {
  await context.requestSalesApproval(editingId, actualCash, offset);
- alert('Approval request sent successfully!');
+ toast.success(t('dc.askedToast'));
  } catch (error) {
- alert('Failed to request approval. Please try again.');
+ toast.error('Failed to request approval. Please try again.');
  }
  };
 
  const handleApproveDiscrepancy = async (saleId: string) => {
- if (!confirm('Approve this discrepancy? The new cash amount will be accepted.')) {
+ if (!(await confirm({ title: 'Approve this difference?', body: 'The new cash amount will be accepted.', confirmLabel: 'Approve' }))) {
  return;
  }
  try {
  await context.approveDiscrepancy(saleId);
- alert('Discrepancy approved successfully!');
+ toast.success('Difference approved');
  } catch (error) {
- alert('Failed to approve discrepancy. Please try again.');
+ toast.error('Failed to approve discrepancy. Please try again.');
  }
  };
 
  const handleRejectDiscrepancy = async (saleId: string) => {
- const reason = prompt('Please enter reason for rejection:');
+ const reason = await promptText({ title: 'Reject this difference?', label: 'Reason', required: true, confirmLabel: 'Reject', tone: 'danger' });
  if (!reason) return;
  
  try {
  await context.rejectDiscrepancy(saleId, reason);
- alert('Discrepancy rejected. Manager must pay the difference.');
+ toast.success('Rejected - the incharge pays the difference.');
  } catch (error) {
- alert('Failed to reject discrepancy. Please try again.');
+ toast.error('Failed to reject discrepancy. Please try again.');
  }
  };
 
@@ -1172,548 +1169,222 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  }
  };
 
- return (
- <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/30 to-rose-50/30">
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
- {/* Page header */}
- <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
- <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
- <DollarSign className="w-6 h-6 text-white" />
- </div>
- <div>
- <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Sales Management</h1>
- <p className="text-sm sm:text-base text-gray-500">Log daily sales, reconcile cash/Paytm, and manage payouts</p>
- </div>
- </div>
-
- {/* Sync Now - store incharge lives on this page, not SalesView.tsx, so the sync
- button needs to be here too (not just on the read-only view others land on). */}
- {canEditSales && (
- <div className="flex justify-end mb-3">
- {(() => {
- // Stores open at 3 PM IST - keep in sync with server-side STORE_OPENING_HOUR_IST.
- // Computed via Intl so it's correct regardless of the browser's own timezone.
- const istHourNow = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit' }), 10);
- const isViewingPastDate = selectedDate < getTodayIST();
- // Backfilling a past, already-closed date is always allowed regardless of time of
- // day - only "today"'s sync needs to wait for the store to actually open.
- const syncDisabledForTiming = !isViewingPastDate && istHourNow < 15;
- return (
- <button
- onClick={handleSyncPosNow}
- disabled={isSyncingPos || syncDisabledForTiming}
- className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
- title={syncDisabledForTiming ? "Stores open at 3 PM IST - sync isn't available before then" : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"}
- >
- <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
- {isSyncingPos ? 'Syncing...' : syncDisabledForTiming ? 'Opens at 3 PM' : 'Sync POS Now'}
- </button>
+ // ---- Day close screen (wireframe DayClose) ----------------------------------------------
+ const [formulaOpen, setFormulaOpen] = useState(false);
+ const paytmInputRef = useRef<HTMLInputElement>(null);
+ const showPayoutsTab = useShellHasMoneyTab('SalesManagement', 'payout');
+ const showLoansTab = useShellHasMoneyTab('SalesManagement', 'loans');
+ const canEnter = canEditSales || canReconcileCash;
+ const syncTooEarly = posSyncTooEarly(selectedDate, getTodayIST());
+ const countedToday = salesForDate ? countedCashInHand(salesForDate) : null;
+ const eventCashIn = (salesForDate as any)?.eventCashIn || 0;
+ const eventCashOut = (salesForDate as any)?.eventCashOut || 0;
+ const syncedAt: string | undefined = (salesForDate as any)?.syncedAt;
+ // syncedAt digits are already IST wall-clock time (written with a "Z"), so read them as UTC.
+ const syncedLabel = syncedAt ? new Date(syncedAt).toLocaleString('en-IN', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit', hour12: true }) : null;
+ const lastLoaded = lastLoadedRef.current;
+ const editedNow = !!lastLoaded && lastLoaded.key === formKey
+ && (['paytmAmount', 'cashAmount', 'actualCashInHand', 'cashOverShortReason', 'cashOverShortNote'] as const).some((f) => formData[f] !== lastLoaded.values[f]);
+ const dayStatus: DayStatus = pendingDayClose
+ ? { kind: 'waiting' }
+ : salesForDate?.rejectedBy
+ ? { kind: 'rejected', by: salesForDate.rejectedBy, at: salesForDate.rejectedAt, reason: salesForDate.rejectionReason }
+ : salesForDate?.approvedBy
+ ? { kind: 'approved', by: salesForDate.approvedBy, at: salesForDate.approvedAt }
+ : isEditing && countedToday !== null
+ ? { kind: 'submitted', asked: !!salesForDate?.approvalRequested, needsApproval: salesForDate?.approvalStatus === 'pending' }
+ : editedNow
+ ? { kind: 'draft' }
+ : { kind: 'notStarted' };
+ const fixAndResubmit = () => {
+ paytmInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+ paytmInputRef.current?.focus();
+ };
+ const reasonOptions = (['missed_kot', 'wrong_change', 'tip', 'counting_mistake', 'other'] as const).map((key) => ({ value: key, label: t(`dc.reason.${key}` as I18nKey) }));
+ const prevCashNum = parseFloat(formData.previousCashInHand) || 0;
+ const topupNum = parseFloat(formData.usedOnlineMoney) || 0;
+ const cashNum = parseFloat(formData.cashAmount) || 0;
+ const formulaLines: FormulaLine[] = [
+ { label: t('dc.f.prev'), amount: prevCashNum, sign: '' as const },
+ { label: t('dc.f.topup'), amount: topupNum, sign: '+' as const },
+ { label: t('dc.f.collected'), amount: cashNum, sign: '+' as const },
+ ...(eventCashIn ? [{ label: t('dc.f.eventIn'), amount: eventCashIn, sign: '+' as const }] : []),
+ ...(eventCashOut ? [{ label: t('dc.f.eventOut'), amount: eventCashOut, sign: '−' as const }] : []),
+ { label: t('dc.f.spent'), amount: totalExpenses, sign: '−' as const },
+ ];
+ const pendingRequests = context.salesData.filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy);
+ const legacyPending = context.salesData.filter(s => s.approvalRequired && !s.approvedBy && !s.approvalRequested);
+ const opsPending = context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId);
+ const backToDayClose = (
+ <Button variant="ghost" size="sm" leadingIcon={<ArrowLeft />} onClick={() => setActiveTab('entry')} className="self-start">{t('dc.backToDayClose')}</Button>
  );
- })()}
- </div>
- )}
 
- <div className="flex items-center gap-1.5 mb-4 bg-white/70 p-1 rounded-full w-fit border border-orange-200/50">
- <button
- onClick={() => setActiveTab('entry')}
- className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'entry' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
- >
- Sales Entry
- </button>
- <button
- onClick={() => setActiveTab('payout')}
- className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'payout' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
- >
- Aggregator Payout
- </button>
- <button
- onClick={() => setActiveTab('loans')}
- className={`px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'loans' ? 'bg-orange-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}
- >
- Loans
- </button>
- </div>
-
- {activeTab === 'payout' && (
- <OnlineSalesTab
- context={context}
- selectedStoreId={effectiveStoreId}
- selectedDate={selectedDate}
- onDateChange={setSelectedDate}
- />
- )}
-
+ return (
+ <MoneyPage lang={lang}>
  {activeTab === 'entry' && (
  <>
- {/* Date Selector */}
- <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+ <DayBand value={selectedDate} onChange={setSelectedDate} />
 
- {/* Friday Weekly Reporting Reminder */}
+ <MoneyWaiting kinds={['sales']} date={selectedDate} />
+ <DayStatusBanner status={dayStatus} onFix={canEnter ? fixAndResubmit : undefined} readOnly={!canEnter} />
+
+ {/* Friday weekly cash count - the same day close records it, so it queues offline the same way. */}
  {isFriday && context.isManager && (
- <div className="mt-6 bg-gradient-to-br from-blue-50/80 to-blue-100/50 border border-blue-300/50 rounded-2xl p-6 shadow-sm">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-2 bg-blue-500/10 rounded-lg">
- <AlertTriangle className="w-5 h-5 text-blue-600" />
- </div>
- <h2 className="text-sm font-semibold text-gray-900">Weekly Cash Reporting - Friday</h2>
- </div>
- <p className="text-sm text-gray-700 mb-3">
- Today is Friday! Please report the actual cash left with you after entering today's sales data.
- </p>
- <div className="bg-blue-50/70 border border-blue-200/50 rounded-xl p-3 text-xs">
- <p className="text-gray-700">
- <strong>Important:</strong> If the cash discrepancy exceeds ₹500, cluster head approval will be required before saving.
- </p>
- </div>
- </div>
+ <Callout tone="info" title={t('dc.fridayTitle')}>{t('dc.fridayBody')}</Callout>
  )}
 
- {/* Pending Approvals for Cluster Head */}
- {isClusterHead && (
- <div className="mt-6 space-y-4">
- {/* Discrepancy Approval Requests */}
- {context.salesData.filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy).length > 0 && (
- <div className="bg-gradient-to-br from-orange-50/80 to-orange-100/50 border border-orange-300/50 rounded-2xl p-6 shadow-sm">
- <div className="flex items-center gap-2 mb-4">
- <div className="p-2 bg-orange-500/10 rounded-lg">
- <AlertTriangle className="w-5 h-5 text-orange-600" />
- </div>
- <h2 className="text-sm font-semibold text-gray-900">Discrepancy Approval Requests</h2>
- </div>
- 
- <div className="space-y-3">
- {context.salesData
- .filter(s => s.approvalRequested && !s.approvedBy && !s.rejectedBy)
- .map(sale => (
- <div key={sale.id} className="bg-white/80 rounded-xl p-4 border border-orange-300/50 shadow-sm">
- <div className="mb-3">
- <p className="text-sm font-semibold text-gray-900">
- {formatDateIST(sale.date)}
- </p>
- <p className="text-xs text-gray-600 mt-1">
- Expected Cash: ₹{((sale.actualCashInHand ?? 0) - sale.cashOffset).toFixed(2)}
- </p>
- <p className="text-xs text-gray-600">
- Actual Cash: ₹{sale.requestedCashInHand?.toFixed(2)}
- </p>
- <p className="text-xs font-semibold text-orange-600 mt-1">
- Discrepancy: ₹{((sale.requestedCashInHand || 0) - ((sale.actualCashInHand ?? 0) - sale.cashOffset)).toFixed(2)}
- </p>
- </div>
- <div className="flex gap-2">
- <button
- onClick={() => handleApproveDiscrepancy(sale.id)}
- className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-semibold transition-all text-sm shadow-sm"
- >
- ✓ Approve
- </button>
- <button
- onClick={() => handleRejectDiscrepancy(sale.id)}
- className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-semibold transition-all text-sm shadow-sm"
- >
- ✗ Reject
- </button>
+ {/* Cluster head: discrepancy approval requests (the owner normally reviews in SalesView). */}
+ {isClusterHead && pendingRequests.length > 0 && (
+ <ListGroup title={t('dc.approvalRequests')}>
+ {pendingRequests.map((sale) => {
+ const expected = (sale.actualCashInHand ?? 0) - sale.cashOffset;
+ const requested = sale.requestedCashInHand || 0;
+ return (
+ <div key={sale.id} className="flex flex-col">
+ <ListRow title={formatDateIST(sale.date)} subtitle={`Expected ${formatINR(expected)} · counted ${formatINR(requested)}`} trailing={<DiffChip diff={requested - expected} />} />
+ <div className="flex gap-2 px-4 pb-3">
+ <Button variant="danger-ghost" size="sm" onClick={() => handleRejectDiscrepancy(sale.id)}>Reject</Button>
+ <Button variant="secondary" size="sm" leadingIcon={<Check />} onClick={() => handleApproveDiscrepancy(sale.id)}>Approve</Button>
  </div>
  </div>
- ))}
- </div>
- </div>
+ );
+ })}
+ </ListGroup>
  )}
- 
- {/* Regular Pending Approvals (Legacy) */}
- {context.salesData.filter(s => s.approvalRequired && !s.approvedBy && !s.approvalRequested).length > 0 && (
- <div className="bg-[#FFF4E6] border-2 border-[#FFE4C4] rounded-xl p-6">
- <div className="flex items-center gap-2 mb-4">
- <AlertTriangle className="w-6 h-6 text-[#E8A87C]" />
- <h2 className="text-gray-900 font-bold">Pending Approvals</h2>
- </div>
- 
- <div className="space-y-3">
- {context.salesData
- .filter(s => s.approvalRequired && !s.approvedBy && !s.approvalRequested)
- .map(sale => (
- <div key={sale.id} className="bg-white rounded-lg p-4 flex items-center justify-between border border-yellow-300">
- <div>
- <p className="text-gray-900">
- {formatDateIST(sale.date)}
- </p>
- <p className="text-sm text-gray-600 mt-1">
- Cash Discrepancy: <span className={sale.cashOffset > 0 ? 'text-green-600' : 'text-red-600'}>
- {sale.cashOffset > 0 ? '+' : ''}₹{sale.cashOffset.toFixed(2)}
- </span>
- </p>
- <p className="text-xs text-gray-500">
- Expected: ₹{((sale.actualCashInHand ?? 0) - sale.cashOffset).toFixed(2)} |
- Actual: ₹{(sale.actualCashInHand ?? 0).toFixed(2)}
- </p>
- </div>
- {/* Only the operations manager and cluster head can approve (the server refuses anyone
- else); the store incharge just sees where it stands (owner, 27 Oct 2026). */}
- {canApproveSales ? (
- <button
- onClick={async () => {
+ {isClusterHead && legacyPending.length > 0 && (
+ <ListGroup title={t('dc.pendingApprovals')}>
+ {legacyPending.map((sale) => (
+ <ListRow
+ key={sale.id}
+ title={formatDateIST(sale.date)}
+ subtitle={`Expected ${formatINR((sale.actualCashInHand ?? 0) - sale.cashOffset)} · counted ${formatINR(sale.actualCashInHand ?? 0)}`}
+ trailing={canApproveSales ? (
+ <Button variant="secondary" size="sm" leadingIcon={<Check />} onClick={async () => {
  try {
  await context.approveSalesData(sale.id);
- alert('Approved successfully!');
+ toast.success('Approved');
  } catch (error) {
- alert('Failed to approve. Please try again.');
+ toast.error('Failed to approve. Please try again.');
  }
- }}
- className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
- >
- ✓ Approve
- </button>
- ) : (
- <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
- <Clock className="w-3.5 h-3.5" />
- Waiting for manager approval
- </span>
- )}
- </div>
+ }}>Approve</Button>
+ ) : <StatusChip status="approval.pending" />}
+ />
  ))}
- </div>
- </div>
- )}
- </div>
+ </ListGroup>
  )}
 
- {/* Approved Sales Message */}
- {salesForDate && salesForDate.approvedBy && (
- <div className="mt-6 bg-gradient-to-br from-green-50/80 to-green-100/50 border border-green-300/50 rounded-2xl p-5 shadow-sm">
- <div className="flex items-center gap-2 mb-2">
- <div className="p-2 bg-green-500/10 rounded-lg">
- <CheckCircle className="w-5 h-5 text-green-600" />
- </div>
- <h2 className="text-sm font-semibold text-gray-900">Sales Approved</h2>
- </div>
- <p className="text-sm text-gray-700">
- ✓ Your sales entry for {formatDateIST(salesForDate.date)} has been approved by {salesForDate.approvedBy}.
- </p>
- </div>
- )}
+ <Section
+ title={t('dc.posTitle')}
+ action={canEditSales ? (
+ <Button variant="secondary" size="sm" leadingIcon={<RefreshCw className={isSyncingPos ? 'animate-spin' : undefined} />} onClick={handleSyncPosNow} disabled={isSyncingPos || syncTooEarly}>
+ {isSyncingPos ? t('dc.syncing') : t('dc.syncNow')}
+ </Button>
+ ) : undefined}
+ >
+ {canEditSales && syncTooEarly && <p className="-mt-1 text-label text-text-3">{t('dc.syncOpensAt3')}</p>}
+ <FigureCard>
+ <FigureRow label={t('dc.posTotal')} caption={syncedLabel ? t('dc.syncedAt', { time: syncedLabel }) : t('dc.notSynced')} value={formatINR(offlineSalesTotal + onlineSalesTotal)} emphasis />
+ <FigureRow label={t('dc.counter')} caption={t('dc.counterSub')} value={formatINR(offlineSalesTotal)} />
+ <FigureRow label="Zomato" value={formatINR(onlineSalesEntryForDate?.zomatoSales || 0)} />
+ <FigureRow label="Swiggy" value={formatINR(onlineSalesEntryForDate?.swiggySales || 0)} />
+ </FigureCard>
+ </Section>
 
- {/* Single-column stack, matching SalesView.tsx's structure (the read-only view
- everyone else on this date sees) - previously a two-column layout with a "Summary
- Cards" column that re-displayed the same Expected Cash / Actual Cash / Paytm Balance
- figures shown in Cash Reconciliation and Paytm Reconciliation below in 5 separate
- cards (Total Sales, Payment Breakdown, Cash Status, Online Cash in Hand, Total Cash),
- plus a second repeat further down (Offline/Online Cash Status). Consolidated so the
- store incharge's editable screen doesn't just look inconsistent with everyone else's
- view of the same data, but actually has the same information architecture. */}
- <div className="space-y-4 mt-6">
- <div className="flex items-center gap-2 mb-2">
- <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-md shadow-green-500/20 flex-shrink-0">
- <DollarSign className="w-5 h-5 text-white" />
- </div>
- <h2 className="text-base font-bold text-gray-900 tracking-tight">Sales Entry</h2>
- </div>
-
- {/* Today's Sales - total up top with the Online/Offline split right beneath it,
- since both figures are read-only and need no action - just a glance. */}
- <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 shadow-sm">
- <p className="text-xs text-green-100 uppercase tracking-wide">Today's Sales</p>
- <p className="text-white text-2xl font-semibold mt-1">₹{(offlineSalesTotal + onlineSalesTotal).toFixed(2)}</p>
- <div className="grid grid-cols-2 gap-3 mt-3">
- <div className="bg-white/15 rounded-xl px-3 py-2">
- <p className="text-[11px] text-green-100 uppercase tracking-wide">Online</p>
- <p className="text-white text-sm font-semibold">₹{onlineSalesTotal.toFixed(2)}</p>
- </div>
- <div className="bg-white/15 rounded-xl px-3 py-2">
- <p className="text-[11px] text-green-100 uppercase tracking-wide">Offline</p>
- <p className="text-white text-sm font-semibold">₹{offlineSalesTotal.toFixed(2)}</p>
- </div>
- </div>
- <details className="mt-3">
- <summary className="text-xs text-green-100 cursor-pointer hover:underline">▸ View Zomato / Swiggy split</summary>
- <div className="mt-2 text-xs text-white/90 bg-white/10 rounded-lg p-2 space-y-1">
- <div className="flex justify-between"><span>Zomato</span><span>₹{(onlineSalesEntryForDate?.zomatoSales || 0).toFixed(2)}</span></div>
- <div className="flex justify-between"><span>Swiggy</span><span>₹{(onlineSalesEntryForDate?.swiggySales || 0).toFixed(2)}</span></div>
- </div>
- </details>
- </div>
-
- <form onSubmit={handleSubmit} className="space-y-4">
- {/* Cash Count - the one thing the store incharge actually has to type each day.
- Offline Sales stays visible here (read-only) since it's what Paytm+Cash is checked against. */}
- <div className="bg-gradient-to-br from-amber-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center justify-between mb-4">
- <div className="flex items-center gap-2">
- <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-md shadow-orange-500/20 flex-shrink-0">
- <CreditCard className="w-5 h-5 text-white" />
- </div>
- <h3 className="text-sm font-bold text-gray-900 tracking-tight">Cash Count</h3>
- </div>
- {(canEditSales || canReconcileCash) && (
- <VoiceButton onText={fillSalesFromVoice} busy={voiceBusy} label="বলুন" prompt="যেমন: আজকে ক্যাশ ৩৪০০, পেটিএম ৩৫০০, হাতে আছে ৩০০০" />
- )}
- {offlineSalesTotal > 0 && (
- paymentMismatch ? (
- <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-100/80 px-2.5 py-1 rounded-full">
- <AlertTriangle className="w-3 h-3" /> {offlinePaymentDiscrepancy > 0 ? 'short' : 'over'} ₹{Math.abs(offlinePaymentDiscrepancy).toFixed(2)}
- </span>
- ) : (
- <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100/80 px-2.5 py-1 rounded-full">
- <CheckCircle className="w-3 h-3" /> matched
- </span>
- )
+ <form id="day-close-form" onSubmit={handleSubmit} className="flex flex-col gap-6">
+ <Section
+ title={t('dc.countTitle')}
+ action={canEnter ? <VoiceButton onText={fillSalesFromVoice} busy={voiceBusy} label={t('voice.speak')} prompt="যেমন: আজকে ক্যাশ ৩৪০০, পেটিএম ৩৫০০, হাতে আছে ৩০০০" /> : undefined}
+ >
+ {voiceHeard && <p className="-mt-1 text-label text-text-2">{t('dc.heard', { text: voiceHeard })}</p>}
+ <div className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4">
+ {canEnter && <p className="text-body-sm text-text-2">{t('dc.countHint')}</p>}
+ <Field label={t('dc.paytmReceived')} required disabled={!canEditSales}>
+ <MoneyInput ref={paytmInputRef} value={formData.paytmAmount} onValueChange={(_, raw) => setFormData({ ...formData, paytmAmount: raw })} required disabled={!canEditSales} />
+ </Field>
+ <Field label={t('dc.cashCollected')} required disabled={!canEditSales}>
+ <MoneyInput value={formData.cashAmount} onValueChange={(_, raw) => setFormData({ ...formData, cashAmount: raw })} required disabled={!canEditSales} />
+ </Field>
+ <Field label={t('dc.cashInDrawer')} required disabled={!canReconcileCash} helper={!canReconcileCash ? t('dc.enteredByIncharge') : t('dc.drawerHelp')}>
+ <MoneyInput value={formData.actualCashInHand} onValueChange={(_, raw) => setFormData({ ...formData, actualCashInHand: raw })} required disabled={!canReconcileCash} />
+ </Field>
+ {/* Day 1 or the 1st of the month: the cash carried in, typed once. */}
+ {(isFirstDay || isFirstOfMonth) && (
+ <Field label={isFirstDay ? t('dc.openingDay1') : t('dc.openingMonth')} required disabled={!canEditSales} helper={isFirstDay ? t('dc.openingDay1Help') : t('dc.openingMonthHelp')}>
+ <MoneyInput value={formData.previousCashInHand} onValueChange={(_, raw) => setFormData({ ...formData, previousCashInHand: raw })} required disabled={!canEditSales} />
+ </Field>
  )}
  </div>
+ </Section>
 
- {/* Bengali+English instructions - what he actually needs to do here, in his own
- mixed language rather than English-only jargon. */}
- {voiceHeard && (
- <p className="text-[11px] text-violet-800 bg-violet-50 rounded-lg px-3 py-1.5 mb-2">Heard: {voiceHeard}</p>
- )}
- <p className="text-xs text-gray-700 bg-white/70 rounded-lg px-3 py-2 mb-3 leading-relaxed">
- 👉 দোকান বন্ধ করার আগে ক্যাশ বক্স আর Paytm-এ যা <b>সত্যিই</b> আছে, সেটা গুনে এখানে লিখুন — আন্দাজে না, একদম আসল সংখ্যা। এটা POS-এর sales-এর সাথে মিলিয়ে check হবে।
- </p>
-
- <div className="grid grid-cols-2 gap-3 mb-1">
- <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
- <label className="block text-xs font-medium text-gray-600 mb-2">Paytm (₹)</label>
- <input
- type="number"
- step="0.01"
- value={formData.paytmAmount}
- onChange={(e) => setFormData({ ...formData, paytmAmount: e.target.value })}
- className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
- required
- disabled={!canEditSales}
- placeholder="Enter Paytm amount"
- />
+ <Section title={t('dc.matchTitle')}>
+ <FigureCard>
+ <FigureRow label={t('dc.counterSales')} caption={t('dc.fromPos')} value={formatINR(offlineSalesTotal)} />
+ <FigureRow label={t('dc.youCounted')} caption={t('dc.paytmPlusCash')} value={formatINR((parseFloat(formData.paytmAmount) || 0) + (parseFloat(formData.cashAmount) || 0))} />
+ <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+ <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
+ <DiffChip diff={-offlinePaymentDiscrepancy} notCounted={offlineSalesTotal <= 0} />
  </div>
+ </FigureCard>
 
- <div className="bg-white/70 p-3 rounded-xl border border-orange-200/50">
- <label className="block text-xs font-medium text-gray-600 mb-2">Cash (₹)</label>
- <input
- type="number"
- step="0.01"
- value={formData.cashAmount}
- onChange={(e) => setFormData({ ...formData, cashAmount: e.target.value })}
- className="w-full px-2 py-1 border-0 bg-transparent text-base font-semibold focus:ring-0 focus:outline-none"
- required
- disabled={!canEditSales}
- placeholder="Enter cash amount"
- />
- </div>
- </div>
-
- <details className="mt-2">
- <summary className="text-xs text-orange-700 cursor-pointer hover:underline">▸ View offline sales total</summary>
- <div className="mt-2 bg-white/70 rounded-lg p-2.5 text-xs text-gray-600 flex justify-between">
- <span>Total Offline Sales (auto-synced from POS)</span>
- <span className="font-semibold text-gray-800">₹{offlineSalesTotal.toFixed(2)}</span>
- </div>
- </details>
-
- {/* Cash+Paytm doesn't match Net Offline Sales - this is real business money that went
- missing or came in extra (missed KOT, wrong change, a tip, a counting slip), not just
- a data-entry gap. Book it with a reason instead of letting it silently vanish into -
- or inflate - Sales; it rolls up separately as its own "Cash Over/Short" line. */}
+ {/* Cash + Paytm doesn't match the counter sales: real money that went missing or came in
+ extra - booked with a reason as its own Cash Over/Short line, never into Sales. */}
  {paymentMismatch && (
- <div className="mt-3 bg-red-50/80 border border-red-200 rounded-xl p-3">
- <p className="text-xs font-semibold text-red-800 mb-1 flex items-center gap-1">
- <AlertTriangle className="w-3.5 h-3.5" /> Why the {offlinePaymentDiscrepancy > 0 ? 'shortage' : 'excess'} of ₹{Math.abs(offlinePaymentDiscrepancy).toFixed(2)}?
+ <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-soft p-4">
+ <p className="text-body-sm font-semibold text-text">
+ {offlinePaymentDiscrepancy > 0 ? t('dc.whyShort', { amount: formatINR(Math.abs(offlinePaymentDiscrepancy)) }) : t('dc.whyExcess', { amount: formatINR(Math.abs(offlinePaymentDiscrepancy)) })}
  </p>
- <p className="text-[11px] text-red-700 mb-2 leading-relaxed">
- এই টাকাটা কোথায় গেল/এল বলুন — এটা Sales-এ যোগ হবে না, আলাদা "Cash Over/Short" হিসেবে রাখা হবে যাতে আমরা ট্র্যাক করতে পারি।
- </p>
- <div className="flex flex-wrap gap-1.5 mb-2">
- {([
- { key: 'missed_kot', label: 'Missed KOT' },
- { key: 'wrong_change', label: 'Wrong change' },
- { key: 'tip', label: 'Tip' },
- { key: 'counting_mistake', label: 'Counting mistake' },
- { key: 'other', label: 'Other' },
- ] as const).map((r) => (
- <button
- key={r.key}
- type="button"
- disabled={!canEditSales}
- onClick={() => setFormData({ ...formData, cashOverShortReason: r.key })}
- className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
- formData.cashOverShortReason === r.key
- ? 'bg-red-600 text-white'
- : 'bg-white text-red-700 border border-red-300 hover:bg-red-100'
- }`}
- >
- {r.label}
- </button>
- ))}
- </div>
- <textarea
- value={formData.cashOverShortNote}
- onChange={(e) => setFormData({ ...formData, cashOverShortNote: e.target.value })}
- disabled={!canEditSales}
- placeholder="Optional note - কী হয়েছিল একটু লিখুন (optional)"
- rows={2}
- className="w-full text-xs px-2.5 py-2 border border-red-200 rounded-lg bg-white/90 focus:outline-none focus:ring-1 focus:ring-red-400"
+ <p className="text-label text-text-2">{t('dc.overShortNote')}</p>
+ <ChoiceChips
+ aria-label={t('dc.reason')}
+ value={formData.cashOverShortReason || ('' as never)}
+ onValueChange={(v) => canEditSales && setFormData({ ...formData, cashOverShortReason: v })}
+ options={reasonOptions.map((o) => ({ ...o, disabled: !canEditSales }))}
  />
+ <Field label={t('dc.reasonNote')} optional disabled={!canEditSales}>
+ <Textarea value={formData.cashOverShortNote} onChange={(e) => setFormData({ ...formData, cashOverShortNote: e.target.value })} disabled={!canEditSales} rows={2} />
+ </Field>
  </div>
  )}
 
- {/* Cash reconciliation takes a while (physically counting a till) - save progress
- here so switching apps or tabs mid-count doesn't wipe it out. Doesn't submit the
- form, just protects what's typed so far until Update/Save Sales Data below. */}
- {canEditSales && (
- <button
- type="button"
- onClick={handleSaveDraft}
- className="mt-3 w-full px-3 py-2 bg-white/80 border border-orange-300 text-orange-700 rounded-xl text-xs font-semibold hover:bg-white transition-colors flex items-center justify-center gap-1.5"
- >
- 💾 Save Progress
- </button>
- )}
- </div>
-
- {/* Cash Reconciliation Section - shown right after Payment Mode Distribution */}
- <div className="bg-gradient-to-br from-teal-50/80 to-teal-100/50 rounded-2xl p-5 border border-teal-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center justify-between mb-4">
- <div className="flex items-center gap-2">
- <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-md shadow-teal-500/20 flex-shrink-0">
- <Wallet className="w-5 h-5 text-white" />
- </div>
- <h3 className="text-sm font-bold text-gray-900 tracking-tight">Cash Reconciliation</h3>
- </div>
- <div className="flex items-center gap-2 flex-wrap justify-end">
- {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && (
- <span className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ${cashDiscrepancy > 0 ? 'text-green-700 bg-green-100/80' : 'text-red-700 bg-red-100/80'}`}>
- <AlertTriangle className="w-3 h-3" /> {cashDiscrepancy > 0 ? 'excess' : 'short'} ₹{Math.abs(cashDiscrepancy).toFixed(2)}
+ <FigureCard>
+ <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+ <span className="flex min-w-0 flex-1 flex-col">
+ <span className="text-body-md font-medium text-text">{t('dc.expectedDrawer')}</span>
+ <Button variant="link" size="sm" className="self-start text-label" onClick={() => setFormulaOpen(true)}>{t('dc.howWorkedOut')}</Button>
  </span>
- )}
+ <span className="num text-body-md font-semibold text-text">{formatINR(expectedCashInHand)}</span>
  </div>
+ <FigureRow label={t('dc.inDrawer')} caption={t('dc.youCounted')} value={formData.actualCashInHand ? formatINR(parseFloat(formData.actualCashInHand) || 0) : '–'} />
+ <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+ <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
+ <DiffChip diff={cashDiscrepancy} notCounted={!(parseFloat(formData.actualCashInHand) > 0)} />
  </div>
- 
- <div className="space-y-4">
- <div>
- <label className="block text-xs font-medium text-gray-500 mb-2">Expected Cash</label>
- <div className="bg-white/70 rounded-xl p-4 border border-teal-200/50">
- <p className="text-4xl font-bold text-gray-900">₹{expectedCashInHand.toFixed(2)}</p>
- <p className="text-xs text-gray-600 mt-2">
- Previous day's cash ₹{(parseFloat(formData.previousCashInHand) || 0).toFixed(2)} + cash top-up ₹{(parseFloat(formData.usedOnlineMoney) || 0).toFixed(2)} + today's cash collection ₹{(parseFloat(formData.cashAmount) || 0).toFixed(2)} − expenses ₹{totalExpenses.toFixed(2)} = expected ₹{expectedCashInHand.toFixed(2)}
- </p>
- <details className="mt-2">
- <summary className="text-xs text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
- ▸ View expense breakdown (store vs production house)
- </summary>
- <div className="mt-2 text-xs bg-white rounded border border-teal-200 overflow-hidden">
- <div className="grid grid-cols-3 gap-2 px-2.5 py-1.5 bg-teal-50 text-teal-700 font-semibold">
- <span>Category</span>
- <span className="text-right">Store</span>
- <span className="text-right">Prod. House</span>
- </div>
- {expenseBreakdownByEntity.rows.map((row) => (
- <div key={row.label} className="grid grid-cols-3 gap-2 px-2.5 py-1.5 text-gray-700 border-t border-teal-100">
- <span>{row.label}</span>
- <span className="text-right tabular-nums">₹{row.store.toFixed(2)}</span>
- <span className="text-right tabular-nums">₹{row.production.toFixed(2)}</span>
- </div>
- ))}
- <div className="grid grid-cols-3 gap-2 px-2.5 py-1.5 font-semibold text-teal-800 border-t border-teal-200 bg-teal-50/60">
- <span>Total</span>
- <span className="text-right tabular-nums">₹{expenseBreakdownByEntity.storeTotal.toFixed(2)}</span>
- <span className="text-right tabular-nums">₹{expenseBreakdownByEntity.productionTotal.toFixed(2)}</span>
- </div>
- </div>
- </details>
- </div>
- </div>
-
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">
- Actual Cash in Hand (₹) <span className="text-red-500">*</span>
- {!canReconcileCash && <span className="text-gray-400 font-normal"> - entered by store incharge</span>}
- </label>
- <input
- type="number"
- step="0.01"
- value={formData.actualCashInHand}
- onChange={(e) => setFormData({ ...formData, actualCashInHand: e.target.value })}
- className="w-full px-4 py-3 border border-teal-300 rounded-xl bg-white/70 text-lg font-semibold focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all"
- required
- disabled={!canReconcileCash}
- placeholder="Count and enter actual physical cash"
- />
- <p className="text-xs text-gray-500 mt-1">Count and enter actual physical cash</p>
- <p className="text-xs text-gray-700 bg-white/70 rounded-lg px-3 py-2 mt-2 leading-relaxed">
- 👉 উপরে "Expected Cash"-এ যা দেখাচ্ছে, সেটার সাথে হাতে থাকা cash মিলিয়ে দেখুন। মিললেও, না মিললেও — যা <b>সত্যিই</b> হাতে আছে (physically count করে) সেই সংখ্যাটাই এখানে লিখুন, বেশি হোক বা কম।
- </p>
- </div>
-
- {/* Cash discrepancy note - the pill up top already flags it; this just adds the
- one detail that matters (whether approval will be required). */}
+ </FigureCard>
  {cashDiscrepancy !== 0 && parseFloat(formData.actualCashInHand) > 0 && Math.abs(cashDiscrepancy) > 200 && (
- <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
- ⚠️ High discrepancy - you can save, but cluster head approval will be required.
- </p>
- )}
- </div>
- </div>
-
- {/* Payment-mismatch and high-discrepancy warnings live as inline pills on the
- Cash Count / Cash Reconciliation / Paytm Reconciliation cards above, plus a confirm
- prompt on submit for anything that needs approval - no need to repeat them here.
- Placed right after Actual Cash in Hand / Paytm Reconciliation since that's the last
- manual entry in the normal flow - everything below (opening balance on day 1/month
- 1, read-only status summaries) either doesn't apply most days or needs no action. */}
- {(canEditSales || canReconcileCash) && (
- <div className="space-y-3">
- {pendingDayClose && <WaitingToSend kinds={['sales']} date={selectedDate} />}
- <button
- type="submit"
- disabled={isSubmitting}
- className="w-full px-6 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
- >
- {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
- {isSubmitting ? 'Saving...' : isEditing ? 'Update Sales Data' : 'Save Sales Data'}
- </button>
-
- {/* Request Approval Button - Only show when editing with high discrepancy */}
- {isEditing && editingId && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
- <button
- type="button"
- onClick={handleRequestApproval}
- className="w-full px-6 py-3.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-semibold text-sm"
- >
- <AlertTriangle className="w-5 h-5" />
- Request Approval from Cluster Head
- </button>
+ <Callout tone="warning" title={t('dc.needsApproval')} />
  )}
 
- {/* Show if approval is pending */}
- {isEditing && salesForDate?.approvalRequested && !salesForDate?.approvedBy && !salesForDate?.rejectedBy && (
- <div className="w-full px-6 py-3 bg-orange-100/80 border border-orange-300/50 text-orange-800 rounded-xl text-center text-sm font-medium shadow-sm">
- ⏳ Approval request sent - Waiting for cluster head response
- </div>
+ {/* Ask for approval once a big difference is saved (until someone approves or it's asked). */}
+ {canEnter && isEditing && editingId && (needsApproval || needsPaytmApproval || posTotalMismatch) && !salesForDate?.approvedBy && !salesForDate?.approvalRequested && (
+ <Button variant="secondary" leadingIcon={<AlertTriangle />} onClick={handleRequestApproval} className="self-start">{t('dc.askApproval')}</Button>
  )}
- </div>
- )}
+ </Section>
 
- {/* Paytm balance - auto-tracked, no action needed from the store incharge. Kept
-     small and below the save button on purpose: it is informational, not something
-     they count or reconcile. "Breakdown" opens the full day's math. */}
- <div className="mt-4 flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
- <div className="flex items-center gap-2.5 min-w-0">
- <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500 flex-shrink-0">
- <Smartphone className="w-4 h-4" />
+ {/* Paytm moves only through logged top-ups and payouts, so nobody counts it. */}
+ <Section title={t('dc.paytmTitle')}>
+ <FigureCard>
+ <div className="flex min-h-15 items-center gap-3 px-4 py-2.5">
+ <IconWell icon={Smartphone} />
+ <span className="flex min-w-0 flex-1 flex-col">
+ <span className="text-body-md font-medium text-text">{t('dc.paytmBalance')}</span>
+ <span className="text-label text-text-3">{t('dc.autoTracked')}</span>
+ </span>
+ <span className="num text-body-md font-semibold text-text">{formatINR(calculatePaytmBalance)}</span>
  </div>
- <div className="min-w-0">
- <p className="text-xs font-semibold text-gray-700">Paytm balance <span className="font-normal text-gray-400">&middot; auto-tracked</span></p>
- <p className="text-[11px] text-gray-400 truncate">Moves only through logged top-ups &amp; payouts &mdash; no count needed</p>
+ <div className="px-2 py-1">
+ <Button variant="ghost" size="sm" onClick={() => setShowPaytmBreakdown(true)}>{t('dc.breakdown')}</Button>
  </div>
- </div>
- <div className="flex items-center gap-2 flex-shrink-0">
- <span className="text-base font-bold text-gray-900 tabular-nums">&#8377;{calculatePaytmBalance.toFixed(2)}</span>
- <button
- type="button"
- onClick={() => setShowPaytmBreakdown(true)}
- className="text-[11px] font-semibold text-orange-600 hover:text-orange-700 hover:underline whitespace-nowrap"
- >
- Breakdown
- </button>
- </div>
- </div>
-
+ </FigureCard>
  <PaytmLedger input={{
  salesData: context.salesData,
  overheads: context.overheads,
@@ -1725,195 +1396,86 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  onlineCashRecalibrations: context.onlineCashRecalibrations || [],
  effectiveStoreId: effectiveStoreId ?? null,
  }} />
-
-
- {/* Previous Cash Balance - Only show on day 1 or 1st of month */}
- {(isFirstDay || isFirstOfMonth) && (
- <div className="bg-gradient-to-br from-amber-50/80 to-amber-100/50 rounded-2xl p-5 border border-amber-200/50 shadow-sm hover:shadow-md transition-all">
- <div className="flex items-center gap-2 mb-4">
- <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-md shadow-amber-500/20 flex-shrink-0">
- <Wallet className="w-5 h-5 text-white" />
- </div>
- <h3 className="text-sm font-bold text-gray-900 tracking-tight">{isFirstDay ? 'Opening Cash Balance (Day 1)' : 'Cash Left from Previous Month'}</h3>
- </div>
- <div>
- <label className="block text-xs font-medium text-gray-600 mb-2">Cash Left (₹)</label>
- <input
- type="number"
- step="0.01"
- value={formData.previousCashInHand}
- onChange={(e) => setFormData({ ...formData, previousCashInHand: e.target.value })}
- className="w-full px-4 py-3 border border-amber-200 bg-white/70 rounded-xl text-lg font-semibold focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
- disabled={!canEditSales}
- required
- />
- <p className="text-xs text-gray-500 mt-2">
- {isFirstDay 
- ? 'Enter starting cash for the first day' 
- : 'Enter cash left from previous month (after deducting all expenses and salaries)'}
- </p>
- </div>
- </div>
- )}
-
- {/* Approval status display */}
- {isEditing && salesForDate && (
- <div className="bg-white border border-gray-300 rounded-lg p-4">
- <div className="space-y-3">
- {(needsApproval || needsPaytmApproval) && salesForDate.approvalRequested && !salesForDate.approvedBy && (
- <div className="bg-yellow-50 border-2 border-yellow-300 text-yellow-800 px-4 py-3 rounded-lg">
- <p className="font-semibold">⏳ Pending Approval</p>
- <p className="mt-1">This entry is waiting for cluster head approval due to high {needsApproval && needsPaytmApproval ? 'cash and Paytm discrepancy' : needsApproval ? 'cash discrepancy' : 'Paytm discrepancy'}.</p>
- </div>
- )}
- 
- {salesForDate.approvedBy && (
- <div className="bg-green-50 border-2 border-green-300 text-green-700 px-4 py-3 rounded-lg">
- <p className="font-semibold">✅ Approved</p>
- <p className="mt-1">Approved by: {salesForDate.approvedBy}</p>
- {salesForDate.approvedAt && (
- <p className="text-sm">Date: {new Date(salesForDate.approvedAt).toLocaleString()}</p>
- )}
- </div>
- )}
- 
- {salesForDate.rejectedBy && (
- <div className="bg-red-50 border-2 border-red-300 text-red-700 px-4 py-3 rounded-lg">
- <div>
- <p className="font-semibold">❌ Rejected</p>
- <p className="mt-1">Rejected by: {salesForDate.rejectedBy}</p>
- {salesForDate.rejectedAt && (
- <p className="text-sm">Date: {new Date(salesForDate.rejectedAt).toLocaleString()}</p>
- )}
- {salesForDate.rejectionReason && (
- <p className="mt-1 italic">Reason: {salesForDate.rejectionReason}</p>
- )}
- <p className="mt-1 font-medium">You must pay the discrepancy from your pocket.</p>
- </div>
- </div>
- )}
- </div>
- </div>
- )}
-
- {/* Save/Update button moved up to right after Cash Reconciliation + Paytm
- Reconciliation, since everything below that point is read-only summary/status -
- no reason to make someone scroll past it to find the button that finishes the form. */}
+ </Section>
  </form>
- </div>
 
- {/* Cash Top-up Request - store incharge can ask the cluster head for more physical
- cash when the offline till is running low. Shown before Loan Management per request. */}
- <div className="mt-6">
- <div className="bg-white rounded-2xl border border-gray-100 p-5">
- <div className="flex items-center justify-between gap-3 mb-5">
- <div className="flex items-center gap-3 min-w-0">
- <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 flex-shrink-0">
- <IndianRupee className="w-4 h-4" />
- </div>
- <div className="min-w-0">
- <h2 className="text-sm font-semibold text-gray-900">Cash top-up</h2>
- <p className="text-xs text-gray-500">Ask the cluster head for more physical cash</p>
- </div>
- </div>
- <button
- onClick={() => {
- setTopupDate(selectedDate);
- setShowTopupModal(true);
- }}
- className="flex-shrink-0 px-3.5 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
+ {/* Cash top-up: ask the cluster head for more physical cash when the till runs low. */}
+ <ListGroup
+ title={t('topup.title')}
+ action={<Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={() => { setTopupDate(selectedDate); setShowTopupModal(true); }}>{t('topup.request')}</Button>}
+ empty={<p className="px-4 py-4 text-body-sm text-text-2">{t('topup.none')}</p>}
+ footer={t('topup.sub')}
  >
- <PlusCircle className="w-3.5 h-3.5" />
- Request Top-up
- </button>
+ {myPendingTopups.map((r) => <TopupRow key={r.id} request={r} />)}
+ </ListGroup>
+ <CashTopupHistory requests={topupRequests} />
+
+ {/* Payouts and loans: their own tabs where the shell has them, otherwise one tap from here. */}
+ {(!showPayoutsTab || !showLoansTab) && (
+ <ListGroup overline={t('dc.more')}>
+ {!showPayoutsTab && <ListRow icon={FileSpreadsheet} title={t('dc.payouts')} subtitle={t('dc.payoutsSub')} onClick={() => setActiveTab('payout')} />}
+ {!showLoansTab && <ListRow icon={HandCoins} title={t('dc.loans')} subtitle={t('dc.loansSub')} onClick={() => setActiveTab('loans')} />}
+ </ListGroup>
+ )}
+
+ {/* Operations manager: sales waiting for approval. */}
+ {isOperationsManager && (
+ <ListGroup title="Sales waiting for approval" empty={<EmptyState compact icon={CheckCircle} title={t('empty.allCaughtUp')} />}>
+ {opsPending.map((sale) => (
+ <div key={sale.id} className="flex flex-col">
+ <ListRow
+ title={formatDateIST(sale.date)}
+ subtitle={`By ${sale.createdBy} · sales ${formatINR(sale.offlineSales + sale.onlineSales)} · ${countedCashInHand(sale) !== null ? `cash ${formatINR(sale.actualCashInHand ?? 0)}` : 'not counted yet'}`}
+ />
+ <div className="flex gap-2 px-4 pb-3">
+ <Button variant="danger-ghost" size="sm" onClick={async () => {
+ try {
+ await (context as any).rejectSalesData(sale.id);
+ toast.success('Sales rejected');
+ } catch (error) {
+ toast.error('Failed to reject sales');
+ }
+ }}>Reject</Button>
+ <Button variant="secondary" size="sm" leadingIcon={<Check />} onClick={async () => {
+ try {
+ await context.approveSalesData(sale.id);
+ toast.success('Sales approved');
+ } catch (error) {
+ toast.error('Failed to approve sales');
+ }
+ }}>Approve</Button>
  </div>
- {myPendingTopups.length === 0 ? (
- <p className="text-sm text-gray-500">No pending top-up requests.</p>
- ) : (
- <div className="space-y-2">
- {myPendingTopups.map((r) => (
- <div key={r.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center justify-between">
- <div>
- <div className="flex items-center gap-2">
- <p className="text-sm text-gray-900">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
-   <span className="text-[10px] font-mono text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
- </div>
- <p className="text-xs text-gray-500">{TOPUP_REASON_LABELS[r.reason]}</p>
- <p className="text-xs text-gray-400 mt-0.5">Requested {formatDateTimeIST(r.requestDate, false)}</p>
- </div>
- <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">
- <Clock className="w-3.5 h-3.5" /> Pending
- </span>
  </div>
  ))}
- </div>
+ </ListGroup>
  )}
 
- {/* Global top-up ledger - every requester sees the full history across all
- stores/production house, same as what a cluster head sees, not just their own. */}
- <CashTopupHistory requests={topupRequests} />
- </div>
- </div>
-
- {/* Cash Top-up Request Modal */}
- {showTopupModal && (
- <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
- <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-gray-200">
- <h3 className="text-gray-900 mb-4 font-semibold">Request Cash Top-up</h3>
- <label className="block text-xs font-medium text-gray-600 mb-1">Date this top-up is for</label>
- <DatePicker
- value={topupDate}
- onChange={setTopupDate}
- max={getTodayIST()}
- className="w-full mb-3"
- />
- <p className="text-xs text-gray-500 mb-3">
- Defaults to the date you're viewing - change this if the top-up is for an earlier day (e.g. a late vendor settlement).
- </p>
- <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹)</label>
- <input
- type="number"
- step="0.01"
- value={topupAmount}
- onChange={(e) => setTopupAmount(e.target.value)}
- className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3"
- placeholder="Enter amount needed"
- autoFocus
- />
- <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
- <select
- value={topupReason}
- onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
- className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4"
- >
- <option value="store_inventory">Store Inventory</option>
- <option value="production_inventory">Production House Inventory</option>
- <option value="other">Other</option>
- </select>
- <div className="flex gap-2">
- <button
- onClick={() => setShowTopupModal(false)}
- className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
- >
- Cancel
- </button>
- <button
- onClick={handleRequestTopup}
- disabled={isSubmittingTopup}
- className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition-colors disabled:opacity-50"
- >
- {isSubmittingTopup ? 'Sending...' : 'Send Request'}
- </button>
- </div>
- </div>
- </div>
+ {canEnter && (
+ <StickyFooter>
+ <Button variant="secondary" size="lg" onClick={handleSaveDraft}>{t('dayClose.saveDraft')}</Button>
+ <Button type="submit" form="day-close-form" size="lg" className="flex-1" loading={isSubmitting}>
+ {isEditing ? t('dc.sendAgain') : t('dayClose.send')}
+ </Button>
+ </StickyFooter>
  )}
  </>
  )}
 
- {/* Loan Management Section */}
+ {activeTab === 'payout' && (
+ <>
+ {!showPayoutsTab && backToDayClose}
+ <OnlineSalesTab
+ context={context}
+ selectedStoreId={effectiveStoreId}
+ selectedDate={selectedDate}
+ onDateChange={setSelectedDate}
+ />
+ </>
+ )}
+
  {activeTab === 'loans' && (
- <div>
+ <>
+ {!showLoansTab && backToDayClose}
  <LoanManagementSection
  context={context}
  effectiveStoreId={effectiveStoreId}
@@ -1924,339 +1486,75 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  canApply={isOperationsManager || isClusterHead}
  canApprove={isClusterHead}
  />
- </div>
+ </>
  )}
 
- {/* Paytm Daily Breakdown Modal */}
- {showPaytmBreakdown && (
- <div 
- className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
- onClick={() => setShowPaytmBreakdown(false)}
- >
- <div 
- className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-2xl"
- onClick={(e) => e.stopPropagation()}
- >
- <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
- <div className="flex items-center justify-between">
- <div>
- <h2 className="text-2xl font-bold">Paytm Daily Breakdown</h2>
- <p className="text-orange-100 mt-1">Complete transaction history</p>
- </div>
- <button
- onClick={() => setShowPaytmBreakdown(false)}
- className="p-2 hover:bg-white/20 rounded-lg transition-colors"
- >
- <X className="w-6 h-6" />
- </button>
- </div>
- </div>
- 
- <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-120px)]">
- {/* Summary Cards at top */}
- <div className="grid grid-cols-3 gap-4 mb-6">
- <div className="bg-green-50 border border-green-200 rounded-lg p-4">
- <p className="text-sm text-green-600 font-medium">Total Received</p>
- <p className="text-2xl font-bold text-green-700">
- ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.paytmReceived + day.onlinePayouts + (day.loansTaken || 0), 0)).toLocaleString()}
- </p>
- </div>
- <div className="bg-red-50 border border-red-200 rounded-lg p-4">
- <p className="text-sm text-red-600 font-medium">Total Used</p>
- <p className="text-2xl font-bold text-red-700">
- ₹{(paytmDailyBreakdown.reduce((sum, day) => sum + day.usedOnlineMoney + day.commission + (day.employeePayouts || 0) + (day.loanRepayments || 0), 0)).toLocaleString()}
- </p>
- </div>
- <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
- <p className="text-sm text-orange-600 font-medium">Current Balance</p>
- <p className="text-2xl font-bold text-orange-700">
- ₹{calculatePaytmBalance.toLocaleString()}
- </p>
- </div>
- </div>
-
- {/* Daily breakdown table */}
- <div className="space-y-2">
- {paytmDailyBreakdown.map((day, index) => {
- const dayBalance = day.runningBalance;
- const isToday = day.date === selectedDate;
- 
- return (
- <div 
- key={day.date} 
- className={`border rounded-lg p-4 ${
- isToday ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-white'
- }`}
- >
- <div className="flex items-center justify-between mb-3">
- <div>
- <p className="font-semibold text-gray-900">
- {formatDateIST(day.date)}
- {isToday && <span className="ml-2 text-xs bg-orange-500 text-white px-2 py-1 rounded-full">Today</span>}
- </p>
- </div>
- <div className="text-right">
- <p className="text-xs text-gray-500">Running Balance</p>
- <p className="text-lg font-bold text-orange-600">₹{dayBalance.toLocaleString()}</p>
- </div>
- </div>
- 
- <div className="grid grid-cols-2 gap-3 text-sm">
- {day.paytmReceived > 0 && (
- <div className="flex justify-between items-center bg-green-50 px-3 py-2 rounded">
- <span className="text-green-700">+ Paytm In:</span>
- <span className="font-semibold text-green-800">₹{day.paytmReceived.toLocaleString()}</span>
- </div>
- )}
- {day.onlinePayouts > 0 && (
- <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded">
- <span className="text-emerald-700">+ Online Payouts:</span>
- <span className="font-semibold text-emerald-800">₹{day.onlinePayouts.toLocaleString()}</span>
- </div>
- )}
- {day.usedOnlineMoney > 0 && (
- <div className="flex justify-between items-center bg-red-50 px-3 py-2 rounded">
- <span className="text-red-700">- Used for Expenses:</span>
- <span className="font-semibold text-red-800">₹{day.usedOnlineMoney.toLocaleString()}</span>
- </div>
- )}
- {day.commission > 0 && (
- <div className="flex justify-between items-center bg-rose-50 px-3 py-2 rounded">
- <span className="text-rose-700">- Commission:</span>
- <span className="font-semibold text-rose-800">₹{day.commission.toLocaleString()}</span>
- </div>
- )}
- {day.employeePayouts > 0 && (
- <div className="flex justify-between items-center bg-orange-50 px-3 py-2 rounded">
- <span className="text-orange-700">- Employee Payouts:</span>
- <span className="font-semibold text-orange-800">₹{day.employeePayouts.toLocaleString()}</span>
- </div>
- )}
- {day.loansTaken > 0 && (
- <div className="flex justify-between items-center bg-blue-50 px-3 py-2 rounded">
- <span className="text-blue-700">+ Loan Received:</span>
- <span className="font-semibold text-blue-800">₹{day.loansTaken.toLocaleString()}</span>
- </div>
- )}
- {day.loanRepayments > 0 && (
- <div className="flex justify-between items-center bg-amber-50 px-3 py-2 rounded">
- <span className="text-amber-700">- Loan Repayment:</span>
- <span className="font-semibold text-amber-800">₹{day.loanRepayments.toLocaleString()}</span>
- </div>
- )}
- </div>
- </div>
- );
- })}
- </div>
- </div>
- </div>
- </div>
- )}
-
- {/* Pending Approvals for Operations Manager */}
- {isOperationsManager && (
- <div className="mt-6 space-y-4">
- {/* Sales Pending Approval */}
- {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length > 0 && (
- <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
- <div className="flex items-center gap-2 mb-4">
- <CheckSquare className="w-6 h-6 text-green-600" />
- <h2 className="text-gray-900 font-bold">Sales Pending Approval</h2>
- </div>
- 
- <div className="space-y-3">
- {context.salesData
- .filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId)
- .map(sale => (
- <div key={sale.id} className="bg-white rounded-lg p-4 border border-green-300">
- <div className="mb-3">
- <p className="text-gray-900 font-medium">
- {formatDateIST(sale.date)}
- </p>
- <p className="text-sm text-gray-600 mt-1">
- Submitted by: {sale.createdBy}
- </p>
- <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
- <div>
- <span className="text-gray-600">Total Sales:</span>
- <span className="ml-1 font-medium">₹{(sale.offlineSales + sale.onlineSales).toFixed(2)}</span>
- </div>
- <div>
- <span className="text-gray-600">Cash in Hand:</span>
- {/* POS-sync placeholders sit in this list too, and their count is blank until someone counts. */}
- <span className="ml-1 font-medium">{countedCashInHand(sale) !== null ? `₹${(sale.actualCashInHand ?? 0).toFixed(2)}` : 'Not counted yet'}</span>
- </div>
- </div>
- </div>
- <div className="flex gap-2">
- <button
- onClick={async () => {
- try {
- await context.approveSalesData(sale.id);
- alert('Sales approved successfully!');
- } catch (error) {
- alert('Failed to approve sales');
- }
- }}
- className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
- >
- ✓ Approve
- </button>
- <button
- onClick={async () => {
- try {
- await (context as any).rejectSalesData(sale.id);
- alert('Sales rejected successfully!');
- } catch (error) {
- alert('Failed to reject sales');
- }
- }}
- className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold transition-all"
- >
- ✗ Reject
- </button>
- </div>
- </div>
- ))}
- </div>
- </div>
- )}
- 
- {/* No Pending Sales Message */}
- {context.salesData.filter(s => s.approvalStatus === 'pending' && s.createdBy !== context.user?.employeeId).length === 0 && (
- <div className="bg-[#E8F5E9] border-2 border-[#A5D6A7] rounded-xl p-6">
- <div className="flex items-center gap-2 mb-4">
- <CheckSquare className="w-6 h-6 text-green-600" />
- <h2 className="text-gray-900 font-bold">Sales Pending Approval</h2>
- </div>
- <p className="text-gray-600">No pending sales at the moment.</p>
- </div>
- )}
- </div>
- )}
-
- {/* Confirmation Dialog */}
- {showConfirmDialog && (
- <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
- <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
- <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 rounded-t-2xl">
- <div className="flex items-center justify-between text-white">
- <div className="flex items-center gap-3">
- <AlertTriangle className="w-6 h-6" />
- <h2 className="text-xl font-bold">Confirm Sales Data</h2>
- </div>
- <button
- onClick={handleCancelDialog}
- className="p-1 hover:bg-white/20 rounded-lg transition-colors"
- >
- <X className="w-5 h-5" />
- </button>
- </div>
- </div>
- 
- <div className="p-6 space-y-6">
- <div className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg p-4 border border-yellow-200">
- <p className="text-sm text-gray-700 mb-3 font-semibold">
- You are about to save sales data with the following values:
- </p>
- <div className="space-y-2 text-sm">
- <div className="flex justify-between">
- <span className="text-gray-600">Offline Sales:</span>
- <span className="font-semibold">₹{parseFloat(formData.offlineSales) || 0}</span>
- </div>
- <div className="flex justify-between">
- <span className="text-gray-600">Expected Cash:</span>
- <span className="font-semibold">₹{expectedCashInHand.toFixed(2)}</span>
- </div>
- <div className="flex justify-between">
- <span className="text-gray-600">Actual Cash:</span>
- <span className="font-semibold">₹{parseFloat(formData.actualCashInHand) || 0}</span>
- </div>
- </div>
- </div>
-
- {/* Cash Discrepancy - the one number the store incharge actually needs to act on,
- so it gets its own large, unmissable card instead of sitting as just another row
- in the list above. Paytm is deliberately not shown here at all (see the removed
- Expected/Actual Paytm rows above) - Paytm is auto-tracked and not something he
- counts or is responsible for; showing it here only invited confusion about which
- number he's actually confirming. */}
- <div className={`rounded-2xl p-5 border-2 text-center ${
- cashDiscrepancy === 0
- ? 'bg-green-50 border-green-400'
- : Math.abs(cashDiscrepancy) > 200
- ? 'bg-red-50 border-red-500 animate-pulse'
- : 'bg-amber-50 border-amber-400'
- }`}>
- <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${
- cashDiscrepancy === 0 ? 'text-green-700' : Math.abs(cashDiscrepancy) > 200 ? 'text-red-700' : 'text-amber-700'
- }`}>
- {cashDiscrepancy === 0 ? '✅ Cash Matched' : cashDiscrepancy > 0 ? '⚠️ Cash Discrepancy — Excess' : '⚠️ Cash Discrepancy — Short'}
- </p>
- <p className={`text-4xl font-extrabold tabular-nums ${
- cashDiscrepancy === 0 ? 'text-green-600' : cashDiscrepancy > 0 ? 'text-blue-600' : 'text-red-600'
- }`}>
- {cashDiscrepancy === 0 ? '₹0' : `${cashDiscrepancy > 0 ? '+' : '−'}₹${Math.abs(cashDiscrepancy).toFixed(2)}`}
- </p>
- </div>
-
- {(calculatePaytmBalance < 0 || (expectedCashInHand + calculatePaytmBalance) < 0) && (
- <div className="bg-red-50 border border-red-200 rounded-lg p-4">
- <div className="flex items-start gap-2">
- <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
- <div className="text-sm text-red-800">
- <p className="font-semibold mb-1">⚠️ Warning: Negative Balance Detected</p>
- {calculatePaytmBalance < 0 && (
- <p className="mb-1">• Online Cash (Paytm) is negative: ₹{calculatePaytmBalance.toFixed(2)}</p>
- )}
- {(expectedCashInHand + calculatePaytmBalance) < 0 && (
- <p>• Total Combined Cash is negative: ₹{(expectedCashInHand + calculatePaytmBalance).toFixed(2)}</p>
- )}
- </div>
- </div>
- </div>
- )}
-
- <div className="flex items-start gap-3 bg-gray-50 rounded-lg p-4">
- <input
- type="checkbox"
- id="confirm-responsibility"
- checked={confirmationChecked}
- onChange={(e) => setConfirmationChecked(e.target.checked)}
- className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+ <FormulaSheet
+ open={formulaOpen}
+ onOpenChange={setFormulaOpen}
+ title={t('dc.formulaTitle')}
+ lines={formulaLines}
+ totalLabel={t('dc.expectedDrawer')}
+ total={expectedCashInHand}
+ note={t('dc.formulaNote')}
+ breakdown={expenseBreakdownByEntity}
  />
- <label htmlFor="confirm-responsibility" className="text-sm text-gray-700 cursor-pointer">
- I confirm that I have verified this sales data and take responsibility for its accuracy. I understand that this data will be used for financial reporting and analysis.
+
+ <PaytmBreakdownSheet
+ open={showPaytmBreakdown}
+ onOpenChange={setShowPaytmBreakdown}
+ rows={paytmDailyBreakdown}
+ balance={calculatePaytmBalance}
+ selectedDate={selectedDate}
+ />
+
+ <TopupSheet
+ open={showTopupModal}
+ onOpenChange={setShowTopupModal}
+ mode="request"
+ value={{ date: topupDate, amount: topupAmount, reason: topupReason, destination: '', storeId: '' }}
+ onChange={(v) => { setTopupDate(v.date); setTopupAmount(v.amount); setTopupReason(v.reason); }}
+ onSubmit={handleRequestTopup}
+ submitting={isSubmittingTopup}
+ reasonChoices={['store_inventory', 'production_inventory', 'other']}
+ />
+
+ {/* Send: what is being confirmed, and the responsibility tick. */}
+ <ResponsiveModal
+ open={showConfirmDialog}
+ onOpenChange={(open) => { if (!open) handleCancelDialog(); }}
+ title={t('dc.confirmTitle')}
+ footer={
+ <>
+ <Button variant="secondary" size="lg" onClick={handleCancelDialog}>{t('common.cancel')}</Button>
+ <Button size="lg" className="flex-1" onClick={handleConfirmSubmit} disabled={!confirmationChecked}>{t('dayClose.send')}</Button>
+ </>
+ }
+ >
+ <div className="flex flex-col gap-4">
+ <FigureCard>
+ <FigureRow label={t('dc.counterSales')} value={formatINR(parseFloat(formData.offlineSales) || 0)} />
+ <FigureRow label={t('dc.expectedDrawer')} value={formatINR(expectedCashInHand)} />
+ <FigureRow label={t('dc.inDrawer')} value={formatINR(parseFloat(formData.actualCashInHand) || 0)} />
+ </FigureCard>
+ <div className={cn('flex flex-col items-center gap-1 rounded-lg border p-4 text-center', cashDiscrepancy === 0 ? 'border-success-border bg-success-soft' : Math.abs(cashDiscrepancy) > 200 ? 'border-danger-border bg-danger-soft' : 'border-warning-border bg-warning-soft')}>
+ <DiffChip diff={cashDiscrepancy} />
+ <span className={cn('num text-display font-semibold', cashDiscrepancy === 0 ? 'text-success' : cashDiscrepancy > 0 ? 'text-warning' : 'text-danger')}>
+ {cashDiscrepancy === 0 ? formatINR(0) : formatINR(cashDiscrepancy, { sign: true })}
+ </span>
+ </div>
+ {(calculatePaytmBalance < 0 || (expectedCashInHand + calculatePaytmBalance) < 0) && (
+ <Callout tone="danger" title={t('dc.negativeTitle')}>
+ {calculatePaytmBalance < 0 && <span className="block">Paytm is negative: {formatINR(calculatePaytmBalance)}</span>}
+ {(expectedCashInHand + calculatePaytmBalance) < 0 && <span className="block">Cash and Paytm together are negative: {formatINR(expectedCashInHand + calculatePaytmBalance)}</span>}
+ </Callout>
+ )}
+ <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg bg-surface-2 p-4">
+ <Checkbox checked={confirmationChecked} onCheckedChange={(v) => setConfirmationChecked(v === true)} className="mt-0.5" aria-label={t('dc.confirmCheck')} />
+ <span className="text-body-sm text-text">{t('dc.confirmCheck')}</span>
  </label>
  </div>
-
- <div className="flex gap-3">
- <button
- type="button"
- onClick={handleCancelDialog}
- className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
- >
- Cancel
- </button>
- <button
- type="button"
- onClick={handleConfirmSubmit}
- disabled={!confirmationChecked}
- className={`flex-1 px-4 py-3 rounded-lg font-semibold transition-colors ${
- confirmationChecked
- ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-rose-600'
- : 'bg-gray-300 text-gray-500 cursor-not-allowed'
- }`}
- >
- Save Sales Data
- </button>
- </div>
- </div>
- </div>
- </div>
- )}
- </div>
- </div>
+ </ResponsiveModal>
+ </MoneyPage>
  );
 }
