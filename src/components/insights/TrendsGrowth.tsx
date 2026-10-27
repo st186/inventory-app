@@ -62,13 +62,13 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
     <div className="space-y-4">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className={card}>
-          <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-5 h-5 text-info" /><h3 className="font-bold text-text">Average sales by weekday</h3></div>
+          <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-5 h-5 text-text-2" /><h3 className="font-bold text-text">Average sales by weekday</h3></div>
           <p className="text-xs text-text-3 mb-3">Last 8 weeks, normal open days only (festival and closed days left out)</p>
           <ul className="space-y-2">
             {stats.weekday.map((w) => (
               <li key={w.label} className="flex items-center gap-3 text-sm">
                 <span className="w-9 text-text-2">{w.label}</span>
-                <div className="flex-1 h-5 bg-surface-2 rounded-md overflow-hidden"><div className="h-full bg-info rounded-md" style={{ width: `${(w.avg / maxWd) * 100}%` }} /></div>
+                <div className="flex-1 h-5 bg-surface-2 rounded-md overflow-hidden"><div className="h-full bg-chart-1 rounded-md" style={{ width: `${(w.avg / maxWd) * 100}%` }} /></div>
                 <span className="w-20 text-right font-semibold tabular-nums">{w.avg ? rupees(w.avg) : '—'}</span>
               </li>
             ))}
