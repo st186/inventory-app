@@ -7,6 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
+import { registerBackupRoutes } from './backup.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -269,6 +270,8 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/cluster-heads(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
   { test: /^\/item-sales(\/|$)/, methods: ['DELETE'], roles: OWNER_ONLY },
   { test: /^\/investors(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
+  // Full backup download, file checks and restore (backup.ts).
+  { test: /^\/admin\/(backup|restore)(\/|$)/, roles: OWNER_ONLY },
   { test: /^\/(unified-employees|employees|archived-employees)(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/payouts(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/salary-advances\/.+/, methods: ['PUT', 'DELETE'], roles: LEADS },
@@ -16358,6 +16361,9 @@ app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
     return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
+
+// Full backup / restore and the nightly encrypted copy to Google Drive (backup.ts).
+registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: LATEST_APP_VERSION, notifyClusterHeads: async (title, message) => { let sent = 0; for (const head of await getAllClusterHeads()) if (head.authUserId) { await notifyUser(head.authUserId, 'backup_failed', title, message); sent++; } return sent; } });
 
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
 registerInsightsRoutes(app, {
