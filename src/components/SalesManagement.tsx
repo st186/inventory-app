@@ -31,6 +31,7 @@ const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
  store_inventory: 'Store Inventory',
  production_inventory: 'Production House Inventory',
  other: 'Other',
+ event_cash: 'Event stall cash', // label only: event requests (events.ts) never touch this store's till
 };
 
 // Matches the backend's PRODUCTION_CASH_GO_LIVE_DATE (index.ts) exactly - from this date

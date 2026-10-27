@@ -8,6 +8,7 @@ const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
   store_inventory: 'Store Inventory',
   production_inventory: 'Production House Inventory',
   other: 'Other',
+  event_cash: 'Event stall cash',
 };
 
 type HistoryFilter = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastMonth' | 'custom';
