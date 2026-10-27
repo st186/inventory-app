@@ -246,6 +246,7 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
       const w = shiftWindow(date, profile.settings);
       return c.json({
         required: true,
+        employeeId: a.employeeId,
         date,
         serverNow: new Date(now).toISOString(),
         exempt: profile.exempt,

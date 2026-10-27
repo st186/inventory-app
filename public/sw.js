@@ -111,6 +111,8 @@ const NOTIFICATION_VIEW_MAP = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
+  kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
+  shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
 };
 
 function getNavigationTarget(data) {

@@ -59,6 +59,8 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' },
+  kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
+  shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
 };
 
 export function getNavigationTarget(data: any): NotificationNavigationTarget | null {

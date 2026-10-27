@@ -6,6 +6,7 @@ import { DatePicker } from './DatePicker';
 import { PaymentHistoryModal } from './PaymentHistoryModal';
 import { generatePayslip } from '../utils/payslip';
 import { employeeBelongsToStore } from '../utils/entityAccess';
+import { useApprovedVariablePay } from './kpi/useApprovedVariablePay';
 
 interface SalaryComponent {
   label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
@@ -182,6 +183,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     // but settled elsewhere, so they must not drain the Paytm figure.
     paidFrom: 'paytm' as 'paytm' | 'bank' | 'cash',
   });
+
+  // Variable pay approved in Team KPIs fills an empty Variable Pay field when one person is picked.
+  const approvedVariablePay = useApprovedVariablePay(showPayoutModal, payoutData.employeeIds.map((id) => employees.find((e) => e.id === id)?.employeeId || id), payoutData.forMonth, (amount) => setPayoutData((d) => (d.variablePay ? d : { ...d, variablePay: String(amount) })));
 
   // Edit payout modal state
   const [showEditPayout, setShowEditPayout] = useState(false);
@@ -2458,6 +2462,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
                 <p className="text-xs text-gray-500 mt-1">
                   💡 Shown as its own line on the payslip, alongside the employee's fixed salary components
                 </p>
+                {approvedVariablePay !== null && <p className="text-xs text-emerald-700 mt-1">Approved in Team KPIs for this month: ₹{approvedVariablePay.toLocaleString('en-IN')}</p>}
               </div>
               {payoutData.employeeIds.length > 0 && (() => {
                 const payingByDays = activeTab === 'contract' && payoutData.periodType === 'days';
