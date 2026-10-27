@@ -1001,3 +1001,92 @@ ${JSON.stringify({
     } catch (err) { return fail(c, err); }
   });
 }
+
+// ---------------- Workplace photo hygiene score (workplace.ts) ----------------
+// Scores one workplace-check photo 0-10 for cleanliness with the vision model (Haiku by default,
+// about ₹0.02 a photo). No person is passed to callClaude, so staff photo uploads don't use anyone's
+// chat allowance; the cost still counts toward the monthly ₹ limit. Self-contained on purpose:
+// other features append their own exports to this file too.
+
+export type PhotoHygieneScore = {
+  score: number;
+  verdict: 'clean' | 'needs_cleaning' | 'unclear_photo';
+  issues: string[];
+  issuesBengali: string[];
+  whatIsShown: string;
+};
+
+// What "clean" means for each kind of area, matched on the check's English name. Order matters:
+// "Post-steaming table" is a table, "Dining area fan" a fan, "Garbage/back area" the garbage area.
+const HYGIENE_RUBRICS: [RegExp, string][] = [
+  [/garbage|dustbin|\bbins?\b|waste|back area/i, 'Garbage / back area: bins covered with lids and not overflowing, no spilled or loose waste on the floor, no flies or pests, floor swept.'],
+  [/\bfans?\b/i, 'Fan: blades and motor cover free of dust, grease and cobwebs.'],
+  [/light|bulb|tube/i, 'Lights: no dust, cobwebs or dead insects on or around the lights; fittings intact.'],
+  [/table|surface|counter|slab/i, 'Table / work surface: dry, no food bits, dough or flour clumps, no stains, oil or spills, nothing unrelated left lying on it.'],
+  [/fryer|kadai|karahi/i, 'Fryer: no burnt residue or black crust, no old oil spills or drips on the body, stand or floor, oil not dark and foamy, outside wiped.'],
+  [/steam/i, 'Steamer: no stuck dough or momo bits on trays, lids or racks, no scale or slime, water area clean, outside wiped.'],
+  [/crate|basket|tray/i, 'Crates / trays: washed, no dough, food bits or stains, dry and stacked neatly off the floor.'],
+  [/freez|fridge|refrigerat|chiller/i, 'Freezer: door seal clean, no heavy ice build-up, no open or torn packs, no spills or pooled water or blood, items covered and stacked.'],
+  [/front|entrance|shutter/i, 'Shop front: entrance and counter area swept and wiped, no litter or stains, things arranged neatly.'],
+  [/wall/i, 'Walls: no stains, splashes, oil marks, cobwebs or mould.'],
+  [/equipment|machine|utensil|mixer|grinder/i, 'Equipment: no food residue or grease build-up, stored clean and dry, nothing broken or unsafe.'],
+  [/kitchen|floor|area|room/i, 'Kitchen area: floor swept and mopped, no water pooling, no food waste, corners clean, things stored off the floor.'],
+];
+const GENERAL_RUBRIC = 'General: clean, dry and in order - no dirt, food waste, stains, grease, dust, cobwebs or clutter.';
+
+const HYGIENE_SYSTEM = `You check daily hygiene photos for Bunny Momos, a momo shop and production kitchen in West Bengal, India. Staff photograph each area every afternoon to prove it is clean and in order.
+- Judge only what the photo shows. Do not assume dirt you cannot see, and do not excuse dirt you can see.
+- Simple, low-cost premises are normal: judge cleanliness and order, not how new or fancy things are. Old but clean equipment is clean.
+- Score 0-10: 9-10 spotless; 7-8 clean, at most a tiny issue; 5-6 needs a wipe or tidy now; 3-4 clearly dirty; 0-2 very dirty or unsafe for food.
+- verdict "clean" if nothing needs doing before the next service, "needs_cleaning" if something should be cleaned now, "unclear_photo" if the photo is too dark, blurred, too close, or does not show the named area (then score 0 and say what is wrong with the photo).
+- issues: up to 4 short, specific English phrases a worker can act on (e.g. "oil drips on fryer side"), empty if clean. issuesBengali: the same issues in simple everyday Bengali, same order.
+- whatIsShown: one short English sentence describing what the photo shows.`;
+
+const hygieneSchema = {
+  type: 'object',
+  properties: {
+    score: { type: 'integer', description: 'Cleanliness 0-10' },
+    verdict: { type: 'string', enum: ['clean', 'needs_cleaning', 'unclear_photo'] },
+    issues: { type: 'array', items: { type: 'string' }, description: 'Short English phrases, at most 4' },
+    issuesBengali: { type: 'array', items: { type: 'string' }, description: 'The same issues in simple Bengali' },
+    whatIsShown: { type: 'string' },
+  },
+  required: ['score', 'verdict', 'issues', 'issuesBengali', 'whatIsShown'],
+  additionalProperties: false,
+};
+
+export async function aiScorePhoto(
+  kv: Kv,
+  photo: { base64: string; mediaType: string; itemName: string; hint?: string },
+): Promise<PhotoHygieneScore> {
+  const rubric = HYGIENE_RUBRICS.find(([re]) => re.test(photo.itemName))?.[1] || GENERAL_RUBRIC;
+  // callClaude only reads deps.kv; the rest of Deps isn't used for a scoring call.
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const res = await callClaude(deps, {
+    purpose: 'workplace-photo',
+    system: HYGIENE_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 1500,
+    format: { type: 'json_schema', schema: hygieneSchema },
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: photo.mediaType, data: photo.base64 } },
+        { type: 'text', text: `Area: ${photo.itemName.slice(0, 80)}${photo.hint ? ` (owner's note: ${photo.hint.slice(0, 160)})` : ''}.\nWhat to check: ${rubric}` },
+      ],
+    }],
+  });
+  let parsed: any = null;
+  try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+  if (!parsed || typeof parsed.score !== 'number') throw new AiError('The photo check returned no score.', 502);
+  const verdict = ['clean', 'needs_cleaning', 'unclear_photo'].includes(parsed.verdict) ? parsed.verdict : 'unclear_photo';
+  const list = (v: any) => (Array.isArray(v) ? v : []).map((s: any) => String(s || '').trim().slice(0, 120)).filter(Boolean).slice(0, 4);
+  return {
+    score: Math.max(0, Math.min(10, Math.round(parsed.score))),
+    verdict,
+    issues: list(parsed.issues),
+    issuesBengali: list(parsed.issuesBengali),
+    whatIsShown: String(parsed.whatIsShown || '').slice(0, 200),
+  };
+}

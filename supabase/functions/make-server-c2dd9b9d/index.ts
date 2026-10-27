@@ -8,6 +8,7 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerProfileRoutes } from './profile.ts';
+import { registerWorkplaceRoutes } from './workplace.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -16362,6 +16363,7 @@ app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
 
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
+registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
 registerInsightsRoutes(app, {
   kv: kvWithRetry,
   verifyUser,
