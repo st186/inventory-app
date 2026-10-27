@@ -18,6 +18,7 @@ import { CategoryManagerModal } from './CategoryManagerModal';
 import { InvoiceScanner } from './insights/InvoiceScanner';
 import { PriceCheckPanel } from './PriceCheck';
 import { buildPriceGuide, checkPurchase, type PriceFlag } from '../utils/expenseChecks';
+import { belongsToTab, combinedDayExpenses, dayExpenses, makeScopeMatcher } from './money/expenseMath';
 
 // Invoice scanning is on (about ₹0.03 a bill on Haiku). The server can still switch it off with
 // its AI_INVOICE_SCAN secret set to "off" (see insights.ts).
@@ -59,11 +60,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [activeTab, setActiveTab] = useState<'store' | 'production' | 'combined'>(
  defaultsToProduction ? 'production' : 'store'
  );
- // Items saved before this split lack entityType — treat those as store expenses.
- // 'combined' matches nothing here - the combined summary tab computes its own totals
- // per entity directly (see combinedTotals below) rather than filtering by activeTab.
- const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: 'store' | 'production' | 'combined') =>
- tab === 'production' ? item.entityType === 'production_house' : tab === 'store' ? item.entityType !== 'production_house' : false;
+ // Items saved before this split lack entityType - treated as store expenses (money/expenseMath.ts).
 
  const changeDate = (days: number) => {
  const current = new Date(selectedDate);
@@ -137,82 +134,32 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  ? { entityType: 'production_house', productionHouseId: targetProductionHouseId }
  : { entityType: 'store', storeId: effectiveStoreId || existing?.storeId || defaultStoreForAdds || undefined };
 
- // Production-house-tagged items carry a productionHouseId, not a storeId (storeId is
- // null for them) - matching them against effectiveStoreId as if it were a storeId always
- // fails and silently zeroes out the Production House tab/summary. Match each item by
- // whichever id its own entityType actually uses.
- const matchesEffectiveScope = (item: { storeId?: string | null; productionHouseId?: string | null; entityType?: 'store' | 'production_house' }) => {
- if (!effectiveStoreId) return true;
- if (item.entityType === 'production_house') {
- return !targetProductionHouseId || item.productionHouseId === targetProductionHouseId;
- }
- return item.storeId === effectiveStoreId;
- };
+ // Production-house-tagged items are matched by productionHouseId, store items by storeId.
+ const matchesEffectiveScope = makeScopeMatcher(effectiveStoreId, targetProductionHouseId);
 
  console.log('🏪 InventoryManagement - effectiveStoreId:', effectiveStoreId);
  console.log('🏪 InventoryManagement - selectedStoreId prop:', selectedStoreId);
  console.log('🏪 InventoryManagement - user storeId:', context.user?.storeId);
 
- const filteredInventory = context.inventory.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
- const filteredOverheads = context.overheads.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
- const filteredFixedCosts = context.fixedCosts.filter(
- (item) => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, activeTab);
- }
- );
-
- const totalInventoryCost = filteredInventory.reduce(
- (sum, item) => sum + item.totalCost,
- 0
- );
- const totalOverheadCost = filteredOverheads.reduce(
- (sum, item) => sum + item.amount,
- 0
- );
- const totalFixedCost = filteredFixedCosts.reduce(
- (sum, item) => sum + item.amount,
- 0
- );
+ const day = dayExpenses({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, tab: activeTab, matchesScope: matchesEffectiveScope,
+ });
+ const filteredInventory = day.inventory;
+ const filteredOverheads = day.overheads;
+ const filteredFixedCosts = day.fixedCosts;
+ const totalInventoryCost = day.inventoryTotal;
+ const totalOverheadCost = day.overheadTotal;
+ const totalFixedCost = day.fixedTotal;
 
  // Combined Store + Production House totals for the selected date, independent of
  // which single-entity tab is active - powers the "Total Purchases" summary tab.
- const combinedTotals = useMemo(() => {
- const forEntity = (entityType: 'store' | 'production_house') => {
- const inv = context.inventory.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const oh = context.overheads.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const fc = context.fixedCosts.filter(item => {
- const dateMatch = item.date === selectedDate;
- return dateMatch && matchesEffectiveScope(item) && belongsToTab(item, entityType === 'production_house' ? 'production' : 'store');
- });
- const inventoryCost = inv.reduce((sum, item) => sum + item.totalCost, 0);
- const overheadCost = oh.reduce((sum, item) => sum + item.amount, 0);
- const fixedCost = fc.reduce((sum, item) => sum + item.amount, 0);
- return {
- inventory: { total: inventoryCost, items: inv },
- overhead: { total: overheadCost, items: oh },
- fixedCost: { total: fixedCost, items: fc },
- total: inventoryCost + overheadCost + fixedCost,
- };
- };
- return { store: forEntity('store'), production: forEntity('production_house') };
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, targetProductionHouseId]);
+ const combinedTotals = useMemo(() => combinedDayExpenses({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, matchesScope: matchesEffectiveScope,
+ }),
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, targetProductionHouseId]);
 
  // What each item usually costs, from every purchase on record - powers the price warnings
  // while adding and the "purchases look wrong" list (utils/expenseChecks.ts).

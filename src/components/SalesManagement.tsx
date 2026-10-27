@@ -12,13 +12,22 @@ import * as api from '../utils/api';
 import { addDays, getTodayIST, formatDateIST, formatDateTimeIST } from '../utils/timezone';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
-import { paidOutsideStoreTill, storeCashPortion } from '../utils/cashSource';
-import { countedCashInHand, loanRepayments } from '../utils/paytmRules';
+import { countedCashInHand } from '../utils/paytmRules';
 import { PaytmLedger } from './PaytmLedger';
 import { toast } from 'sonner';
 import { VoiceButton } from './VoiceButton';
 import { WaitingToSend, useOutbox } from './SyncStatus';
 import { isPendingId } from '../utils/outbox';
+import {
+ PRODUCTION_CASH_GO_LIVE_DATE,
+ dayCloseCashDiscrepancy,
+ dayCloseExpectedCash,
+ dayCloseExpenseBreakdown,
+ dayCloseTotalExpenses,
+ isCommissionEntry,
+ offlinePaymentCheck,
+ paytmDailyBreakdown as computePaytmDailyBreakdown,
+} from './money/dayCloseMath';
 
 type Props = {
  context: InventoryContextType;
@@ -34,12 +43,6 @@ const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
  event_cash: 'Event stall cash', // label only: event requests (events.ts) never touch this store's till
 };
 
-// Matches the backend's PRODUCTION_CASH_GO_LIVE_DATE (index.ts) exactly - from this date
-// onward, production house spend has its own cash ledger (ProductionManagement.tsx's
-// "Cash in Hand" tab) instead of being folded into the store's own expected-cash figure.
-// Dates before it keep the old blended calculation untouched - historical data was never
-// captured split, so it isn't retroactively re-split.
-const PRODUCTION_CASH_GO_LIVE_DATE = '2026-08-21';
 
 export function SalesManagement({ context, selectedStoreId, initialTab = 'entry' }: Props) {
  const [selectedDate, setSelectedDate] = useState<string>(
@@ -54,15 +57,6 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const [onlineSalesData, setOnlineSalesData] = useState<api.OnlineSalesEntry[]>([]);
  const [isLoadingOnlineSales, setIsLoadingOnlineSales] = useState(false);
 
- // Helper function to identify commission entries
- // Commission entries are stored as overhead items with category 'service_charge' and description containing 'Aggregator Commission'
- // Legacy entries may have category 'commission'
- const isCommissionEntry = (item: any) => {
- return (
- (item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) ||
- item.category === 'commission' // Legacy format
- );
- };
 
  const [formData, setFormData] = useState({
  offlineSales: '',
@@ -441,122 +435,35 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
  }, [context.salesData, selectedDate, effectiveStoreId]);
 
- // Calculate total expenses for the day
- const totalExpenses = useMemo(() => {
- // Production house spend used to count against the store's own cash too, since the
- // store's till/Paytm is what actually funds it in practice - but that meant a store
- // incharge's physical count got flagged as "discrepancy" for money they never touched,
- // caused entirely by the production house's own spending. From PRODUCTION_CASH_GO_LIVE_DATE
- // onward, production has its OWN cash ledger (see ProductionManagement.tsx's "Cash in
- // Hand" tab, backed by production-cash: records) - so the store's own expected-cash
- // calculation goes back to being strictly the store's own spend, full stop. Dates before
- // go-live keep the old blended behavior exactly as-is (historical data was never captured
- // split, so it isn't retroactively re-split here).
- const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
- // Paid with the cluster head's own money, or out of production's cash: a store cost, but
- // never out of this store's own cash.
- const fromStoreMoney = (item: { paymentMethod?: string; paidFromProductionHouseId?: string | null }) => !paidOutsideStoreTill(item);
-
- // Only the cash part of each bill comes out of the till: an online-paid bill none of it,
- // a "both" bill just its cashAmount (storeCashPortion - same as SalesView's expected cash
- // and the bill form's store-cash check).
- const inventoryCost = context.inventory
- .filter(item => {
- if (!fromStoreMoney(item)) return false;
- const dateMatch = item.date === selectedDate;
- const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
- const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => sum + storeCashPortion(item), 0);
-
- const allOverheadCosts = context.overheads
- .filter(item => {
- if (!fromStoreMoney(item)) return false;
- const dateMatch = item.date === selectedDate;
- const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
- const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => sum + storeCashPortion(item), 0);
-
- const allFixedCosts = context.fixedCosts
- .filter(item => {
- if (!fromStoreMoney(item)) return false;
- const dateMatch = item.date === selectedDate;
- const isThisStoresProductionHouseSpend = includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
- const storeMatch = effectiveStoreId ? (item.storeId === effectiveStoreId || isThisStoresProductionHouseSpend) : true;
- return dateMatch && storeMatch;
- })
- .reduce((sum, item) => sum + storeCashPortion(item), 0);
-
- return inventoryCost + allOverheadCosts + allFixedCosts;
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
+ // Calculate total expenses for the day (money/dayCloseMath.ts)
+ const totalExpenses = useMemo(() => dayCloseTotalExpenses({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, effectiveStoreId, effectiveProductionHouseId,
+ }), [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
  // Same totalExpenses figure, but split by who actually spent it - the store's own
  // purchases vs. production house spend that's charged against this store's cash. Feeds
  // the compact expense breakdown popover instead of one lumped "all expenses" number.
  // production stays 0 from PRODUCTION_CASH_GO_LIVE_DATE onward, matching totalExpenses
  // above no longer including it - see that useMemo's comment for why.
- const expenseBreakdownByEntity = useMemo(() => {
- const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
- const isProdHouseSpend = (item: { entityType?: string; productionHouseId?: string }) =>
- includeProductionSpend && !!effectiveProductionHouseId && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseId;
- const belongsToday = (item: { date: string; storeId?: string; paymentMethod?: string; entityType?: string; productionHouseId?: string; paidFromProductionHouseId?: string | null }) =>
- !paidOutsideStoreTill(item) && item.date === selectedDate && (effectiveStoreId ? (item.storeId === effectiveStoreId || isProdHouseSpend(item)) : true);
-
- const split = (list: any[]) => {
- let store = 0;
- let production = 0;
- list.forEach((item) => {
- if (!belongsToday(item)) return;
- const amt = storeCashPortion(item);
- if (isProdHouseSpend(item)) production += amt; else store += amt;
- });
- return { store, production };
- };
-
- const inventory = split(context.inventory);
- const overhead = split(context.overheads);
- const fixed = split(context.fixedCosts);
-
- return {
- rows: [
- { label: 'Inventory', ...inventory },
- { label: 'Overhead', ...overhead },
- { label: 'Fixed costs', ...fixed },
- ],
- storeTotal: inventory.store + overhead.store + fixed.store,
- productionTotal: inventory.production + overhead.production + fixed.production,
- };
- }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
+ const expenseBreakdownByEntity = useMemo(() => dayCloseExpenseBreakdown({
+ inventory: context.inventory, overheads: context.overheads, fixedCosts: context.fixedCosts,
+ selectedDate, effectiveStoreId, effectiveProductionHouseId,
+ }), [context.inventory, context.overheads, context.fixedCosts, selectedDate, effectiveStoreId, effectiveProductionHouseId]);
 
 
- // Calculate expected closing cash balance
- const calculateCashInHand = (prevCash: number, cashReceived: number, expenses: number, paytmAmount: number, contractPayouts: number) => {
- // "Amount Used from Paytm" now INCLUDES contract payouts in the total
- // Contract payouts are withdrawn from Paytm (included in paytmAmount) and then paid out to employees
- // So: Expected Cash = prevCash + paytmAmount + cashReceived - expenses - contractPayouts
- return prevCash + paytmAmount + cashReceived - expenses - contractPayouts;
- };
-
- // Calculate expected cash for current form data
- const expectedCashInHand = useMemo(() => {
- const prevCash = parseFloat(formData.previousCashInHand) || 0;
- const cashReceived = parseFloat(formData.cashAmount) || 0;
- const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
- // Event stalls (events.ts): cash an event handed back to this till comes in, a float sent to an
- // event goes out (GET /sales puts eventCashIn / eventCashOut on the day's row).
- const eventCash = ((salesForDate as any)?.eventCashIn || 0) - ((salesForDate as any)?.eventCashOut || 0);
- return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount, totalContractPayout) + eventCash;
- }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney, totalContractPayout, salesForDate]);
+ // Calculate expected cash for current form data (incl. event stall cash in / out)
+ const expectedCashInHand = useMemo(() => dayCloseExpectedCash({
+ previousCashInHand: formData.previousCashInHand,
+ cashAmount: formData.cashAmount,
+ usedOnlineMoney: formData.usedOnlineMoney,
+ totalExpenses,
+ totalContractPayout,
+ salesForDate,
+ }), [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney, totalContractPayout, salesForDate]);
 
  // Calculate cash discrepancy
- const cashDiscrepancy = useMemo(() => {
- const actual = parseFloat(formData.actualCashInHand) || 0;
- if (actual === 0) return 0;
- return actual - expectedCashInHand;
- }, [formData.actualCashInHand, expectedCashInHand]);
+ const cashDiscrepancy = useMemo(() => dayCloseCashDiscrepancy(formData.actualCashInHand, expectedCashInHand), [formData.actualCashInHand, expectedCashInHand]);
 
  const needsApproval = Math.abs(cashDiscrepancy) > 200;
 
@@ -646,220 +553,18 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  }, [payoutsForDisplay, selectedDate, effectiveStoreId]);
 
  // Calculate daily breakdown for Paytm/Online Cash
- const paytmDailyBreakdown = useMemo(() => {
- // Check if there's a recalibration for the current month
- const selectedMonth = selectedDate.slice(0, 7);
- const hasRecalibrationThisMonth = lastOnlineRecalibration && lastOnlineRecalibration.month === selectedMonth;
- const recalibrationDate = hasRecalibrationThisMonth ? lastOnlineRecalibration.date : '2000-01-01';
- 
- // Always show from the 1st of the selected month for better visibility
- // But use recalibration for balance calculations
- const displayStartDate = `${selectedMonth}-01`;
- 
- // Filter by store
- const storeFilteredSales = effectiveStoreId 
- ? context.salesData.filter(s => s.storeId === effectiveStoreId)
- : context.salesData;
- const storeFilteredFixed = effectiveStoreId 
- ? context.fixedCosts.filter(i => i.storeId === effectiveStoreId)
- : context.fixedCosts;
- const storeFilteredOverhead = effectiveStoreId 
- ? context.overheads.filter(i => i.storeId === effectiveStoreId)
- : context.overheads;
- const storeFilteredInventory = effectiveStoreId 
- ? context.inventory.filter(i => i.storeId === effectiveStoreId)
- : context.inventory;
- 
- // Get all unique dates FROM display start date (1st of month) onwards, up to selected date
- const allDates = new Set<string>();
- 
- storeFilteredSales
- .filter(s => s.date >= displayStartDate && s.date <= selectedDate)
- .forEach(s => allDates.add(s.date));
- 
- storeFilteredFixed
- .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
- .forEach(item => allDates.add(item.date));
- 
- storeFilteredOverhead
- .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
- .forEach(item => allDates.add(item.date));
- 
- storeFilteredInventory
- .filter(item => item.date >= displayStartDate && item.date <= selectedDate)
- .forEach(item => allDates.add(item.date));
- 
- // Add commission dates (commission entries identified by description pattern)
- storeFilteredOverhead
- .filter(item => isCommissionEntry(item) && item.date >= displayStartDate && item.date <= selectedDate)
- .forEach(item => allDates.add(item.date));
- 
- // Add loan dates (loans taken add money to Paytm)
- const storeFilteredLoans = effectiveStoreId
- ? onlineLoans.filter(l => l.storeId === effectiveStoreId)
- : onlineLoans;
- 
- storeFilteredLoans
- .filter(l => l.loanDate >= displayStartDate && l.loanDate <= selectedDate)
- .forEach(l => allDates.add(l.loanDate));
- 
- // Add loan repayment dates (repayments deduct money from Paytm) - each repayment on its
- // own date, partial ones included
- storeFilteredLoans
- .forEach(l => loanRepayments(l)
- .filter(r => r.date >= displayStartDate && r.date <= selectedDate)
- .forEach(r => allDates.add(r.date)));
- 
- // Sort dates chronologically
- const sortedDates = Array.from(allDates).sort();
- 
- // Calculate running balance for each day
- // If there's a recalibration, we need to handle dates before and after it differently
- // For dates BEFORE recalibration: work backwards from recalibration balance
- // For dates ON/AFTER recalibration: work forwards from recalibration balance
- 
- console.log('📊 Daily Breakdown Calculation:', {
- hasRecalibration: hasRecalibrationThisMonth,
- recalibrationDate,
- displayStartDate,
- numberOfDays: sortedDates.length
- });
- 
- // First pass: calculate all daily changes
- const dailyData = sortedDates.map(date => {
- const salesForDay = storeFilteredSales.find(s => s.date === date);
- const paytmReceived = salesForDay?.paytmAmount ?? 0;
- 
- // "Used online money" is driven entirely by approved cash top-ups (stored directly
- // on the sales record), not by inventory/overhead/fixed-cost payment method flags,
- // which are now just a placeholder with no effect on any balance.
- const usedOnlineMoney = salesForDay?.usedOnlineMoney ?? 0;
-
- // Check if there's a commission entry for this date (from overheads)
- // Sum all commissions for this date (in case there are multiple entries)
- // Commission is PAID via Paytm to aggregators (Swiggy/Zomato)
- // If payment method is 'both', only include the online portion
- const commission = storeFilteredOverhead
- .filter(item => isCommissionEntry(item) && item.date === date)
- .reduce((sum, item) => {
- // Handle legacy entries where paymentMethod might be undefined (assume 'online' for commission)
- const paymentMethod = item.paymentMethod || 'online';
- // For 'online' payment method, include full amount
- if (paymentMethod === 'online') return sum + (item.amount || 0);
- // For 'both' payment method, only include the online portion
- if (paymentMethod === 'both') return sum + (item.onlineAmount || 0);
- // For 'cash' payment method, don't include in online money
- return sum;
- }, 0);
- 
- // Get online payouts for the day (what Swiggy/Zomato actually pay us)
- const storeFilteredPayouts = effectiveStoreId
- ? payoutsForDisplay.filter(p => p.storeId === effectiveStoreId)
- : payoutsForDisplay;
-
- const onlinePayouts = storeFilteredPayouts
- .filter(p => p.date === date)
- .reduce((sum, p) => sum + (p.swiggyPayout ?? 0) + (p.zomatoPayout ?? 0), 0);
- 
- // Get employee payouts for the day (paid from Online Cash in Hand)
- const storeFilteredEmployeePayouts = effectiveStoreId
- ? employeePayouts.filter(p => !p.storeId || p.storeId === effectiveStoreId) // Include payouts without storeId for backward compatibility
- : employeePayouts;
- 
- const employeePayoutsForDay = storeFilteredEmployeePayouts
- .filter(p => p.date === date && (p.paidFrom == null || p.paidFrom === 'paytm'))
- .reduce((sum, p) => sum + (p.amount || 0), 0);
- 
- // Get loans taken on this day (adds money to Paytm)
- const loansForDay = storeFilteredLoans
- .filter(l => l.loanDate === date)
- .reduce((sum, l) => sum + l.loanAmount, 0);
- 
- // Get loan repayments made on this day (reduces money from Paytm)
- const repaymentForDay = storeFilteredLoans
- .reduce((sum, l) => sum + loanRepayments(l).filter(r => r.date === date).reduce((s, r) => s + r.amount, 0), 0);
- 
- // Net change = Paytm Received + Online Payouts + Loans Taken - Used - Commission - Employee Payouts - Loan Repayments
- // Commission, Employee Payouts, Loans, and Repayments are shown in their own columns
- const netChange = paytmReceived + onlinePayouts + loansForDay - usedOnlineMoney - commission - employeePayoutsForDay - repaymentForDay;
- 
- return {
- date,
- paytmReceived,
- onlinePayouts, // Changed from onlineSales to onlinePayouts
- usedOnlineMoney,
- commission,
- employeePayouts: employeePayoutsForDay, // Add employee payouts to breakdown
- loansTaken: loansForDay, // Add loans taken
- loanRepayments: repaymentForDay, // Add loan repayments
- netChange,
- runningBalance: 0 // Will be calculated in second pass
- };
- });
- 
- // Second pass: Calculate running balances
- console.log('💰 ===== CALCULATING RUNNING BALANCES =====');
- console.log('📊 Has recalibration this month?', hasRecalibrationThisMonth);
- console.log('📅 Recalibration date:', recalibrationDate);
- console.log('📊 Number of daily data entries:', dailyData.length);
- console.log('📊 Daily data dates:', dailyData.map(d => d.date));
- 
- if (hasRecalibrationThisMonth) {
- // Find the recalibration date index
- const recalibrationIndex = dailyData.findIndex(d => d.date === recalibrationDate);
- 
- console.log('🔍 Recalibration index in daily data:', recalibrationIndex);
- console.log('💰 Recalibration actual balance:', lastOnlineRecalibration.actualBalance);
- 
- if (recalibrationIndex >= 0) {
- // Set the recalibration date's balance
- dailyData[recalibrationIndex].runningBalance = lastOnlineRecalibration.actualBalance;
- 
- console.log(`✅ Set ${recalibrationDate} balance to ₹${lastOnlineRecalibration.actualBalance}`);
- 
- // Calculate forwards from recalibration date
- console.log('➡️ Calculating FORWARD from recalibration date...');
- for (let i = recalibrationIndex + 1; i < dailyData.length; i++) {
- dailyData[i].runningBalance = dailyData[i - 1].runningBalance + dailyData[i].netChange;
- console.log(` ${dailyData[i].date}: prev(${dailyData[i-1].runningBalance.toFixed(2)}) + net(${dailyData[i].netChange.toFixed(2)}) = ${dailyData[i].runningBalance.toFixed(2)}`);
- }
- 
- // Calculate backwards from recalibration date
- console.log('⬅️ Calculating BACKWARD from recalibration date...');
- for (let i = recalibrationIndex - 1; i >= 0; i--) {
- dailyData[i].runningBalance = dailyData[i + 1].runningBalance - dailyData[i + 1].netChange;
- console.log(` ${dailyData[i].date}: next(${dailyData[i+1].runningBalance.toFixed(2)}) - nextNet(${dailyData[i+1].netChange.toFixed(2)}) = ${dailyData[i].runningBalance.toFixed(2)}`);
- }
- 
- console.log('✅ Final balances for all dates:');
- dailyData.forEach(d => {
- console.log(` ${d.date}: ₹${d.runningBalance.toFixed(2)} (net change: ₹${d.netChange.toFixed(2)})`);
- });
- } else {
- console.log('⚠️ Recalibration date not found in daily data range!');
- console.log('⚠️ Starting from zero...');
- // Recalibration date not in range, start from beginning
- let balance = 0;
- dailyData.forEach(day => {
- balance += day.netChange;
- day.runningBalance = balance;
- console.log(` ${day.date}: ₹${balance.toFixed(2)}`);
- });
- }
- } else {
- console.log('📊 No recalibration - calculating normally from zero');
- // No recalibration, calculate normally from start
- let balance = 0;
- dailyData.forEach(day => {
- balance += day.netChange;
- day.runningBalance = balance;
- console.log(` ${day.date}: ₹${balance.toFixed(2)}`);
- });
- }
- console.log('💰 ===== END RUNNING BALANCE CALCULATION =====\n');
- 
- return dailyData;
- }, [context.salesData, context.fixedCosts, context.overheads, context.inventory, payoutsForDisplay, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
+ const paytmDailyBreakdown = useMemo(() => computePaytmDailyBreakdown({
+ salesData: context.salesData,
+ fixedCosts: context.fixedCosts,
+ overheads: context.overheads,
+ inventory: context.inventory,
+ payoutsForDisplay,
+ employeePayouts,
+ onlineLoans,
+ selectedDate,
+ effectiveStoreId,
+ lastOnlineRecalibration,
+ }), [context.salesData, context.fixedCosts, context.overheads, context.inventory, payoutsForDisplay, employeePayouts, onlineLoans, selectedDate, effectiveStoreId, lastOnlineRecalibration]);
 
  // Note: inventory/overhead/fixed-cost "payment method" (cash/online) splits don't drive
  // the Paytm figure - "Used Online Money" is sourced entirely from approved cash top-ups
@@ -1368,14 +1073,12 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  // (formData.offlineSales is populated from salesForDate.offlineSales, written by Step A of
  // the nightly pos-sync). Cash and Paytm below are the store incharge's own physical count
  // of how that total was actually received - the discrepancy compares the two.
- const offlineSalesTotal = parseFloat(formData.offlineSales) || categorySalesChannelRevenue.offline || 0;
- const paytm = parseFloat(formData.paytmAmount) || 0;
- const cash = parseFloat(formData.cashAmount) || 0;
- const offlinePaymentTotal = paytm + cash;
- // Signed: positive means the counted cash+paytm is SHORT of the real offline total,
- // negative means it's OVER (matches "can be positive or negative" from the requested behavior).
- const offlinePaymentDiscrepancy = offlineSalesTotal - offlinePaymentTotal;
- const paymentMismatch = Math.abs(offlinePaymentDiscrepancy) > 0.01;
+ const { offlineSalesTotal, offlinePaymentDiscrepancy, paymentMismatch } = offlinePaymentCheck({
+ offlineSales: formData.offlineSales,
+ categoryOffline: categorySalesChannelRevenue.offline,
+ paytmAmount: formData.paytmAmount,
+ cashAmount: formData.cashAmount,
+ });
 
  // Total POS-reported sales (online + offline, both now read-only/synced figures) must
  // match the total cash the store incharge actually counted at end of day. Online/offline
