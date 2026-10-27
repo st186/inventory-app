@@ -349,40 +349,109 @@ const supabase = createClient(
 );
 console.log('✅ Supabase client initialized');
 
-// Paginated getByPrefix to bypass Supabase's default 1000-row limit
-async function getAllByPrefix(prefix: string): Promise<any[]> {
+// ---- Date windows on the history lists (date-range-v1, speed work 28 Oct 2026) ----
+// The big history lists accept ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional, inclusive) and
+// return only records whose own calendar date (the IST date the app stored on them) falls in
+// the window. Without either parameter a route answers exactly as before (older app builds).
+type DateRange = { from?: string; to?: string; field: string };
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// The window asked for on this request, null when none, or an error message for a bad date.
+function requestedDateRange(c: any, field = 'date'): { range: DateRange | null } | { error: string } {
+  const from = c.req.query('from') || undefined;
+  const to = c.req.query('to') || undefined;
+  if (!from && !to) return { range: null };
+  if ((from && !ISO_DAY.test(from)) || (to && !ISO_DAY.test(to))) return { error: 'from and to must be dates like 2026-10-28' };
+  if (from && to && from > to) return { error: 'from must not be after to' };
+  return { range: { from, to, field } };
+}
+
+// Exact check in code, after the database's own (text) filter: a stored value with a time part
+// ("2026-10-28T09:00") counts as its date.
+function inDateRange(record: any, range: DateRange): boolean {
+  const day = typeof record?.[range.field] === 'string' ? record[range.field].slice(0, 10) : '';
+  if (!day) return false;
+  return (!range.from || day >= range.from) && (!range.to || day <= range.to);
+}
+
+// Paginated getByPrefix to bypass Supabase's default 1000-row limit. The first page also
+// returns the total, and any further pages are fetched together rather than one after
+// another (inventory: is 5 pages; each round trip to the database used to add ~260 ms).
+// Rows are de-duplicated by key, so a row added while the pages are read can't appear twice.
+// With a date range the database filters too, so only that window is read at all.
+async function getAllByPrefix(prefix: string, range?: DateRange | null): Promise<any[]> {
   const pageSize = 1000;
-  let allResults: any[] = [];
-  let from = 0;
-  
-  while (true) {
+  const page = (start: number, withCount: boolean) => {
+    let query = supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value', withCount ? { count: 'exact' } : undefined)
+      .like('key', prefix + '%');
+    if (range?.from) query = query.gte(`value->>${range.field}`, range.from);
+    // Below the next day rather than <= to, so a stored date with a time part is included.
+    if (range?.to) query = query.lt(`value->>${range.field}`, addDaysToDateString(range.to, 1));
+    return query
+      // Without a stable order, page boundaries can shift between requests and rows get
+      // returned twice or skipped entirely once a prefix passes 1000 rows.
+      .order('key', { ascending: true })
+      .range(start, start + pageSize - 1);
+  };
+
+  const byKey = new Map<string, any>();
+  const take = (rows: any[] | null) => {
+    for (const row of rows || []) if (!byKey.has(row.key)) byKey.set(row.key, row.value);
+  };
+
+  const first = await page(0, true);
+  if (first.error) throw new Error(first.error.message);
+  take(first.data);
+  let lastLength = first.data?.length || 0;
+  let next = pageSize;
+  if (lastLength === pageSize) {
+    const total = typeof first.count === 'number' ? first.count : 0;
+    const starts: number[] = [];
+    for (let s = pageSize; s < total; s += pageSize) starts.push(s);
+    const pages = await Promise.all(starts.map((s) => page(s, false)));
+    for (const p of pages) {
+      if (p.error) throw new Error(p.error.message);
+      take(p.data);
+    }
+    if (pages.length) {
+      lastLength = pages[pages.length - 1].data?.length || 0;
+      next = starts[starts.length - 1] + pageSize;
+    }
+    // Rows added since the count: carry on page by page until a short page.
+    while (lastLength === pageSize) {
+      const p = await page(next, false);
+      if (p.error) throw new Error(p.error.message);
+      take(p.data);
+      lastLength = p.data?.length || 0;
+      next += pageSize;
+    }
+  }
+
+  const values = Array.from(byKey.values());
+  return range ? values.filter((v) => inDateRange(v, range)) : values;
+}
+
+// Paginated version with retry
+async function getAllByPrefixWithRetry(prefix: string, range?: DateRange | null): Promise<any[]> {
+  return retryWithBackoff(() => getAllByPrefix(prefix, range), `getAllByPrefix(${prefix})`);
+}
+
+// One record of a collection by its id field. The database finds it, instead of the whole
+// collection being downloaded to search it (inventory: is 4,000+ rows, ~2 MB, 5 pages).
+// Same answer as that search: the first exact match in key order.
+async function findByIdInPrefix(prefix: string, id: string): Promise<any | undefined> {
+  return retryWithBackoff(async () => {
     const { data, error } = await supabase
       .from('kv_store_c2dd9b9d')
       .select('key, value')
       .like('key', prefix + '%')
-      // Without a stable order, page boundaries can shift between requests and rows get
-      // returned twice or skipped entirely once a prefix passes 1000 rows.
-      .order('key', { ascending: true })
-      .range(from, from + pageSize - 1);
-    
-    if (error) {
-      throw new Error(error.message);
-    }
-    
-    if (!data || data.length === 0) break;
-    
-    allResults = allResults.concat(data.map(d => d.value));
-    
-    if (data.length < pageSize) break; // Last page
-    from += pageSize;
-  }
-  
-  return allResults;
-}
-
-// Paginated version with retry
-async function getAllByPrefixWithRetry(prefix: string): Promise<any[]> {
-  return retryWithBackoff(() => getAllByPrefix(prefix), `getAllByPrefix(${prefix})`);
+      .eq('value->>id', id)
+      .order('key', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data || []).map((row: any) => row.value).find((v: any) => v?.id === id);
+  }, `findByIdInPrefix(${prefix})`);
 }
 
 // Generic retry wrapper for database operations
@@ -889,12 +958,15 @@ app.get('/make-server-c2dd9b9d/inventory', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     console.log('🔍 [INVENTORY GET] Fetching inventory items (paginated)...');
     // All users (cluster heads, employees, and managers) see all inventory
     // Filtering by storeId happens in the frontend
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('inventory:');
+    const items = await getAllByPrefixWithRetry('inventory:', windowed.range);
     console.log('🔍 [INVENTORY GET] Found items:', items.length);
     console.log('🔍 [INVENTORY GET] Sample items:', items.slice(0, 3).map(i => ({ id: i.id, date: i.date, itemName: i.itemName })));
     
@@ -1060,7 +1132,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: inventory: has 3000+ rows, and the plain prefix read stops at 1000, so an
     // older entry wasn't found and the edit was saved as a second copy.
-    const existing = (await getAllByPrefixWithRetry('inventory:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('inventory:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Inventory item not found - it may have been deleted' }, 404);
@@ -1109,8 +1181,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the inventory item by searching all inventory items with this ID
-    const allInventory = await getAllByPrefixWithRetry('inventory:');
-    const targetInventory = allInventory?.find((item: any) => item.id === itemId);
+    const targetInventory = await findByIdInPrefix('inventory:', itemId);
     
     if (!targetInventory) {
       console.log(`⚠️ Inventory item not found: ${itemId}. It may have been already deleted.`);
@@ -1139,11 +1210,14 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // All users (cluster heads, employees, and managers) see all overheads
     // Filtering by storeId happens in the frontend
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('overhead:');
+    const items = await getAllByPrefixWithRetry('overhead:', windowed.range);
     
     return c.json({ overheads: items || [] });
   } catch (error: any) {
@@ -1260,7 +1334,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     // editor's own id used to leave the original in place and add a second copy whenever
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated, like GET /overheads: the plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('overhead:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('overhead:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Overhead item not found - it may have been deleted' }, 404);
@@ -1315,8 +1389,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the overhead item by searching all overhead items with this ID
-    const allOverheads = await getAllByPrefixWithRetry('overhead:');
-    const targetOverhead = allOverheads?.find((item: any) => item.id === itemId);
+    const targetOverhead = await findByIdInPrefix('overhead:', itemId);
     
     if (!targetOverhead) {
       console.log(`⚠️ Overhead item not found: ${itemId}. It may have been already deleted.`);
@@ -1349,10 +1422,13 @@ app.get('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // All users (cluster heads, employees, and managers) see all fixed costs
     // Filtering by storeId happens in the frontend
-    const items = await getAllByPrefixWithRetry('fixedcost:');
+    const items = await getAllByPrefixWithRetry('fixedcost:', windowed.range);
     
     return c.json({ fixedCosts: items || [] });
   } catch (error) {
@@ -1449,7 +1525,7 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     // editor's own id used to leave the original in place and add a second copy whenever
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: the plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('fixedcost:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('fixedcost:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Fixed cost not found - it may have been deleted' }, 404);
@@ -1498,8 +1574,7 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the fixed cost item by searching all fixed cost items with this ID
-    const allFixedCosts = await getAllByPrefixWithRetry('fixedcost:');
-    const targetFixedCost = allFixedCosts?.find((item: any) => item.id === itemId);
+    const targetFixedCost = await findByIdInPrefix('fixedcost:', itemId);
     
     if (!targetFixedCost) {
       console.log(`⚠️ Fixed cost item not found: ${itemId}. It may have been already deleted.`);
@@ -1528,10 +1603,13 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Get all sales data (not scoped by userId since everyone needs to see all sales)
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('sales:');
+    const items = await getAllByPrefixWithRetry('sales:', windowed.range);
     
     return c.json({ sales: items || [] });
   } catch (error: any) {
@@ -1694,8 +1772,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const updates = await c.req.json();
 
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
 
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1846,8 +1923,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
     const { requestedCashInHand, requestedOffset } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1910,8 +1986,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1977,8 +2052,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
     const { reason } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -2042,8 +2116,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -2622,8 +2695,11 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allProduction = await getAllByPrefixWithRetry('production:');
+    const allProduction = await getAllByPrefixWithRetry('production:', windowed.range);
     return c.json({ production: allProduction });
   } catch (error: any) {
     console.log('Error fetching production data:', error);
@@ -2796,7 +2872,7 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
     // Update the record where it already lives (under whoever created it): writing under the
     // editor's own id left the original in place and added a second copy. Paginated, as the
     // plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('production:')).find((p: any) => p.id === itemId);
+    const existing = await findByIdInPrefix('production:', itemId);
     if (!existing) {
       return c.json({ error: 'Production data not found' }, 404);
     }
@@ -3320,7 +3396,12 @@ const LATEST_APP_VERSION = '1.15.21';
 // What this server supports, so a newer app can switch each feature on only against a server
 // that has it (an older app ignores the list). Add a name here only once the feature ships:
 //   cors-v2        x-region / idempotency-key / x-bunny-client / if-none-match allowed (CORS above)
-const SERVER_FEATURES: string[] = ['cors-v2'];
+//   date-range-v1  ?from=&to= (YYYY-MM-DD, inclusive) on the history lists: /inventory, /overheads,
+//                  /fixed-costs, /sales, /sales-data, /production, /online-sales, /online-payouts,
+//                  /aggregator-settlements (settlementDate), /stock-requests and /production-requests
+//                  (requestDate), /online-cash-recalibration/all, /timesheets/all, /payouts,
+//                  /leaves/all (leaveDate), /order-item-detail
+const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1'];
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -3471,27 +3552,26 @@ app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
   }
 });
 
+// Unified employee records as the employee lists hand them out: both id and employeeId set, and
+// type mirroring employmentType (payroll reads type).
+function normalizeEmployee(emp: any) {
+  return {
+    ...emp,
+    id: emp.id || emp.employeeId, // Use employeeId as id if id doesn't exist
+    employeeId: emp.employeeId || emp.id, // Ensure employeeId exists
+    type: emp.employmentType || emp.type // Map employmentType to type for payroll compatibility
+  };
+}
+
 // Employee Management Routes
 // Get all employees
 app.get('/make-server-c2dd9b9d/employees', async (c) => {
   try {
-    // Fetch from both old and new employee storage for backwards compatibility
-    const [oldEmployees, unifiedEmployees] = await Promise.all([
-      kvWithRetry.getByPrefix('employee:'),
-      kvWithRetry.getByPrefix('unified-employee:')
-    ]);
-    
-    // Normalize unified employees to have both id and employeeId, and type field
-    const normalizedUnified = unifiedEmployees.map((emp: any) => ({
-      ...emp,
-      id: emp.id || emp.employeeId, // Use employeeId as id if id doesn't exist
-      employeeId: emp.employeeId || emp.id, // Ensure employeeId exists
-      type: emp.employmentType || emp.type // Map employmentType to type for payroll compatibility
-    }));
-    
-    // Combine both arrays
-    const allEmployees = [...oldEmployees, ...normalizedUnified];
-    
+    // Only unified-employee: records. The old employee: collection has been empty for months
+    // and nothing in the app writes it, yet it was scanned on every call (~500 times a day).
+    const unifiedEmployees = await kvWithRetry.getByPrefix('unified-employee:');
+    const allEmployees = unifiedEmployees.map(normalizeEmployee);
+
     const viewer = await viewerOf(c);
     return c.json({ success: true, employees: allEmployees.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error: any) {
@@ -3657,12 +3737,7 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
     // excludes their entire payout history once they're archived, regardless of whether
     // the store/archive-status filtering is otherwise correct. Confirmed real: Akash Dey's
     // August payout existed the whole time but could never match either tab.
-    const normalized = archivedEmployees.map((emp: any) => ({
-      ...emp,
-      id: emp.id || emp.employeeId,
-      employeeId: emp.employeeId || emp.id,
-      type: emp.employmentType || emp.type
-    }));
+    const normalized = archivedEmployees.map(normalizeEmployee);
     const viewer = await viewerOf(c);
     return c.json({ success: true, employees: normalized.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
@@ -3742,10 +3817,13 @@ app.post('/make-server-c2dd9b9d/archived-employees/:employeeId/restore', async (
 // Payout Management Routes
 // Get all payouts
 app.get('/make-server-c2dd9b9d/payouts', async (c) => {
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Paginated: every salary and daily wage is a row, so this passes 1000 and payslips,
     // My Payouts and advance recovery would silently miss the rest.
-    const payouts = await getAllByPrefixWithRetry('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:', windowed.range);
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching payouts:', error);
@@ -3891,8 +3969,11 @@ app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const sales = await getAllByPrefixWithRetry('online_sales:');
+    const sales = await getAllByPrefixWithRetry('online_sales:', windowed.range);
     return c.json({ success: true, sales });
   } catch (error: any) {
     console.log('Error fetching online sales:', error);
@@ -3938,8 +4019,11 @@ app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const payouts = await getAllByPrefixWithRetry('online_payout:');
+    const payouts = await getAllByPrefixWithRetry('online_payout:', windowed.range);
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching online payouts:', error);
@@ -4028,9 +4112,13 @@ app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  // A settlement's own date is the day it was paid out (settlementDate).
+  const windowed = requestedDateRange(c, 'settlementDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     const storeId = c.req.query('storeId');
-    let settlements = await getAllByPrefixWithRetry('aggregator-settlement:');
+    let settlements = await getAllByPrefixWithRetry('aggregator-settlement:', windowed.range);
     if (storeId) {
       settlements = (settlements || []).filter((s: any) => s.storeId === storeId);
     }
@@ -5859,12 +5947,19 @@ app.get('/make-server-c2dd9b9d/order-item-detail', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     const storeId = c.req.query('storeId');
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
 
-    let records = await kv.getByPrefix('order-item-detail:');
+    // With ?from/&to the database narrows it first: by store through the key
+    // (order-item-detail:{storeId}:{date}) and by day. Without them, as before.
+    let records = windowed.range
+      ? await getAllByPrefixWithRetry(storeId ? `order-item-detail:${storeId}:` : 'order-item-detail:', windowed.range)
+      : await kv.getByPrefix('order-item-detail:');
     records = (records || []).filter((r: any) => {
       if (storeId && r.storeId !== storeId) return false;
       if (startDate && r.date < startDate) return false;
@@ -6569,8 +6664,11 @@ app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allTimesheets = await getAllByPrefixWithRetry('timesheet:');
+    const allTimesheets = await getAllByPrefixWithRetry('timesheet:', windowed.range);
     return c.json({ timesheets: allTimesheets });
   } catch (error: any) {
     console.log('Error fetching all timesheets:', error);
@@ -6879,9 +6977,12 @@ app.post('/make-server-c2dd9b9d/timesheets/auto-approve-stale', async (c) => {
 
 // Get all leaves (for cluster heads/managers)
 app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
+  const windowed = requestedDateRange(c, 'leaveDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Paginated - plain getByPrefix stopped at 1000 rows and hid newer applications.
-    const allLeaves = await getAllByPrefixWithRetry('leave:');
+    const allLeaves = await getAllByPrefixWithRetry('leave:', windowed.range);
     return c.json({ leaves: allLeaves });
   } catch (error) {
     console.log('Error fetching all leaves:', error);
@@ -11817,9 +11918,12 @@ app.get('/make-server-c2dd9b9d/sales-data', async (c) => {
     return c.json({ error: auth.error }, auth.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const records = await getAllByPrefixWithRetry('sales_data_');
-    
+    const records = await getAllByPrefixWithRetry('sales_data_', windowed.range);
+
     console.log('Retrieved sales data records:', records.length);
     
     return c.json({ data: records });
@@ -12461,25 +12565,16 @@ app.get('/make-server-c2dd9b9d/stock-requests', async (c) => {
     return c.json({ error: auth.error }, auth.status);
   }
 
+  const windowed = requestedDateRange(c, 'requestDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     console.log('🔍 SERVER: Fetching stock requests with prefix stock_request_');
-    const requests = await getAllByPrefixWithRetry('stock_request_');
+    const requests = await getAllByPrefixWithRetry('stock_request_', windowed.range);
     console.log('📦 Server: Retrieved stock requests:', requests.length);
-    console.log('📦 Server: Sample stock request:', requests[0]);
-    console.log('📦 Server: All stock request IDs:', requests.map(r => r?.id || 'NO_ID'));
-    
-    // Also let's check all keys in the database to debug
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
-    );
-    const { data: allKeys, error: keysError } = await supabase
-      .from('kv_store_c2dd9b9d')
-      .select('key')
-      .like('key', 'stock_%');
-    console.log('📊 SERVER: All stock-related keys in database:', allKeys?.map(k => k.key) || []);
-    console.log('📊 SERVER: Total stock-related keys:', allKeys?.length || 0);
-    
+    // (A debugging scan of every stock_* key used to run here on each call, after the list
+    // was already read - a second database round trip on every app start. Removed.)
+
     return c.json({ stockRequests: requests });
   } catch (error: any) {
     console.error('Error fetching stock requests:', error);
@@ -15918,8 +16013,13 @@ app.get('/make-server-c2dd9b9d/online-cash-recalibration/history/:storeId', asyn
 
 // Get all online cash recalibrations (for all stores)
 app.get('/make-server-c2dd9b9d/online-cash-recalibration/all', async (c) => {
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allRecalibrations = await kvWithRetry.getByPrefix('online-cash-recalibration:');
+    const allRecalibrations = windowed.range
+      ? await getAllByPrefixWithRetry('online-cash-recalibration:', windowed.range)
+      : await kvWithRetry.getByPrefix('online-cash-recalibration:');
     
     console.log(`📊 Fetching all recalibrations:`, {
       count: allRecalibrations?.length || 0
