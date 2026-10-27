@@ -1,8 +1,21 @@
+// Insights > Overview > Performance tracker: which days had expenses, sales, production and stock
+// requests logged, and how late. A period chip, the completion figures, then the days as a list
+// (a day opens a sheet with who logged what, when); the table only from 1024 px.
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText, Bug } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { toast } from 'sonner@2.0.3';
-import { DatePicker } from './DatePicker';
+import { Card } from './ui/card';
+import { EmptyState } from './ui/empty-state';
+import { Field, controlClasses } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonListRows, SkeletonStatTiles } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { cn } from './ui/utils';
+import { HowItWorks, OptionChip, SectionHeading, TextRow } from './insights/parts/common';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { formatDateTimeIST, formatDateIST } from '../utils/timezone';
 import { getAssignedProductionHouseIds, getAssignedStoreIds } from '../utils/entityAccess';
@@ -52,6 +65,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const [periodStats, setPeriodStats] = useState<PeriodStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [openLogDate, setOpenLogDate] = useState<string | null>(null);
+  const [showAllDays, setShowAllDays] = useState(false);
 
   const selectedConcreteStoreId = selectedStoreId && selectedStoreId !== 'all' ? selectedStoreId : null;
   const isProductionIncharge = context.user?.designation === 'production_incharge';
@@ -592,380 +607,173 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
     }
   };
 
+  const STATUS_CHIP: Record<DailyLog['status'], { tone: 'success' | 'warning' | 'danger'; label: string; icon: typeof CheckCircle }> = {
+    complete: { tone: 'success', label: 'Complete', icon: CheckCircle },
+    partial: { tone: 'warning', label: 'Partial', icon: AlertTriangle },
+    missing: { tone: 'danger', label: 'Missing', icon: XCircle },
+  };
+  const openLog = dailyLogs.find((l) => l.date === openLogDate) || null;
+  const logged = (ok: boolean, at: string | null, by: string, what?: string) =>
+    ok ? [what ?? 'Logged', formatDateTime(at), by ? `by ${by}` : ''].filter(Boolean).join(' · ') : 'Not logged';
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface border border-border">
-          <FileText className="w-6 h-6 text-text-2" />
-        </div>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight">Data Capture Monitor</h1>
-          <p className="text-sm sm:text-base text-text-3">Track daily data logging and manager performance</p>
-        </div>
-      </div>
+    <div className="flex flex-col gap-5">
+      <SectionHeading
+        title="Data capture"
+        caption="Daily data logging and on-time entry, day by day"
+      />
 
-      <div className="bg-surface rounded-lg border border-border p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <h2 className="text-lg sm:text-xl font-bold text-text tracking-tight">Select Period</h2>
-
-          {/* Date Range Selector */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setDateRange('day')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'day'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              Today
-            </button>
-            <button
-              onClick={() => setDateRange('thisMonth')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'thisMonth'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              This Month
-            </button>
-            <button
-              onClick={() => setDateRange('prevMonth')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'prevMonth'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              Last Month
-            </button>
-            <button
-              onClick={() => setDateRange('thisYear')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'thisYear'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              This Year
-            </button>
-            <button
-              onClick={() => setDateRange('prevYear')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'prevYear'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              Last Year
-            </button>
-            <button
-              onClick={() => setDateRange('custom')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'custom'
-                  ? 'bg-primary-soft text-primary border-2 border-border'
-                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              Custom
-            </button>
-          </div>
-        </div>
-
-        {/* Custom Date Range */}
+      <div className="flex flex-col gap-3">
+        <OptionChip
+          title="Period"
+          value={dateRange}
+          onChange={setDateRange}
+          className="self-start"
+          options={[
+            { value: 'day', label: 'Today' },
+            { value: 'thisMonth', label: 'This month' },
+            { value: 'prevMonth', label: 'Last month' },
+            { value: 'thisYear', label: 'This year' },
+            { value: 'prevYear', label: 'Last year' },
+            { value: 'custom', label: 'Custom dates' },
+          ]}
+        />
         {dateRange === 'custom' && (
-          <div className="mt-4 flex flex-wrap gap-4">
-            <DatePicker
-              label="Start Date"
-              value={customStartDate}
-              onChange={setCustomStartDate}
-            />
-            <DatePicker
-              label="End Date"
-              value={customEndDate}
-              onChange={setCustomEndDate}
-            />
+          <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+            <Field label="Start date">
+              <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className={controlClasses} />
+            </Field>
+            <Field label="End date">
+              <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className={controlClasses} />
+            </Field>
           </div>
         )}
-
-
       </div>
 
-      {/* Period Statistics */}
-      {periodStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-          <div className="rounded-lg p-4 text-text bg-surface border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <Calendar className="w-5 h-5 text-text-2" />
-              <div className="text-xs uppercase tracking-wide text-text-2">Total Days</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.totalDays}</div>
-          </div>
+      <HowItWorks title="What the statuses mean" label="What Complete, Partial and Late mean" className="-mt-2">
+        <p><span className="font-medium text-text">Complete</span>: both expenses and sales were logged that day.</p>
+        <p><span className="font-medium text-text">Partial</span>: at least one kind of data was logged.</p>
+        <p><span className="font-medium text-text">Missing</span>: nothing was logged.</p>
+        <p><span className="font-medium text-text">Late</span>: an entry was made after midnight.</p>
+      </HowItWorks>
 
-          <div className="rounded-lg p-4 text-text bg-surface border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="w-5 h-5 text-text-2" />
-              <div className="text-xs uppercase tracking-wide text-text-2">Completion Rate</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.completionRate.toFixed(1)}%</div>
-          </div>
+      {/* Period figures */}
+      {loading && !periodStats ? (
+        <SkeletonStatTiles count={4} />
+      ) : periodStats ? (
+        <>
+          <StatTile
+            hero
+            label="Completion rate"
+            value={`${periodStats.completionRate.toFixed(1)}%`}
+            caption={`${periodStats.totalDays} days in the period · ${periodStats.onTimeRate.toFixed(1)}% complete and on time`}
+          />
+          <StatGrid columns={3}>
+            <StatTile label="On-time rate" value={`${periodStats.onTimeRate.toFixed(1)}%`} />
+            <StatTile label="Total discrepancy" value={`₹${periodStats.totalDiscrepancy.toFixed(2)}`} />
+            <StatTile className="col-span-2 lg:col-span-1" label="Average discrepancy" value={`₹${periodStats.avgDiscrepancy.toFixed(2)}`} caption="Per day with sales logged" />
+          </StatGrid>
+        </>
+      ) : null}
 
-          <div className="rounded-lg p-4 text-text bg-surface border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <Clock className="w-5 h-5 text-text-2" />
-              <div className="text-xs uppercase tracking-wide text-text-2">On-Time Rate</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.onTimeRate.toFixed(1)}%</div>
+      {/* Day by day: a list on phones (tap a day for who logged what, when), a table from 1024 px */}
+      {loading ? (
+        <SkeletonListRows count={6} />
+      ) : dailyLogs.length === 0 ? (
+        <Card><EmptyState compact icon={Calendar} title="No data for this period" /></Card>
+      ) : (
+        <>
+          <ListGroup title="Day by day" meta={`${dailyLogs.length} days`} className="lg:hidden">
+            {dailyLogs.slice(0, showAllDays ? undefined : 14).map((log) => {
+              const s = STATUS_CHIP[log.status];
+              return (
+                <ListRow
+                  key={log.date}
+                  title={<span className="inline-flex items-center gap-2">{formatDate(log.date)}{log.lateEntry && <StatusChip tone="warning" icon={Clock}>Late</StatusChip>}</span>}
+                  subtitle={[
+                    log.inventoryLogged ? `${log.inventoryCount} expense items` : 'No expenses',
+                    log.salesLogged ? 'sales' : 'no sales',
+                    log.productionLogged ? 'production' : 'no production',
+                    log.stockRequestLogged ? 'stock request' : 'no stock request',
+                  ].join(' · ')}
+                  trailing={
+                    <span className="flex flex-col items-end gap-1">
+                      <StatusChip tone={s.tone} icon={s.icon}>{s.label}</StatusChip>
+                      {log.salesLogged && <span className={cn('num text-label', log.cashDiscrepancy > 500 ? 'font-semibold text-danger' : 'text-text-2')}>₹{log.cashDiscrepancy.toFixed(2)}</span>}
+                    </span>
+                  }
+                  onClick={() => setOpenLogDate(log.date)}
+                />
+              );
+            })}
+            {!showAllDays && dailyLogs.length > 14 && (
+              <ListRow muted density="compact" title={`See all (${dailyLogs.length})`} onClick={() => setShowAllDays(true)} chevron="down" />
+            )}
+          </ListGroup>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Expense</TableHead>
+                  <TableHead>Sales</TableHead>
+                  <TableHead>Production</TableHead>
+                  <TableHead>Stock requests</TableHead>
+                  <TableHead numeric>Cash discrepancy</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dailyLogs.map((log) => {
+                  const s = STATUS_CHIP[log.status];
+                  const cell = (ok: boolean, at: string | null, by: string, what?: string) =>
+                    ok ? (
+                      <div className="flex flex-col">
+                        <span className="text-text">{what ?? 'Logged'}</span>
+                        <span className="text-label text-text-3">{formatDateTime(at)}</span>
+                        {by && <span className="text-label text-text-3">By {by}</span>}
+                      </div>
+                    ) : <span className="text-text-3">Not logged</span>;
+                  return (
+                    <TableRow key={log.date} className="align-top">
+                      <TableCell className="whitespace-nowrap">
+                        <span className="inline-flex items-center gap-2">{formatDate(log.date)}{log.lateEntry && <StatusChip tone="warning" icon={Clock}>Late</StatusChip>}</span>
+                      </TableCell>
+                      <TableCell><StatusChip tone={s.tone} icon={s.icon}>{s.label}</StatusChip></TableCell>
+                      <TableCell>{cell(log.inventoryLogged, log.inventoryLoggedAt, log.inventoryLoggedBy, `${log.inventoryCount} items`)}</TableCell>
+                      <TableCell>{cell(log.salesLogged, log.salesLoggedAt, log.salesLoggedBy)}</TableCell>
+                      <TableCell>{cell(log.productionLogged, log.productionLoggedAt, log.productionLoggedBy)}</TableCell>
+                      <TableCell>{cell(log.stockRequestLogged, log.stockRequestLoggedAt, log.stockRequestLoggedBy)}</TableCell>
+                      <TableCell numeric className={log.salesLogged && log.cashDiscrepancy > 500 ? 'font-semibold text-danger' : undefined}>{log.salesLogged ? `₹${log.cashDiscrepancy.toFixed(2)}` : '-'}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
-
-          <div className="rounded-lg p-4 text-text bg-surface border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingDown className="w-5 h-5 text-text-2" />
-              <div className="text-xs uppercase tracking-wide text-text-2">Total Discrepancy</div>
-            </div>
-            <div className="text-2xl font-semibold">₹{periodStats.totalDiscrepancy.toFixed(2)}</div>
-          </div>
-
-          <div className="rounded-lg p-4 text-text bg-surface border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-5 h-5 text-text-2" />
-              <div className="text-xs uppercase tracking-wide text-text-2">Avg Discrepancy</div>
-            </div>
-            <div className="text-2xl font-semibold">₹{periodStats.avgDiscrepancy.toFixed(2)}</div>
-          </div>
-        </div>
+        </>
       )}
 
-      {/* Daily Logs - stacked cards on mobile (the 7-column table doesn't fit a phone
-          screen even with horizontal scroll - nothing signals there's more to scroll to,
-          so it just looked cut off), a table on larger screens. */}
-      <div className="sm:hidden space-y-3">
-        {loading ? (
-          <div className="bg-surface rounded-lg border border-border p-6 text-center text-text-3">
-            Loading data...
-          </div>
-        ) : dailyLogs.length === 0 ? (
-          <div className="bg-surface rounded-lg border border-border p-6 text-center text-text-3">
-            No data for selected period
-          </div>
-        ) : (
-          dailyLogs.map((log) => (
-            <div key={log.date} className="bg-surface rounded-lg border border-border p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  {log.lateEntry && (
-                    <span title="Late Entry">
-                      <AlertTriangle className="w-4 h-4 text-primary" />
-                    </span>
-                  )}
-                  <span className="text-sm font-medium text-text">{formatDate(log.date)}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {getStatusIcon(log.status)}
-                  <span className={`px-2 py-0.5 text-xs rounded-full ${getStatusColor(log.status)}`}>
-                    {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-text-3">Expense</span>
-                  {log.inventoryLogged ? (
-                    <span className="text-text text-right">{log.inventoryCount} items</span>
-                  ) : (
-                    <span className="text-text-3">Not logged</span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text-3">Sales</span>
-                  <span className={log.salesLogged ? 'text-text' : 'text-text-3'}>
-                    {log.salesLogged ? 'Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text-3">Production</span>
-                  <span className={log.productionLogged ? 'text-text' : 'text-text-3'}>
-                    {log.productionLogged ? 'Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text-3">Stock Requests</span>
-                  <span className={log.stockRequestLogged ? 'text-text' : 'text-text-3'}>
-                    {log.stockRequestLogged ? 'Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text-3">Cash Discrepancy</span>
-                  {log.salesLogged ? (
-                    <span className={log.cashDiscrepancy > 500 ? 'text-danger' : 'text-text'}>
-                      ₹{log.cashDiscrepancy.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-text-3">-</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))
+      <ResponsiveModal
+        open={!!openLog}
+        onOpenChange={(o) => { if (!o) setOpenLogDate(null); }}
+        title={openLog ? formatDate(openLog.date) : ''}
+        description={openLog ? `${STATUS_CHIP[openLog.status].label}${openLog.lateEntry ? ' · late entry' : ''}` : undefined}
+        size="form"
+      >
+        {openLog && (
+          <ListGroup>
+            <TextRow title="Expense" lines={[logged(openLog.inventoryLogged, openLog.inventoryLoggedAt, openLog.inventoryLoggedBy, `${openLog.inventoryCount} items`)]} />
+            <TextRow title="Sales" lines={[logged(openLog.salesLogged, openLog.salesLoggedAt, openLog.salesLoggedBy)]} />
+            <TextRow title="Production" lines={[logged(openLog.productionLogged, openLog.productionLoggedAt, openLog.productionLoggedBy)]} />
+            <TextRow title="Stock requests" lines={[logged(openLog.stockRequestLogged, openLog.stockRequestLoggedAt, openLog.stockRequestLoggedBy)]} />
+            <TextRow
+              title="Cash discrepancy"
+              trailing={<span className={cn('num text-body-md font-semibold', openLog.salesLogged && openLog.cashDiscrepancy > 500 ? 'text-danger' : 'text-text')}>{openLog.salesLogged ? `₹${openLog.cashDiscrepancy.toFixed(2)}` : '-'}</span>}
+            />
+          </ListGroup>
         )}
-      </div>
-
-      <div className="hidden sm:block bg-surface rounded-lg border border-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-surface-2 border-b border-border">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  <span>Expense</span>
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Sales
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Production
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Stock Requests
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
-                  Cash Discrepancy
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-text-3">
-                    Loading data...
-                  </td>
-                </tr>
-              ) : dailyLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-text-3">
-                    No data for selected period
-                  </td>
-                </tr>
-              ) : (
-                dailyLogs.map((log) => (
-                  <tr key={log.date} className="hover:bg-surface-2">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {log.lateEntry && (
-                          <span title="Late Entry">
-                            <AlertTriangle className="w-4 h-4 text-primary" />
-                          </span>
-                        )}
-                        <span className="text-sm text-text">{formatDate(log.date)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(log.status)}
-                        <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(log.status)}`}>
-                          {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.inventoryLogged ? (
-                        <div className="text-sm">
-                          <p className="text-text">{log.inventoryCount} items</p>
-                          <p className="text-text-3">{formatDateTime(log.inventoryLoggedAt)}</p>
-                          {log.inventoryLoggedBy && (
-                            <p className="text-xs text-text-3">By: {log.inventoryLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-text-3">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.salesLogged ? (
-                        <div className="text-sm">
-                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
-                          <p className="text-text-3">{formatDateTime(log.salesLoggedAt)}</p>
-                          {log.salesLoggedBy && (
-                            <p className="text-xs text-text-3">By: {log.salesLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-text-3">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.productionLogged ? (
-                        <div className="text-sm">
-                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
-                          <p className="text-text-3">{formatDateTime(log.productionLoggedAt)}</p>
-                          {log.productionLoggedBy && (
-                            <p className="text-xs text-text-3">By: {log.productionLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-text-3">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.stockRequestLogged ? (
-                        <div className="text-sm">
-                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
-                          <p className="text-text-3">{formatDateTime(log.stockRequestLoggedAt)}</p>
-                          {log.stockRequestLoggedBy && (
-                            <p className="text-xs text-text-3">By: {log.stockRequestLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-text-3">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.salesLogged ? (
-                        <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-danger' : 'text-text'}`}>
-                          ₹{log.cashDiscrepancy.toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-text-3">-</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="bg-surface-2 rounded-lg border border-border p-4">
-        <p className="text-sm text-text-2 mb-2">Legend:</p>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-success" />
-            <span className="text-text-2">Complete - Both Inventory AND Sales logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-warning" />
-            <span className="text-text-2">Partial - At least one data type logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4 text-danger" />
-            <span className="text-text-2">Missing - No data logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-primary" />
-            <span className="text-text-2">Orange icon = Late entry (logged after midnight)</span>
-          </div>
-        </div>
-      </div>
+      </ResponsiveModal>
     </div>
   );
 }
