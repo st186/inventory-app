@@ -243,11 +243,15 @@ console.log('Environment check:', {
 });
 console.log('About to configure CORS and middleware...');
 
+// cors-v2 (speed work, 28 Oct 2026): x-region lets the app run the function next to the
+// database (Tokyo) instead of next to the phone; idempotency-key, x-bunny-client and
+// if-none-match carry the safe-retry, lean-list and bootstrap/ETag features (see
+// SERVER_FEATURES). Deployed before any app build sends them.
 app.use('*', cors({
   origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'x-region', 'idempotency-key', 'x-bunny-client', 'if-none-match'],
+  exposeHeaders: ['Content-Length', 'etag', 'idempotent-replay', 'x-sb-edge-region'],
   maxAge: 86400,
 }));
 console.log('✅ CORS configured successfully');
@@ -3261,10 +3265,15 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // bundle are updated together, in the same release, by construction.
 const LATEST_APP_VERSION = '1.15.21';
 
+// What this server supports, so a newer app can switch each feature on only against a server
+// that has it (an older app ignores the list). Add a name here only once the feature ships:
+//   cors-v2        x-region / idempotency-key / x-bunny-client / if-none-match allowed (CORS above)
+const SERVER_FEATURES: string[] = ['cors-v2'];
+
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
 app.get('/make-server-c2dd9b9d/app-version', (c) => {
-  return c.json({ latestVersion: LATEST_APP_VERSION });
+  return c.json({ latestVersion: LATEST_APP_VERSION, features: SERVER_FEATURES });
 });
 
 // Debug endpoint to check user metadata
