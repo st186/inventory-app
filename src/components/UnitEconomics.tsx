@@ -547,7 +547,19 @@ export function UnitEconomics({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="overflow-x-auto mt-3">
+          {/* Phones: a list; from 1024 px: the table */}
+          <ul className="mt-3 divide-y divide-border lg:hidden">
+            {trendData.map((t) => (
+              <li key={t.label} className="flex items-center justify-between gap-3 py-2">
+                <span className="min-w-0">
+                  <span className="block text-body-sm text-text">{t.label}</span>
+                  <span className="block text-caption text-text-3">Sales {inr(t.revenue)} · gross {inr(t.cm1Amt)} · CM2 {inr(t.cm2Amt)} · EBITDA {inr(t.ebitdaAmt)}</span>
+                </span>
+                <span className={`num shrink-0 text-right text-body-sm font-semibold ${t.netAmt < 0 ? 'text-danger' : 'text-text'}`}>{inr(t.netAmt)}<span className="block text-caption font-normal text-text-3">{t.net}% net</span></span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 hidden overflow-x-auto lg:block">
             <table className="w-full text-xs tabular-nums">
               <thead>
                 <tr className="text-left text-text-3 border-b border-border">

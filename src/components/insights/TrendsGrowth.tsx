@@ -77,24 +77,20 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
 
         <div className={card}>
           <div className="flex items-center gap-2 mb-3"><Leaf className="w-5 h-5 text-success" /><h3 className="font-bold text-text">Non-veg vs veg by week</h3></div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-xs text-text-3 text-left"><th className="py-1 pr-2 font-medium">Week of</th><th className="py-1 px-2 font-medium text-right">Sales</th><th className="py-1 px-2 font-medium text-right">Chicken</th><th className="py-1 pl-2 font-medium text-right">Veg share</th></tr></thead>
-              <tbody className="divide-y divide-border">
-                {stats.weeks.map(([wk, w]) => {
-                  const total = w.nonVeg + w.veg;
-                  return (
-                    <tr key={wk}>
-                      <td className="py-1.5 pr-2 whitespace-nowrap">{fmtDay(wk)}{w.days < 7 ? <span className="text-caption text-text-3"> · {w.days}d</span> : null}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{rupees(w.revenue)}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{w.chicken.toLocaleString('en-IN')}</td>
-                      <td className="py-1.5 pl-2 text-right tabular-nums">{total ? `${Math.round((w.veg / total) * 100)}%` : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="divide-y divide-border">
+            {stats.weeks.map(([wk, w]) => {
+              const total = w.nonVeg + w.veg;
+              return (
+                <li key={wk} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block text-body-sm text-text">Week of {fmtDay(wk)}{w.days < 7 ? ` · ${w.days} days` : ''}</span>
+                    <span className="block text-caption text-text-3">Chicken {w.chicken.toLocaleString('en-IN')} · veg {total ? `${Math.round((w.veg / total) * 100)}%` : '—'}</span>
+                  </span>
+                  <span className="num shrink-0 text-body-sm font-semibold text-text">{rupees(w.revenue)}</span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </div>
 
@@ -120,21 +116,17 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
           {stats.festivals.length === 0 ? (
             <p className="text-sm text-text-3">No past festival days marked yet - add them in the calendar below.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="text-xs text-text-3 text-left"><th className="py-1 pr-2 font-medium">Day</th><th className="py-1 px-2 font-medium text-right">Sales</th><th className="py-1 px-2 font-medium text-right">Non-veg</th><th className="py-1 pl-2 font-medium text-right">Veg</th></tr></thead>
-                <tbody className="divide-y divide-border">
-                  {stats.festivals.map((f) => (
-                    <tr key={f.date}>
-                      <td className="py-1.5 pr-2"><span className="whitespace-nowrap">{fmtDay(f.date)} · {f.name}</span> <span className={`text-caption px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[f.effect]}`}>{effectLabel(f.effect)}</span></td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{pct(f.revenueRatio)}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{pct(f.nonVegRatio)}</td>
-                      <td className="py-1.5 pl-2 text-right tabular-nums">{pct(f.vegRatio)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="divide-y divide-border">
+              {stats.festivals.map((f) => (
+                <li key={f.date} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-body-sm text-text">{fmtDay(f.date)} · {f.name} <span className={`text-caption px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[f.effect]}`}>{effectLabel(f.effect)}</span></span>
+                    <span className="block text-caption text-text-3">Non-veg {pct(f.nonVegRatio)} · veg {pct(f.vegRatio)} of a usual day</span>
+                  </span>
+                  <span className="num shrink-0 text-body-sm font-semibold text-text">{pct(f.revenueRatio)}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>

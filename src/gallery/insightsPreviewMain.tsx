@@ -68,6 +68,26 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     case '/online-loans': return json({ loans: mock.loans });
     case '/order-item-detail': return json({ records: mock.orderItemDetail(q.get('startDate') || '2026-03-01', q.get('endDate') || today, q.get('storeId') || undefined) });
     case '/production-ledger': return json({ entries: mock.productionLedger(q.get('from') || today, q.get('to') || today) });
+    case '/insights/overview': {
+      // Trends: the last 90 days of the chosen store (or all) from the made-up sales.
+      const storeId = q.get('storeId');
+      const from = new Date(Date.parse(`${today}T00:00:00Z`) - 90 * 86400_000).toISOString().slice(0, 10);
+      const byDate = new Map<string, { revenue: number; pieces: Record<string, number> }>();
+      for (const s of mock.context.salesData) {
+        if (s.date < from || (storeId && s.storeId !== storeId)) continue;
+        const d = byDate.get(s.date) || { revenue: 0, pieces: {} };
+        d.revenue += (s.cashAmount || 0) + (s.paytmAmount || 0);
+        byDate.set(s.date, d);
+      }
+      for (const c of mock.context.categorySalesData) {
+        const d = byDate.get(c.date);
+        if (!d || (storeId && c.storeId !== storeId)) continue;
+        const keys: Record<string, string> = { 'Chicken Momos': 'chicken', 'Chicken Cheese Momos': 'chickenCheese', 'Chicken Kurkure Momos': 'chickenKurkure', 'Veg Momos': 'veg', 'Corn Cheese Momos': 'cheeseCorn', 'Paneer Momos': 'paneer', 'Veg Kurkure Momos': 'vegKurkure' };
+        for (const [name, n] of Object.entries(c.data as Record<string, number>)) if (keys[name]) d.pieces[keys[name]] = (d.pieces[keys[name]] || 0) + n * 6;
+      }
+      const history = [...byDate.entries()].sort().map(([date, d]) => ({ date, revenue: d.revenue, pieces: d.pieces }));
+      return json({ today, storeId, history, events: [], forecast: [], yesterday: { date: today, actual: null, actualPieces: null, expected: {} }, learned: {} });
+    }
     case '/events/summary':
       if (params.get('events') === '0') return json({ error: 'Not found' }, 404);
       return json({ summary: { ...EVENTS_SUMMARY, from: q.get('from'), to: q.get('to') } });

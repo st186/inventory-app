@@ -57,21 +57,17 @@ export function ForecastAccuracy({ accuracy }: { accuracy?: Accuracy }) {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <p className="text-xs font-semibold text-text-2 mb-1">Week by week - is it getting better?</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-xs text-text-3 text-left"><th className="py-1 pr-2 font-medium">Week of</th><th className="py-1 px-2 font-medium text-right">Typical miss</th><th className="py-1 px-2 font-medium text-right">Within ±15%</th><th className="py-1 pl-2 font-medium text-right">Ran</th></tr></thead>
-                  <tbody className="divide-y divide-border">
-                    {weeks.map((w) => (
-                      <tr key={w.week}>
-                        <td className="py-1.5 pr-2 whitespace-nowrap">{fmtDay(w.week)}{w.days < 6 ? <span className="text-caption text-text-3"> · {w.days}d</span> : null}</td>
-                        <td className={`py-1.5 px-2 text-right tabular-nums font-semibold ${missTone(w.typicalMiss)}`}>{pctText(w.typicalMiss)}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">{w.within15 === null ? '—' : `${Math.round(w.within15 * w.days)} of ${w.days}`}</td>
-                        <td className="py-1.5 pl-2 text-right text-text-2">{biasText(w.bias)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ul className="divide-y divide-border">
+                {weeks.map((w) => (
+                  <li key={w.week} className="flex items-center justify-between gap-3 py-2">
+                    <span className="min-w-0">
+                      <span className="block text-body-sm text-text">Week of {fmtDay(w.week)}{w.days < 6 ? ` · ${w.days} days` : ''}</span>
+                      <span className="block text-caption text-text-3">Within ±15%: {w.within15 === null ? '—' : `${Math.round(w.within15 * w.days)} of ${w.days}`} · {biasText(w.bias)}</span>
+                    </span>
+                    <span className={`num shrink-0 text-right text-body-sm font-semibold ${missTone(w.typicalMiss)}`}>{pctText(w.typicalMiss)}<span className="block text-caption font-normal text-text-3">typical miss</span></span>
+                  </li>
+                ))}
+              </ul>
             </div>
 
             <div>
