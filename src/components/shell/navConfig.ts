@@ -83,7 +83,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -112,6 +112,7 @@ export type ScreenSpec =
   | { screen: 'RiderProfile' }
   | { screen: 'More' }
   | { screen: 'Inbox' }
+  | { screen: 'Events' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -348,6 +349,9 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   }
   if (can.backup) add('backup', 'more.backup', 'backup', { screen: 'BackupRestore' }, L('backup', { screen: 'BackupRestore' }));
   if (can.riderProfile) add('rider-profile', 'more.riderProfile', 'profile', { screen: 'RiderProfile' }, L('rider-profile', { screen: 'RiderProfile' }));
+  // Event stalls (owner, 27 Oct 2026): the owner and managers find them under More; staff assigned
+  // to an event open it from their Home card. Which events anyone may see is the server's call.
+  if (kind !== 'rider') add('events', 'event.events', 'events', { screen: 'Events' }, null, 'events');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -374,7 +378,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -389,7 +393,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'my-kpis'),
+      group('more.business', 'insights', 'events', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report'),

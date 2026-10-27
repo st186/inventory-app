@@ -74,6 +74,8 @@ export const LEGACY_ALIASES: Record<string, Candidates> = {
   assets: () => ['equipment'],
   'inventory-items': () => ['items'],
   'advanced-inventory': () => ['stock/on-hand', 'production/on-hand'],
+  // Event stalls: the event id travels as `highlight` (notificationNavigation.ts), EventsDestination opens it.
+  events: () => ['events'],
 };
 
 export function resolveLegacyTarget(target: LegacyTarget | null | undefined, nav: Pick<NavModel, 'destinations'>): Route {

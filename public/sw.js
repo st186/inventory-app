@@ -78,6 +78,12 @@ const NOTIFICATION_VIEW_MAP = {
   cash_topup_approved: { view: 'sales' },
   production_cash_store_bill: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
+  // Event stalls: relatedId is the event id (opens that event); a momo return goes to the
+  // production queue, where production confirms it.
+  event_assigned: { view: 'events' },
+  event_day_closed: { view: 'events', tab: 'sales' },
+  event_momo_return: { view: 'stock-requests' },
+  event_momo_return_received: { view: 'events', tab: 'stock' },
   paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
   low_stock_alert: { view: 'analytics', tab: 'production-requests' },
