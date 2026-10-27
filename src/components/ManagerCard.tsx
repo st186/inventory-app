@@ -1,5 +1,7 @@
-import { ChevronRight, UserCog, User } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { CornerDownRight } from 'lucide-react';
 import type { Employee } from '../utils/api';
+import { InitialsAvatar } from './ui/avatar';
 
 interface ManagerNode extends Employee {
   employees?: Employee[];
@@ -11,78 +13,58 @@ interface ManagerCardProps {
   level?: number;
 }
 
-export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
-  const hasSubordinates = (manager.managers && manager.managers.length > 0) || (manager.employees && manager.employees.length > 0);
-  
-  // Format designation for display
-  const formatDesignation = (designation?: string | null) => {
-    if (!designation) return 'Manager';
-    
-    const designationMap: Record<string, string> = {
-      'operations_incharge': 'Operations Incharge',
-      'store_incharge': 'Store Incharge',
-      'production_incharge': 'Production Incharge',
-      'store_ops': 'Store Operations',
-      'production_ops': 'Production Operations',
-      'rider': 'Rider',
-    };
-    
-    return designationMap[designation] || designation;
+// Format designation for display
+export const formatDesignation = (designation?: string | null, fallback = 'Manager') => {
+  if (!designation) return fallback;
+
+  const designationMap: Record<string, string> = {
+    'operations_incharge': 'Operations incharge',
+    'operations_manager': 'Operations manager',
+    'store_incharge': 'Store incharge',
+    'production_incharge': 'Production incharge',
+    'store_ops': 'Store operations',
+    'production_ops': 'Production operations',
+    'rider': 'Rider',
   };
-  
+
+  return designationMap[designation] || designation;
+};
+
+/** One person in the org tree: indented under whoever they report to. */
+export function TreeRow({ depth, name, meta, trailing, onClick }: { depth: number; name: string; meta?: ReactNode; trailing?: ReactNode; onClick?: () => void }) {
+  const body = (
+    <>
+      {depth > 0 && <CornerDownRight className="size-4 shrink-0 text-text-disabled" aria-hidden="true" />}
+      <InitialsAvatar name={name} size={depth === 0 ? 40 : 32} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-body-md font-medium text-text">{name}</span>
+        {meta && <span className="truncate text-label text-text-3">{meta}</span>}
+      </span>
+      {trailing}
+    </>
+  );
+  const style = { paddingLeft: 16 + Math.min(depth, 4) * 20 };
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} style={style} className="flex min-h-14 w-full items-center gap-3 py-2 pr-4 text-left outline-none transition-colors hover:bg-surface-2/60 active:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        {body}
+      </button>
+    );
+  }
+  return <div style={style} className="flex min-h-14 items-center gap-3 py-2 pr-4">{body}</div>;
+}
+
+// A manager and everyone under them (recursive), as rows inside the parent's ListGroup.
+export function ManagerCard({ manager, level = 0 }: ManagerCardProps) {
   return (
-    <div className="mb-4 last:mb-0 border border-gray-200 rounded-2xl bg-white overflow-hidden shadow-sm">
-      {/* Manager Header */}
-      <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 p-3 sm:p-4">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <ChevronRight className="w-5 h-5 text-white/70 flex-shrink-0" />
-          <div className="w-10 h-10 bg-white/20 border border-white/30 rounded-full flex items-center justify-center text-white flex-shrink-0">
-            <UserCog className="w-5 h-5" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h4 className="text-white font-bold truncate">{manager.name}</h4>
-            <span className="inline-block mt-1 px-2 py-1 bg-white/20 border border-white/30 text-white text-xs rounded max-w-full truncate align-top">
-              {formatDesignation(manager.designation)}
-            </span>
-            <div className="text-sm text-emerald-50 truncate mt-1">{manager.employeeId} • {manager.email}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Subordinates */}
-      {hasSubordinates && (
-        <div className="p-3 sm:p-4 space-y-4 bg-gray-50">
-          {/* Subordinate Managers (Recursive) */}
-          {manager.managers && manager.managers.length > 0 && (
-            <div className="space-y-3">
-              {manager.managers.map((subManager) => (
-                <ManagerCard key={subManager.employeeId} manager={subManager} level={level + 1} />
-              ))}
-            </div>
-          )}
-
-          {/* Direct Employees */}
-          {manager.employees && manager.employees.length > 0 && (
-            <div>
-              <p className="text-xs text-gray-500 mb-2">Direct Reports:</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {manager.employees.map((employee) => (
-                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-rose-50 rounded-xl border border-rose-100">
-                    <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                    <div className="w-8 h-8 bg-rose-600 rounded-full flex items-center justify-center text-white text-sm flex-shrink-0">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-900 truncate">{employee.name}</div>
-                      <div className="text-xs text-gray-600 truncate">{employee.employeeId}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <>
+      <TreeRow depth={level} name={manager.name} meta={`${formatDesignation(manager.designation)} · ${manager.employeeId}`} />
+      {manager.managers?.map((subManager) => (
+        <ManagerCard key={subManager.employeeId} manager={subManager} level={level + 1} />
+      ))}
+      {manager.employees?.map((employee) => (
+        <TreeRow key={employee.employeeId} depth={level + 1} name={employee.name} meta={employee.employeeId} />
+      ))}
+    </>
   );
 }
