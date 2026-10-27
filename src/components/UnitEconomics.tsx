@@ -5,6 +5,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Scale, Info, ChevronRight } from 'lucide-react';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { SegmentedControl } from './ui/segmented-control';
+import { Skeleton } from './ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { HowItWorks } from './insights/parts/common';
 import type { PnlBreakdown, CostLineKey, UnitEconomicsTrendPoint } from './unitEconomicsModel';
 
 // The P&L shape lives with the one function that builds it (utils/pnl.ts), and the smoothing
@@ -391,96 +397,17 @@ export function UnitEconomics({
           </div>
         </div>
 
-        {/* Per order */}
-        <div className="bg-surface rounded-lg border border-border">
-          <div className="px-4 sm:px-5 py-4 border-b border-border">
-            <h3 className="text-base font-bold text-text">One order, by channel</h3>
-            <p className="text-xs text-text-3">What an average order brings in and what's left after food, packaging and the platform's cut</p>
-          </div>
-          {orders === null ? (
-            <p className="p-5 text-sm text-text-3">Loading order counts…</p>
-          ) : channels.length === 0 ? (
-            <p className="p-5 text-sm text-text-3">No POS orders synced for this period.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-caption uppercase tracking-wide text-text-3 border-b border-border">
-                    <th className="px-4 py-2 font-medium">Per order</th>
-                    {channels.map((c) => <th key={c.key} className="px-4 py-2 text-right font-semibold text-text-2">{c.name}</th>)}
-                  </tr>
-                </thead>
-                <tbody className="tabular-nums">
-                  {[
-                    { label: 'Orders', cell: (c: typeof channels[number]) => c.orders.toLocaleString('en-IN') },
-                    { label: 'Average order value', cell: (c: typeof channels[number]) => inr(c.aov) },
-                    { label: '− Food & packaging', cell: (c: typeof channels[number]) => inr(c.cogsPerOrder) },
-                    { label: '− Platform cut', cell: (c: typeof channels[number]) => (c.cut ? inr(c.cutPerOrder) : '-') },
-                  ].map((row) => (
-                    <tr key={row.label} className="border-b border-border">
-                      <td className="px-4 py-2 text-text-2">{row.label}</td>
-                      {channels.map((c) => <td key={c.key} className="px-4 py-2 text-right">{row.cell(c)}</td>)}
-                    </tr>
-                  ))}
-                  <tr className="bg-surface-2 font-semibold">
-                    <td className="px-4 py-2 text-text">Left for staff, rent & profit</td>
-                    {channels.map((c) => (
-                      <td key={c.key} className="px-4 py-2 text-right text-text">
-                        {inr(c.left)}
-                        <span className="block text-caption font-medium text-text-3">{pctText(c.keptPct)} of the order</span>
-                      </td>
-                    ))}
-                  </tr>
-                  <tr className="border-t-2 border-info-border bg-info-soft">
-                    <td colSpan={channels.length + 1} className="px-4 py-2">
-                      <span className="text-sm font-semibold text-info">{byFood ? 'Same food on every channel' : `Same order value on every channel: ${inr(sameValue)}`}</span>
-                      <span className="block text-caption text-info">
-                        {byFood
-                          ? `The counter's average order (${inr(sameValue)}) sold on each channel at that channel's prices: same plates, same food cost. ${markupNote}.`
-                          : "Normalized to the counter's average order, so the channels compare like for like"}
-                      </span>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-4 py-2 text-text-2">{byFood ? 'Price for the same food' : 'Order value'}</td>
-                    {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(o.price)}</td>)}
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-4 py-2 text-text-2">− Food &amp; packaging</td>
-                    {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(o.food)}</td>)}
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-4 py-2 text-text-2">− Platform cut</td>
-                    {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{o.cut ? inr(o.cut) : '-'}</td>)}
-                  </tr>
-                  <tr className="border-b border-border font-semibold">
-                    <td className="px-4 py-2 text-text">Left for staff, rent &amp; profit</td>
-                    {sameOrder.map((o) => (
-                      <td key={o.key} className="px-4 py-2 text-right text-text">
-                        {inr(o.left)}
-                        <span className="block text-caption font-medium text-text-3">{pctText(o.keptPct)} of the order</span>
-                      </td>
-                    ))}
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="px-4 py-2 text-text-2">− Staff, rent &amp; running costs</td>
-                    {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(overheadPerOrder)}</td>)}
-                  </tr>
-                  <tr className="bg-surface-2 font-semibold">
-                    <td className="px-4 py-2 text-text">Profit per order</td>
-                    {sameOrder.map((o) => (
-                      <td key={o.key} className={`px-4 py-2 text-right ${o.profit < 0 ? 'text-danger' : 'text-text'}`}>
-                        {inr(o.profit)}
-                        <span className="block text-caption font-medium text-text-3">{pctText(o.profitPct)} of the order</span>
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-              <p className="px-4 py-3 text-caption text-text-3">{byFood ? "Food and packaging are shared out by how much food each channel sold, valued at counter prices (each dish's latest counter price in the POS), because online menus charge more for the same plates." : "Food and packaging are shared out by each channel's share of sales."} Staff, rent, electricity, running costs, equipment, interest and marketing are shared equally across all {totalOrders.toLocaleString('en-IN')} orders ({inr(overheadPerOrder)} each), with salaries, rent and electricity counted day by day. Orders come from the POS.</p>
-            </div>
-          )}
-        </div>
+        {/* Per order: one channel at a time on phones, the full table from 1024 px */}
+        <PerOrderByChannel
+          orders={orders}
+          channels={channels}
+          sameOrder={sameOrder}
+          byFood={byFood}
+          sameValue={sameValue}
+          markupNote={markupNote}
+          overheadPerOrder={overheadPerOrder}
+          totalOrders={totalOrders}
+        />
       </div>
 
       {/* Survival numbers */}
@@ -616,5 +543,152 @@ export function UnitEconomics({
         </dl>
       </details>
     </div>
+  );
+}
+
+// ---- One order, by channel ------------------------------------------------------------------------
+// Phones: one channel at a time (segmented), as two short lists - the average order, then the same
+// food sold on that channel. From 1024 px: the full side-by-side table. Same figures either way.
+type ChannelRow = { key: string; name: string; orders: number; aov: number; cogsPerOrder: number; cut: number; cutPerOrder: number; left: number; keptPct: number };
+type SameOrderRow = { key: string; price: number; food: number; cut: number; left: number; profit: number; keptPct: number; profitPct: number };
+
+function PerOrderByChannel({ orders, channels, sameOrder, byFood, sameValue, markupNote, overheadPerOrder, totalOrders }: {
+  orders: unknown;
+  channels: ChannelRow[];
+  sameOrder: SameOrderRow[];
+  byFood: boolean;
+  sameValue: number;
+  markupNote: string;
+  overheadPerOrder: number;
+  totalOrders: number;
+}) {
+  const [picked, setPicked] = useState<string>('counter');
+  const active = channels.find((c) => c.key === picked) ? picked : channels[0]?.key;
+  const c = channels.find((x) => x.key === active);
+  const o = sameOrder.find((x) => x.key === active);
+  const amount = (text: string, tone?: 'danger') => <span className={`num text-body-md font-semibold ${tone === 'danger' ? 'text-danger' : 'text-text'}`}>{text}</span>;
+  const sameTitle = byFood ? 'Same food on every channel' : `Same order value on every channel: ${inr(sameValue)}`;
+  const sameNote = byFood
+    ? `The counter's average order (${inr(sameValue)}) sold on each channel at that channel's prices: same plates, same food cost. ${markupNote}.`
+    : "Normalized to the counter's average order, so the channels compare like for like";
+  const footnote = `${byFood ? "Food and packaging are shared out by how much food each channel sold, valued at counter prices (each dish's latest counter price in the POS), because online menus charge more for the same plates." : "Food and packaging are shared out by each channel's share of sales."} Staff, rent, electricity, running costs, equipment, interest and marketing are shared equally across all ${totalOrders.toLocaleString('en-IN')} orders (${inr(overheadPerOrder)} each), with salaries, rent and electricity counted day by day. Orders come from the POS.`;
+
+  return (
+    <section className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:p-5" aria-labelledby="per-order-title">
+      <div className="flex flex-col gap-0.5">
+        <h3 id="per-order-title" className="text-subtitle font-semibold text-text">One order, by channel</h3>
+        <p className="text-label text-text-3">What an average order brings in and what's left after food, packaging and the platform's cut</p>
+      </div>
+      {orders === null ? (
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      ) : channels.length === 0 ? (
+        <EmptyState compact title="No POS orders synced for this period" />
+      ) : (
+        <>
+          <div className="flex flex-col gap-3 lg:hidden">
+            {channels.length > 1 && (
+              <SegmentedControl aria-label="Channel" value={active} onValueChange={setPicked} options={channels.map((x) => ({ value: x.key, label: x.name }))} />
+            )}
+            {c && o && (
+              <>
+                <ListGroup overline="Average order">
+                  <ListRow density="compact" title="Orders" trailing={amount(c.orders.toLocaleString('en-IN'))} />
+                  <ListRow density="compact" title="Average order value" trailing={amount(inr(c.aov))} />
+                  <ListRow density="compact" title="− Food & packaging" trailing={amount(inr(c.cogsPerOrder))} />
+                  <ListRow density="compact" title="− Platform cut" trailing={amount(c.cut ? inr(c.cutPerOrder) : '-')} />
+                  <ListRow density="compact" title="Left for staff, rent & profit" subtitle={`${pctText(c.keptPct)} of the order`} trailing={amount(inr(c.left))} />
+                </ListGroup>
+                <ListGroup overline={sameTitle} footer={sameNote}>
+                  <ListRow density="compact" title={byFood ? 'Price for the same food' : 'Order value'} trailing={amount(inr(o.price))} />
+                  <ListRow density="compact" title="− Food & packaging" trailing={amount(inr(o.food))} />
+                  <ListRow density="compact" title="− Platform cut" trailing={amount(o.cut ? inr(o.cut) : '-')} />
+                  <ListRow density="compact" title="Left for staff, rent & profit" subtitle={`${pctText(o.keptPct)} of the order`} trailing={amount(inr(o.left))} />
+                  <ListRow density="compact" title="− Staff, rent & running costs" trailing={amount(inr(overheadPerOrder))} />
+                  <ListRow density="compact" title="Profit per order" subtitle={`${pctText(o.profitPct)} of the order`} trailing={amount(inr(o.profit), o.profit < 0 ? 'danger' : undefined)} />
+                </ListGroup>
+              </>
+            )}
+          </div>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Per order</TableHead>
+                  {channels.map((x) => <TableHead key={x.key} numeric>{x.name}</TableHead>)}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {[
+                  { label: 'Orders', cell: (x: ChannelRow) => x.orders.toLocaleString('en-IN') },
+                  { label: 'Average order value', cell: (x: ChannelRow) => inr(x.aov) },
+                  { label: '− Food & packaging', cell: (x: ChannelRow) => inr(x.cogsPerOrder) },
+                  { label: '− Platform cut', cell: (x: ChannelRow) => (x.cut ? inr(x.cutPerOrder) : '-') },
+                ].map((row) => (
+                  <TableRow key={row.label}>
+                    <TableCell className="text-text-2">{row.label}</TableCell>
+                    {channels.map((x) => <TableCell key={x.key} numeric>{row.cell(x)}</TableCell>)}
+                  </TableRow>
+                ))}
+                <TableRow className="bg-surface-2 font-semibold">
+                  <TableCell>Left for staff, rent &amp; profit</TableCell>
+                  {channels.map((x) => (
+                    <TableCell key={x.key} numeric>
+                      {inr(x.left)}
+                      <span className="block text-caption font-medium text-text-3">{pctText(x.keptPct)} of the order</span>
+                    </TableCell>
+                  ))}
+                </TableRow>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={channels.length + 1}>
+                    <span className="block text-body-sm font-semibold text-text">{sameTitle}</span>
+                    <span className="block text-label text-text-3">{sameNote}</span>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-text-2">{byFood ? 'Price for the same food' : 'Order value'}</TableCell>
+                  {sameOrder.map((x) => <TableCell key={x.key} numeric>{inr(x.price)}</TableCell>)}
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-text-2">− Food &amp; packaging</TableCell>
+                  {sameOrder.map((x) => <TableCell key={x.key} numeric>{inr(x.food)}</TableCell>)}
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-text-2">− Platform cut</TableCell>
+                  {sameOrder.map((x) => <TableCell key={x.key} numeric>{x.cut ? inr(x.cut) : '-'}</TableCell>)}
+                </TableRow>
+                <TableRow className="font-semibold">
+                  <TableCell>Left for staff, rent &amp; profit</TableCell>
+                  {sameOrder.map((x) => (
+                    <TableCell key={x.key} numeric>
+                      {inr(x.left)}
+                      <span className="block text-caption font-medium text-text-3">{pctText(x.keptPct)} of the order</span>
+                    </TableCell>
+                  ))}
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-text-2">− Staff, rent &amp; running costs</TableCell>
+                  {sameOrder.map((x) => <TableCell key={x.key} numeric>{inr(overheadPerOrder)}</TableCell>)}
+                </TableRow>
+                <TableRow className="bg-surface-2 font-semibold">
+                  <TableCell>Profit per order</TableCell>
+                  {sameOrder.map((x) => (
+                    <TableCell key={x.key} numeric className={x.profit < 0 ? 'text-danger' : undefined}>
+                      {inr(x.profit)}
+                      <span className="block text-caption font-medium text-text-3">{pctText(x.profitPct)} of the order</span>
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+          <HowItWorks title="One order, by channel">
+            <p>{footnote}</p>
+          </HowItWorks>
+        </>
+      )}
+    </section>
   );
 }
