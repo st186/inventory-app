@@ -8,12 +8,14 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerProfileRoutes } from './profile.ts';
-import { registerPasswordRoutes, passwordGate } from './passwords.ts';
+import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
 import { registerWorkplaceRoutes } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
+import { idempotencyMiddleware } from './idempotency.ts';
+import { registerBootstrapRoutes } from './bootstrap.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -54,22 +56,55 @@ function withTrustedRoles(user: any) {
   return { ...user, user_metadata: meta };
 }
 
-// The signed-in caller's role and employee id (already verified by the login gate).
-async function viewerOf(c: any): Promise<{ role?: string; employeeId?: string }> {
+type Viewer = { role?: string; employeeId?: string; lean?: boolean };
+
+// The signed-in caller's role and employee id (already verified by the login gate), and
+// whether the app asked for lean lists (see withoutImages).
+async function viewerOf(c: any): Promise<Viewer> {
+  const lean = wantsLeanLists(c);
   const auth = await verifyUser(c.req.header('Authorization'));
-  return 'error' in auth ? {} : { role: auth.user.user_metadata?.role, employeeId: auth.user.user_metadata?.employeeId };
+  return 'error' in auth ? { lean } : { role: auth.user.user_metadata?.role, employeeId: auth.user.user_metadata?.employeeId, lean };
+}
+
+// The whole record, Aadhaar images included: the owner, and the person themself.
+function seesFullEmployeeRecord(emp: any, viewer: Viewer): boolean {
+  if (viewer.role === 'cluster_head') return true;
+  return !!viewer.employeeId && (emp?.employeeId === viewer.employeeId || emp?.id === viewer.employeeId);
 }
 
 // Who sees what in employee records: Aadhaar card images only the owner and the person
 // themself; pay, date of birth and phone also managers and audit.
-function employeeForViewer(emp: any, viewer: { role?: string; employeeId?: string }) {
-  if (!emp || viewer.role === 'cluster_head') return emp;
-  if (viewer.employeeId && (emp.employeeId === viewer.employeeId || emp.id === viewer.employeeId)) return emp;
+function employeeForViewer(emp: any, viewer: Viewer) {
+  if (!emp) return emp;
+  if (seesFullEmployeeRecord(emp, viewer)) return viewer.lean ? withoutImages(emp) : emp;
   const { aadharFront, aadharBack, ...rest } = emp;
   const out: any = { ...rest, hasAadharImages: !!(aadharFront || aadharBack) };
   if (viewer.role !== 'manager' && viewer.role !== 'audit') {
     for (const k of ['salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'dob', 'dateOfBirth', 'phone', 'bankDetails', 'tempPassword']) delete out[k];
   }
+  return viewer.lean ? withoutImages(out) : out;
+}
+
+// ---- Lean employee lists (lean-lists-v1, speed work 28 Oct 2026) ----
+// An app that sends X-Bunny-Client: 2 gets employee lists without any image data (Aadhaar
+// front/back, photos, any data: URL), with hasAadharImages saying whether Aadhaar images exist;
+// it opens them one person at a time from GET /employees/:id/documents. The owner's phone used
+// to download ~0.7 MB of photos per app open. Without the header the lists are as before.
+const IMAGE_FIELD = /aadh?ar(front|back)|photo|image|selfie|avatar|picture/i;
+
+function wantsLeanLists(c: any): boolean {
+  return c.req.header('X-Bunny-Client') === '2';
+}
+
+function isImageField(key: string, value: unknown): boolean {
+  return typeof value === 'string' && (IMAGE_FIELD.test(key) || value.startsWith('data:'));
+}
+
+function withoutImages(emp: any) {
+  if (!emp || typeof emp !== 'object') return emp;
+  const out: any = {};
+  for (const [k, v] of Object.entries(emp)) if (!isImageField(k, v)) out[k] = v;
+  out.hasAadharImages = emp.hasAadharImages === true || !!(emp.aadharFront || emp.aadharBack);
   return out;
 }
 
@@ -243,11 +278,15 @@ console.log('Environment check:', {
 });
 console.log('About to configure CORS and middleware...');
 
+// cors-v2 (speed work, 28 Oct 2026): x-region lets the app run the function next to the
+// database (Tokyo) instead of next to the phone; idempotency-key, x-bunny-client and
+// if-none-match carry the safe-retry, lean-list and bootstrap/ETag features (see
+// SERVER_FEATURES). Deployed before any app build sends them.
 app.use('*', cors({
   origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'x-region', 'idempotency-key', 'x-bunny-client', 'if-none-match'],
+  exposeHeaders: ['Content-Length', 'etag', 'idempotent-replay', 'x-sb-edge-region'],
   maxAge: 86400,
 }));
 console.log('✅ CORS configured successfully');
@@ -314,6 +353,7 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   const cronSecret = Deno.env.get('CRON_SYNC_SECRET');
   if (cronSecret && c.req.header('X-Cron-Secret') === cronSecret) return next();
 
+  warmPasswordPolicy();
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) return c.json({ error: auth.error }, auth.status);
   // Password rotation (passwords.ts): a password past 90 days, or one the owner force-reset, only
@@ -344,40 +384,113 @@ const supabase = createClient(
 );
 console.log('✅ Supabase client initialized');
 
-// Paginated getByPrefix to bypass Supabase's default 1000-row limit
-async function getAllByPrefix(prefix: string): Promise<any[]> {
+// Safe retries for writes: Idempotency-Key (idempotency.ts). After the login gate, before every
+// route, so only signed-in requests are keyed (per person).
+app.use(`${API_PREFIX}/*`, idempotencyMiddleware({ supabase, verifyUser }));
+
+// ---- Date windows on the history lists (date-range-v1, speed work 28 Oct 2026) ----
+// The big history lists accept ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional, inclusive) and
+// return only records whose own calendar date (the IST date the app stored on them) falls in
+// the window. Without either parameter a route answers exactly as before (older app builds).
+type DateRange = { from?: string; to?: string; field: string };
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// The window asked for on this request, null when none, or an error message for a bad date.
+function requestedDateRange(c: any, field = 'date'): { range: DateRange | null } | { error: string } {
+  const from = c.req.query('from') || undefined;
+  const to = c.req.query('to') || undefined;
+  if (!from && !to) return { range: null };
+  if ((from && !ISO_DAY.test(from)) || (to && !ISO_DAY.test(to))) return { error: 'from and to must be dates like 2026-10-28' };
+  if (from && to && from > to) return { error: 'from must not be after to' };
+  return { range: { from, to, field } };
+}
+
+// Exact check in code, after the database's own (text) filter: a stored value with a time part
+// ("2026-10-28T09:00") counts as its date.
+function inDateRange(record: any, range: DateRange): boolean {
+  const day = typeof record?.[range.field] === 'string' ? record[range.field].slice(0, 10) : '';
+  if (!day) return false;
+  return (!range.from || day >= range.from) && (!range.to || day <= range.to);
+}
+
+// Paginated getByPrefix to bypass Supabase's default 1000-row limit. The first page also
+// returns the total, and any further pages are fetched together rather than one after
+// another (inventory: is 5 pages; each round trip to the database used to add ~260 ms).
+// Rows are de-duplicated by key, so a row added while the pages are read can't appear twice.
+// With a date range the database filters too, so only that window is read at all.
+async function getAllByPrefix(prefix: string, range?: DateRange | null): Promise<any[]> {
   const pageSize = 1000;
-  let allResults: any[] = [];
-  let from = 0;
-  
-  while (true) {
+  const page = (start: number, withCount: boolean) => {
+    let query = supabase
+      .from('kv_store_c2dd9b9d')
+      .select('key, value', withCount ? { count: 'exact' } : undefined)
+      .like('key', prefix + '%');
+    if (range?.from) query = query.gte(`value->>${range.field}`, range.from);
+    // Below the next day rather than <= to, so a stored date with a time part is included.
+    if (range?.to) query = query.lt(`value->>${range.field}`, addDaysToDateString(range.to, 1));
+    return query
+      // Without a stable order, page boundaries can shift between requests and rows get
+      // returned twice or skipped entirely once a prefix passes 1000 rows.
+      .order('key', { ascending: true })
+      .range(start, start + pageSize - 1);
+  };
+
+  const byKey = new Map<string, any>();
+  const take = (rows: any[] | null) => {
+    for (const row of rows || []) if (!byKey.has(row.key)) byKey.set(row.key, row.value);
+  };
+
+  const first = await page(0, true);
+  if (first.error) throw new Error(first.error.message);
+  take(first.data);
+  let lastLength = first.data?.length || 0;
+  let next = pageSize;
+  if (lastLength === pageSize) {
+    const total = typeof first.count === 'number' ? first.count : 0;
+    const starts: number[] = [];
+    for (let s = pageSize; s < total; s += pageSize) starts.push(s);
+    const pages = await Promise.all(starts.map((s) => page(s, false)));
+    for (const p of pages) {
+      if (p.error) throw new Error(p.error.message);
+      take(p.data);
+    }
+    if (pages.length) {
+      lastLength = pages[pages.length - 1].data?.length || 0;
+      next = starts[starts.length - 1] + pageSize;
+    }
+    // Rows added since the count: carry on page by page until a short page.
+    while (lastLength === pageSize) {
+      const p = await page(next, false);
+      if (p.error) throw new Error(p.error.message);
+      take(p.data);
+      lastLength = p.data?.length || 0;
+      next += pageSize;
+    }
+  }
+
+  const values = Array.from(byKey.values());
+  return range ? values.filter((v) => inDateRange(v, range)) : values;
+}
+
+// Paginated version with retry
+async function getAllByPrefixWithRetry(prefix: string, range?: DateRange | null): Promise<any[]> {
+  return retryWithBackoff(() => getAllByPrefix(prefix, range), `getAllByPrefix(${prefix})`);
+}
+
+// One record of a collection by its id field. The database finds it, instead of the whole
+// collection being downloaded to search it (inventory: is 4,000+ rows, ~2 MB, 5 pages).
+// Same answer as that search: the first exact match in key order.
+async function findByIdInPrefix(prefix: string, id: string): Promise<any | undefined> {
+  return retryWithBackoff(async () => {
     const { data, error } = await supabase
       .from('kv_store_c2dd9b9d')
       .select('key, value')
       .like('key', prefix + '%')
-      // Without a stable order, page boundaries can shift between requests and rows get
-      // returned twice or skipped entirely once a prefix passes 1000 rows.
-      .order('key', { ascending: true })
-      .range(from, from + pageSize - 1);
-    
-    if (error) {
-      throw new Error(error.message);
-    }
-    
-    if (!data || data.length === 0) break;
-    
-    allResults = allResults.concat(data.map(d => d.value));
-    
-    if (data.length < pageSize) break; // Last page
-    from += pageSize;
-  }
-  
-  return allResults;
-}
-
-// Paginated version with retry
-async function getAllByPrefixWithRetry(prefix: string): Promise<any[]> {
-  return retryWithBackoff(() => getAllByPrefix(prefix), `getAllByPrefix(${prefix})`);
+      .eq('value->>id', id)
+      .order('key', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data || []).map((row: any) => row.value).find((v: any) => v?.id === id);
+  }, `findByIdInPrefix(${prefix})`);
 }
 
 // Generic retry wrapper for database operations
@@ -439,63 +552,132 @@ const kvWithRetry = {
   mdel: (keys: string[]) => retryWithBackoff(() => kv.mdel(keys), `kv.mdel`)
 };
 
-const verifiedTokens = new Map<string, { at: number; result: any }>();
+// ---- Work after the response (speed work, 28 Oct 2026) ----
+// Notifications and pushes don't change what a save answers, so the slow write routes hand
+// them over here and reply at once (a POST /inventory used to take 3.5 s, mostly this; and the
+// longer a save stays open on a weak signal, the likelier it drops). EdgeRuntime.waitUntil keeps
+// the server copy alive until the work is done; where it doesn't exist the work is awaited as
+// before. Failures are logged, never thrown - the save itself has already succeeded.
+function afterResponse(label: string, work: () => Promise<unknown>): Promise<void> {
+  const task = Promise.resolve()
+    .then(work)
+    .then(() => undefined, (error) => console.log(`${label} failed (after the response):`, error instanceof Error ? error.message : String(error)));
+  const runtime = (globalThis as any).EdgeRuntime;
+  if (runtime && typeof runtime.waitUntil === 'function') {
+    runtime.waitUntil(task);
+    return Promise.resolve();
+  }
+  return task;
+}
+
+// ---- Login check (speed work, 28 Oct 2026) ----
+// Each answer is kept per server copy for up to a minute (never past the token's own expiry),
+// and the login gate, the route and anything else in the same request share one check while it
+// runs. On a fresh copy the check costs one call to the auth server: getUser already returns
+// the stored user (current roles, ban and app_metadata), so the second getUserById call it used
+// to make bought nothing. The archived-record read starts alongside it.
+const VERIFIED_TOKEN_TTL_MS = 60_000;
+const verifiedTokens = new Map<string, { at: number; until: number; result: any }>();
+const verifyingTokens = new Map<string, Promise<any>>();
+
+// The token's claims, read without checking the signature: only a hint for the archived-record
+// read started in parallel, used only once getUser has vouched for the same login.
+function unverifiedClaims(accessToken: string): any {
+  try {
+    const part = accessToken.split('.')[1];
+    if (!part) return null;
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function rememberVerified(accessToken: string, result: any, claims: any) {
+  const now = Date.now();
+  const expiresMs = typeof claims?.exp === 'number' ? claims.exp * 1000 : now + VERIFIED_TOKEN_TTL_MS;
+  const until = Math.min(now + VERIFIED_TOKEN_TTL_MS, expiresMs);
+  if (until <= now) return;
+  if (verifiedTokens.size > 500) {
+    for (const [token, entry] of verifiedTokens) if (entry.until <= now) verifiedTokens.delete(token);
+    if (verifiedTokens.size > 500) verifiedTokens.clear();
+  }
+  verifiedTokens.set(accessToken, { at: now, until, result });
+}
+
+// Auth server unreachable or failing (as opposed to "this token is no good"): supabase-js hands
+// these back as an error value rather than throwing, and they used to answer 401, which signs
+// the person out on a network blip.
+function isTransientAuthError(error: any): boolean {
+  if (!error) return false;
+  if (error.name === 'AuthRetryableFetchError') return true;
+  const status = typeof error.status === 'number' ? error.status : undefined;
+  return status === 0 || (status !== undefined && status >= 500);
+}
 
 // Middleware to verify user authentication with retry logic
-async function verifyUser(authHeader: string | null, retryCount = 0): Promise<any> {
+async function verifyUser(authHeader: string | null): Promise<any> {
   if (!authHeader) {
     return { error: 'Unauthorized', status: 401 };
   }
-  
+
   const accessToken = authHeader.split(' ')[1];
+  if (!accessToken) return { error: 'Unauthorized', status: 401 };
   // The login gate and the route itself both verify the same token: reuse a fresh answer.
   const cachedAuth = verifiedTokens.get(accessToken);
-  if (cachedAuth && Date.now() - cachedAuth.at < 30000) return cachedAuth.result;
+  if (cachedAuth && Date.now() < cachedAuth.until) return cachedAuth.result;
+  const running = verifyingTokens.get(accessToken);
+  if (running) return running;
+  const check = verifyAccessToken(accessToken).finally(() => verifyingTokens.delete(accessToken));
+  verifyingTokens.set(accessToken, check);
+  return check;
+}
+
+async function verifyAccessToken(accessToken: string, retryCount = 0): Promise<any> {
   const maxRetries = 3;
   const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 5000); // Exponential backoff, max 5s
-  
+
+  // Start the archived-record read now, by the employee id the token itself names, so it
+  // overlaps the auth call. (Never for the owner - see below.)
+  const claims = unverifiedClaims(accessToken);
+  const claimedEmployeeId = claims?.app_metadata?.employeeId || claims?.user_metadata?.employeeId;
+  const archivedEarly = typeof claims?.sub === 'string' && typeof claimedEmployeeId === 'string' && claims?.app_metadata?.role !== 'cluster_head'
+    ? isArchivedLogin(claimedEmployeeId, claims.sub)
+    : null;
+
   try {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    
+    if (isTransientAuthError(error)) throw error;
+
     if (error || !user?.id) {
       return { error: 'Unauthorized', status: 401 };
     }
-    
-    // Fetch the latest user data from Supabase to ensure we have current role
-    try {
-      const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
-      if (!userError && userData?.user) {
-        // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
-        // token issued before that stays valid until it expires - refuse it here so leaving
-        // takes effect at once. 401 makes the app sign them out.
-        // Someone archived before archiving switched logins off has no ban yet: catch them
-        // by their archived record and ban them now. (Never the owner - a stray archived
-        // copy of their record must not lock the business out.)
-        const employeeIdHint = userData.user.app_metadata?.employeeId || userData.user.user_metadata?.employeeId;
-        const isOwner = userData.user.app_metadata?.role === 'cluster_head';
-        if (isLoginBlocked(userData.user) || (!isOwner && (await isArchivedLogin(employeeIdHint, user.id)))) {
-          if (!isLoginBlocked(userData.user)) await setEmployeeLoginBlocked(user.id, true);
-          const result = { error: 'This login has been switched off', status: 401 };
-          verifiedTokens.set(accessToken, { at: Date.now(), result });
-          return result;
-        }
-        // Fresh metadata, with roles from app_metadata only (see withTrustedRoles).
-        const result = { user: withTrustedRoles({ ...user, user_metadata: userData.user.user_metadata, app_metadata: userData.user.app_metadata }) };
-        if (verifiedTokens.size > 500) verifiedTokens.clear();
-        verifiedTokens.set(accessToken, { at: Date.now(), result });
-        return result;
-      }
-    } catch (e) {
-      console.log('Error fetching fresh user data:', e);
-    }
 
-    if (isLoginBlocked(user)) return { error: 'This login has been switched off', status: 401 };
-    return { user: withTrustedRoles(user) };
+    // An archived employee's login is banned (see setEmployeeLoginBlocked), but an access
+    // token issued before that stays valid until it expires - refuse it here so leaving
+    // takes effect at once. 401 makes the app sign them out.
+    // Someone archived before archiving switched logins off has no ban yet: catch them
+    // by their archived record and ban them now. (Never the owner - a stray archived
+    // copy of their record must not lock the business out.)
+    const employeeIdHint = user.app_metadata?.employeeId || user.user_metadata?.employeeId;
+    const isOwner = user.app_metadata?.role === 'cluster_head';
+    const archived = !isOwner && (archivedEarly && user.id === claims.sub && employeeIdHint === claimedEmployeeId
+      ? await archivedEarly
+      : await isArchivedLogin(employeeIdHint, user.id));
+    if (isLoginBlocked(user) || archived) {
+      if (!isLoginBlocked(user)) await setEmployeeLoginBlocked(user.id, true);
+      const result = { error: 'This login has been switched off', status: 401 };
+      rememberVerified(accessToken, result, claims);
+      return result;
+    }
+    // Roles from app_metadata only (see withTrustedRoles).
+    const result = { user: withTrustedRoles(user) };
+    rememberVerified(accessToken, result, claims);
+    return result;
   } catch (error: any) {
-    // This catch only ever sees a THROWN exception - a genuinely invalid/expired token
-    // is returned as a normal { error } value above (line ~179), not thrown. So anything
-    // landing here is an infra/network hiccup talking to Supabase Auth itself (timeout,
-    // connection reset, transient unavailability), not proof the user's session is bad.
+    // Only an infra/network hiccup talking to Supabase Auth lands here (a thrown exception,
+    // or a retryable/5xx error re-thrown above) - not proof the user's session is bad. A
+    // genuinely invalid/expired token is answered with 401 above.
     // Retry generously, and if retries are exhausted, return 503 (not 401) so the
     // frontend's retry-on-5xx logic kicks in instead of force-logging the user out -
     // treating "we couldn't verify" as "verification failed" was logging people out
@@ -504,7 +686,7 @@ async function verifyUser(authHeader: string | null, retryCount = 0): Promise<an
       const delay = retryDelay(retryCount);
       console.log(`⚠️ Transient error in verifyUser (${error?.message || error}), retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})...`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      return verifyUser(authHeader, retryCount + 1);
+      return verifyAccessToken(accessToken, retryCount + 1);
     }
 
     console.error('❌ Error in verifyUser after retries:', error);
@@ -527,8 +709,8 @@ function isLoginBlocked(user: any): boolean {
 
 // True when this login belongs to an archived employee record and to no active one. Ids
 // were reused in the past, so the archived record must carry this very login. One primary
-// key read on the common path (verifyUser answers are cached for 30s); a read failure
-// never locks anyone out.
+// key read on the common path (verifyUser answers are cached for a minute and the read runs
+// alongside the auth call); a read failure never locks anyone out.
 async function isArchivedLogin(employeeId: string | undefined, authUserId: string): Promise<boolean> {
   if (!employeeId) return false;
   try {
@@ -833,12 +1015,15 @@ app.get('/make-server-c2dd9b9d/inventory', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     console.log('🔍 [INVENTORY GET] Fetching inventory items (paginated)...');
     // All users (cluster heads, employees, and managers) see all inventory
     // Filtering by storeId happens in the frontend
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('inventory:');
+    const items = await getAllByPrefixWithRetry('inventory:', windowed.range);
     console.log('🔍 [INVENTORY GET] Found items:', items.length);
     console.log('🔍 [INVENTORY GET] Sample items:', items.slice(0, 3).map(i => ({ id: i.id, date: i.date, itemName: i.itemName })));
     
@@ -932,39 +1117,34 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     
     await kvWithRetry.set(key, inventoryItem);
     console.log('✅ [INVENTORY POST] Inventory Purchase Record saved successfully!');
-    
-    // Verify it was saved by reading it back
-    const verifyItem = await kvWithRetry.get(key);
-    console.log('🔍 [INVENTORY POST] Verification read:', verifyItem ? 'SUCCESS - Item found' : 'FAILED - Item not found!');
-    if (verifyItem) {
-      console.log('🔍 [INVENTORY POST] Verified item data:', { id: verifyItem.id, date: verifyItem.date, itemName: verifyItem.itemName });
-    }
+    // (A read-back of the row just written, for a log line, used to follow here: removed.)
 
     await cascadeProductionCashForExpense(inventoryItem);
-    if (inventoryItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(inventoryItem, userName || userEmail);
-    }
 
-    // Notify cluster heads about inventory data entry
-    console.log('📢 [INVENTORY POST] Creating notifications for cluster heads...');
-    const clusterHeads = await getAllClusterHeads();
-    console.log('📢 [INVENTORY POST] Found cluster heads:', clusterHeads.length);
+    // Notify the production incharge (bill paid from production cash) and cluster heads about
+    // the inventory data entry - after the response (afterResponse).
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
-        const notificationResult = await notifyUser(
-          clusterHead.authUserId,
-          'inventory_logged',
-          'Inventory Data Logged',
-          `${managerName} logged inventory data for ${item.date}`,
-          itemId,
-          item.date
-        );
-        console.log('📢 [INVENTORY POST] Notification result for', clusterHead.name, ':', notificationResult ? 'success' : 'failed (non-critical)');
+    await afterResponse('Inventory notifications', async () => {
+      if (inventoryItem.paidFromProductionHouseId) {
+        await notifyStoreBillPaidFromProductionCash(inventoryItem, userName || userEmail);
       }
-    }
-    
+      const clusterHeads = await getAllClusterHeads();
+      console.log('📢 [INVENTORY POST] Notifying cluster heads:', clusterHeads.length);
+      for (const clusterHead of clusterHeads) {
+        if (clusterHead.authUserId) {
+          const notificationResult = await notifyUser(
+            clusterHead.authUserId,
+            'inventory_logged',
+            'Inventory Data Logged',
+            `${managerName} logged inventory data for ${item.date}`,
+            itemId,
+            item.date
+          );
+          console.log('📢 [INVENTORY POST] Notification result for', clusterHead.name, ':', notificationResult ? 'success' : 'failed (non-critical)');
+        }
+      }
+    });
+
     console.log('✅ [INVENTORY POST] Complete! Returning success response');
     return c.json({ success: true, item: inventoryItem });
   } catch (error) {
@@ -1004,7 +1184,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: inventory: has 3000+ rows, and the plain prefix read stops at 1000, so an
     // older entry wasn't found and the edit was saved as a second copy.
-    const existing = (await getAllByPrefixWithRetry('inventory:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('inventory:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Inventory item not found - it may have been deleted' }, 404);
@@ -1025,7 +1205,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, inventoryItem);
     if (inventoryItem.paidFromProductionHouseId && inventoryItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(inventoryItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(inventoryItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: inventoryItem });
@@ -1053,8 +1233,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the inventory item by searching all inventory items with this ID
-    const allInventory = await getAllByPrefixWithRetry('inventory:');
-    const targetInventory = allInventory?.find((item: any) => item.id === itemId);
+    const targetInventory = await findByIdInPrefix('inventory:', itemId);
     
     if (!targetInventory) {
       console.log(`⚠️ Inventory item not found: ${itemId}. It may have been already deleted.`);
@@ -1083,11 +1262,14 @@ app.get('/make-server-c2dd9b9d/overheads', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // All users (cluster heads, employees, and managers) see all overheads
     // Filtering by storeId happens in the frontend
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('overhead:');
+    const items = await getAllByPrefixWithRetry('overhead:', windowed.range);
     
     return c.json({ overheads: items || [] });
   } catch (error: any) {
@@ -1172,7 +1354,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
 
     await cascadeProductionCashForExpense(overheadItem);
     if (overheadItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: overheadItem });
@@ -1204,7 +1386,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     // editor's own id used to leave the original in place and add a second copy whenever
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated, like GET /overheads: the plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('overhead:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('overhead:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Overhead item not found - it may have been deleted' }, 404);
@@ -1231,7 +1413,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, overheadItem);
     if (overheadItem.paidFromProductionHouseId && overheadItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: overheadItem });
@@ -1259,8 +1441,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the overhead item by searching all overhead items with this ID
-    const allOverheads = await getAllByPrefixWithRetry('overhead:');
-    const targetOverhead = allOverheads?.find((item: any) => item.id === itemId);
+    const targetOverhead = await findByIdInPrefix('overhead:', itemId);
     
     if (!targetOverhead) {
       console.log(`⚠️ Overhead item not found: ${itemId}. It may have been already deleted.`);
@@ -1293,10 +1474,13 @@ app.get('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // All users (cluster heads, employees, and managers) see all fixed costs
     // Filtering by storeId happens in the frontend
-    const items = await getAllByPrefixWithRetry('fixedcost:');
+    const items = await getAllByPrefixWithRetry('fixedcost:', windowed.range);
     
     return c.json({ fixedCosts: items || [] });
   } catch (error) {
@@ -1363,7 +1547,7 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
 
     await cascadeProductionCashForExpense(fixedCostItem);
     if (fixedCostItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: fixedCostItem });
@@ -1393,7 +1577,7 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     // editor's own id used to leave the original in place and add a second copy whenever
     // someone edited another person's entry (a 22 Jan 2026 gas bill exists twice this way).
     // Paginated: the plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('fixedcost:')).find((i: any) => i.id === itemId);
+    const existing = await findByIdInPrefix('fixedcost:', itemId);
     // An edit of an entry deleted meanwhile (another phone, an open form) used to write it back.
     if (!existing) {
       return c.json({ error: 'Fixed cost not found - it may have been deleted' }, 404);
@@ -1414,7 +1598,7 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, fixedCostItem);
     if (fixedCostItem.paidFromProductionHouseId && fixedCostItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: fixedCostItem });
@@ -1442,8 +1626,7 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the fixed cost item by searching all fixed cost items with this ID
-    const allFixedCosts = await getAllByPrefixWithRetry('fixedcost:');
-    const targetFixedCost = allFixedCosts?.find((item: any) => item.id === itemId);
+    const targetFixedCost = await findByIdInPrefix('fixedcost:', itemId);
     
     if (!targetFixedCost) {
       console.log(`⚠️ Fixed cost item not found: ${itemId}. It may have been already deleted.`);
@@ -1472,10 +1655,13 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Get all sales data (not scoped by userId since everyone needs to see all sales)
     // Use paginated query to avoid Supabase's default 1000-row limit
-    const items = await getAllByPrefixWithRetry('sales:');
+    const items = await getAllByPrefixWithRetry('sales:', windowed.range);
     
     return c.json({ sales: items || [] });
   } catch (error: any) {
@@ -1587,22 +1773,24 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     }
 
     // Notify cluster heads and this store's operations manager(s) about the sales entry
-    const clusterHeads = await getAllClusterHeads();
-    const opsManagers = await getOperationsManagers(storeId);
+    // (after the response - see afterResponse).
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-
-    for (const recipient of [...clusterHeads, ...opsManagers]) {
-      if (recipient.authUserId) {
-        await notifyUser(
-          recipient.authUserId,
-          'sales_logged',
-          'Sales Data Logged',
-          `${managerName} logged sales data for ${item.date}`,
-          itemId,
-          item.date
-        );
+    await afterResponse('Sales notifications', async () => {
+      const clusterHeads = await getAllClusterHeads();
+      const opsManagers = await getOperationsManagers(storeId);
+      for (const recipient of [...clusterHeads, ...opsManagers]) {
+        if (recipient.authUserId) {
+          await notifyUser(
+            recipient.authUserId,
+            'sales_logged',
+            'Sales Data Logged',
+            `${managerName} logged sales data for ${item.date}`,
+            itemId,
+            item.date
+          );
+        }
       }
-    }
+    });
 
     // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
     // version, not the one from before it ran.
@@ -1638,8 +1826,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const updates = await c.req.json();
 
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
 
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1693,9 +1880,10 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     // Notify this store's operations manager(s) that the store incharge logged/confirmed
     // today's sales - the common path now that pos-sync creates the day's record first and
     // the store incharge edits/confirms it via this route, not the POST route above.
-    try {
+    // After the response (afterResponse), which also logs any failure.
+    const managerName = authResult.user.user_metadata?.name || authResult.user.email;
+    await afterResponse('Notifying operations manager of sales update', async () => {
       const opsManagers = await getOperationsManagers(salesItem.storeId);
-      const managerName = authResult.user.user_metadata?.name || authResult.user.email;
       for (const opsManager of opsManagers) {
         if (opsManager.authUserId) {
           await notifyUser(
@@ -1708,9 +1896,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
           );
         }
       }
-    } catch (notifyError) {
-      console.error('Error notifying operations manager of sales update:', notifyError);
-    }
+    });
 
     // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
     // version, not the one from before it ran (the form would otherwise show a stale balance).
@@ -1790,8 +1976,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
     const { requestedCashInHand, requestedOffset } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1813,23 +1998,24 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
 
     await kv.set(key, updatedItem);
     
-    // Create notifications for all cluster heads
-    const clusterHeads = await getAllClusterHeads();
+    // Create notifications for all cluster heads (after the response - see afterResponse)
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
-        await notifyUser(
-          clusterHead.authUserId,
-          'discrepancy_request',
-          'Cash Discrepancy Approval Needed',
-          `${managerName} requests approval for ₹${Math.abs(requestedOffset).toFixed(2)} discrepancy on ${existingSale.date}`,
-          itemId,
-          existingSale.date
-        );
+    await afterResponse('Discrepancy request notifications', async () => {
+      const clusterHeads = await getAllClusterHeads();
+      for (const clusterHead of clusterHeads) {
+        if (clusterHead.authUserId) {
+          await notifyUser(
+            clusterHead.authUserId,
+            'discrepancy_request',
+            'Cash Discrepancy Approval Needed',
+            `${managerName} requests approval for ₹${Math.abs(requestedOffset).toFixed(2)} discrepancy on ${existingSale.date}`,
+            itemId,
+            existingSale.date
+          );
+        }
       }
-    }
-    
+    });
+
     return c.json({ success: true, item: updatedItem });
   } catch (error) {
     console.log('Error requesting approval:', error);
@@ -1854,8 +2040,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1885,16 +2070,16 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
 
     await kv.set(key, approvedItem);
     
-    // Notify the manager who submitted the sale
+    // Notify the manager who submitted the sale (after the response - see afterResponse)
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await notifyUser(
+    await afterResponse('Discrepancy approved notification', () => notifyUser(
       existingSale.userId,
       'discrepancy_approved',
       'Discrepancy Approved ✓',
       `${clusterHeadName} approved your cash discrepancy of ₹${Math.abs(existingSale.requestedOffset).toFixed(2)} for ${existingSale.date}`,
       itemId,
       existingSale.date
-    );
+    ));
     
     return c.json({ success: true, item: approvedItem });
   } catch (error) {
@@ -1921,8 +2106,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
     const { reason } = await c.req.json();
     
     // Find the sales item with this ID
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -1948,16 +2132,16 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
 
     await kv.set(key, rejectedItem);
     
-    // Notify the manager who submitted the sale
+    // Notify the manager who submitted the sale (after the response - see afterResponse)
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await notifyUser(
+    await afterResponse('Discrepancy rejected notification', () => notifyUser(
       existingSale.userId,
       'discrepancy_rejected',
       'Discrepancy Rejected ✗',
       `${clusterHeadName} rejected your cash discrepancy request for ${existingSale.date}. Reason: ${reason}. You must pay the difference.`,
       itemId,
       existingSale.date
-    );
+    ));
     
     return c.json({ success: true, item: rejectedItem });
   } catch (error) {
@@ -1986,8 +2170,7 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve', async (c) => {
     const itemId = c.req.param('id');
     
     // Find the sales item with this ID (look through all users' sales)
-    const allSales = await getAllByPrefixWithRetry('sales:');
-    const existingSale = allSales.find((s: any) => s.id === itemId);
+    const existingSale = await findByIdInPrefix('sales:', itemId);
     
     if (!existingSale) {
       return c.json({ error: 'Sales data not found' }, 404);
@@ -2566,8 +2749,11 @@ app.get('/make-server-c2dd9b9d/production', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allProduction = await getAllByPrefixWithRetry('production:');
+    const allProduction = await getAllByPrefixWithRetry('production:', windowed.range);
     return c.json({ production: allProduction });
   } catch (error: any) {
     console.log('Error fetching production data:', error);
@@ -2740,7 +2926,7 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
     // Update the record where it already lives (under whoever created it): writing under the
     // editor's own id left the original in place and added a second copy. Paginated, as the
     // plain prefix read stops at 1000 rows.
-    const existing = (await getAllByPrefixWithRetry('production:')).find((p: any) => p.id === itemId);
+    const existing = await findByIdInPrefix('production:', itemId);
     if (!existing) {
       return c.json({ error: 'Production data not found' }, 404);
     }
@@ -3261,10 +3447,27 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // bundle are updated together, in the same release, by construction.
 const LATEST_APP_VERSION = '1.15.21';
 
+// What this server supports, so a newer app can switch each feature on only against a server
+// that has it (an older app ignores the list). Add a name here only once the feature ships:
+//   cors-v2        x-region / idempotency-key / x-bunny-client / if-none-match allowed (CORS above)
+//   date-range-v1  ?from=&to= (YYYY-MM-DD, inclusive) on the history lists: /inventory, /overheads,
+//                  /fixed-costs, /sales, /sales-data, /production, /online-sales, /online-payouts,
+//                  /aggregator-settlements (settlementDate), /stock-requests and /production-requests
+//                  (requestDate), /online-cash-recalibration/all, /timesheets/all, /payouts,
+//                  /leaves/all (leaveDate), /order-item-detail
+//   lean-lists-v1  X-Bunny-Client: 2 strips images from the employee lists (/employees,
+//                  /unified-employees[/manager|/cluster-head], /archived-employees, /cluster-heads,
+//                  /me/employee) and keeps hasAadharImages; GET /employees/:id/documents has them
+//   idempotency-v1 Idempotency-Key on any POST/PUT/PATCH/DELETE: a repeat replays the stored answer
+//                  (Idempotent-Replay: true) instead of saving twice (idempotency.ts)
+//   bootstrap-v1   GET /bootstrap: the startup routes for the caller's role in one answer, with an
+//                  ETag / If-None-Match -> 304 (bootstrap.ts)
+const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1', 'idempotency-v1', 'bootstrap-v1'];
+
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
 app.get('/make-server-c2dd9b9d/app-version', (c) => {
-  return c.json({ latestVersion: LATEST_APP_VERSION });
+  return c.json({ latestVersion: LATEST_APP_VERSION, features: SERVER_FEATURES });
 });
 
 // Debug endpoint to check user metadata
@@ -3410,27 +3613,26 @@ app.post('/make-server-c2dd9b9d/auth/create-employee-accounts', async (c) => {
   }
 });
 
+// Unified employee records as the employee lists hand them out: both id and employeeId set, and
+// type mirroring employmentType (payroll reads type).
+function normalizeEmployee(emp: any) {
+  return {
+    ...emp,
+    id: emp.id || emp.employeeId, // Use employeeId as id if id doesn't exist
+    employeeId: emp.employeeId || emp.id, // Ensure employeeId exists
+    type: emp.employmentType || emp.type // Map employmentType to type for payroll compatibility
+  };
+}
+
 // Employee Management Routes
 // Get all employees
 app.get('/make-server-c2dd9b9d/employees', async (c) => {
   try {
-    // Fetch from both old and new employee storage for backwards compatibility
-    const [oldEmployees, unifiedEmployees] = await Promise.all([
-      kvWithRetry.getByPrefix('employee:'),
-      kvWithRetry.getByPrefix('unified-employee:')
-    ]);
-    
-    // Normalize unified employees to have both id and employeeId, and type field
-    const normalizedUnified = unifiedEmployees.map((emp: any) => ({
-      ...emp,
-      id: emp.id || emp.employeeId, // Use employeeId as id if id doesn't exist
-      employeeId: emp.employeeId || emp.id, // Ensure employeeId exists
-      type: emp.employmentType || emp.type // Map employmentType to type for payroll compatibility
-    }));
-    
-    // Combine both arrays
-    const allEmployees = [...oldEmployees, ...normalizedUnified];
-    
+    // Only unified-employee: records. The old employee: collection has been empty for months
+    // and nothing in the app writes it, yet it was scanned on every call (~500 times a day).
+    const unifiedEmployees = await kvWithRetry.getByPrefix('unified-employee:');
+    const allEmployees = unifiedEmployees.map(normalizeEmployee);
+
     const viewer = await viewerOf(c);
     return c.json({ success: true, employees: allEmployees.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error: any) {
@@ -3439,6 +3641,70 @@ app.get('/make-server-c2dd9b9d/employees', async (c) => {
       return c.json({ success: true, employees: [], warning: 'Database temporarily unavailable' });
     }
     return c.json({ error: 'Failed to fetch employees' }, 500);
+  }
+});
+
+// The signed-in person's own employee record (same shape as their entry in GET /employees),
+// so a plain employee's phone needn't download the whole staff list to find itself.
+// employee is null for a login with no employee record.
+app.get('/make-server-c2dd9b9d/me/employee', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const employeeId = authResult.user.user_metadata?.employeeId;
+    const record = employeeId ? await kvWithRetry.get(`unified-employee:${employeeId}`) : null;
+    const viewer = await viewerOf(c);
+    return c.json({ success: true, employee: record ? employeeForViewer(normalizeEmployee(record), viewer) : null });
+  } catch (error) {
+    console.log('Error fetching own employee record:', error);
+    return c.json({ error: 'Failed to fetch your employee record' }, 500);
+  }
+});
+
+// One person's document images (Aadhaar front and back, and any other photo kept on the
+// record), for the lean lists above. Exactly who sees them in the full lists: the owner and the
+// person themself; anyone else gets 403. ?archived=true reads the past-employee record (ids
+// were reused in the past, so an active record with the same id may exist too).
+app.get('/make-server-c2dd9b9d/employees/:id/documents', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const id = c.req.param('id');
+    const wantArchived = c.req.query('archived') === 'true';
+    const [active, archived] = await Promise.all([
+      wantArchived ? Promise.resolve(null) : kvWithRetry.get(`unified-employee:${id}`),
+      kvWithRetry.get(`archived-employee:${id}`),
+    ]);
+    const record = active || archived;
+    if (!record) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+    const viewer = await viewerOf(c);
+    if (!seesFullEmployeeRecord(normalizeEmployee(record), viewer)) {
+      return c.json({ error: 'Only the owner and the employee themself can see these documents' }, 403);
+    }
+
+    const images: Record<string, string> = {};
+    for (const [k, v] of Object.entries(record)) {
+      if (k !== 'aadharFront' && k !== 'aadharBack' && isImageField(k, v)) images[k] = v as string;
+    }
+    return c.json({
+      success: true,
+      employeeId: record.employeeId || record.id || id,
+      archived: !active,
+      aadharFront: record.aadharFront || null,
+      aadharBack: record.aadharBack || null,
+      images,
+    });
+  } catch (error) {
+    console.log('Error fetching employee documents:', error);
+    return c.json({ error: 'Failed to fetch employee documents' }, 500);
   }
 });
 
@@ -3596,12 +3862,7 @@ app.get('/make-server-c2dd9b9d/archived-employees', async (c) => {
     // excludes their entire payout history once they're archived, regardless of whether
     // the store/archive-status filtering is otherwise correct. Confirmed real: Akash Dey's
     // August payout existed the whole time but could never match either tab.
-    const normalized = archivedEmployees.map((emp: any) => ({
-      ...emp,
-      id: emp.id || emp.employeeId,
-      employeeId: emp.employeeId || emp.id,
-      type: emp.employmentType || emp.type
-    }));
+    const normalized = archivedEmployees.map(normalizeEmployee);
     const viewer = await viewerOf(c);
     return c.json({ success: true, employees: normalized.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
@@ -3681,10 +3942,13 @@ app.post('/make-server-c2dd9b9d/archived-employees/:employeeId/restore', async (
 // Payout Management Routes
 // Get all payouts
 app.get('/make-server-c2dd9b9d/payouts', async (c) => {
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Paginated: every salary and daily wage is a row, so this passes 1000 and payslips,
     // My Payouts and advance recovery would silently miss the rest.
-    const payouts = await getAllByPrefixWithRetry('payout:');
+    const payouts = await getAllByPrefixWithRetry('payout:', windowed.range);
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching payouts:', error);
@@ -3830,8 +4094,11 @@ app.get('/make-server-c2dd9b9d/online-sales', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const sales = await getAllByPrefixWithRetry('online_sales:');
+    const sales = await getAllByPrefixWithRetry('online_sales:', windowed.range);
     return c.json({ success: true, sales });
   } catch (error: any) {
     console.log('Error fetching online sales:', error);
@@ -3877,8 +4144,11 @@ app.get('/make-server-c2dd9b9d/online-payouts', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const payouts = await getAllByPrefixWithRetry('online_payout:');
+    const payouts = await getAllByPrefixWithRetry('online_payout:', windowed.range);
     return c.json({ success: true, payouts });
   } catch (error: any) {
     console.log('Error fetching online payouts:', error);
@@ -3967,9 +4237,13 @@ app.get('/make-server-c2dd9b9d/aggregator-settlements', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  // A settlement's own date is the day it was paid out (settlementDate).
+  const windowed = requestedDateRange(c, 'settlementDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     const storeId = c.req.query('storeId');
-    let settlements = await getAllByPrefixWithRetry('aggregator-settlement:');
+    let settlements = await getAllByPrefixWithRetry('aggregator-settlement:', windowed.range);
     if (storeId) {
       settlements = (settlements || []).filter((s: any) => s.storeId === storeId);
     }
@@ -5798,12 +6072,19 @@ app.get('/make-server-c2dd9b9d/order-item-detail', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     const storeId = c.req.query('storeId');
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
 
-    let records = await kv.getByPrefix('order-item-detail:');
+    // With ?from/&to the database narrows it first: by store through the key
+    // (order-item-detail:{storeId}:{date}) and by day. Without them, as before.
+    let records = windowed.range
+      ? await getAllByPrefixWithRetry(storeId ? `order-item-detail:${storeId}:` : 'order-item-detail:', windowed.range)
+      : await kv.getByPrefix('order-item-detail:');
     records = (records || []).filter((r: any) => {
       if (storeId && r.storeId !== storeId) return false;
       if (startDate && r.date < startDate) return false;
@@ -6508,8 +6789,11 @@ app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allTimesheets = await getAllByPrefixWithRetry('timesheet:');
+    const allTimesheets = await getAllByPrefixWithRetry('timesheet:', windowed.range);
     return c.json({ timesheets: allTimesheets });
   } catch (error: any) {
     console.log('Error fetching all timesheets:', error);
@@ -6551,28 +6835,31 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
     // Route the approval notification to the employee's own approver - their incharge or
     // manager (see approversFor). Cluster heads are only a fallback for someone with
     // neither on file - this route used to hardcode cluster heads unconditionally.
+    // Sent after the response (afterResponse).
     if (timesheet.status === 'pending') {
-      // attendance-employee: is an empty/legacy collection - real employee records
-      // (with the actual name and authUserId) live under unified-employee:.
-      const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
-      const employeeName = employee?.name || timesheet.employeeId;
+      await afterResponse('Timesheet notifications', async () => {
+        // attendance-employee: is an empty/legacy collection - real employee records
+        // (with the actual name and authUserId) live under unified-employee:.
+        const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
+        const employeeName = employee?.name || timesheet.employeeId;
 
-      const recipients = await approversFor(employee);
+        const recipients = await approversFor(employee);
 
-      const timeSummary = formatTimesheetSummary(savedTimesheet);
-      for (const recipient of recipients) {
-        if (recipient.authUserId) {
-          await notifyUser(
-            recipient.authUserId,
-            'timesheet_pending',
-            'Timesheet Approval Needed',
-            `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
-            id,
-            timesheet.date,
-            { recordType: 'timesheet', recordId: id }
-          );
+        const timeSummary = formatTimesheetSummary(savedTimesheet);
+        for (const recipient of recipients) {
+          if (recipient.authUserId) {
+            await notifyUser(
+              recipient.authUserId,
+              'timesheet_pending',
+              'Timesheet Approval Needed',
+              `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
+              id,
+              timesheet.date,
+              { recordType: 'timesheet', recordId: id }
+            );
+          }
         }
-      }
+      });
     }
 
     return c.json({ success: true, id });
@@ -6614,30 +6901,33 @@ app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
         byEmployee.get(t.employeeId)!.push(t);
       }
 
-      for (const [employeeId, entries] of byEmployee) {
-        const employee = await kv.get(`unified-employee:${employeeId}`);
-        const employeeName = employee?.name || employeeId;
+      // Sent after the response (afterResponse).
+      await afterResponse('Bulk timesheet notifications', async () => {
+        for (const [employeeId, entries] of byEmployee) {
+          const employee = await kv.get(`unified-employee:${employeeId}`);
+          const employeeName = employee?.name || employeeId;
 
-        const recipients = await approversFor(employee);
+          const recipients = await approversFor(employee);
 
-        const sortedDates = entries.map((t: any) => t.date).sort();
-        const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
-        const firstId = entries[0].id;
+          const sortedDates = entries.map((t: any) => t.date).sort();
+          const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
+          const firstId = entries[0].id;
 
-        for (const recipient of recipients) {
-          if (recipient.authUserId) {
-            await notifyUser(
-              recipient.authUserId,
-              'timesheet_pending',
-              'Timesheet Approval Needed',
-              `${employeeName} (${employeeId}) submitted timesheet: ${dateRangeLabel}`,
-              firstId,
-              sortedDates[0],
-              { recordType: 'timesheet', recordId: firstId }
-            );
+          for (const recipient of recipients) {
+            if (recipient.authUserId) {
+              await notifyUser(
+                recipient.authUserId,
+                'timesheet_pending',
+                'Timesheet Approval Needed',
+                `${employeeName} (${employeeId}) submitted timesheet: ${dateRangeLabel}`,
+                firstId,
+                sortedDates[0],
+                { recordType: 'timesheet', recordId: firstId }
+              );
+            }
           }
         }
-      }
+      });
     }
 
     return c.json({ success: true, count: timesheets.length });
@@ -6818,9 +7108,12 @@ app.post('/make-server-c2dd9b9d/timesheets/auto-approve-stale', async (c) => {
 
 // Get all leaves (for cluster heads/managers)
 app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
+  const windowed = requestedDateRange(c, 'leaveDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     // Paginated - plain getByPrefix stopped at 1000 rows and hid newer applications.
-    const allLeaves = await getAllByPrefixWithRetry('leave:');
+    const allLeaves = await getAllByPrefixWithRetry('leave:', windowed.range);
     return c.json({ leaves: allLeaves });
   } catch (error) {
     console.log('Error fetching all leaves:', error);
@@ -6872,25 +7165,28 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
     // escalation threshold) goes to the employee's own approver - incharge or manager
     // (approversFor), matching who can act on it in the Approve Leaves screen. Advance
     // leave past the threshold is escalated straight to the cluster head instead.
+    // Sent after the response (afterResponse).
     if (leave.status === 'pending') {
-      // attendance-employee: is a legacy/unused collection - real employee records
-      // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
-      const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
-      const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
-      const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
+      await afterResponse('Leave notifications', async () => {
+        // attendance-employee: is a legacy/unused collection - real employee records
+        // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
+        const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
+        const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
+        const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
 
-      const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
-      const message = escalateToClusterHead
-        ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
-        : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
+        const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
+        const message = escalateToClusterHead
+          ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
+          : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
 
-      const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
+        const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
 
-      for (const recipient of recipients) {
-        if (recipient.authUserId) {
-          await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate, { recordType: 'leave', recordId: id });
+        for (const recipient of recipients) {
+          if (recipient.authUserId) {
+            await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate, { recordType: 'leave', recordId: id });
+          }
         }
-      }
+      });
     }
 
     return c.json({ success: true, id });
@@ -8060,7 +8356,7 @@ app.get('/make-server-c2dd9b9d/cluster-heads', async (c) => {
   try {
     const allEmployees = await kv.getByPrefix('unified-employee:');
     const clusterHeads = allEmployees.filter((emp: any) => emp.role === 'cluster_head');
-    return c.json({ clusterHeads });
+    return c.json({ clusterHeads: wantsLeanLists(c) ? clusterHeads.map(withoutImages) : clusterHeads });
   } catch (error) {
     console.log('Error fetching cluster heads:', error);
     return c.json({ error: 'Failed to fetch cluster heads' }, 500);
@@ -9513,7 +9809,7 @@ app.post('/make-server-c2dd9b9d/notifications/auto-cleanup', async (c) => {
 // existing call sites can gain push notifications without restructuring.
 async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | null> {
   try {
-    const allUsers = await kv.getByPrefix('unified-employee:');
+    const allUsers = await staffForNotifications();
     const match = allUsers.find((u: any) => u.authUserId === authUserId);
     return match?.employeeId || null;
   } catch (error) {
@@ -9597,16 +9893,30 @@ async function notifyUser(
   return notificationResult;
 }
 
+// Staff records for working out who to notify, read once a minute per server copy: one save
+// used to scan every employee record (Aadhaar photos included) once per recipient. Callers get
+// copies, so nothing can change the shared list.
+const NOTIFY_STAFF_TTL_MS = 60_000;
+let notifyStaff: { at: number; list: Promise<any[]> } | null = null;
+async function staffForNotifications(): Promise<any[]> {
+  if (!notifyStaff || Date.now() - notifyStaff.at > NOTIFY_STAFF_TTL_MS) {
+    const list = kv.getByPrefix('unified-employee:');
+    notifyStaff = { at: Date.now(), list };
+    list.catch(() => { if (notifyStaff?.list === list) notifyStaff = null; });
+  }
+  return (await notifyStaff.list).map((u: any) => ({ ...u }));
+}
+
 // Helper to get all cluster heads
 async function getAllClusterHeads() {
-  const allUsers = await kv.getByPrefix('unified-employee:');
+  const allUsers = await staffForNotifications();
   return allUsers.filter((u: any) => u.role === 'cluster_head');
 }
 
 // Helper to get operations managers (excluding store/production incharges)
 async function getOperationsManagers(storeId?: string) {
-  const allUsers = await kv.getByPrefix('unified-employee:');
-  const managers = allUsers.filter((u: any) => 
+  const allUsers = await staffForNotifications();
+  const managers = allUsers.filter((u: any) =>
     u.role === 'manager' && 
     u.designation !== 'store_incharge' && 
     u.designation !== 'production_incharge'
@@ -11756,9 +12066,12 @@ app.get('/make-server-c2dd9b9d/sales-data', async (c) => {
     return c.json({ error: auth.error }, auth.status);
   }
 
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const records = await getAllByPrefixWithRetry('sales_data_');
-    
+    const records = await getAllByPrefixWithRetry('sales_data_', windowed.range);
+
     console.log('Retrieved sales data records:', records.length);
     
     return c.json({ data: records });
@@ -12400,25 +12713,16 @@ app.get('/make-server-c2dd9b9d/stock-requests', async (c) => {
     return c.json({ error: auth.error }, auth.status);
   }
 
+  const windowed = requestedDateRange(c, 'requestDate');
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
     console.log('🔍 SERVER: Fetching stock requests with prefix stock_request_');
-    const requests = await getAllByPrefixWithRetry('stock_request_');
+    const requests = await getAllByPrefixWithRetry('stock_request_', windowed.range);
     console.log('📦 Server: Retrieved stock requests:', requests.length);
-    console.log('📦 Server: Sample stock request:', requests[0]);
-    console.log('📦 Server: All stock request IDs:', requests.map(r => r?.id || 'NO_ID'));
-    
-    // Also let's check all keys in the database to debug
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL'),
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
-    );
-    const { data: allKeys, error: keysError } = await supabase
-      .from('kv_store_c2dd9b9d')
-      .select('key')
-      .like('key', 'stock_%');
-    console.log('📊 SERVER: All stock-related keys in database:', allKeys?.map(k => k.key) || []);
-    console.log('📊 SERVER: Total stock-related keys:', allKeys?.length || 0);
-    
+    // (A debugging scan of every stock_* key used to run here on each call, after the list
+    // was already read - a second database round trip on every app start. Removed.)
+
     return c.json({ stockRequests: requests });
   } catch (error: any) {
     console.error('Error fetching stock requests:', error);
@@ -15857,8 +16161,13 @@ app.get('/make-server-c2dd9b9d/online-cash-recalibration/history/:storeId', asyn
 
 // Get all online cash recalibrations (for all stores)
 app.get('/make-server-c2dd9b9d/online-cash-recalibration/all', async (c) => {
+  const windowed = requestedDateRange(c);
+  if ('error' in windowed) return c.json({ error: windowed.error }, 400);
+
   try {
-    const allRecalibrations = await kvWithRetry.getByPrefix('online-cash-recalibration:');
+    const allRecalibrations = windowed.range
+      ? await getAllByPrefixWithRetry('online-cash-recalibration:', windowed.range)
+      : await kvWithRetry.getByPrefix('online-cash-recalibration:');
     
     console.log(`📊 Fetching all recalibrations:`, {
       count: allRecalibrations?.length || 0
@@ -16574,6 +16883,8 @@ registerInsightsRoutes(app, {
 });
 // Password rotation: status, self-service change, owner force reset, daily reminders (passwords.ts).
 registerPasswordRoutes(app, { supabase, verifyUser, kv: kvWithRetry, notifyUser, forgetVerifiedTokens: () => verifiedTokens.clear() });
+// Everything the app loads at startup in one request, built from the routes above (bootstrap.ts).
+registerBootstrapRoutes(app, { verifyUser });
 
 console.log('✅ Server initialization complete - all routes registered successfully');
 console.log('🚀 Starting Deno server...');
