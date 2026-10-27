@@ -10,6 +10,7 @@
 // AI_MONTHLY_CAP_INR (default 1000) are optional secrets.
 
 import Anthropic from 'npm:@anthropic-ai/sdk';
+import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
   backtest, summarizeAccuracy, tuneSettings,
@@ -926,7 +927,16 @@ ${JSON.stringify({
     const authResult = await deps.verifyUser(c.req.header('Authorization'));
     if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
     const role = authResult.user.user_metadata?.role;
-    if (role !== 'manager' && role !== 'cluster_head') return c.json({ error: 'Only people who enter sales or expenses can use voice entry' }, 403);
+    // Staff assigned to an event stall (events.ts) also enter its day close, during the event window.
+    const onEventStall = async () => {
+      const employeeId = authResult.user.user_metadata?.employeeId;
+      if (!employeeId) return false;
+      const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+      const events = (await deps.kv.getByPrefix('event:')) || [];
+      return events.some((e: any) => e?.id && !e.closedAt && e.status !== 'closed' && (e.inchargeId === employeeId || (e.staffIds || []).includes(employeeId))
+        && today >= eventDay(e.startDate, -STAFF_WINDOW_BEFORE_DAYS) && today <= eventDay(e.endDate, STAFF_WINDOW_AFTER_DAYS));
+    };
+    if (role !== 'manager' && role !== 'cluster_head' && !(await onEventStall())) return c.json({ error: 'Only people who enter sales or expenses can use voice entry' }, 403);
     try {
       const { kind, text } = await c.req.json();
       const said = String(text || '').trim().slice(0, 600);

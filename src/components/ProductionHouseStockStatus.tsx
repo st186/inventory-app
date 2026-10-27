@@ -192,8 +192,10 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       // Momos have left the production house once shipped (in transit and part shipments count),
       // in the shipped amounts.
       const houseStoreIds = new Set(context.stores.filter(s => s.productionHouseId === house.id).map(s => s.id));
+      // An event stall's request (events.ts) names its production house itself.
+      const fromHouse = (req: any) => houseStoreIds.has(req.storeId) || (!!req.eventId && req.productionHouseId === house.id);
       const shippedInWindow = productionRequests.filter(req => {
-        if (!SENT_STATUSES.includes(req.status) || !houseStoreIds.has(req.storeId)) return false;
+        if (!SENT_STATUSES.includes(req.status) || !fromHouse(req)) return false;
         const shippedAt = shippedAtIST(req);
         if (!shippedAt || shippedAt.substring(0, 10) > selectedDate) return false;
         return !fromCount || shippedAt >= count.date;

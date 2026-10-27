@@ -9,7 +9,7 @@ import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { StockThresholdSettings } from './StockThresholdSettings';
 import { RecalibrationReports } from './RecalibrationReports';
 import { StockWastageModal } from './StockWastageModal';
-import { getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
+import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
 import { bagSize, bagsLabel, roundUpToBags, isPhase1Live } from '../utils/batches';
 import { getTodayIST } from '../utils/timezone';
 import { suggestRequest, type ForecastDay, type MomoKey } from '../utils/forecast';
@@ -275,6 +275,16 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
   const scopedStoreIdSet = useMemo(() => scopedStoreIds ? new Set(scopedStoreIds) : null, [scopedStoreIds]);
   const storeScopeKey = scopedStoreIds === null ? 'all' : scopedStoreIds.join('|');
   const matchesStoreScope = (storeId?: string | null) => !scopedStoreIdSet || (!!storeId && scopedStoreIdSet.has(storeId));
+  // Event stall requests (events.ts) carry the event as their storeId, so no store scope matches
+  // them: the production side of the event's production house sees and ships them (operations
+  // and the owner see all; a store filter shows that store's events). Store incharges don't.
+  const myHouseIds = useMemo(() => getAssignedProductionHouseIds(context.user, context.productionHouses || []), [context.user, context.productionHouses]);
+  const matchesRequestScope = (req: { storeId?: string | null; eventId?: string; productionHouseId?: string; parentStoreId?: string }) => {
+    if (!req.eventId) return matchesStoreScope(req.storeId);
+    if (selectedConcreteStoreId) return req.parentStoreId === selectedConcreteStoreId;
+    if (isClusterHead || isOperationsHead) return true;
+    return isProductionHead && (myHouseIds.length === 0 || (!!req.productionHouseId && myHouseIds.includes(req.productionHouseId)));
+  };
 
   // Name of the store this view is scoped to, shown in the header so it's clear at a
   // glance whose stock requests you're looking at.
@@ -626,7 +636,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
       let filteredRequests = data;
       
       if (scopedStoreIds !== null) {
-        filteredRequests = data.filter(req => matchesStoreScope(req.storeId));
+        filteredRequests = data.filter(req => matchesRequestScope(req as any));
       }
       // Cluster heads see all requests when no store is selected. Production incharges use
       // the stores supplied by their assigned production house(s).
@@ -1359,6 +1369,8 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
 
             const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
             if (!inRange(deliveryDate)) return false;
+            // Momos delivered to an event stall (events.ts) are the event's stock, not a store's.
+            if ((req as any).eventId) return false;
 
             return matchesStoreScope(req.storeId);
           }) || [];
@@ -2964,6 +2976,7 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
                                     <div className="flex items-center gap-2 text-base font-semibold text-gray-700 bg-white px-4 py-2 rounded-lg shadow-md">
                                       <Store className="w-5 h-5 flex-shrink-0 text-teal-600" />
                                       <span className="truncate">{request.storeName || 'Unknown Store'}</span>
+                                      {(request as any).eventId && <span className="flex-shrink-0 rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-semibold text-foreground">Event</span>}
                                     </div>
                                   </div>
                                 </div>

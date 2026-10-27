@@ -241,11 +241,20 @@ export async function rejectDiscrepancy(accessToken: string, id: string, reason:
 // CASH TOP-UP REQUEST API
 // ============================================
 
-export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'other';
+// 'event_cash': an event stall's cash (events.ts). It has no storeId (it isn't the store's till
+// money); the approver picks fundingSource - the store's Paytm (paytmStoreId) or the production
+// house's cash (fundedFromProductionHouseId).
+export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'other' | 'event_cash';
 
 export interface CashTopupRequest {
   id: string;
   storeId: string;
+  eventId?: string;
+  eventName?: string;
+  note?: string;
+  fundingSource?: 'store_paytm' | 'production_cash';
+  paytmStoreId?: string;
+  fundedFromProductionHouseId?: string;
   // Set only when reason is 'production_inventory' - the approved amount credits this
   // production house's own cash ledger (see ProductionCashEntry below) instead of the
   // store's usedOnlineMoney. Undefined on requests made before this field existed, and on
@@ -288,9 +297,11 @@ export async function requestCashTopup(accessToken: string, date: string, reques
   return data.request;
 }
 
-export async function approveCashTopup(accessToken: string, id: string): Promise<CashTopupRequest> {
+// An event's request (reason 'event_cash') needs fundingSource: where the money comes from.
+export async function approveCashTopup(accessToken: string, id: string, fundingSource?: 'store_paytm' | 'production_cash'): Promise<CashTopupRequest> {
   const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests/${id}/approve`, accessToken, {
     method: 'POST',
+    ...(fundingSource ? { body: JSON.stringify({ fundingSource }) } : {}),
   });
   return data.request;
 }

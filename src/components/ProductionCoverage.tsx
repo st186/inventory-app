@@ -71,7 +71,9 @@ export function ProductionCoverage({
     const houseStores = new Set(stores.filter((s) => s.productionHouseId === productionHouseId).map((s) => s.id));
     const dispatches = new Map<string, number>();
     for (const r of productionRequests) {
-      if (!houseStores.has((r as any).storeId) || !['shipped', 'delivered', 'partially-delivered'].includes((r as any).status)) continue;
+      // Event stall requests (events.ts) name their production house themselves.
+      const fromHouse = houseStores.has((r as any).storeId) || (!!(r as any).eventId && (r as any).productionHouseId === productionHouseId);
+      if (!fromHouse || !['shipped', 'delivered', 'partially-delivered'].includes((r as any).status)) continue;
       const d = dispatchDay(r);
       if (d && d >= monthStart && d <= last) dispatches.set(d, (dispatches.get(d) || 0) + 1);
     }

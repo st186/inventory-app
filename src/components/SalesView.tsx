@@ -26,6 +26,7 @@ const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
   store_inventory: 'Store Inventory',
   production_inventory: 'Production House Inventory',
   other: 'Other',
+  event_cash: 'Event stall cash',
 };
 
 // Matches the backend's PRODUCTION_CASH_GO_LIVE_DATE (index.ts) and
@@ -466,12 +467,19 @@ export function SalesView({ context, selectedStoreId }: Props) {
     }
   };
 
-  const handleApproveTopup = async (id: string) => {
+  // An event stall's request (events.ts) is approved from the store's Paytm or the production
+  // house's cash - the button pressed says which.
+  const handleApproveTopup = async (id: string, fundingSource?: 'store_paytm' | 'production_cash') => {
     if (!context.user?.accessToken) return;
-    if (!confirm('Approve this cash top-up? The amount will move from Online to Offline Cash in Hand.')) return;
+    const question = fundingSource === 'production_cash'
+      ? "Approve this event cash? It comes out of the production house's cash in hand."
+      : fundingSource === 'store_paytm'
+        ? "Approve this event cash? It comes off the store's Paytm balance."
+        : 'Approve this cash top-up? The amount will move from Online to Offline Cash in Hand.';
+    if (!confirm(question)) return;
     setResolvingTopupId(id);
     try {
-      await api.approveCashTopup(context.user.accessToken, id);
+      await api.approveCashTopup(context.user.accessToken, id, fundingSource);
       toast.success('Cash top-up approved');
       loadTopupRequests();
     } catch (error: any) {
@@ -1993,7 +2001,26 @@ export function SalesView({ context, selectedStoreId }: Props) {
                     <p className="text-xs text-muted-foreground/70 mt-0.5">Requested {formatDateTimeIST(r.requestDate, false)}</p>
                   </div>
                 </div>
+                {r.reason === 'event_cash' && r.note && <p className="text-xs text-muted-foreground mb-2">{r.note}</p>}
                 <div className="flex gap-2">
+                  {r.reason === 'event_cash' ? (
+                    <>
+                      <button
+                        onClick={() => handleApproveTopup(r.id, 'store_paytm')}
+                        disabled={resolvingTopupId === r.id}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" /> From store Paytm
+                      </button>
+                      <button
+                        onClick={() => handleApproveTopup(r.id, 'production_cash')}
+                        disabled={resolvingTopupId === r.id}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" /> From production cash
+                      </button>
+                    </>
+                  ) : (
                   <button
                     onClick={() => handleApproveTopup(r.id)}
                     disabled={resolvingTopupId === r.id}
@@ -2001,6 +2028,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
                   >
                     <CheckCircle className="w-4 h-4" /> Approve
                   </button>
+                  )}
                   <button
                     onClick={() => handleRejectTopup(r.id)}
                     disabled={resolvingTopupId === r.id}

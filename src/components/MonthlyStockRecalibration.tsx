@@ -330,6 +330,8 @@ export function MonthlyStockRecalibration({
  if (!shippedAt || !shippedAt.startsWith(currentMonth)) return false;
 
  // Filter by production house - check both UUID and original ID
+ // An event stall's request (events.ts) names its production house itself.
+ if ((req as any).eventId) return (req as any).productionHouseId === productionHouseUUID || (req as any).productionHouseId === effectiveStoreId;
  const requestingStore = context.stores?.find(s => s.id === req.storeId);
  return requestingStore?.productionHouseId === productionHouseUUID ||
  requestingStore?.productionHouseId === effectiveStoreId;
@@ -446,6 +448,8 @@ export function MonthlyStockRecalibration({
  if (!SENT_STATUSES.includes(req.status)) return false;
  const shippedAt = shippedAtIST(req);
  if (!shippedAt || shippedAt < recalibrationDate) return false;
+ // An event stall's request (events.ts) names its production house itself.
+ if ((req as any).eventId) return (req as any).productionHouseId === productionHouseUUID || (req as any).productionHouseId === effectiveStoreId;
  const requestingStore = context.stores?.find(s => s.id === req.storeId);
  return requestingStore?.productionHouseId === productionHouseUUID ||
  requestingStore?.productionHouseId === effectiveStoreId;
@@ -752,6 +756,8 @@ export function MonthlyStockRecalibration({
  if (!SENT_STATUSES.includes(req.status)) return false;
  const shippedAt = shippedAtIST(req);
  if (!shippedAt || !shippedAt.startsWith(previousMonthStr)) return false;
+ // An event stall's request (events.ts) names its production house itself.
+ if ((req as any).eventId) return (req as any).productionHouseId === locationUUID || (req as any).productionHouseId === effectiveStoreId;
  const requestingStore = context.stores?.find(s => s.id === req.storeId);
  // Check both UUID and original ID for production house matching
  return requestingStore?.productionHouseId === locationUUID ||
