@@ -86,7 +86,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  ? false
  : activeTab === 'production'
  ? (isProductionIncharge || isOperationsManager || isClusterHead)
- : (isClusterHead || (context.isManager && !isProductionIncharge && (!isStoreIncharge || effectiveStoreId === context.user?.storeId)));
+ : (isClusterHead || ((context.isManager || isStoreIncharge) && !isProductionIncharge && (!isStoreIncharge || effectiveStoreId === context.user?.storeId)));
  // Stores the cluster head can file a store expense under, when no single store is selected.
  const clusterStoreOptions = isClusterHead ? (context.stores || []).map((st) => ({ id: st.id, name: st.name })) : undefined;
  const defaultStoreForAdds = effectiveStoreId || (isClusterHead ? ((context.stores || []).find((st) => st.productionHouseId)?.id || context.stores?.[0]?.id) : undefined);

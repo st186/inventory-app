@@ -117,6 +117,21 @@ export function AttendancePortal({ user, selectedStoreId, isIncharge = false, in
               </>
             )}
 
+            {/* Incharges on employee logins approve their own staff from here, not only from the
+                notification (owner, 27 Oct 2026). Plain staff never see these. */}
+            {isEmployee && isIncharge && (
+              <>
+                <button onClick={() => setActiveTab('approve-timesheet')} className={tabButtonClass('approve-timesheet')}>
+                  <CheckSquare className="w-4 h-4" />
+                  Approve timesheets
+                </button>
+                <button onClick={() => setActiveTab('approve-leave')} className={tabButtonClass('approve-leave')}>
+                  <CheckSquare className="w-4 h-4" />
+                  Approve leaves
+                </button>
+              </>
+            )}
+
             {/* Manager Tabs */}
             {isManager && (
               <>

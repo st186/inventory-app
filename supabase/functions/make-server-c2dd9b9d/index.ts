@@ -272,6 +272,12 @@ const OWNER_ONLY = ['cluster_head'];
 const LEADS = ['cluster_head', 'manager'];
 const WRITES = ['POST', 'PUT', 'DELETE'];
 const INCHARGE_DESIGNATIONS = ['store_incharge', 'production_incharge', 'operations_incharge'];
+// Expenses (inventory, overheads, fixed costs): managers, the cluster head and incharges on either
+// login type; plain staff and contract workers can't (owner, 27 Oct 2026). Each route still pins
+// an incharge to their own store or production house.
+const canWriteExpenses = (user: { user_metadata?: Record<string, unknown> }) =>
+  ['manager', 'cluster_head'].includes(String(user.user_metadata?.role)) ||
+  INCHARGE_DESIGNATIONS.includes(String(user.user_metadata?.designation));
 // alsoDesignations: let these designations through whatever their login role (incharges on employee logins).
 const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesignations?: string[] }[] = [
   { test: /^\/unified-employees\/[^/]+\/reset-password$/, roles: OWNER_ONLY },
@@ -861,7 +867,7 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     console.log('💾 [INVENTORY POST] User ID:', userId);
     console.log('💾 [INVENTORY POST] User role:', role);
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       console.log('❌ [INVENTORY POST] Access denied - user is not a manager or cluster head');
       return c.json({ error: 'Only managers and cluster heads can add inventory items' }, 403);
     }
@@ -988,7 +994,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can update inventory items' }, 403);
     }
 
@@ -1040,7 +1046,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can delete inventory items' }, 403);
     }
 
@@ -1107,7 +1113,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     const role = authResult.user.user_metadata?.role;
     console.log(`👤 User ${userId} with role ${role} is creating expense/overhead`);
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       console.log('⛔ Unauthorized: User is not a manager or cluster head');
       return c.json({ error: 'Only managers and cluster heads can add overhead items' }, 403);
     }
@@ -1189,7 +1195,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can update overhead items' }, 403);
     }
 
@@ -1246,7 +1252,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can delete overhead items' }, 403);
     }
 
@@ -1312,7 +1318,7 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
     const storeId = authResult.user.user_metadata?.storeId;
     const designation = authResult.user.user_metadata?.designation;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can add fixed costs' }, 403);
     }
 
@@ -1378,7 +1384,7 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can update fixed costs' }, 403);
     }
 
@@ -1429,7 +1435,7 @@ app.delete('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
     const userId = authResult.user.id;
     const role = authResult.user.user_metadata?.role;
 
-    if (role !== 'manager' && role !== 'cluster_head') {
+    if (!canWriteExpenses(authResult.user)) {
       return c.json({ error: 'Only managers and cluster heads can delete fixed costs' }, 403);
     }
 
@@ -1620,11 +1626,11 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     const designation = authResult.user.user_metadata?.designation;
 
     // Store incharge owns sales entry, POS validation, and cash reconciliation as a
-    // single workflow now - enforced here, not just in the UI.
+    // single workflow now - enforced here, not just in the UI. Either login type (owner, 27 Oct 2026).
     const isManager = role === 'manager';
     const isStoreIncharge = designation === 'store_incharge';
 
-    if (!isManager || !isStoreIncharge) {
+    if (!isStoreIncharge) {
       return c.json({ error: 'Only store incharges can update sales data' }, 403);
     }
 

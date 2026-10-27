@@ -115,7 +115,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  // Store incharges keep the original "Store Inventory" default.
  const defaultTopupReason: api.CashTopupReason = (isProductionIncharge || isOperationsManager) ? 'production_inventory' : 'store_inventory';
  const [topupReason, setTopupReason] = useState<api.CashTopupReason>(defaultTopupReason);
- const canEditSales = isManager && isStoreIncharge; // Store incharge validates the day's sales (POS-reported once live) against the cash they counted
+ // Store incharge validates the day's sales (POS-reported once live) against the cash they
+ // counted, on either login type - not only manager logins (owner, 27 Oct 2026).
+ const canEditSales = isStoreIncharge;
  const canReconcileCash = isStoreIncharge; // Store incharge owns cash reconciliation as part of the same validation workflow
  const canApproveSales = isOperationsManager || isClusterHead; // Operations manager and cluster head can approve
  
@@ -1619,6 +1621,9 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  Actual: ₹{(sale.actualCashInHand ?? 0).toFixed(2)}
  </p>
  </div>
+ {/* Only the operations manager and cluster head can approve (the server refuses anyone
+ else); the store incharge just sees where it stands (owner, 27 Oct 2026). */}
+ {canApproveSales ? (
  <button
  onClick={async () => {
  try {
@@ -1632,6 +1637,12 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  >
  ✓ Approve
  </button>
+ ) : (
+ <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+ <Clock className="w-3.5 h-3.5" />
+ Waiting for manager approval
+ </span>
+ )}
  </div>
  ))}
  </div>

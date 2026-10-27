@@ -2488,7 +2488,8 @@ export default function App() {
  }}
  />
  ) : activeView === 'inventory' && isAnyIncharge ? (
- <InventoryView context={contextValue} />
+ // Incharges on employee logins add and edit their own side's expenses too (owner, 27 Oct 2026).
+ <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} employees={employees} />
  ) : activeView === 'sales' && isAnyIncharge ? (
  <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
  ) : activeView === 'production' && canViewProduction ? (
