@@ -2777,17 +2777,7 @@ export default function App() {
  <Download className="w-4 h-4" />
  <span className="hidden xl:inline">Export</span>
  </button>
- <button
- onClick={() => setActiveView('backup')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'backup'
- ? 'bg-white text-blue-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Database className="w-4 h-4" />
- <span className="hidden xl:inline">Backup</span>
- </button>
+ {/* Backup is owner-only (full data + restore), so managers no longer get the tab. */}
  <EquipmentNavButton variant="manager-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />
  </>
  )}
@@ -3032,20 +3022,7 @@ export default function App() {
                     <Download className="w-5 h-5" />
                     <span>Export</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('backup');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'backup'
-                        ? 'bg-[#B4D7FF] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#E6F2FF]'
-                    }`}
-                  >
-                    <Database className="w-5 h-5" />
-                    <span>Backup</span>
-                  </button>
+                  {/* Backup is owner-only (full data + restore), so managers no longer get it. */}
                   <EquipmentNavButton variant="manager-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />
                   </>
  )}
@@ -3169,7 +3146,7 @@ export default function App() {
  currentUserId={user.email}
  context={contextValue}
  />
- ) : activeView === 'backup' ? (
+ ) : activeView === 'backup' && isClusterHead ? (
  <BackupRestore context={contextValue} />
  ) : activeView === 'employees' ? (
  <EmployeeManagement

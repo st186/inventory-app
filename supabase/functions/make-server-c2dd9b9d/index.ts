@@ -12,6 +12,7 @@ import { registerPasswordRoutes, passwordGate } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
 import { registerWorkplaceRoutes } from './workplace.ts';
+import { registerBackupRoutes } from './backup.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -275,6 +276,8 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   { test: /^\/cluster-heads(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
   { test: /^\/item-sales(\/|$)/, methods: ['DELETE'], roles: OWNER_ONLY },
   { test: /^\/investors(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
+  // Full backup download, file checks and restore (backup.ts).
+  { test: /^\/admin\/(backup|restore)(\/|$)/, roles: OWNER_ONLY },
   { test: /^\/(unified-employees|employees|archived-employees)(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/payouts(\/|$)/, methods: WRITES, roles: LEADS },
   { test: /^\/salary-advances\/.+/, methods: ['PUT', 'DELETE'], roles: LEADS },
@@ -12756,41 +12759,6 @@ app.post('/make-server-c2dd9b9d/migrate-stock-request-timestamps', async (c) => 
   }
 });
 
-// Debug endpoint: Check all stock-related keys in database (cluster head only)
-app.get('/make-server-c2dd9b9d/debug/stock-keys', async (c) => {
-  const auth = await verifyUser(c.req.header('Authorization'));
-  if ('error' in auth) {
-    return c.json({ error: auth.error }, auth.status);
-  }
-
-  try {
-    const role = auth.user.user_metadata?.role;
-    if (role !== 'cluster_head') {
-      return c.json({ error: 'Only cluster heads can access debug endpoints' }, 403);
-    }
-
-    // Get all stock requests
-    const stockRequests = await getAllByPrefixWithRetry('stock_request_');
-    
-    console.log('🔍 Debug: Stock-related keys:', {
-      stockRequestCount: stockRequests.length,
-      stockRequestIds: stockRequests.map(r => r.id),
-      sampleStockRequest: stockRequests[0]
-    });
-
-    return c.json({
-      stockRequests: {
-        count: stockRequests.length,
-        ids: stockRequests.map(r => r.id),
-        sample: stockRequests[0] || null
-      }
-    });
-  } catch (error: any) {
-    console.error('Error checking stock keys:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
 // ============================================
 // STOCK RECALIBRATION ROUTES
 // ============================================
@@ -16570,115 +16538,8 @@ app.get('/make-server-c2dd9b9d/online-loans/repayments', async (c) => {
   }
 });
 
-// DIAGNOSTIC: Check inventory database status (NO AUTH REQUIRED FOR DEBUGGING)
-app.get('/make-server-c2dd9b9d/diagnostic/inventory-status', async (c) => {
-  try {
-    console.log('🔍 [DIAGNOSTIC] Checking inventory database status...');
-    
-    // Search all inventory keys
-    const allInventory = await kvWithRetry.getByPrefix('inventory:');
-    console.log('🔍 [DIAGNOSTIC] Total inventory items in DB:', allInventory.length);
-    
-    const march17Items = allInventory.filter((i: any) => i.date === '2026-03-17');
-    const latestItems = allInventory.slice(-10); // Last 10 items
-    
-    console.log('🔍 [DIAGNOSTIC] March 17 items:', march17Items.length);
-    console.log('🔍 [DIAGNOSTIC] Latest items:', latestItems.map((i: any) => i.id));
-    
-    return c.json({ 
-      totalInventoryCount: allInventory.length,
-      march17Count: march17Items.length,
-      march17Items: march17Items.map((i: any) => ({ id: i.id, itemName: i.itemName, totalCost: i.totalCost })),
-      latestItemIds: latestItems.map((i: any) => ({ id: i.id, date: i.date, itemName: i.itemName }))
-    });
-  } catch (error) {
-    console.error('❌ [DIAGNOSTIC] Error:', error);
-    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
-  }
-});
-
-// DIAGNOSTIC: Show all key prefixes in database to find where data is hiding
-app.get('/make-server-c2dd9b9d/diagnostic/all-keys', async (c) => {
-  try {
-    console.log('🔍 [DIAGNOSTIC] Fetching ALL database keys...');
-    
-    // Query the database directly to see ALL keys
-    const { data, error } = await supabase
-      .from('kv_store_c2dd9b9d')
-      .select('key')
-      .limit(100); // Get first 100 keys as sample
-    
-    if (error) {
-      console.error('❌ [DIAGNOSTIC] Database error:', error);
-      return c.json({ error: error.message }, 500);
-    }
-    
-    console.log('🔍 [DIAGNOSTIC] Found', data?.length, 'keys (sample)');
-    
-    // Extract unique prefixes
-    const prefixes = new Map<string, number>();
-    data?.forEach((row: any) => {
-      const key = row.key;
-      const prefix = key.split(':')[0];
-      prefixes.set(prefix, (prefixes.get(prefix) || 0) + 1);
-    });
-    
-    const prefixSummary = Array.from(prefixes.entries()).map(([prefix, count]) => ({
-      prefix,
-      count,
-      example: data?.find((row: any) => row.key.startsWith(prefix))?.key
-    }));
-    
-    console.log('📊 [DIAGNOSTIC] Prefix summary:', prefixSummary);
-    
-    return c.json({ 
-      totalSampled: data?.length || 0,
-      sampleKeys: data?.slice(0, 20).map((row: any) => row.key),
-      prefixSummary
-    });
-  } catch (error) {
-    console.error('❌ [DIAGNOSTIC] Error:', error);
-    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
-  }
-});
-
-// DIAGNOSTIC: Search for backup data
-app.get('/make-server-c2dd9b9d/diagnostic/search-backups', async (c) => {
-  try {
-    console.log('🔍 [DIAGNOSTIC] Searching for backup keys...');
-    
-    // Search for backup keys
-    const { data, error } = await supabase
-      .from('kv_store_c2dd9b9d')
-      .select('key, created_at')
-      .like('key', 'backup:%')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    
-    if (error) {
-      console.error('❌ [DIAGNOSTIC] Database error:', error);
-      return c.json({ error: error.message }, 500);
-    }
-    
-    console.log('🔍 [DIAGNOSTIC] Found', data?.length, 'backup keys');
-    
-    const backups = data?.map((row: any) => ({
-      key: row.key,
-      createdAt: row.created_at,
-      // Extract backup info from key pattern: backup:YYYY-MM-DD_HH-MM-SS:type
-      timestamp: row.key.split(':')[1],
-      type: row.key.split(':')[2]
-    })) || [];
-    
-    return c.json({ 
-      totalBackups: backups.length,
-      backups: backups
-    });
-  } catch (error) {
-    console.error('❌ [DIAGNOSTIC] Error:', error);
-    return c.json({ error: 'Diagnostic failed', details: error instanceof Error ? error.message : String(error) }, 500);
-  }
-});
+// Full backup / restore and the nightly encrypted copy to Google Drive (backup.ts).
+registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: LATEST_APP_VERSION, notifyClusterHeads: async (title, message) => { let sent = 0; for (const head of await getAllClusterHeads()) if (head.authUserId) { await notifyUser(head.authUserId, 'backup_failed', title, message); sent++; } return sent; } });
 
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
