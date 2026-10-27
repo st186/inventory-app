@@ -51,24 +51,24 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
     return { weekday, weeks: [...weeks.entries()].sort(([a], [b]) => a.localeCompare(b)), mix, festivals };
   }, [data]);
 
-  if (loading && !data) return <div className="flex items-center justify-center gap-2 py-12 text-gray-500"><Loader2 className="w-5 h-5 animate-spin" /> Loading trends...</div>;
-  if (error) return <p className="text-sm text-rose-700 bg-rose-50 rounded-lg p-4">{error}</p>;
+  if (loading && !data) return <div className="flex items-center justify-center gap-2 py-12 text-text-3"><Loader2 className="w-5 h-5 animate-spin" /> Loading trends...</div>;
+  if (error) return <p className="text-sm text-danger bg-danger-soft rounded-lg p-4">{error}</p>;
   if (!data || !stats) return null;
 
   const maxWd = Math.max(1, ...stats.weekday.map((w) => w.avg));
-  const card = 'bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5';
+  const card = 'bg-surface rounded-lg border border-border p-4 sm:p-5';
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className={card}>
-          <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-5 h-5 text-indigo-600" /><h3 className="font-bold text-gray-900">Average sales by weekday</h3></div>
-          <p className="text-xs text-gray-500 mb-3">Last 8 weeks, normal open days only (festival and closed days left out)</p>
+          <div className="flex items-center gap-2 mb-3"><BarChart3 className="w-5 h-5 text-text-2" /><h3 className="font-bold text-text">Average sales by weekday</h3></div>
+          <p className="text-xs text-text-3 mb-3">Last 8 weeks, normal open days only (festival and closed days left out)</p>
           <ul className="space-y-2">
             {stats.weekday.map((w) => (
               <li key={w.label} className="flex items-center gap-3 text-sm">
-                <span className="w-9 text-gray-600">{w.label}</span>
-                <div className="flex-1 h-5 bg-gray-100 rounded-md overflow-hidden"><div className="h-full bg-indigo-500 rounded-md" style={{ width: `${(w.avg / maxWd) * 100}%` }} /></div>
+                <span className="w-9 text-text-2">{w.label}</span>
+                <div className="flex-1 h-5 bg-surface-2 rounded-md overflow-hidden"><div className="h-full bg-chart-1 rounded-md" style={{ width: `${(w.avg / maxWd) * 100}%` }} /></div>
                 <span className="w-20 text-right font-semibold tabular-nums">{w.avg ? rupees(w.avg) : '—'}</span>
               </li>
             ))}
@@ -76,38 +76,34 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
         </div>
 
         <div className={card}>
-          <div className="flex items-center gap-2 mb-3"><Leaf className="w-5 h-5 text-emerald-600" /><h3 className="font-bold text-gray-900">Non-veg vs veg by week</h3></div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-xs text-gray-500 text-left"><th className="py-1 pr-2 font-medium">Week of</th><th className="py-1 px-2 font-medium text-right">Sales</th><th className="py-1 px-2 font-medium text-right">Chicken</th><th className="py-1 pl-2 font-medium text-right">Veg share</th></tr></thead>
-              <tbody className="divide-y divide-gray-100">
-                {stats.weeks.map(([wk, w]) => {
-                  const total = w.nonVeg + w.veg;
-                  return (
-                    <tr key={wk}>
-                      <td className="py-1.5 pr-2 whitespace-nowrap">{fmtDay(wk)}{w.days < 7 ? <span className="text-[11px] text-gray-400"> · {w.days}d</span> : null}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{rupees(w.revenue)}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{w.chicken.toLocaleString('en-IN')}</td>
-                      <td className="py-1.5 pl-2 text-right tabular-nums">{total ? `${Math.round((w.veg / total) * 100)}%` : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <div className="flex items-center gap-2 mb-3"><Leaf className="w-5 h-5 text-success" /><h3 className="font-bold text-text">Non-veg vs veg by week</h3></div>
+          <ul className="divide-y divide-border">
+            {stats.weeks.map(([wk, w]) => {
+              const total = w.nonVeg + w.veg;
+              return (
+                <li key={wk} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block text-body-sm text-text">Week of {fmtDay(wk)}{w.days < 7 ? ` · ${w.days} days` : ''}</span>
+                    <span className="block text-caption text-text-3">Chicken {w.chicken.toLocaleString('en-IN')} · veg {total ? `${Math.round((w.veg / total) * 100)}%` : '—'}</span>
+                  </span>
+                  <span className="num shrink-0 text-body-sm font-semibold text-text">{rupees(w.revenue)}</span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className={card}>
-          <h3 className="font-bold text-gray-900 mb-1">Item mix: last 4 weeks vs the 4 before</h3>
-          <p className="text-xs text-gray-500 mb-3">Momos sold per type</p>
-          <ul className="divide-y divide-gray-100">
+          <h3 className="font-bold text-text mb-1">Item mix: last 4 weeks vs the 4 before</h3>
+          <p className="text-xs text-text-3 mb-3">Momos sold per type</p>
+          <ul className="divide-y divide-border">
             {stats.mix.map((m) => (
               <li key={m.key} className="flex items-center justify-between gap-3 py-1.5 text-sm">
-                <span className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${m.veg ? 'bg-emerald-500' : 'bg-orange-500'}`} />{m.label}</span>
-                <span className="tabular-nums text-gray-700">{m.recent.toLocaleString('en-IN')} <span className="text-gray-400">vs {m.before.toLocaleString('en-IN')}</span>
-                  {m.change !== null && <span className={`ml-2 font-semibold ${m.change >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{m.change >= 0 ? '+' : ''}{Math.round(m.change * 100)}%</span>}
+                <span className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${m.veg ? 'bg-success' : 'bg-primary'}`} />{m.label}</span>
+                <span className="tabular-nums text-text-2">{m.recent.toLocaleString('en-IN')} <span className="text-text-3">vs {m.before.toLocaleString('en-IN')}</span>
+                  {m.change !== null && <span className={`ml-2 font-semibold ${m.change >= 0 ? 'text-success' : 'text-danger'}`}>{m.change >= 0 ? '+' : ''}{Math.round(m.change * 100)}%</span>}
                 </span>
               </li>
             ))}
@@ -115,26 +111,22 @@ export function TrendsGrowth({ accessToken, storeId, canManage }: { accessToken:
         </div>
 
         <div className={card}>
-          <div className="flex items-center gap-2 mb-1"><PartyPopper className="w-5 h-5 text-amber-600" /><h3 className="font-bold text-gray-900">How festival days went</h3></div>
-          <p className="text-xs text-gray-500 mb-3">Against a normal day of the same weekday. The forecast uses these to plan the next one.</p>
+          <div className="flex items-center gap-2 mb-1"><PartyPopper className="w-5 h-5 text-warning" /><h3 className="font-bold text-text">How festival days went</h3></div>
+          <p className="text-xs text-text-3 mb-3">Against a normal day of the same weekday. The forecast uses these to plan the next one.</p>
           {stats.festivals.length === 0 ? (
-            <p className="text-sm text-gray-500">No past festival days marked yet - add them in the calendar below.</p>
+            <p className="text-sm text-text-3">No past festival days marked yet - add them in the calendar below.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="text-xs text-gray-500 text-left"><th className="py-1 pr-2 font-medium">Day</th><th className="py-1 px-2 font-medium text-right">Sales</th><th className="py-1 px-2 font-medium text-right">Non-veg</th><th className="py-1 pl-2 font-medium text-right">Veg</th></tr></thead>
-                <tbody className="divide-y divide-gray-100">
-                  {stats.festivals.map((f) => (
-                    <tr key={f.date}>
-                      <td className="py-1.5 pr-2"><span className="whitespace-nowrap">{fmtDay(f.date)} · {f.name}</span> <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[f.effect]}`}>{effectLabel(f.effect)}</span></td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{pct(f.revenueRatio)}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{pct(f.nonVegRatio)}</td>
-                      <td className="py-1.5 pl-2 text-right tabular-nums">{pct(f.vegRatio)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="divide-y divide-border">
+              {stats.festivals.map((f) => (
+                <li key={f.date} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-body-sm text-text">{fmtDay(f.date)} · {f.name} <span className={`text-caption px-1.5 py-0.5 rounded-full ${EFFECT_CHIP[f.effect]}`}>{effectLabel(f.effect)}</span></span>
+                    <span className="block text-caption text-text-3">Non-veg {pct(f.nonVegRatio)} · veg {pct(f.vegRatio)} of a usual day</span>
+                  </span>
+                  <span className="num shrink-0 text-body-sm font-semibold text-text">{pct(f.revenueRatio)}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>

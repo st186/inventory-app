@@ -1,10 +1,12 @@
 // What makes up one cost line on the Unit Economics ladder (food, packaging, rent &
 // electricity, other running costs, equipment...): its categories, largest first, and the
 // entries behind each one. Spread costs (equipment, bulk packaging, the POS fee) show this
-// period's share next to the full purchase.
+// period's share next to the full purchase. A sheet on phones, a dialog on desktop.
 
 import { useState } from 'react';
-import { X, ChevronDown, ChevronRight, Receipt } from 'lucide-react';
+import { ChevronDown, ChevronRight, Receipt } from 'lucide-react';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { EmptyState } from './ui/empty-state';
 
 export type CostLineEntry = { id: string; date: string; name: string; detail?: string; amount: number };
 export type CostLineGroup = { label: string; amount: number; entries: CostLineEntry[] };
@@ -27,83 +29,62 @@ export function CostLineModal({
   const [open, setOpen] = useState<string | null>(sorted.length === 1 ? sorted[0].label : null);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
-      <div
-        className="bg-white w-full sm:max-w-2xl max-h-[90vh] rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-5 py-4 flex items-start justify-between gap-3 flex-shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
-              <Receipt className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-bold leading-tight">{title}</h2>
-              <p className="text-xs text-indigo-100 mt-0.5">
-                {periodLabel} · {inr(total)}{revenue > 0 ? ` · ${((total / revenue) * 100).toFixed(1)}% of revenue` : ''}
-              </p>
-            </div>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/20 transition-colors flex-shrink-0" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="overflow-y-auto">
-          {sorted.length === 0 ? (
-            <p className="p-6 text-sm text-gray-500 text-center">Nothing recorded under this line for the period.</p>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {sorted.map((g) => {
-                const isOpen = open === g.label;
-                const share = total > 0 ? (g.amount / total) * 100 : 0;
-                return (
-                  <li key={g.label}>
-                    <button
-                      type="button"
-                      onClick={() => setOpen(isOpen ? null : g.label)}
-                      aria-expanded={isOpen}
-                      className="w-full text-left px-5 py-3 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isOpen ? <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />}
-                          <span className="text-sm font-medium text-gray-900 break-words">{g.label}</span>
-                          <span className="text-[11px] text-gray-500 flex-shrink-0">{g.entries.length} {g.entries.length === 1 ? 'entry' : 'entries'}</span>
+    <ResponsiveModal
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title={title}
+      description={`${periodLabel} · ${inr(total)}${revenue > 0 ? ` · ${((total / revenue) * 100).toFixed(1)}% of sales` : ''}`}
+      size="detail"
+    >
+      {sorted.length === 0 ? (
+        <EmptyState compact icon={Receipt} title="Nothing under this line" body="No entries for the period." />
+      ) : (
+        <ul className="-mx-1 overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+          {sorted.map((g) => {
+            const isOpen = open === g.label;
+            const share = total > 0 ? (g.amount / total) * 100 : 0;
+            return (
+              <li key={g.label}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : g.label)}
+                  aria-expanded={isOpen}
+                  className="flex min-h-15 w-full flex-col gap-2 px-4 py-3 text-left outline-none hover:bg-surface-2/60 active:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <span className="flex w-full items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isOpen ? <ChevronDown className="size-4 shrink-0 text-text-3" aria-hidden="true" /> : <ChevronRight className="size-4 shrink-0 text-text-3" aria-hidden="true" />}
+                      <span className="break-words text-body-md font-medium text-text">{g.label}</span>
+                      <span className="shrink-0 text-caption text-text-3">{g.entries.length} {g.entries.length === 1 ? 'entry' : 'entries'}</span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="num block text-body-md font-semibold text-text">{inr(g.amount)}</span>
+                      <span className="num block text-caption text-text-3">{share.toFixed(0)}%</span>
+                    </span>
+                  </span>
+                  <span className="ml-6 block h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
+                    <span className="block h-full rounded-full bg-chart-1" style={{ width: `${Math.max(1, share)}%` }} />
+                  </span>
+                </button>
+                {isOpen && (
+                  <ul className="border-t border-border bg-surface-2 [&>*+*]:border-t [&>*+*]:border-border">
+                    {[...g.entries].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.amount - a.amount)).map((e) => (
+                      <li key={e.id} className="flex items-start justify-between gap-3 py-2 pr-4 pl-10">
+                        <div className="min-w-0">
+                          <p className="break-words text-body-sm text-text">{e.name}</p>
+                          <p className="text-caption text-text-3" data-ai-private={e.detail ? '' : undefined}>{[shortDate(e.date), e.detail].filter(Boolean).join(' · ')}</p>
                         </div>
-                        <div className="text-right flex-shrink-0">
-                          <p className="text-sm font-semibold tabular-nums text-gray-900">{inr(g.amount)}</p>
-                          <p className="text-[11px] tabular-nums text-gray-500">{share.toFixed(0)}%</p>
-                        </div>
-                      </div>
-                      <div className="mt-2 ml-6 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">
-                        <div className="h-full rounded-full bg-indigo-400" style={{ width: `${Math.max(1, share)}%` }} />
-                      </div>
-                    </button>
-                    {isOpen && (
-                      <ul className="bg-gray-50/70 border-t border-gray-100 divide-y divide-gray-100">
-                        {[...g.entries].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.amount - a.amount)).map((e) => (
-                          <li key={e.id} className="pl-11 pr-5 py-2 flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm text-gray-800 break-words">{e.name}</p>
-                              <p className="text-[11px] text-gray-500" data-ai-private={e.detail ? '' : undefined}>{[shortDate(e.date), e.detail].filter(Boolean).join(' · ')}</p>
-                            </div>
-                            <p className="text-sm tabular-nums text-gray-900 flex-shrink-0">{inr(e.amount)}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {note && <p className="px-5 py-3 text-[11px] text-gray-500 border-t border-gray-100">{note}</p>}
-        </div>
-      </div>
-    </div>
+                        <p className="num shrink-0 text-body-sm text-text">{inr(e.amount)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {note && <p className="mt-3 text-caption text-text-3">{note}</p>}
+    </ResponsiveModal>
   );
 }

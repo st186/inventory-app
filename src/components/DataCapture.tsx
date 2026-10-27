@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText, Bug } from 'lucide-react';
 import { InventoryContextType } from '../App';
+import { toast } from 'sonner@2.0.3';
 import { DatePicker } from './DatePicker';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { formatDateTimeIST, formatDateIST } from '../utils/timezone';
@@ -524,26 +525,26 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'complete':
-        return 'bg-green-100 text-green-800';
+        return 'bg-success-soft text-success';
       case 'partial':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-warning-soft text-warning';
       case 'missing':
-        return 'bg-red-100 text-red-800';
+        return 'bg-danger-soft text-danger';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-surface-2 text-text';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'complete':
-        return <CheckCircle className="w-5 h-5 text-green-600" />;
+        return <CheckCircle className="w-5 h-5 text-success" />;
       case 'partial':
-        return <AlertTriangle className="w-5 h-5 text-yellow-600" />;
+        return <AlertTriangle className="w-5 h-5 text-warning" />;
       case 'missing':
-        return <XCircle className="w-5 h-5 text-red-600" />;
+        return <XCircle className="w-5 h-5 text-danger" />;
       default:
-        return <Clock className="w-5 h-5 text-gray-600" />;
+        return <Clock className="w-5 h-5 text-text-2" />;
     }
   };
 
@@ -552,7 +553,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       // Get access token from user session
       const accessToken = context.user?.accessToken;
       if (!accessToken) {
-        alert('Not authenticated. Please log in again.');
+        toast.error('Not signed in. Please sign in again.');
         return;
       }
 
@@ -571,23 +572,23 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       // Check if response has error
       if (data.error) {
         console.error('🐛 Database Debug Error:', data.error);
-        alert(`Error: ${data.error}`);
+        toast.error(`Error: ${data.error}`);
         return;
       }
       
       // Check if response has expected structure
       if (!data.stockRequests) {
         console.error('🐛 Unexpected response structure:', data);
-        alert('Unexpected response structure. Check console for details.');
+        toast.error('Unexpected answer from the server. See the console for details.');
         return;
       }
       
       setDebugInfo(data);
       console.log('🐛 Database Debug Info:', data);
-      alert(`Stock Requests in Database:\n\nCount: ${data.stockRequests.count}\nIDs: ${data.stockRequests.ids.join(', ') || 'None'}\n\nCheck console for more details.`);
+      toast.info(`Stock requests in the database: ${data.stockRequests.count}`, { description: `IDs: ${data.stockRequests.ids.join(', ') || 'none'}. More in the console.` });
     } catch (error) {
       console.error('Error checking database:', error);
-      alert('Error checking database. See console for details.');
+      toast.error('Could not check the database. See the console for details.');
     }
   };
 
@@ -595,18 +596,18 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
-          <FileText className="w-6 h-6 text-white" />
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface border border-border">
+          <FileText className="w-6 h-6 text-text-2" />
         </div>
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Data Capture Monitor</h1>
-          <p className="text-sm sm:text-base text-gray-500">Track daily data logging and manager performance</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight">Data Capture Monitor</h1>
+          <p className="text-sm sm:text-base text-text-3">Track daily data logging and manager performance</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+      <div className="bg-surface rounded-lg border border-border p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Select Period</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-text tracking-tight">Select Period</h2>
 
           {/* Date Range Selector */}
           <div className="flex flex-wrap gap-2">
@@ -614,8 +615,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('day')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'day'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               Today
@@ -624,8 +625,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('thisMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'thisMonth'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               This Month
@@ -634,8 +635,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('prevMonth')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'prevMonth'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               Last Month
@@ -644,8 +645,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('thisYear')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'thisYear'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               This Year
@@ -654,8 +655,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('prevYear')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'prevYear'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               Last Year
@@ -664,8 +665,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
               onClick={() => setDateRange('custom')}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                 dateRange === 'custom'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-primary-soft text-primary border-2 border-border'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               Custom
@@ -695,42 +696,42 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       {/* Period Statistics */}
       {periodStats && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
+          <div className="rounded-lg p-4 text-text bg-surface border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <Calendar className="w-5 h-5 text-blue-100" />
-              <div className="text-xs uppercase tracking-wide text-blue-100">Total Days</div>
+              <Calendar className="w-5 h-5 text-text-2" />
+              <div className="text-xs uppercase tracking-wide text-text-2">Total Days</div>
             </div>
             <div className="text-2xl font-semibold">{periodStats.totalDays}</div>
           </div>
 
-          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
+          <div className="rounded-lg p-4 text-text bg-surface border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="w-5 h-5 text-emerald-100" />
-              <div className="text-xs uppercase tracking-wide text-emerald-100">Completion Rate</div>
+              <CheckCircle className="w-5 h-5 text-text-2" />
+              <div className="text-xs uppercase tracking-wide text-text-2">Completion Rate</div>
             </div>
             <div className="text-2xl font-semibold">{periodStats.completionRate.toFixed(1)}%</div>
           </div>
 
-          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
+          <div className="rounded-lg p-4 text-text bg-surface border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <Clock className="w-5 h-5 text-amber-100" />
-              <div className="text-xs uppercase tracking-wide text-amber-100">On-Time Rate</div>
+              <Clock className="w-5 h-5 text-text-2" />
+              <div className="text-xs uppercase tracking-wide text-text-2">On-Time Rate</div>
             </div>
             <div className="text-2xl font-semibold">{periodStats.onTimeRate.toFixed(1)}%</div>
           </div>
 
-          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
+          <div className="rounded-lg p-4 text-text bg-surface border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <TrendingDown className="w-5 h-5 text-red-100" />
-              <div className="text-xs uppercase tracking-wide text-red-100">Total Discrepancy</div>
+              <TrendingDown className="w-5 h-5 text-text-2" />
+              <div className="text-xs uppercase tracking-wide text-text-2">Total Discrepancy</div>
             </div>
             <div className="text-2xl font-semibold">₹{periodStats.totalDiscrepancy.toFixed(2)}</div>
           </div>
 
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
+          <div className="rounded-lg p-4 text-text bg-surface border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-5 h-5 text-orange-100" />
-              <div className="text-xs uppercase tracking-wide text-orange-100">Avg Discrepancy</div>
+              <TrendingUp className="w-5 h-5 text-text-2" />
+              <div className="text-xs uppercase tracking-wide text-text-2">Avg Discrepancy</div>
             </div>
             <div className="text-2xl font-semibold">₹{periodStats.avgDiscrepancy.toFixed(2)}</div>
           </div>
@@ -742,24 +743,24 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
           so it just looked cut off), a table on larger screens. */}
       <div className="sm:hidden space-y-3">
         {loading ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
+          <div className="bg-surface rounded-lg border border-border p-6 text-center text-text-3">
             Loading data...
           </div>
         ) : dailyLogs.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
+          <div className="bg-surface rounded-lg border border-border p-6 text-center text-text-3">
             No data for selected period
           </div>
         ) : (
           dailyLogs.map((log) => (
-            <div key={log.date} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div key={log.date} className="bg-surface rounded-lg border border-border p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   {log.lateEntry && (
                     <span title="Late Entry">
-                      <AlertTriangle className="w-4 h-4 text-orange-500" />
+                      <AlertTriangle className="w-4 h-4 text-primary" />
                     </span>
                   )}
-                  <span className="text-sm font-medium text-gray-900">{formatDate(log.date)}</span>
+                  <span className="text-sm font-medium text-text">{formatDate(log.date)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {getStatusIcon(log.status)}
@@ -771,39 +772,39 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
 
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Expense</span>
+                  <span className="text-text-3">Expense</span>
                   {log.inventoryLogged ? (
-                    <span className="text-gray-900 text-right">{log.inventoryCount} items</span>
+                    <span className="text-text text-right">{log.inventoryCount} items</span>
                   ) : (
-                    <span className="text-gray-400">Not logged</span>
+                    <span className="text-text-3">Not logged</span>
                   )}
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Sales</span>
-                  <span className={log.salesLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.salesLogged ? '✓ Logged' : 'Not logged'}
+                  <span className="text-text-3">Sales</span>
+                  <span className={log.salesLogged ? 'text-text' : 'text-text-3'}>
+                    {log.salesLogged ? 'Logged' : 'Not logged'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Production</span>
-                  <span className={log.productionLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.productionLogged ? '✓ Logged' : 'Not logged'}
+                  <span className="text-text-3">Production</span>
+                  <span className={log.productionLogged ? 'text-text' : 'text-text-3'}>
+                    {log.productionLogged ? 'Logged' : 'Not logged'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Stock Requests</span>
-                  <span className={log.stockRequestLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.stockRequestLogged ? '✓ Logged' : 'Not logged'}
+                  <span className="text-text-3">Stock Requests</span>
+                  <span className={log.stockRequestLogged ? 'text-text' : 'text-text-3'}>
+                    {log.stockRequestLogged ? 'Logged' : 'Not logged'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Cash Discrepancy</span>
+                  <span className="text-text-3">Cash Discrepancy</span>
                   {log.salesLogged ? (
-                    <span className={log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}>
+                    <span className={log.cashDiscrepancy > 500 ? 'text-danger' : 'text-text'}>
                       ₹{log.cashDiscrepancy.toFixed(2)}
                     </span>
                   ) : (
-                    <span className="text-gray-400">-</span>
+                    <span className="text-text-3">-</span>
                   )}
                 </div>
               </div>
@@ -812,58 +813,58 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
         )}
       </div>
 
-      <div className="hidden sm:block bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="hidden sm:block bg-surface rounded-lg border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-surface-2 border-b border-border">
               <tr>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   <span>Expense</span>
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Sales
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Production
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Stock Requests
                 </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs text-text-2 uppercase tracking-wider">
                   Cash Discrepancy
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-border">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-text-3">
                     Loading data...
                   </td>
                 </tr>
               ) : dailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-text-3">
                     No data for selected period
                   </td>
                 </tr>
               ) : (
                 dailyLogs.map((log) => (
-                  <tr key={log.date} className="hover:bg-gray-50">
+                  <tr key={log.date} className="hover:bg-surface-2">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         {log.lateEntry && (
                           <span title="Late Entry">
-                            <AlertTriangle className="w-4 h-4 text-orange-500" />
+                            <AlertTriangle className="w-4 h-4 text-primary" />
                           </span>
                         )}
-                        <span className="text-sm text-gray-900">{formatDate(log.date)}</span>
+                        <span className="text-sm text-text">{formatDate(log.date)}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -877,62 +878,62 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
                     <td className="px-6 py-4 whitespace-nowrap">
                       {log.inventoryLogged ? (
                         <div className="text-sm">
-                          <p className="text-gray-900">{log.inventoryCount} items</p>
-                          <p className="text-gray-500">{formatDateTime(log.inventoryLoggedAt)}</p>
+                          <p className="text-text">{log.inventoryCount} items</p>
+                          <p className="text-text-3">{formatDateTime(log.inventoryLoggedAt)}</p>
                           {log.inventoryLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.inventoryLoggedBy}</p>
+                            <p className="text-xs text-text-3">By: {log.inventoryLoggedBy}</p>
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
+                        <span className="text-sm text-text-3">Not logged</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {log.salesLogged ? (
                         <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.salesLoggedAt)}</p>
+                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
+                          <p className="text-text-3">{formatDateTime(log.salesLoggedAt)}</p>
                           {log.salesLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.salesLoggedBy}</p>
+                            <p className="text-xs text-text-3">By: {log.salesLoggedBy}</p>
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
+                        <span className="text-sm text-text-3">Not logged</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {log.productionLogged ? (
                         <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.productionLoggedAt)}</p>
+                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
+                          <p className="text-text-3">{formatDateTime(log.productionLoggedAt)}</p>
                           {log.productionLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.productionLoggedBy}</p>
+                            <p className="text-xs text-text-3">By: {log.productionLoggedBy}</p>
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
+                        <span className="text-sm text-text-3">Not logged</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {log.stockRequestLogged ? (
                         <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.stockRequestLoggedAt)}</p>
+                          <p className="flex items-center gap-1 text-text"><CheckCircle className="size-4 text-success" aria-hidden="true" />Logged</p>
+                          <p className="text-text-3">{formatDateTime(log.stockRequestLoggedAt)}</p>
                           {log.stockRequestLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.stockRequestLoggedBy}</p>
+                            <p className="text-xs text-text-3">By: {log.stockRequestLoggedBy}</p>
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
+                        <span className="text-sm text-text-3">Not logged</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {log.salesLogged ? (
-                        <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}`}>
+                        <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-danger' : 'text-text'}`}>
                           ₹{log.cashDiscrepancy.toFixed(2)}
                         </span>
                       ) : (
-                        <span className="text-sm text-gray-400">-</span>
+                        <span className="text-sm text-text-3">-</span>
                       )}
                     </td>
                   </tr>
@@ -944,24 +945,24 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       </div>
 
       {/* Legend */}
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
-        <p className="text-sm text-gray-700 mb-2">Legend:</p>
+      <div className="bg-surface-2 rounded-lg border border-border p-4">
+        <p className="text-sm text-text-2 mb-2">Legend:</p>
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-green-600" />
-            <span className="text-gray-600">Complete - Both Inventory AND Sales logged</span>
+            <CheckCircle className="w-4 h-4 text-success" />
+            <span className="text-text-2">Complete - Both Inventory AND Sales logged</span>
           </div>
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-yellow-600" />
-            <span className="text-gray-600">Partial - At least one data type logged</span>
+            <AlertTriangle className="w-4 h-4 text-warning" />
+            <span className="text-text-2">Partial - At least one data type logged</span>
           </div>
           <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4 text-red-600" />
-            <span className="text-gray-600">Missing - No data logged</span>
+            <XCircle className="w-4 h-4 text-danger" />
+            <span className="text-text-2">Missing - No data logged</span>
           </div>
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-orange-500" />
-            <span className="text-gray-600">Orange icon = Late entry (logged after midnight)</span>
+            <AlertTriangle className="w-4 h-4 text-primary" />
+            <span className="text-text-2">Orange icon = Late entry (logged after midnight)</span>
           </div>
         </div>
       </div>

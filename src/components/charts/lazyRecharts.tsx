@@ -86,6 +86,6 @@ export function LazyChart({ height, children }: { height: number | string; child
     loadWhenIdle().then(() => { if (alive) setIsReady(true); }, () => { /* placeholder stays */ });
     return () => { alive = false; };
   }, [isReady]);
-  if (!isReady) return <div className="w-full rounded-lg bg-gray-50 animate-pulse" style={{ height }} aria-hidden="true" />;
+  if (!isReady) return <div className="w-full rounded-lg bg-surface-2 animate-pulse" style={{ height }} aria-hidden="true" />;
   return <>{children()}</>;
 }

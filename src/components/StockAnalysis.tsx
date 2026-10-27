@@ -117,10 +117,10 @@ const PIPELINE_AXIS_MAX = 22; // 10 PM
 const PIPELINE_AXIS_TICKS = [10, 12, 14, 16, 18, 20, 22];
 
 function efficiencyTone(pct: number | null): string {
-  if (pct === null) return 'text-gray-400';
-  if (pct >= 90) return 'text-emerald-600';
-  if (pct >= 70) return 'text-amber-600';
-  return 'text-red-600';
+  if (pct === null) return 'text-text-3';
+  if (pct >= 90) return 'text-success';
+  if (pct >= 70) return 'text-warning';
+  return 'text-danger';
 }
 
 // Operational SLA thresholds this business runs on - surfaced as their own card rather
@@ -671,7 +671,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       (dataKey === 'Shipped' && payload.shippedNextDayCount > 0) ||
       (dataKey === 'Delivered' && payload.delayedCount > 0);
     if (flagged) {
-      return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={6} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />;
+      return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={6} fill="var(--chart-1)" stroke="var(--chart-grid)" strokeWidth={1.5} />;
     }
     return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={3} fill={color} />;
   };
@@ -679,15 +679,15 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 rounded-2xl p-6 shadow-xl">
-        <div className="absolute inset-0 bg-white/10" />
+      <div className="relative overflow-hidden rounded-lg p-6 bg-surface border border-border">
+        <div className="absolute inset-0 bg-surface-2" />
         <div className="relative flex items-center gap-4">
-          <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-            <BarChart3 className="w-7 h-7 text-white" />
+          <div className="w-14 h-14 bg-surface-2 rounded-lg flex items-center justify-center border-2 border-border flex-shrink-0">
+            <BarChart3 className="w-7 h-7 text-text-2" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Store-Production SLA Analysis</h1>
-            <p className="text-sm sm:text-base text-white/80 mt-1">Request fulfillment and pipeline timing</p>
+            <h1 className="text-2xl sm:text-3xl text-text-2 font-bold tracking-tight">Store-Production SLA Analysis</h1>
+            <p className="text-sm sm:text-base text-text-2 mt-1">Request fulfillment and pipeline timing</p>
           </div>
         </div>
       </div>
@@ -698,8 +698,8 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           <button
             key={p}
             onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              period === p ? 'bg-indigo-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            className={`min-h-11 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              period === p ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
             }`}
           >
             {PERIOD_LABELS[p]}
@@ -713,16 +713,16 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               value={customRange.from}
               max={customRange.to || undefined}
               onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+              className="min-h-11 px-3 py-2 border border-border-strong rounded-md text-body-sm bg-surface text-text"
             />
-            <span className="text-sm text-gray-500">to</span>
+            <span className="text-sm text-text-3">to</span>
             <input
               type="date"
               aria-label="To date"
               value={customRange.to}
               min={customRange.from || undefined}
               onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
+              className="min-h-11 px-3 py-2 border border-border-strong rounded-md text-body-sm bg-surface text-text"
             />
           </div>
         )}
@@ -732,11 +732,11 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           business runs on, checked against every request that actually has the relevant
           timestamp, plus a handful of auto-generated callouts pulled from the sections
           below so the headline issues surface without reading every table. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <AlertTriangle className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-gray-900">SLA Scorecard &amp; Key Observations</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <AlertTriangle className="w-4 h-4 text-info" />
+          <h3 className="text-sm font-semibold text-text">SLA Scorecard &amp; Key Observations</h3>
+          <span className="text-xs text-text-3 ml-auto">{periodLabel}</span>
         </div>
         <div className="p-4 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -746,17 +746,17 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               { label: `Delivered within ${DELIVER_WITHIN_HOURS}h of shipping`, stat: slaStats.delivered, sub: 'Shipped → Delivered' },
             ] as const).map(({ label, stat, sub }) => {
               const pct = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : null;
-              const tone = pct === null ? 'text-gray-400' : pct >= 90 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-600';
-              const barTone = pct === null ? 'bg-gray-200' : pct >= 90 ? 'bg-emerald-500' : pct >= 70 ? 'bg-amber-500' : 'bg-red-500';
+              const tone = pct === null ? 'text-text-3' : pct >= 90 ? 'text-success' : pct >= 70 ? 'text-warning' : 'text-danger';
+              const barTone = pct === null ? 'bg-surface-3' : pct >= 90 ? 'bg-success' : pct >= 70 ? 'bg-warning' : 'bg-danger';
               return (
-                <div key={label} className="border border-gray-200 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-gray-700">{label}</p>
-                  <p className="text-[11px] text-gray-400 mb-2">{sub}</p>
+                <div key={label} className="border border-border rounded-lg p-3">
+                  <p className="text-xs font-semibold text-text-2">{label}</p>
+                  <p className="text-caption text-text-3 mb-2">{sub}</p>
                   <div className="flex items-end justify-between">
                     <span className={`text-2xl font-bold tabular-nums ${tone}`}>{pct === null ? '-' : `${pct}%`}</span>
-                    <span className="text-xs text-gray-500 tabular-nums">{stat.met}/{stat.total} met</span>
+                    <span className="text-xs text-text-3 tabular-nums">{stat.met}/{stat.total} met</span>
                   </div>
-                  <div className="h-1.5 rounded-full bg-gray-100 mt-2 overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-surface-2 mt-2 overflow-hidden">
                     <div className={`h-full rounded-full ${barTone}`} style={{ width: `${pct ?? 0}%` }} />
                   </div>
                 </div>
@@ -764,12 +764,12 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
             })}
           </div>
 
-          <div className="border-t border-gray-100 pt-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Key Observations</p>
+          <div className="border-t border-border pt-3">
+            <p className="text-xs font-semibold text-text-2 mb-2">Key Observations</p>
             <ul className="space-y-1.5">
               {observations.map((note, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                  <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${note.startsWith('No SLA breaches') ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <li key={i} className="flex items-start gap-2 text-sm text-text-2">
+                  <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${note.startsWith('No SLA breaches') ? 'bg-success' : 'bg-warning'}`} />
                   <span>{note}</span>
                 </li>
               ))}
@@ -781,32 +781,32 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               (100%) and substantially fulfilled (90-99%), each with the specific requests
               listed so "when" has real dates attached. */}
           {fulfillmentCompleteness.total > 0 && (
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2">Request Fulfillment Completeness</p>
+            <div className="border-t border-border pt-3">
+              <p className="text-xs font-semibold text-text-2 mb-2">Request Fulfillment Completeness</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-                <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-emerald-800">100% Fulfilled</p>
-                  <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{fulfillmentCompleteness.full.length}</p>
-                  <p className="text-[11px] text-emerald-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
+                <div className="border border-success-border bg-success-soft rounded-lg p-3">
+                  <p className="text-xs font-semibold text-success">100% Fulfilled</p>
+                  <p className="text-2xl font-bold text-success tabular-nums mt-1">{fulfillmentCompleteness.full.length}</p>
+                  <p className="text-caption text-success">of {fulfillmentCompleteness.total} delivered requests</p>
                 </div>
-                <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-amber-800">90-99% Fulfilled</p>
-                  <p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{fulfillmentCompleteness.ninetyPlus.length}</p>
-                  <p className="text-[11px] text-amber-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
+                <div className="border border-warning-border bg-warning-soft rounded-lg p-3">
+                  <p className="text-xs font-semibold text-warning">90-99% Fulfilled</p>
+                  <p className="text-2xl font-bold text-warning tabular-nums mt-1">{fulfillmentCompleteness.ninetyPlus.length}</p>
+                  <p className="text-caption text-warning">of {fulfillmentCompleteness.total} delivered requests</p>
                 </div>
-                <div className="border border-red-200 bg-red-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-red-800">Below 90%</p>
-                  <p className="text-2xl font-bold text-red-700 tabular-nums mt-1">{fulfillmentCompleteness.belowNinety.length}</p>
-                  <p className="text-[11px] text-red-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
+                <div className="border border-danger-border bg-danger-soft rounded-lg p-3">
+                  <p className="text-xs font-semibold text-danger">Below 90%</p>
+                  <p className="text-2xl font-bold text-danger tabular-nums mt-1">{fulfillmentCompleteness.belowNinety.length}</p>
+                  <p className="text-caption text-danger">of {fulfillmentCompleteness.total} delivered requests</p>
                 </div>
               </div>
 
               {(fulfillmentCompleteness.full.length > 0 || fulfillmentCompleteness.ninetyPlus.length > 0) && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-border rounded-lg overflow-hidden">
                   <div className="overflow-x-auto max-h-64 overflow-y-auto">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-gray-50">
-                        <tr className="text-left text-gray-500 uppercase tracking-wide">
+                      <thead className="sticky top-0 bg-surface-2">
+                        <tr className="text-left text-text-3 uppercase tracking-wide">
                           <th className="px-3 py-1.5">Request Date</th>
                           <th className="px-3 py-1.5 text-right">Requested (all items)</th>
                           <th className="px-3 py-1.5 text-right">Delivered (all items)</th>
@@ -817,12 +817,12 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                         {[...fulfillmentCompleteness.full, ...fulfillmentCompleteness.ninetyPlus]
                           .sort((a, b) => b.requestDate.localeCompare(a.requestDate))
                           .map((row) => (
-                            <tr key={row.id} className="border-t border-gray-100">
-                              <td className="px-3 py-1.5 text-gray-700">{row.requestedAt ? new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : row.requestDate}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{row.totalRequested.toLocaleString()}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{row.totalDelivered.toLocaleString()}</td>
+                            <tr key={row.id} className="border-t border-border">
+                              <td className="px-3 py-1.5 text-text-2">{row.requestedAt ? new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : row.requestDate}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-text-2">{row.totalRequested.toLocaleString()}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-text-2">{row.totalDelivered.toLocaleString()}</td>
                               <td className="px-3 py-1.5 text-right tabular-nums font-semibold">
-                                <span className={row.pct >= 99.5 ? 'text-emerald-600' : 'text-amber-600'}>{Math.round(row.pct)}%</span>
+                                <span className={row.pct >= 99.5 ? 'text-success' : 'text-warning'}>{Math.round(row.pct)}%</span>
                               </td>
                             </tr>
                           ))}
@@ -840,40 +840,40 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           and how long any pending one has been waiting on manager approval (auto-approves
           after 5 days - see TIMESHEET_AUTO_APPROVE_DAYS). Org-wide, not scoped to this
           page's store/period filters above, since attendance isn't a stock concept. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Users className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Staff Attendance Compliance</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}{attendanceReport.days > 0 ? ` - ${attendanceReport.days} day${attendanceReport.days === 1 ? '' : 's'}` : ''}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <Users className="w-4 h-4 text-info" />
+          <h3 className="text-sm font-semibold text-text">Staff Attendance Compliance</h3>
+          <span className="text-xs text-text-3 ml-auto">{periodLabel}{attendanceReport.days > 0 ? ` - ${attendanceReport.days} day${attendanceReport.days === 1 ? '' : 's'}` : ''}</span>
         </div>
         {attendanceLoading ? (
-          <div className="p-6 text-center text-sm text-gray-500">Loading attendance data...</div>
+          <div className="p-6 text-center text-sm text-text-3">Loading attendance data...</div>
         ) : attendanceError ? (
-          <div className="p-6 text-center text-sm text-red-600">
+          <div className="p-6 text-center text-sm text-danger">
             Could not load attendance: {attendanceError}.{' '}
-            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="underline">Try again</button>
+            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="min-h-11 px-2 underline">Try again</button>
           </div>
         ) : (
           <div className="p-4 space-y-4">
             <div>
-              <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                <UserX className="w-3.5 h-3.5 text-red-600" /> Timesheets filled vs missing
+              <p className="text-xs font-semibold text-text-2 mb-2 flex items-center gap-1.5">
+                <UserX className="w-3.5 h-3.5 text-danger" /> Timesheets filled vs missing
               </p>
               {attendanceReport.days === 0 || attendanceReport.rows.length === 0 ? (
-                <div className="text-sm text-gray-500">No working days to check in this period yet.</div>
+                <div className="text-sm text-text-3">No working days to check in this period yet.</div>
               ) : (
                 <>
-                  <p className="text-xs text-gray-500 mb-2">
+                  <p className="text-xs text-text-3 mb-2">
                     {attendanceReport.totalFilled} of {attendanceReport.totalExpected} expected timesheets filled
                     {attendanceReport.totalExpected > 0 ? ` (${Math.round((attendanceReport.totalFilled / attendanceReport.totalExpected) * 100)}%)` : ''}.
                     Approved leave days are not counted as missing, and today is not counted until the day is over.
                     {' '}Based on {timesheets.length} timesheets loaded.{' '}
-                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="text-indigo-600 underline">Reload</button>
+                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="min-h-11 px-2 text-primary underline">Reload</button>
                   </p>
-                  <div className="border border-gray-200 rounded-lg overflow-x-auto">
+                  <div className="border border-border rounded-lg overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="text-left text-xs uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-100">
+                        <tr className="text-left text-xs uppercase tracking-wide text-text-3 bg-surface-2 border-b border-border">
                           <th className="px-3 py-2">Employee</th>
                           <th className="px-3 py-2 text-right">Filled</th>
                           <th className="px-3 py-2 text-right">Missing</th>
@@ -883,25 +883,25 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                       </thead>
                       <tbody>
                         {attendanceReport.rows.map((row) => (
-                          <tr key={row.employeeId} className="border-b border-gray-50 align-top">
+                          <tr key={row.employeeId} className="border-b border-border align-top">
                             <td className="px-3 py-2">
-                              <p className="font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
+                              <p className="font-medium text-text">{row.name} <span className="text-text-3 font-normal">({row.employeeId})</span></p>
                               {row.missing > 0 && (
                                 <details className="mt-0.5">
-                                  <summary className="text-xs text-red-600 cursor-pointer">Show missing dates</summary>
-                                  <p className="text-xs text-gray-500 mt-1">{row.missingDates.slice().reverse().join(', ')}</p>
+                                  <summary className="text-xs text-danger cursor-pointer">Show missing dates</summary>
+                                  <p className="text-xs text-text-3 mt-1">{row.missingDates.slice().reverse().join(', ')}</p>
                                 </details>
                               )}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
-                              <span className="font-semibold text-emerald-700">{row.filled}</span>
-                              <span className="text-gray-400"> / {row.expected - row.onLeave}</span>
+                              <span className="font-semibold text-success">{row.filled}</span>
+                              <span className="text-text-3"> / {row.expected - row.onLeave}</span>
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${row.missing > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.missing}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${row.missing > 0 ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}`}>{row.missing}</span>
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-gray-600">{row.onLeave}</td>
-                            <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                            <td className="px-3 py-2 text-right tabular-nums text-text-2">{row.onLeave}</td>
+                            <td className="px-3 py-2 text-xs text-text-2 whitespace-nowrap">
                               {row.approved} approved{row.pending > 0 ? ` · ${row.pending} pending` : ''}{row.rejected > 0 ? ` · ${row.rejected} rejected` : ''}
                             </td>
                           </tr>
@@ -913,24 +913,24 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               )}
             </div>
 
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-amber-600" /> Pending Manager Approval
+            <div className="border-t border-border pt-3">
+              <p className="text-xs font-semibold text-text-2 mb-2 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-warning" /> Pending Manager Approval
               </p>
               {pendingAttendanceApprovals.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-emerald-600">
+                <div className="flex items-center gap-2 text-sm text-success">
                   <span>No timesheets awaiting approval.</span>
                 </div>
               ) : (
-                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-100">
+                <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
                   {pendingAttendanceApprovals.map((row, i) => (
                     <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
-                        <p className="text-xs text-gray-500 mt-0.5">Timesheet for {row.date}</p>
+                        <p className="text-sm font-medium text-text">{row.name} <span className="text-text-3 font-normal">({row.employeeId})</span></p>
+                        <p className="text-xs text-text-3 mt-0.5">Timesheet for {row.date}</p>
                       </div>
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 ${
-                        row.willAutoApproveToday ? 'bg-amber-100 text-amber-800' : row.daysPending >= 3 ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-600'
+                        row.willAutoApproveToday ? 'bg-warning-soft text-warning' : row.daysPending >= 3 ? 'bg-warning-soft text-warning' : 'bg-surface-2 text-text-2'
                       }`}>
                         {row.willAutoApproveToday ? `Auto-approves today (${row.daysPending}d)` : `${row.daysPending}d pending`}
                       </span>
@@ -938,7 +938,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                   ))}
                 </div>
               )}
-              <p className="text-[11px] text-gray-400 mt-2">
+              <p className="text-caption text-text-3 mt-2">
                 A timesheet still pending after {TIMESHEET_AUTO_APPROVE_DAYS} days is automatically approved so attendance records don't get stuck on a forgotten approval.
               </p>
             </div>
@@ -947,40 +947,40 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       </div>
 
       {/* Store wastage - what the store incharge logs under Stock Requests > Log Wastage. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Trash2 className="w-4 h-4 text-red-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Store Wastage</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <Trash2 className="w-4 h-4 text-danger" />
+          <h3 className="text-sm font-semibold text-text">Store Wastage</h3>
+          <span className="text-xs text-text-3 ml-auto">{periodLabel}</span>
         </div>
         {wastageLoading ? (
-          <div className="p-6 text-center text-sm text-gray-500">Loading wastage...</div>
+          <div className="p-6 text-center text-sm text-text-3">Loading wastage...</div>
         ) : wastageSummary.days.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">
+          <div className="p-6 text-center text-sm text-text-3">
             No wastage logged in this period. The store incharge logs it from Stock Requests &rarr; Log Wastage (tracked from 30 Aug 2026).
           </div>
         ) : (
           <div className="p-4 space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg bg-red-50 p-3">
-                <p className="text-xs text-gray-600">Pieces wasted</p>
-                <p className="text-xl font-bold text-red-700 tabular-nums">{wastageSummary.total.toLocaleString('en-IN')}</p>
+              <div className="rounded-lg bg-danger-soft p-3">
+                <p className="text-xs text-text-2">Pieces wasted</p>
+                <p className="text-xl font-bold text-danger tabular-nums">{wastageSummary.total.toLocaleString('en-IN')}</p>
               </div>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <p className="text-xs text-gray-600">Days logged</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.days.length}</p>
+              <div className="rounded-lg bg-surface-2 p-3">
+                <p className="text-xs text-text-2">Days logged</p>
+                <p className="text-xl font-bold text-text tabular-nums">{wastageSummary.days.length}</p>
               </div>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <p className="text-xs text-gray-600">Last logged</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.lastLogged ? new Date(`${wastageSummary.lastLogged}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}</p>
+              <div className="rounded-lg bg-surface-2 p-3">
+                <p className="text-xs text-text-2">Last logged</p>
+                <p className="text-xl font-bold text-text tabular-nums">{wastageSummary.lastLogged ? new Date(`${wastageSummary.lastLogged}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}</p>
               </div>
             </div>
             <div className="space-y-2">
               {wastageSummary.rows.map((r) => (
                 <div key={r.key} className="flex items-center gap-3">
-                  <span className="w-32 text-sm text-gray-700 truncate">{r.label}</span>
-                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-400 rounded-full" style={{ width: `${wastageSummary.maxPieces > 0 ? (r.pieces / wastageSummary.maxPieces) * 100 : 0}%` }} />
+                  <span className="w-32 text-sm text-text-2 truncate">{r.label}</span>
+                  <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
+                    <div className="h-full bg-danger rounded-full" style={{ width: `${wastageSummary.maxPieces > 0 ? (r.pieces / wastageSummary.maxPieces) * 100 : 0}%` }} />
                   </div>
                   <span className="w-16 text-right text-sm font-semibold tabular-nums">{r.pieces}</span>
                 </div>
@@ -988,24 +988,24 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
             </div>
             {wastageSummary.reasonRows.some((r) => r.code) && (
               <div>
-                <p className="text-xs font-semibold text-gray-600 mb-2">By reason</p>
+                <p className="text-xs font-semibold text-text-2 mb-2">By reason</p>
                 <div className="flex flex-wrap gap-2">
                   {wastageSummary.reasonRows.map((r) => (
-                    <span key={r.code || 'none'} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${r.code ? 'bg-white border-gray-200 text-gray-800' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+                    <span key={r.code || 'none'} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${r.code ? 'bg-surface border-border text-text' : 'bg-surface-2 border-border text-text-3'}`}>
                       {r.code && <span className="font-mono font-semibold">{r.code}</span>}
                       {r.label}
                       <span className="font-semibold tabular-nums">{r.pieces}</span>
                     </span>
                   ))}
                 </div>
-                <p className="text-[11px] text-gray-500 mt-1">Q = short or damaged at delivery (from the store's count). S = staff meals, counted here because they leave stock too.</p>
+                <p className="text-caption text-text-3 mt-1">Q = short or damaged at delivery (from the store's count). S = staff meals, counted here because they leave stock too.</p>
               </div>
             )}
-            <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
+            <div className="max-h-48 overflow-y-auto divide-y divide-border border border-border rounded-lg">
               {wastageSummary.days.map((d) => (
                 <div key={d.date} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                  <span className="text-gray-700">{new Date(`${d.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                  <span className="text-gray-500 truncate flex-1 text-xs">{d.notes || d.by}</span>
+                  <span className="text-text-2">{new Date(`${d.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                  <span className="text-text-3 truncate flex-1 text-xs">{d.notes || d.by}</span>
                   <span className="font-semibold tabular-nums">{d.pieces} pcs</span>
                 </div>
               ))}
@@ -1015,64 +1015,64 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       </div>
 
       {/* Out of stock - logged by whoever bills at the store (Out of Stock page, SOP ST-28). */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <PackageX className="w-4 h-4 text-rose-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Out of Stock</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <PackageX className="w-4 h-4 text-danger" />
+          <h3 className="text-sm font-semibold text-text">Out of Stock</h3>
+          <span className="text-xs text-text-3 ml-auto">{periodLabel}</span>
         </div>
         {stockOuts.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">
+          <div className="p-6 text-center text-sm text-text-3">
             No stock-outs logged in this period. The store logs them from the Out of Stock page.
           </div>
         ) : (
           <div className="p-4 space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <div className="bg-rose-50 border border-rose-100 rounded-lg p-3">
-                <p className="text-xs text-rose-700">Times out</p>
-                <p className="text-xl font-bold text-rose-700 tabular-nums">{stockOuts.length}</p>
+              <div className="bg-danger-soft border border-danger-border rounded-lg p-3">
+                <p className="text-xs text-danger">Times out</p>
+                <p className="text-xl font-bold text-danger tabular-nums">{stockOuts.length}</p>
               </div>
-              <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
-                <p className="text-xs text-gray-500">Time out in total</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{stockOutDuration(new Date(0).toISOString(), new Date(stockOutSummary.minutes * 60000).toISOString())}</p>
+              <div className="bg-surface-2 border border-border rounded-lg p-3">
+                <p className="text-xs text-text-3">Time out in total</p>
+                <p className="text-xl font-bold text-text tabular-nums">{stockOutDuration(new Date(0).toISOString(), new Date(stockOutSummary.minutes * 60000).toISOString())}</p>
               </div>
-              <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
-                <p className="text-xs text-gray-500">Out right now</p>
-                <p className={`text-xl font-bold tabular-nums ${stockOutSummary.open.length ? 'text-rose-700' : 'text-gray-900'}`}>{stockOutSummary.open.length}</p>
+              <div className="bg-surface-2 border border-border rounded-lg p-3">
+                <p className="text-xs text-text-3">Out right now</p>
+                <p className={`text-xl font-bold tabular-nums ${stockOutSummary.open.length ? 'text-danger' : 'text-text'}`}>{stockOutSummary.open.length}</p>
               </div>
             </div>
             {stockOutSummary.open.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {stockOutSummary.open.map((e) => (
-                  <span key={e.id} className="text-xs px-2.5 py-1 rounded-full bg-rose-600 text-white">{e.item} · since {istClock(e.startAt)} ({stockOutDuration(e.startAt)})</span>
+                  <span key={e.id} className="text-xs px-2.5 py-1 rounded-full bg-danger text-on-danger">{e.item} · since {istClock(e.startAt)} ({stockOutDuration(e.startAt)})</span>
                 ))}
               </div>
             )}
             <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">By item</p>
+              <p className="text-xs font-semibold text-text-2 mb-2">By item</p>
               <div className="space-y-1">
                 {stockOutSummary.items.map((r) => (
                   <div key={r.item} className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="text-gray-800">{r.item}</span>
-                    <span className="text-gray-600 tabular-nums">{r.times}× · {stockOutDuration(new Date(0).toISOString(), new Date(r.minutes * 60000).toISOString())}</span>
+                    <span className="text-text">{r.item}</span>
+                    <span className="text-text-2 tabular-nums">{r.times}× · {stockOutDuration(new Date(0).toISOString(), new Date(r.minutes * 60000).toISOString())}</span>
                   </div>
                 ))}
               </div>
             </div>
             <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">By reason</p>
+              <p className="text-xs font-semibold text-text-2 mb-2">By reason</p>
               <div className="flex flex-wrap gap-1.5">
                 {stockOutSummary.reasons.map((r) => (
-                  <span key={r.id} className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700">{r.label} · {r.times}</span>
+                  <span key={r.id} className="text-xs px-2.5 py-1 rounded-full bg-surface-2 text-text-2">{r.label} · {r.times}</span>
                 ))}
               </div>
             </div>
             <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Latest</p>
-              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+              <p className="text-xs font-semibold text-text-2 mb-2">Latest</p>
+              <ul className="divide-y divide-border border border-border rounded-lg">
                 {stockOutSummary.latest.map((e) => (
-                  <li key={e.id} className="px-3 py-2 text-xs text-gray-600">
-                    <span className="font-semibold text-gray-900">{e.item}</span> · {new Date(`${istDate(e.startAt)}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} {istClock(e.startAt)} - {e.endAt ? istClock(e.endAt) : 'still out'} · {stockOutDuration(e.startAt, e.endAt)} · {stockOutReasonLabel(e.reason)}{e.reasonNote ? ` (${e.reasonNote})` : ''} · {e.createdByName}
+                  <li key={e.id} className="px-3 py-2 text-xs text-text-2">
+                    <span className="font-semibold text-text">{e.item}</span> · {new Date(`${istDate(e.startAt)}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} {istClock(e.startAt)} - {e.endAt ? istClock(e.endAt) : 'still out'} · {stockOutDuration(e.startAt, e.endAt)} · {stockOutReasonLabel(e.reason)}{e.reasonNote ? ` (${e.reasonNote})` : ''} · {e.createdByName}
                   </li>
                 ))}
               </ul>
@@ -1082,19 +1082,19 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       </div>
 
       {/* Section A: Items requested vs delivered */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Package className="w-4 h-4 text-orange-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Items Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <Package className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold text-text">Items Requested vs Delivered</h3>
+          <span className="text-xs text-text-3 ml-auto">{periodLabel}</span>
         </div>
         {itemStats.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">No requests in this period.</div>
+          <div className="p-6 text-center text-sm text-text-3">No requests in this period.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
+                <tr className="text-left text-xs text-text-3 uppercase tracking-wide">
                   <th className="px-4 py-2">Item</th>
                   <th className="px-4 py-2 text-right">Requested</th>
                   <th className="px-4 py-2 text-right">Delivered</th>
@@ -1104,14 +1104,14 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               </thead>
               <tbody>
                 {itemStats.map((row) => (
-                  <tr key={row.label} className="border-t border-gray-100">
-                    <td className="px-4 py-2.5 text-gray-900">{row.label}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.requested.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.delivered.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.sold.toLocaleString()}</td>
+                  <tr key={row.label} className="border-t border-border">
+                    <td className="px-4 py-2.5 text-text">{row.label}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text-2">{row.requested.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text-2">{row.delivered.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text-2">{row.sold.toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums font-medium">
                       {row.pct === null ? '-' : (
-                        <span className={row.pct >= 90 ? 'text-emerald-600' : row.pct >= 60 ? 'text-amber-600' : 'text-red-600'}>{row.pct}%</span>
+                        <span className={row.pct >= 90 ? 'text-success' : row.pct >= 60 ? 'text-warning' : 'text-danger'}>{row.pct}%</span>
                       )}
                     </td>
                   </tr>
@@ -1123,19 +1123,19 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       </div>
 
       {/* Section B: Sauces requested vs delivered */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Droplet className="w-4 h-4 text-rose-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Sauces - Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">by number of requests, {periodLabel}</span>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <Droplet className="w-4 h-4 text-danger" />
+          <h3 className="text-sm font-semibold text-text">Sauces - Requested vs Delivered</h3>
+          <span className="text-xs text-text-3 ml-auto">by number of requests, {periodLabel}</span>
         </div>
         {sauceStats.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">No sauces requested in this period.</div>
+          <div className="p-6 text-center text-sm text-text-3">No sauces requested in this period.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
+                <tr className="text-left text-xs text-text-3 uppercase tracking-wide">
                   <th className="px-4 py-2">Sauce</th>
                   <th className="px-4 py-2 text-right">Times Requested</th>
                   <th className="px-4 py-2 text-right">Times Delivered</th>
@@ -1144,13 +1144,13 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               </thead>
               <tbody>
                 {sauceStats.map((row) => (
-                  <tr key={row.name} className="border-t border-gray-100">
-                    <td className="px-4 py-2.5 text-gray-900 capitalize">{row.name.replace(/_/g, ' ')}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.requestedCount}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.deliveredCount}</td>
+                  <tr key={row.name} className="border-t border-border">
+                    <td className="px-4 py-2.5 text-text capitalize">{row.name.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text-2">{row.requestedCount}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-text-2">{row.deliveredCount}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums font-medium">
                       {row.pct === null ? '-' : (
-                        <span className={row.pct >= 90 ? 'text-emerald-600' : row.pct >= 60 ? 'text-amber-600' : 'text-red-600'}>{row.pct}%</span>
+                        <span className={row.pct >= 90 ? 'text-success' : row.pct >= 60 ? 'text-warning' : 'text-danger'}>{row.pct}%</span>
                       )}
                     </td>
                   </tr>
@@ -1162,38 +1162,38 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       </div>
 
       {/* Section C: Items not delivered for several days */}
-      <div className="border border-red-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border-b border-red-200">
-          <AlertTriangle className="w-4 h-4 text-red-600" />
-          <h3 className="text-sm font-semibold text-red-900">Not Delivered Recently</h3>
-          <div className="flex items-center gap-1.5 ml-auto text-xs text-red-700">
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-danger-soft border-b border-danger-border">
+          <AlertTriangle className="w-4 h-4 text-danger" />
+          <h3 className="text-sm font-semibold text-danger">Not Delivered Recently</h3>
+          <div className="flex items-center gap-1.5 ml-auto text-xs text-danger">
             <span>Flag after</span>
             <input
               type="number"
               min={1}
               value={staleDays}
               onChange={(e) => setStaleDays(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-12 px-1.5 py-0.5 border border-red-300 rounded text-center"
+              className="min-h-11 w-14 px-1.5 py-0.5 border border-border-strong rounded-md bg-surface text-center"
             />
             <span>days</span>
           </div>
         </div>
         {staleItems.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">Nothing flagged - every requested item has been delivered recently.</div>
+          <div className="p-6 text-center text-sm text-text-3">Nothing flagged - every requested item has been delivered recently.</div>
         ) : (
-          <div className="divide-y divide-red-100">
+          <div className="divide-y divide-border">
             {staleItems.map((row) => (
               <div key={`${row.kind}-${row.label}`} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 capitalize">{row.label.replace(/_/g, ' ')}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-sm font-medium text-text capitalize">{row.label.replace(/_/g, ' ')}</p>
+                  <p className="text-xs text-text-3 mt-0.5">
                     {row.lastDelivered
                       ? `Last delivered ${row.lastDelivered} (${row.daysSince} day${row.daysSince === 1 ? '' : 's'} ago)`
                       : 'Never delivered'}
                     {' - '}{row.requestsSinceDelivery} request{row.requestsSinceDelivery === 1 ? '' : 's'} since
                   </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold whitespace-nowrap flex-shrink-0">
+                <span className="px-2.5 py-1 rounded-full bg-danger-soft text-danger text-xs font-semibold whitespace-nowrap flex-shrink-0">
                   {row.daysSince === null ? 'Never' : `${row.daysSince}d`}
                 </span>
               </div>
@@ -1204,36 +1204,36 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
 
       {/* Section D: Pipeline timing - one chart per stage, so each stage's own daily
           rhythm reads clearly instead of three overlapping lines. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Clock className="w-4 h-4 text-blue-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Pipeline Time of Day, by Stage</h3>
+      <div className="border border-border rounded-lg overflow-hidden bg-surface">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-b border-border">
+          <Clock className="w-4 h-4 text-info" />
+          <h3 className="text-sm font-semibold text-text">Pipeline Time of Day, by Stage</h3>
         </div>
         <div className="p-4">
           {timingChartData.length === 0 ? (
-            <div className="text-center text-sm text-gray-500 py-8">No timestamped requests in this period.</div>
+            <div className="text-center text-sm text-text-3 py-8">No timestamped requests in this period.</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               {([
-                { key: 'Requested', color: '#6366f1', nextDayField: null, efficiency: `${chartEfficiency.requestedCount} placed`, efficiencyTone: 'text-gray-500' },
-                { key: 'Accepted', color: '#f59e0b', nextDayField: 'acceptedNextDayCount', efficiency: chartEfficiency.acceptedSameDayPct === null ? null : `${chartEfficiency.acceptedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.acceptedSameDayPct) },
-                { key: 'Shipped', color: '#3b82f6', nextDayField: 'shippedNextDayCount', efficiency: chartEfficiency.shippedSameDayPct === null ? null : `${chartEfficiency.shippedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.shippedSameDayPct) },
-                { key: 'Delivered', color: '#10b981', nextDayField: 'delayedCount', efficiency: chartEfficiency.deliveredSameDayPct === null ? null : `${chartEfficiency.deliveredSameDayPct}% same-day as shipped`, efficiencyTone: efficiencyTone(chartEfficiency.deliveredSameDayPct) },
+                { key: 'Requested', color: 'var(--chart-4)', nextDayField: null, efficiency: `${chartEfficiency.requestedCount} placed`, efficiencyTone: 'text-text-3' },
+                { key: 'Accepted', color: 'var(--chart-3)', nextDayField: 'acceptedNextDayCount', efficiency: chartEfficiency.acceptedSameDayPct === null ? null : `${chartEfficiency.acceptedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.acceptedSameDayPct) },
+                { key: 'Shipped', color: 'var(--chart-4)', nextDayField: 'shippedNextDayCount', efficiency: chartEfficiency.shippedSameDayPct === null ? null : `${chartEfficiency.shippedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.shippedSameDayPct) },
+                { key: 'Delivered', color: 'var(--chart-2)', nextDayField: 'delayedCount', efficiency: chartEfficiency.deliveredSameDayPct === null ? null : `${chartEfficiency.deliveredSameDayPct}% same-day as shipped`, efficiencyTone: efficiencyTone(chartEfficiency.deliveredSameDayPct) },
               ] as const).map(({ key, color, nextDayField, efficiency, efficiencyTone: tone }) => (
                 <div key={key}>
                   <div className="flex items-baseline justify-between mb-1">
-                    <p className="text-xs font-semibold text-gray-700">{key}</p>
-                    {efficiency && <p className={`text-[11px] font-semibold tabular-nums ${tone}`}>{efficiency}</p>}
+                    <p className="text-xs font-semibold text-text-2">{key}</p>
+                    {efficiency && <p className={`text-caption font-semibold tabular-nums ${tone}`}>{efficiency}</p>}
                   </div>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={timingChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                      <XAxis dataKey="day" tick={{ fontSize: 12 }} />
                       <YAxis
                         domain={[PIPELINE_AXIS_MIN, PIPELINE_AXIS_MAX]}
                         ticks={PIPELINE_AXIS_TICKS}
                         tickFormatter={formatHourShort}
-                        tick={{ fontSize: 10 }}
+                        tick={{ fontSize: 12 }}
                         width={40}
                       />
                       <Tooltip
@@ -1252,24 +1252,24 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
               ))}
             </div>
           )}
-          <p className="text-xs text-gray-500 mt-3">
+          <p className="text-xs text-text-3 mt-3">
             "Requested" is when the request was placed - the other three are grouped under that
             same placement day, so a point's clock time doesn't by itself confirm the stage
             happened that same day. {(delayedDeliveries.length > 0 || nextDayCounts.acceptedNextDay > 0 || nextDayCounts.shippedNextDay > 0) && (
-              <>Where <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 align-middle mx-1" /> appears on Accepted/Shipped/Delivered, at least one request in that day's group actually happened on a later calendar date - hover the point for how many.</>
+              <>Where <span className="inline-block w-2.5 h-2.5 rounded-full bg-danger align-middle mx-1" /> appears on Accepted/Shipped/Delivered, at least one request in that day's group actually happened on a later calendar date - hover the point for how many.</>
             )}
           </p>
 
           {delayedDeliveries.length > 0 && (
-            <div className="mt-4 border border-red-200 rounded-lg overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border-b border-red-200">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                <p className="text-xs font-semibold text-red-900">Delivered later than shipped ({delayedDeliveries.length})</p>
+            <div className="mt-4 border border-border rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 bg-danger-soft border-b border-danger-border">
+                <AlertTriangle className="w-3.5 h-3.5 text-danger" />
+                <p className="text-xs font-semibold text-danger">Delivered later than shipped ({delayedDeliveries.length})</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-left text-gray-500 uppercase tracking-wide">
+                    <tr className="text-left text-text-3 uppercase tracking-wide">
                       <th className="px-3 py-1.5">Request Date</th>
                       <th className="px-3 py-1.5">Accepted</th>
                       <th className="px-3 py-1.5">Shipped</th>
@@ -1279,12 +1279,12 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                   </thead>
                   <tbody>
                     {delayedDeliveries.map((row) => (
-                      <tr key={row.id} className="border-t border-red-100">
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{row.acceptedAt ? new Date(row.acceptedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.shippedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.deliveredAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-right font-semibold text-red-700">{row.daysLate}d</td>
+                      <tr key={row.id} className="border-t border-border">
+                        <td className="px-3 py-1.5 text-text-2">{new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
+                        <td className="px-3 py-1.5 text-text-2">{row.acceptedAt ? new Date(row.acceptedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</td>
+                        <td className="px-3 py-1.5 text-text-2">{new Date(row.shippedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
+                        <td className="px-3 py-1.5 text-text-2">{new Date(row.deliveredAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
+                        <td className="px-3 py-1.5 text-right font-semibold text-danger">{row.daysLate}d</td>
                       </tr>
                     ))}
                   </tbody>
