@@ -9,7 +9,7 @@ import { Money } from '../ui/money';
 import { StatSplit } from '../ui/stat-tile';
 import { useT } from '../../utils/i18n';
 import type { MyEvent } from '../../utils/eventsApi';
-import { EventStatusChip, dateRange, dayNumber } from './eventsShared';
+import { EventStatusChip, dateRange, dayNumber, localNum, useEventsToday } from './eventsShared';
 import { useActiveEventsForUser } from './useActiveEventsForUser';
 
 export function EventHomeCard({ onOpen, events: given }: {
@@ -18,6 +18,7 @@ export function EventHomeCard({ onOpen, events: given }: {
 }) {
   const { t, lang } = useT();
   const loaded = useActiveEventsForUser({ enabled: !given });
+  const today = useEventsToday();
   const events = given || loaded.events;
   if (!events.length) return null;
 
@@ -25,7 +26,7 @@ export function EventHomeCard({ onOpen, events: given }: {
     <div className="flex flex-col gap-3" lang={lang}>
       {events.map((ev) => {
         const total = dayNumber(ev.startDate, ev.endDate);
-        const n = ev.status === 'live' ? dayNumber(ev.startDate, new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)) : null;
+        const n = ev.status === 'live' ? dayNumber(ev.startDate, today) : null;
         return (
           <Card key={ev.id}>
             <CardHeader>
@@ -34,7 +35,7 @@ export function EventHomeCard({ onOpen, events: given }: {
               <CardAction><EventStatusChip status={ev.status} size="sm" /></CardAction>
             </CardHeader>
             <p className="text-body-sm text-text-2">
-              {[t('event.atStall'), dateRange(ev.startDate, ev.endDate, lang), n && n >= 1 && n <= total ? t('event.dayOf', { n, total }) : null, ev.myRole === 'incharge' ? t('event.youIncharge') : null].filter(Boolean).join(' · ')}
+              {[t('event.atStall'), dateRange(ev.startDate, ev.endDate, lang), n && n >= 1 && n <= total ? t('event.dayOf', { n: localNum(n, lang), total: localNum(total, lang) }) : null, ev.myRole === 'incharge' ? t('event.youIncharge') : null].filter(Boolean).join(' · ')}
             </p>
             <StatSplit items={[
               { label: t('event.salesToday'), value: <Money value={ev.today.sales} /> },

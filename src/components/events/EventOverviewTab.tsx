@@ -29,7 +29,8 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
   const out = assetsStillOut(bundle.assets);
   const inTransit = bundle.requests.filter((r) => r.status === 'shipped' || r.status === 'partially-shipped').length;
   const pendingTopups = bundle.topups.filter((x) => x.status === 'pending').length;
-  const chartData = pnl.days.map((d) => ({ label: shortDate(d.date, lang), Sales: d.sales, Costs: d.costs, Profit: d.cumulativeProfit }));
+  // Days so far (all of them once the event is over).
+  const chartData = pnl.days.filter((d) => ev.status !== 'live' || d.date <= bundle.today).map((d) => ({ label: shortDate(d.date, lang), Sales: d.sales, Costs: d.costs, Profit: d.cumulativeProfit }));
   const separate = bundle.digitalAccount.mode === 'separate';
 
   return (
@@ -57,7 +58,7 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
       </StatTile>
 
       <StatGrid>
-        <StatTile label={t('event.cashInHand')} value={<Money value={bundle.cash.inHand} />} caption="Expected from sales, expenses and top-ups" />
+        <StatTile label={t('event.cashInHand')} value={<Money value={bundle.cash.inHand} />} caption="From the cash ledger" />
         {separate
           ? <StatTile label={bundle.digitalAccount.name} value={<Money value={bundle.digital.balance} />} caption="Separate account balance" />
           : <StatTile label="Digital collections" value={<Money value={pnl.digital} />} caption={`In ${bundle.store?.name || 'the store'}'s Paytm`} />}
@@ -82,9 +83,9 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
                     <XAxis dataKey="label" {...chartAxisProps} interval="preserveStartEnd" minTickGap={16} />
                     <YAxis {...chartAxisProps} tickFormatter={(v: number) => formatCompactINR(v)} width={56} />
                     <Tooltip cursor={chartCursor} content={<ChartTooltipCard money />} />
-                    <Bar dataKey="Sales" fill="var(--chart-1)" radius={[3, 3, 0, 0]} maxBarSize={18} />
-                    <Bar dataKey="Costs" fill="var(--chart-5)" radius={[3, 3, 0, 0]} maxBarSize={18} />
-                    <Line dataKey="Profit" stroke="var(--chart-2)" strokeWidth={2} dot={false} type="monotone" />
+                    <Bar dataKey="Sales" fill="var(--chart-1)" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
+                    <Bar dataKey="Costs" fill="var(--chart-5)" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
+                    <Line dataKey="Profit" stroke="var(--chart-2)" strokeWidth={2} dot={false} type="linear" isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
               )}

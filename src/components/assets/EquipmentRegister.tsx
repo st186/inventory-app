@@ -295,6 +295,7 @@ export function EquipmentRegister() {
                             <p className={`font-medium truncate ${a.condition === 'disposed' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{a.name}</p>
                             <p className="text-xs text-gray-500 truncate">
                               {a.quantity} pcs{a.totalCost != null ? ` · ${inr(a.totalCost)}` : ''}{a.purchaseDate ? ` · ${shortDate(a.purchaseDate)}` : ''}{loc === 'all' ? ` · ${locName(a)}` : ''}
+                              {(a.atEvents || []).map((x) => ` · ${x.quantity} at ${x.eventName}`).join('')}
                             </p>
                           </div>
                           <ConditionBadge condition={a.condition} />

@@ -42,7 +42,7 @@ export function EventStaffTab({ bundle }: { bundle: EventBundle }) {
             parts.push(d.checkIn ? t('event.checkedIn', { time: time(d.checkIn.at) }) : d.pendingArrival ? 'Arrival waiting to confirm' : t('event.notCheckedIn'));
             if (d.checkOut) parts.push(`out ${time(d.checkOut.at)}`);
             if (d.photos) parts.push(t('event.photosToday', { done: d.photos.done, total: d.photos.required }));
-            subtitle = parts.join(' · ');
+            subtitle = [s.isIncharge ? 'Incharge' : null, ...parts].filter(Boolean).join(' · ');
           }
           const trailing = live && d
             ? d.checkIn
@@ -55,7 +55,6 @@ export function EventStaffTab({ bundle }: { bundle: EventBundle }) {
               leading={<InitialsAvatar name={s.name} size={40} />}
               title={s.name}
               subtitle={subtitle}
-              chip={live && d ? chips[0] : undefined}
               trailing={trailing}
             />
           );

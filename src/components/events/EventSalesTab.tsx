@@ -9,7 +9,7 @@ import { Callout } from '../ui/callout';
 import { useT } from '../../utils/i18n';
 import type { EventBundle, EventDayRow } from '../../utils/eventsApi';
 import { EventDayCloseSheet } from './EventDayCloseSheet';
-import { dayNumber, shortDate, weekday } from './eventsShared';
+import { dayNumber, localNum, shortDate, weekday } from './eventsShared';
 
 export function EventSalesTab({ bundle, onChanged, waiting }: { bundle: EventBundle; onChanged: () => void; waiting: number }) {
   const { t, lang } = useT();
@@ -29,9 +29,15 @@ export function EventSalesTab({ bundle, onChanged, waiting }: { bundle: EventBun
     if (d.day?.pos?.ok !== false && d.day?.pos) return <StatusChip tone="info" icon={MonitorSmartphone} size="sm">POS</StatusChip>;
     return <StatusChip tone="warning" icon={Clock} size="sm">{t('status.notSent')}</StatusChip>;
   };
+  // The day's state as the row's icon and first words, so the row keeps room for the amount.
+  const state = (d: EventDayRow) => {
+    if (d.day?.submitted) return { icon: CheckCircle2, tone: 'success' as const, word: t('status.sent') };
+    if (d.day?.manual) return { icon: PenLine, tone: 'neutral' as const, word: t('status.draft') };
+    if (d.day?.pos?.ok !== false && d.day?.pos) return { icon: MonitorSmartphone, tone: 'info' as const, word: 'POS' };
+    return { icon: Clock, tone: 'warning' as const, word: t('status.notSent') };
+  };
   const sub = (d: EventDayRow) => {
-    const parts = [`${t('event.dayOf', { n: dayNumber(ev.startDate, d.date), total })}`];
-    if (d.sales.source !== 'none') parts.push(`${t('event.cashSales')} ₹${d.sales.cash.toLocaleString('en-IN')} · ${bundle.digitalAccount.mode === 'separate' ? bundle.digitalAccount.name : 'Paytm'} ₹${d.sales.digital.toLocaleString('en-IN')}`);
+    const parts = [state(d).word, t('event.dayOf', { n: localNum(dayNumber(ev.startDate, d.date), lang), total: localNum(total, lang) })];
     if (typeof d.day?.cashDiff === 'number' && Math.abs(d.day.cashDiff) >= 1) parts.push(`${d.day.cashDiff < 0 ? 'Cash short' : 'Cash over'} ₹${Math.abs(d.day.cashDiff).toLocaleString('en-IN')}`);
     return parts.join(' · ');
   };
@@ -56,16 +62,16 @@ export function EventSalesTab({ bundle, onChanged, waiting }: { bundle: EventBun
         {done.map((d) => (
           <ListRow
             key={d.date}
-            icon={CalendarDays}
+            icon={state(d).icon}
+            iconTone={state(d).tone}
             title={`${weekday(d.date)} ${shortDate(d.date, lang)}`}
             subtitle={sub(d)}
-            chip={chip(d)}
             amount={d.sales.total}
             onClick={canEnter ? () => setOpen(d) : undefined}
           />
         ))}
         {later.map((d) => (
-          <ListRow key={d.date} muted icon={CalendarDays} title={`${weekday(d.date)} ${shortDate(d.date, lang)}`} subtitle={t('event.dayOf', { n: dayNumber(ev.startDate, d.date), total })} />
+          <ListRow key={d.date} muted icon={CalendarDays} title={`${weekday(d.date)} ${shortDate(d.date, lang)}`} subtitle={t('event.dayOf', { n: localNum(dayNumber(ev.startDate, d.date), lang), total: localNum(total, lang) })} />
         ))}
       </ListGroup>
 

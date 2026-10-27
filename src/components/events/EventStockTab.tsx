@@ -51,6 +51,8 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
   };
 
   const momos = bundle.stock.momos;
+  // One primary action: counting a delivery that has arrived wins over asking for more.
+  const incoming = bundle.requests.some((r) => r.status === 'shipped' || r.status === 'partially-shipped');
   const totalLeft = MOMO_KEYS.reduce((s, k) => s + (momos[k]?.left || 0), 0);
   const pieces = (r: EventStockRequest) => MOMO_KEYS.reduce((s, k) => s + (r.receipt ? receivedRequestPieces(r, k) : r.shippedQuantities ? shippedRequestPieces(r, k) : requestPieces(r, k)), 0);
 
@@ -58,7 +60,7 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
     <div className="flex flex-col gap-5" lang={lang}>
       {canRequest && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Button size="lg" leadingIcon={<Plus />} onClick={() => setRequestOpen(true)}>{t('event.requestMomos')}</Button>
+          <Button size="lg" variant={incoming ? 'secondary' : 'primary'} leadingIcon={<Plus />} onClick={() => setRequestOpen(true)}>{t('event.requestMomos')}</Button>
           <Button size="lg" variant="secondary" leadingIcon={<Store />} onClick={() => setMoveOpen(true)}>Move items from the store</Button>
         </div>
       )}
@@ -70,7 +72,9 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
             density="compact"
             title={momoLabel(k, lang)}
             subtitle={`${t('event.received')} ${momos[k].received} · ${t('event.sold')} ${momos[k].sold}${momos[k].inTransit ? ` · ${momos[k].inTransit} on the way` : ''}`}
-            trailing={<span className="num text-body-md font-semibold">{momos[k].left}</span>}
+            trailing={momos[k].sold + momos[k].wasted > momos[k].received
+              ? <StatusChip tone="warning" size="sm">Check counts</StatusChip>
+              : <span className="num text-body-md font-semibold">{momos[k].left}</span>}
           />
         ))}
         {MOMO_KEYS.every((k) => !momos[k] || (!momos[k].received && !momos[k].inTransit && !momos[k].sold)) && (

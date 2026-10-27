@@ -6,7 +6,8 @@ import { getSupabaseClient } from '../../utils/supabase/client';
 import type { Asset, AssetCategory, AssetCondition, AssetLocationKind } from '../../utils/assetRules';
 import { regionHeaders } from '../../utils/http';
 
-export type AssetRow = Asset & { photoUrl: string | null };
+// atEvents: how many are checked out to event stalls right now (server events.ts / assets.ts).
+export type AssetRow = Asset & { photoUrl: string | null; atEvents?: { eventId: string; eventName: string; quantity: number; since: string }[] };
 export interface AssetLocation { kind: AssetLocationKind; id: string; name: string }
 export interface AssetPermissions {
   canEditAll: boolean;
