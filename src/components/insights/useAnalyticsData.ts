@@ -14,7 +14,6 @@ import { buildSpreadCosts } from '../../utils/spreadCosts';
 import { buildOnlineCostIndex, onlineCostsForRange } from '../../utils/onlineCosts';
 import { normalizePnl, type PnlBreakdown, type CostLineKey } from '../unitEconomicsModel';
 import { buildPnl } from '../../utils/pnl';
-import { useInsightsOverview } from './useInsightsOverview';
 import { type CostLineGroup } from '../CostLineModal';
 import { counterValueByChannel } from '../../utils/channelFoodValue';
 import { getSupabaseClient } from '../../utils/supabase/client';
@@ -244,7 +243,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  || (context.user?.storeId && String(context.user.storeId).startsWith('STORE-') ? context.user.storeId : null)
  || (context.stores || []).find((s) => s.productionHouseId)?.id || context.stores?.[0]?.id || null;
  const canManageInsights = isClusterHead || isOperationsManager;
- const insightsOverview = useInsightsOverview(context.user?.accessToken, insightsStoreId);
+ // The brief and forecast (useInsightsOverview) moved to Home with their cards (WP2).
  const effectiveStoreId = analyticsMode === 'store'
  ? (selectedStoreId || productionInchargeDefaultStoreId || (!(isClusterHead || isManager || isProductionIncharge || isAudit) ? (context.user?.storeId || null) : null))
  : null;
@@ -379,10 +378,6 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  
  const [customDateRange, setDateRange] = useState(getDateRangeDefaults());
  const dateRange = useMemo(() => presetDateRange(timeFilterChoice) ?? customDateRange, [timeFilterChoice, customDateRange]);
- const [todayLeaveCount, setTodayLeaveCount] = useState<number>(0);
- const [todayLeaveDetails, setTodayLeaveDetails] = useState<any[]>([]);
- const [showLeaveModal, setShowLeaveModal] = useState(false);
- const [loadingLeaves, setLoadingLeaves] = useState(true);
  const [payoutsData, setPayoutsData] = useState<any[]>([]);
  const [employeesData, setEmployeesData] = useState<any[]>([]);
  const [showRecalibration, setShowRecalibration] = useState(false);
@@ -1220,118 +1215,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  loadStores();
  }, [isClusterHead, analyticsMode]);
 
- // Helper function to get fresh access token
- const getFreshAccessToken = async (): Promise<string | null> => {
- try {
- const supabase = getSupabaseClient();
- const { data: { session } } = await supabase.auth.getSession();
- return session?.access_token || null;
- } catch (error) {
- console.error('Error getting fresh token:', error);
- return null;
- }
- };
-
- // Load leave data for the current week (Monday-Sunday) - was just today's leaves,
- // widened so a cluster head/manager can see the whole week's schedule at once instead
- // of having to check back in daily.
- useEffect(() => {
- const loadWeekLeaves = async () => {
- if (!context.user) return;
-
- try {
- setLoadingLeaves(true);
-
- // Get fresh access token
- const accessToken = await getFreshAccessToken();
- if (!accessToken) {
- console.error('No valid access token available');
- return;
- }
-
- // Monday-Sunday of the current week, in IST.
- const today = getTodayIST();
- const todayDow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=Sun..6=Sat
- const mondayOffset = todayDow === 0 ? -6 : 1 - todayDow;
- const weekStart = addDays(today, mondayOffset);
- const weekEnd = addDays(weekStart, 6);
- const inThisWeek = (leave: api.LeaveApplication) => leave.leaveDate >= weekStart && leave.leaveDate <= weekEnd;
-
- if (context.user.role === 'cluster_head' || context.user.role === 'manager') {
- // Global for both roles - one company-wide leave list, not scoped by store or
- // reporting line. Used to differ by role (and by which store a cluster head/manager
- // happened to be scoped to), so two people looking at the same week could see
- // completely different results - e.g. a manager at one store seeing "everyone's
- // working" while another store's staff were genuinely on leave. Same query, same
- // data, for everyone with access to this card.
- const allLeaves = await api.getAllLeaves(accessToken);
- const weekApprovedLeaves = allLeaves.filter(
- (leave: api.LeaveApplication) => inThisWeek(leave) && leave.status === 'approved'
- );
-
- const employees = await api.getAllEmployees(accessToken);
- const employeeMap = new Map(employees.map(emp => [emp.employeeId, emp]));
-
- const enrichedLeaves = weekApprovedLeaves.map(leave => ({
- ...leave,
- employeeName: employeeMap.get(leave.employeeId)?.name || 'Unknown',
- storeId: employeeMap.get(leave.employeeId)?.storeId || 'N/A',
- storeName: stores.find(s => s.id === employeeMap.get(leave.employeeId)?.storeId)?.name || 'N/A'
- }));
-
- setTodayLeaveCount(enrichedLeaves.length);
- setTodayLeaveDetails(enrichedLeaves);
- } else {
- setTodayLeaveCount(0);
- setTodayLeaveDetails([]);
- }
- } catch (error) {
- console.error('Error loading this week\'s leaves:', error);
- setTodayLeaveCount(0);
- } finally {
- setLoadingLeaves(false);
- }
- };
-
- loadWeekLeaves();
- // Keyed on who is signed in, not the user object itself: App can replace that object (e.g.
- // with a refreshed access token), which would refetch the leave list and every employee.
- // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [context.user?.email, context.user?.role]);
-
- // This week's leave list grouped by day (Monday first), plus a full/half-day split for
- // the compact summary bar - the list itself is flat (one row per approved leave), so
- // this is purely a display grouping, not a second fetch. Days that have already passed
- // are dropped - only today and the remaining days of the week are worth surfacing here.
- const monthLeaveSummary = useMemo(() => {
- const today = getTodayIST();
- const [year, month] = today.split('-').map(Number);
- // Last calendar day of the current month - new Date(year, month, 0) rolls back one day
- // from the 1st of next month, which lands on the last day of this one (month here is
- // already 1-indexed from the split above, so this "next month" is correct as-is).
- const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
-
- const days: { date: string; label: string; isToday: boolean; leaves: any[] }[] = [];
- for (let date = today; date <= monthEnd; date = addDays(date, 1)) {
- const leaves = todayLeaveDetails.filter((l: any) => l.leaveDate === date);
- days.push({
- date,
- label: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }),
- isToday: date === today,
- leaves,
- });
- }
-
- // Bounded to today-through-month-end (previously unbounded into the indefinite future,
- // while the label/day list only ever covered the current week - this scopes the count
- // itself to match what the card actually says it's showing).
- const upcomingLeaves = todayLeaveDetails.filter((l: any) => l.leaveDate >= today && l.leaveDate <= monthEnd);
- const fullDayCount = upcomingLeaves.filter((l: any) => l.leaveType !== 'half').length;
- const halfDayCount = upcomingLeaves.filter((l: any) => l.leaveType === 'half').length;
- const rangeLabel = `${new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(`${monthEnd}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-
- return { days, fullDayCount, halfDayCount, rangeLabel, upcomingCount: upcomingLeaves.length };
- }, [todayLeaveDetails]);
+ // The leave bar and its pop-up (this week's approved leave) moved to Home (WP2); its fetch went with it.
 
  // Auto-switch to production-requests tab when notification is clicked - this tab only
  // exists under Store Analytics, so force that mode even for a production incharge whose
@@ -2149,13 +2033,13 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  });
  });
  const PALETTE: Record<string, string> = {
- Cash: '#22c55e', Paytm: '#3b82f6', PhonePe: '#a855f7', Card: '#f59e0b',
- 'Google Pay': '#06b6d4', Razorpay: '#0ea5e9', Zomato: '#e23744', Swiggy: '#fc8019', Unknown: '#94a3b8',
+ Cash: 'var(--channel-counter)', Paytm: 'var(--chart-4)', PhonePe: 'var(--chart-2)', Card: 'var(--chart-3)',
+ 'Google Pay': 'var(--chart-1)', Razorpay: 'var(--chart-4)', Zomato: 'var(--channel-zomato)', Swiggy: 'var(--channel-swiggy)', Unknown: 'var(--chart-5)',
  };
  return Object.entries(totals)
  .filter(([, amount]) => amount > 0)
  .sort((a, b) => b[1] - a[1])
- .map(([mode, amount]) => ({ name: mode, value: Math.round(amount), color: PALETTE[mode] || '#94a3b8' }));
+ .map(([mode, amount]) => ({ name: mode, value: Math.round(amount), color: PALETTE[mode] || 'var(--chart-5)' }));
  }, [filteredSalesData]);
 
  // SalesData records for previousPeriodRange - same store scoping as filteredSalesData,
@@ -2892,7 +2776,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  const canonical = canonicalCategory(category);
  // Combine Meat and Dairy into a single display category for Analytics
  const displayName = bucket === 'food' && (canonical === 'meat' || canonical === 'dairy')
- ? '🍖🧈 Meat & Dairy'
+ ? 'Meat & Dairy'
  : expenseCategoryLabel(category);
  if (!categoryExpenses[displayName]) {
  categoryExpenses[displayName] = 0;
@@ -2930,28 +2814,28 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
 
  // Add salaries separately (contract + permanent)
  if (metrics.salaryExpenses > 0) {
- categoryExpenses['💰 Salaries'] = metrics.salaryExpenses;
- categoryItems['💰 Salaries'] = []; // No detailed breakdown for salaries in this view
- categoryTypes['💰 Salaries'] = 'salary';
+ categoryExpenses['Salaries'] = metrics.salaryExpenses;
+ categoryItems['Salaries'] = []; // No detailed breakdown for salaries in this view
+ categoryTypes['Salaries'] = 'salary';
  }
 
  // Add aggregator commission as a separate category
  if (metrics.commissionExpenses > 0) {
- categoryExpenses['🍔 Aggregator Commission'] = metrics.commissionExpenses;
- categoryItems['🍔 Aggregator Commission'] = []; // Calculated from online sales/payout data
- categoryTypes['🍔 Aggregator Commission'] = 'commission';
+ categoryExpenses['Aggregator Commission'] = metrics.commissionExpenses;
+ categoryItems['Aggregator Commission'] = []; // Calculated from online sales/payout data
+ categoryTypes['Aggregator Commission'] = 'commission';
  }
  if (metrics.adSpend > 0) {
- categoryExpenses['📣 Zomato/Swiggy Ads'] = metrics.adSpend;
- categoryItems['📣 Zomato/Swiggy Ads'] = [];
- categoryTypes['📣 Zomato/Swiggy Ads'] = 'commission';
+ categoryExpenses['Zomato/Swiggy Ads'] = metrics.adSpend;
+ categoryItems['Zomato/Swiggy Ads'] = [];
+ categoryTypes['Zomato/Swiggy Ads'] = 'commission';
  }
  
  // Add interest expense as a separate category
  if (metrics.interestExpenses > 0) {
- categoryExpenses['💸 Loan Interest'] = metrics.interestExpenses;
- categoryItems['💸 Loan Interest'] = []; // Calculated from accrued interest on loans
- categoryTypes['💸 Loan Interest'] = 'interest';
+ categoryExpenses['Loan Interest'] = metrics.interestExpenses;
+ categoryItems['Loan Interest'] = []; // Calculated from accrued interest on loans
+ categoryTypes['Loan Interest'] = 'interest';
  }
 
  // Create breakdown - show all categories without grouping
@@ -3046,17 +2930,17 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  // Commission, salaries and interest already have purpose-built breakdowns.
  const openCostLine = (line: CostLineKey) => {
  if (line === 'commission' || line === 'ads') {
- setSelectedExpenseCategory({ category: '🍔 Aggregator Commission', items: [], amount: metrics.commissionExpenses + metrics.adSpend, type: 'commission' });
+ setSelectedExpenseCategory({ category: 'Aggregator Commission', items: [], amount: metrics.commissionExpenses + metrics.adSpend, type: 'commission' });
  } else if (line === 'staff') {
- setSelectedExpenseCategory({ category: '💰 Salaries', items: [], amount: metrics.salaryExpenses, type: 'salary' });
+ setSelectedExpenseCategory({ category: 'Salaries', items: [], amount: metrics.salaryExpenses, type: 'salary' });
  } else if (line === 'interest') {
- setSelectedExpenseCategory({ category: '💸 Loan Interest', items: [], amount: metrics.interestExpenses, type: 'interest' });
+ setSelectedExpenseCategory({ category: 'Loan Interest', items: [], amount: metrics.interestExpenses, type: 'interest' });
  } else {
  setCostLine(line);
  }
  };
 
- const COLORS = ['#f43f5e', '#38bdf8', '#fbbf24', '#34d399', '#60a5fa', '#f87171', '#fb923c', '#14b8a6', '#10b981', '#f59e0b'];
+ const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 
  // Calculate total approved cash discrepancies (losses only - negative cashOffset)
  const calculateCashDiscrepancy = () => {
@@ -3135,7 +3019,6 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
   productionInchargeDefaultStoreId,
   insightsStoreId,
   canManageInsights,
-  insightsOverview,
   effectiveStoreId,
   effectiveProductionHouseIdForCosts,
   stockAnalysisFinishedProducts,
@@ -3168,14 +3051,6 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
   customDateRange,
   setDateRange,
   dateRange,
-  todayLeaveCount,
-  setTodayLeaveCount,
-  todayLeaveDetails,
-  setTodayLeaveDetails,
-  showLeaveModal,
-  setShowLeaveModal,
-  loadingLeaves,
-  setLoadingLeaves,
   payoutsData,
   setPayoutsData,
   employeesData,
@@ -3255,8 +3130,6 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
   spreadSourceRecords,
   filteredEmployeesData,
   filteredPayoutsData,
-  getFreshAccessToken,
-  monthLeaveSummary,
   getPeriodLabel,
   calculateAccruedInterest,
   activeSettlementDateRange,

@@ -1,4 +1,6 @@
-// Insights > Production tab. Moved verbatim from Analytics.tsx (WP2 step 1, no visual change).
+// Insights > Production: the production house's output, efficiency, wastage, ledger, stock and SOP
+// checks for the period picked in the Insights period chip. Restyled to the warm-ledger tokens; the
+// figures are the same calculations as before.
 import { TrendingUp, Package, AlertCircle, Calendar, ClipboardCheck, Factory, Trash2, Edit, Check, X, CheckCircle, Settings, Soup, ArrowUp, ArrowDown, CalendarDays } from 'lucide-react';
 import { LazyChart, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart } from '../../charts/lazyRecharts';
 import { toast } from 'sonner@2.0.3';
@@ -15,122 +17,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <>
  {(
  <div>
- {/* Date Range Selector for Production Data */}
- <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl shadow-lg mb-6 p-4 border border-blue-200">
- <div className="flex flex-col gap-4">
- <div>
- <h3 className="text-blue-900" style={{ fontSize: '16px', fontWeight: '700' }}>
- Production Date Range
- </h3>
- <p className="text-blue-700 text-sm mt-1">
- View production data for a selected time period
- </p>
- </div>
- 
- <div className="flex flex-col sm:flex-row gap-3">
- {/* Date Range Preset Buttons */}
- <div className="flex flex-wrap gap-2">
- {[
- { value: 'today' as DateRangeType, label: 'Today' },
- { value: 'yesterday' as DateRangeType, label: 'Yesterday' },
- { value: 'thisWeek' as DateRangeType, label: 'This Week' },
- { value: 'previousWeek' as DateRangeType, label: 'Previous Week' },
- { value: 'thisMonth' as DateRangeType, label: 'This Month' },
- { value: 'previousMonth' as DateRangeType, label: 'Previous Month' },
- { value: 'thisYear' as DateRangeType, label: 'This Year' },
- { value: 'previousYear' as DateRangeType, label: 'Previous Year' },
- { value: 'custom' as DateRangeType, label: 'Custom Range' },
- ].map(option => (
- <button
- key={option.value}
- onClick={() => setProductionDateRange(option.value)}
- className={`px-4 py-2 rounded-lg text-sm border-2 transition-all ${
- productionDateRange === option.value
- ? 'bg-gray-900 text-white border-gray-900'
- : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
- }`}
- style={{ fontSize: '14px', fontWeight: '600' }}
- >
- {option.label}
- </button>
- ))}
- </div>
- </div>
- 
- {/* Custom Date Range Inputs */}
- {productionDateRange === 'custom' && (
- <div className="flex flex-col sm:flex-row gap-3 bg-white/50 p-3 rounded-lg border border-blue-200">
- <div className="flex-1">
- <label className="text-xs text-blue-700 block mb-1">Start Date</label>
- <input
- type="date"
- value={customStartDate}
- onChange={(e) => setCustomStartDate(e.target.value)}
- className="w-full px-3 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
- />
- </div>
- <div className="flex-1">
- <label className="text-xs text-blue-700 block mb-1">End Date</label>
- <input
- type="date"
- value={customEndDate}
- onChange={(e) => setCustomEndDate(e.target.value)}
- className="w-full px-3 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
- />
- </div>
- </div>
- )}
- 
- {/* Display Selected Range */}
- <div className="bg-white/70 rounded-lg p-3 border border-blue-200">
- <div className="text-xs text-blue-700 mb-1">Selected Range:</div>
- <div className="text-sm text-blue-900 font-semibold">
- {(() => {
- const { startDate, endDate } = getDateRangeBounds();
- const start = formatDateIST(startDate);
- const end = formatDateIST(endDate);
- return startDate === endDate ? start : `${start} - ${end}`;
- })()}
- </div>
- </div>
- </div>
- </div>
-
- {/* Old single date selector - HIDDEN */}
- <div className="hidden">
- <select
- value={selectedProductionDate || ''}
- onChange={(e) => setSelectedProductionDate(e.target.value || null)}
- className="px-4 py-2 bg-white border-2 border-blue-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
- style={{ fontSize: '14px', fontWeight: '600' }}
- >
- {(() => {
- // Get unique dates from production data, filtered by selected production house
- const filterById = analyticsMode === 'production'
- ? selectedProductionHouseId
- : selectedProductionHouseId;
- 
- const filteredDates = productionData
- .filter(p => {
- if (!filterById) return true;
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- const phId = p.productionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === filterById;
- })
- .map(p => p.date)
- .filter((date, index, self) => self.indexOf(date) === index)
- .sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
- 
- return filteredDates.map(date => (
- <option key={date} value={date}>
- {formatDateIST(date)}
- </option>
- ));
- })()}
- </select>
- </div>
-
+ {/* The production period is the chip at the top of Insights (Analytics.tsx). */}
  {/* Production Summary Cards */}
  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
  {(() => {
@@ -244,18 +131,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  return (
  <>
- <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-red-600" />
- <p className="text-xs text-gray-600">Chicken Momos</p>
+ <Soup className="w-5 h-5 text-danger" />
+ <p className="text-xs text-text-2">Chicken Momos</p>
  </div>
- <p className="text-2xl text-gray-900">{chickenMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{chickenMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevChickenMomos > 0 && (() => {
  const change = calcPercentChange(chickenMomos, prevChickenMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -264,18 +151,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-yellow-600" />
- <p className="text-xs text-gray-600">Chicken Cheese</p>
+ <Soup className="w-5 h-5 text-warning" />
+ <p className="text-xs text-text-2">Chicken Cheese</p>
  </div>
- <p className="text-2xl text-gray-900">{chickenCheeseMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{chickenCheeseMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevChickenCheeseMomos > 0 && (() => {
  const change = calcPercentChange(chickenCheeseMomos, prevChickenCheeseMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -284,18 +171,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-green-600" />
- <p className="text-xs text-gray-600">Veg Momos</p>
+ <Soup className="w-5 h-5 text-success" />
+ <p className="text-xs text-text-2">Veg Momos</p>
  </div>
- <p className="text-2xl text-gray-900">{vegMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{vegMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevVegMomos > 0 && (() => {
  const change = calcPercentChange(vegMomos, prevVegMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -304,18 +191,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-amber-600" />
- <p className="text-xs text-gray-600">Cheese Corn</p>
+ <Soup className="w-5 h-5 text-warning" />
+ <p className="text-xs text-text-2">Cheese Corn</p>
  </div>
- <p className="text-2xl text-gray-900">{cheeseCornMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{cheeseCornMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevCheeseCornMomos > 0 && (() => {
  const change = calcPercentChange(cheeseCornMomos, prevCheeseCornMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -324,18 +211,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-blue-600" />
- <p className="text-xs text-gray-600">Paneer Momos</p>
+ <Soup className="w-5 h-5 text-info" />
+ <p className="text-xs text-text-2">Paneer Momos</p>
  </div>
- <p className="text-2xl text-gray-900">{paneerMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{paneerMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevPaneerMomos > 0 && (() => {
  const change = calcPercentChange(paneerMomos, prevPaneerMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -344,18 +231,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-lime-50 to-lime-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-lime-600" />
- <p className="text-xs text-gray-600">Veg Kurkure</p>
+ <Soup className="w-5 h-5 text-success" />
+ <p className="text-xs text-text-2">Veg Kurkure</p>
  </div>
- <p className="text-2xl text-gray-900">{vegKurkureMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{vegKurkureMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevVegKurkureMomos > 0 && (() => {
  const change = calcPercentChange(vegKurkureMomos, prevVegKurkureMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -364,18 +251,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-orange-600" />
- <p className="text-xs text-gray-600">Chicken Kurkure</p>
+ <Soup className="w-5 h-5 text-primary" />
+ <p className="text-xs text-text-2">Chicken Kurkure</p>
  </div>
- <p className="text-2xl text-gray-900">{chickenKurkureMomos.toLocaleString()}</p>
+ <p className="text-2xl text-text">{chickenKurkureMomos.toLocaleString()}</p>
  <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-gray-500">pieces</p>
+ <p className="text-xs text-text-3">pieces</p>
  {prevChickenKurkureMomos > 0 && (() => {
  const change = calcPercentChange(chickenKurkureMomos, prevChickenKurkureMomos);
  return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
  <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
  </div>
@@ -384,13 +271,13 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  </div>
 
- <div className="bg-gradient-to-br from-red-100 to-red-200 rounded-xl shadow-lg p-4">
+ <div className="rounded-lg p-4 bg-surface border border-border">
  <div className="flex items-center gap-2 mb-2">
- <Trash2 className="w-5 h-5 text-red-700" />
- <p className="text-xs text-gray-600">Total Wastage</p>
+ <Trash2 className="w-5 h-5 text-danger" />
+ <p className="text-xs text-text-2">Total Wastage</p>
  </div>
- <p className="text-2xl text-gray-900">{totalWastage.toFixed(2)}</p>
- <p className="text-xs text-gray-500 mt-1">kg</p>
+ <p className="text-2xl text-text">{totalWastage.toFixed(2)}</p>
+ <p className="text-xs text-text-3 mt-1">kg</p>
  </div>
  </>
  );
@@ -418,13 +305,13 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  const approved = inRange.filter(p => p.approvalStatus === 'approved').length;
  const pending = inRange.filter(p => p.approvalStatus === 'pending').length;
  return (
- <div className="flex items-center gap-4 text-sm text-gray-600 mb-6 -mt-3">
+ <div className="flex items-center gap-4 text-sm text-text-2 mb-6 -mt-3">
  <span className="flex items-center gap-1.5">
- <ClipboardCheck className="w-4 h-4 text-green-600" />
+ <ClipboardCheck className="w-4 h-4 text-success" />
  {approved} approved record{approved === 1 ? '' : 's'}
  </span>
  <span className="flex items-center gap-1.5">
- <AlertCircle className="w-4 h-4 text-yellow-600" />
+ <AlertCircle className="w-4 h-4 text-warning" />
  {pending} pending record{pending === 1 ? '' : 's'}
  </span>
  </div>
@@ -504,39 +391,39 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  if (currentDates.length === 0) return null;
 
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-6">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Factory className="w-6 h-6 text-orange-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Factory className="w-6 h-6 text-primary" />
  Production Output & Efficiency
  </h2>
- <p className="text-sm text-gray-600">Pieces produced, raw-material yield and wastage rate for the selected date range · dotted lines are the matching previous period</p>
+ <p className="text-sm text-text-2">Pieces produced, raw-material yield and wastage rate for the selected date range · dotted lines are the matching previous period</p>
  </div>
 
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
  {/* Daily output mix, stacked by momo type */}
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Output by Momo Type</h3>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Daily Output by Momo Type</h3>
  <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 11 }} />
- <YAxis tick={{ fontSize: 11 }} />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
  {MOMO_TYPES.map(t => (
  <Bar key={t.key} dataKey={t.key} stackId="momo" name={t.label} fill={t.color} />
  ))}
- <Line type="monotone" dataKey="prev_totalFinal" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ <Line type="monotone" dataKey="prev_totalFinal" name="Total (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
  )}</LazyChart>
  </div>
 
  {/* Period share by momo type */}
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Production Mix (This Period)</h3>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Production Mix (This Period)</h3>
  {hasAnyOutput ? (
  <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
@@ -552,26 +439,26 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </ResponsiveContainer>
  )}</LazyChart>
  ) : (
- <div className="h-[280px] flex items-center justify-center text-sm text-gray-500">No production logged for this period</div>
+ <div className="h-[280px] flex items-center justify-center text-sm text-text-3">No production logged for this period</div>
  )}
  </div>
 
  {/* Raw material yield efficiency */}
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Raw Material Yield</h3>
- <p className="text-xs text-gray-500 mb-3">Pieces produced per kg of raw material used (dough+stuffing for momos, batter+coating for kurkure) · higher is more efficient</p>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1">Raw Material Yield</h3>
+ <p className="text-xs text-text-3 mb-3">Pieces produced per kg of raw material used (dough+stuffing for momos, batter+coating for kurkure) · higher is more efficient</p>
  <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 11 }} />
- <YAxis tick={{ fontSize: 11 }} />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="momoYield" name="Momo yield (pcs/kg)" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey="kurkureYield" name="Kurkure yield (pcs/kg)" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey="prev_momoYield" name="Momo yield (previous period)" stroke="#ea580c" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
- <Line type="monotone" dataKey="prev_kurkureYield" name="Kurkure yield (previous period)" stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
+ <Line type="monotone" dataKey="momoYield" name="Momo yield (pcs/kg)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey="kurkureYield" name="Kurkure yield (pcs/kg)" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey="prev_momoYield" name="Momo yield (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
+ <Line type="monotone" dataKey="prev_kurkureYield" name="Kurkure yield (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
  </LineChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -579,19 +466,19 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  {/* Wastage rate as a % of total raw material, so it's comparable across days
  regardless of production volume - complements the raw-kg trend charts below. */}
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Wastage Rate</h3>
- <p className="text-xs text-gray-500 mb-3">Wasted raw material as a % of total raw material used that day · lower is better</p>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1">Wastage Rate</h3>
+ <p className="text-xs text-text-3 mb-3">Wasted raw material as a % of total raw material used that day · lower is better</p>
  <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 11 }} />
- <YAxis tick={{ fontSize: 11 }} unit="%" />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} unit="%" />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="wastagePct" name="Wastage %" stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />
- <Line type="monotone" dataKey="prev_wastagePct" name="Wastage % (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
+ <Line type="monotone" dataKey="wastagePct" name="Wastage %" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} />
+ <Line type="monotone" dataKey="prev_wastagePct" name="Wastage % (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
  </LineChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -622,14 +509,14 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  };
 
  const SAUCE_TYPES = [
- { key: 'panfriedSauce', label: 'Panfried Sauce', color: '#ea580c' },
- { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', color: '#dc2626' },
- { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', color: '#db2777' },
- { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', color: '#c026d3' },
- { key: 'tandooriSauce', label: 'Tandoori Sauce', color: '#9333ea' },
- { key: 'soupPremix', label: 'Soup Premix', color: '#4f46e5' },
- { key: 'greenMayoChutney', label: 'Green Mayo Chutney', color: '#16a34a' },
- { key: 'spicyRedChutney', label: 'Spicy Red Chutney', color: '#eab308' },
+ { key: 'panfriedSauce', label: 'Panfried Sauce', color: 'var(--chart-1)' },
+ { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', color: 'var(--chart-1)' },
+ { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', color: 'var(--chart-1)' },
+ { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', color: 'var(--chart-4)' },
+ { key: 'tandooriSauce', label: 'Tandoori Sauce', color: 'var(--chart-4)' },
+ { key: 'soupPremix', label: 'Soup Premix', color: 'var(--chart-4)' },
+ { key: 'greenMayoChutney', label: 'Green Mayo Chutney', color: 'var(--chart-2)' },
+ { key: 'spicyRedChutney', label: 'Spicy Red Chutney', color: 'var(--chart-3)' },
  ] as const;
 
  const enumerateDates = (start: string, end: string): string[] => {
@@ -679,37 +566,37 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  if (currentDates.length === 0 || !hasAnySauce) return null;
 
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-6">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Soup className="w-6 h-6 text-rose-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Soup className="w-6 h-6 text-danger" />
  Sauces & Chutneys Usage
  </h2>
- <p className="text-sm text-gray-600">Litres prepared per day for the selected date range · dotted line is the matching previous period</p>
+ <p className="text-sm text-text-2">Litres prepared per day for the selected date range · dotted line is the matching previous period</p>
  </div>
 
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Usage by Type</h3>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Daily Usage by Type</h3>
  <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={sauceChartData}>
  <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 11 }} />
- <YAxis tick={{ fontSize: 11 }} unit="L" />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} unit="L" />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
  {SAUCE_TYPES.map(s => (
  <Bar key={s.key} dataKey={s.key} stackId="sauce" name={s.label} fill={s.color} />
  ))}
- <Line type="monotone" dataKey="prev_totalSauce" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ <Line type="monotone" dataKey="prev_totalSauce" name="Total (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
  )}</LazyChart>
  </div>
 
- <div className="bg-gray-50 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">This Period vs Previous, by Type</h3>
+ <div className="bg-surface-2 rounded-lg p-4">
+ <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">This Period vs Previous, by Type</h3>
  <div className="space-y-2.5">
  {periodTotals.filter(t => t.value > 0 || (previousPeriodTotals.find(p => p.key === SAUCE_TYPES.find(s => s.label === t.name)?.key)?.value || 0) > 0).map(t => {
  const sauceKey = SAUCE_TYPES.find(s => s.label === t.name)?.key;
@@ -718,10 +605,10 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  return (
  <div key={t.name} className="flex items-center gap-3">
  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
- <span className="text-sm text-gray-700 flex-1 truncate">{t.name}</span>
- <span className="text-sm font-semibold text-gray-900 tabular-nums">{t.value.toLocaleString()} L</span>
+ <span className="text-sm text-text-2 flex-1 truncate">{t.name}</span>
+ <span className="text-sm font-semibold text-text tabular-nums">{t.value.toLocaleString()} L</span>
  {change !== null && (
- <span className={`text-xs font-medium tabular-nums w-14 text-right ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+ <span className={`text-xs font-medium tabular-nums w-14 text-right ${change >= 0 ? 'text-success' : 'text-danger'}`}>
  {change >= 0 ? '+' : ''}{change.toFixed(0)}%
  </span>
  )}
@@ -787,24 +674,24 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  if (!hasAnyOutput) return null;
 
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-6">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <CalendarDays className="w-6 h-6 text-teal-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <CalendarDays className="w-6 h-6 text-success" />
  Day-of-Week Production Pattern
  </h2>
- <p className="text-sm text-gray-600">Total pieces produced by day of week, summed across the selected date range · dotted line is the matching previous period</p>
+ <p className="text-sm text-text-2">Total pieces produced by day of week, summed across the selected date range · dotted line is the matching previous period</p>
  </div>
  <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={weekdayChartData}>
  <CartesianGrid strokeDasharray="3 3" />
  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 11 }} />
+ <YAxis tick={{ fontSize: 12 }} />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
- <Bar dataKey="totalFinal" name="Pieces produced" fill="#0d9488" radius={[4, 4, 0, 0]} />
- <Line type="monotone" dataKey="prev_totalFinal" name="Pieces produced (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+ <Bar dataKey="totalFinal" name="Pieces produced" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
+ <Line type="monotone" dataKey="prev_totalFinal" name="Pieces produced (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -813,15 +700,15 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  })()}
 
  {/* Production House Stock Status */}
- <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-orange-200">
+ <div className="bg-surface rounded-lg p-6 mb-6 border-2 border-border">
  <div className="mb-4">
  <div className="flex items-center justify-between gap-4 flex-wrap">
  <div>
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-orange-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Package className="w-6 h-6 text-primary" />
  Production House Stock Status
  </h2>
- <p className="text-sm text-gray-600">
+ <p className="text-sm text-text-2">
  Opening balance + This month produced - Sent to stores (delivered requests)
  </p>
  </div>
@@ -836,7 +723,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds)));
  setShowStockAlertModal(true);
  }}
- className="px-4 py-2 bg-gradient-to-r from-orange-600 to-rose-500 text-white rounded-lg hover:from-orange-700 hover:to-rose-600 transition-all flex items-center gap-2 shadow-lg"
+ className="px-4 py-2 text-text rounded-lg transition-all flex items-center gap-2 bg-surface border border-border"
  title="Configure Stock Alert Thresholds"
  >
  <Settings className="w-5 h-5" />
@@ -849,7 +736,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempMomosPerPlate(momosPerPlate);
  setShowPlateSettingsModal(true);
  }}
- className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 transition-all flex items-center gap-2 shadow-lg"
+ className="px-4 py-2 text-text rounded-lg transition-all flex items-center gap-2 bg-surface border border-border"
  title="Configure Momos Per Plate"
  >
  <Settings className="w-5 h-5" />
@@ -861,20 +748,20 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <div className="flex flex-col gap-2">
  <button
  onClick={() => setShowRecalibration(true)}
- className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-md hover:shadow-lg font-semibold"
+ className="flex items-center gap-2 px-5 py-3 text-text rounded-lg transition-all font-semibold bg-surface border border-border"
  title="Recalibrate production house stock (available on 1st of each month)"
  >
  <Calendar className="w-5 h-5" />
  Recalibrate Stock
  </button>
  {latestRecalibration && latestRecalibration.date && (
- <p className="text-xs text-gray-500 text-center">
+ <p className="text-xs text-text-3 text-center">
  Last recalibrated: {formatDateIST(latestRecalibration.date)} IST
  </p>
  )}
  {previousMonthStock && !latestRecalibration && (
- <p className="text-xs text-blue-600 text-center">
- ℹ️ Using auto carry-forward from previous month
+ <p className="text-xs text-info text-center">
+ Using auto carry-forward from previous month
  </p>
  )}
  </div>
@@ -884,7 +771,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  onClick={() => {
  onNavigateToManageItems();
  }}
- className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all shadow-md hover:shadow-lg font-semibold"
+ className="flex items-center gap-2 px-5 py-3 text-text rounded-lg transition-all font-semibold bg-surface border border-border"
  title="Manage inventory items"
  >
  <Package className="w-5 h-5" />
@@ -897,14 +784,14 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  {/* Production House Selector for Cluster Heads - Only in Store Analytics Mode */}
  {analyticsMode === 'store' && context.user?.role === 'cluster_head' && context.productionHouses && context.productionHouses.length > 0 && (
  <div className="flex items-center gap-2">
- <label className="text-sm text-gray-600">Production House:</label>
+ <label className="text-sm text-text-2">Production House:</label>
  <select
  value={selectedProductionHouseId || 'all'}
  onChange={(e) => {
  const newValue = e.target.value === 'all' ? null : e.target.value;
  setSelectedProductionHouseId(newValue);
  }}
- className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+ className="px-3 py-2 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
  >
  <option value="all">All Production Houses</option>
  {context.productionHouses.map(ph => (
@@ -1216,10 +1103,10 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  // Show info if no production data AND no opening balance
  if (filteredProduction.length === 0 && !hasOpeningBalance) {
  return (
- <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
- <Package className="w-12 h-12 text-blue-400 mx-auto mb-3" />
- <h3 className="text-lg text-gray-900 mb-2">No Production Data</h3>
- <p className="text-sm text-gray-600">
+ <div className="bg-info-soft border border-info-border rounded-lg p-6 text-center">
+ <Package className="w-12 h-12 text-info mx-auto mb-3" />
+ <h3 className="text-lg text-text mb-2">No Production Data</h3>
+ <p className="text-sm text-text-2">
  {effectiveProductionHouseId 
  ? 'No production records found for the selected production house.' 
  : 'No production records found. Start logging production to see stock status.'}
@@ -1232,16 +1119,16 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <>
  {/* Stock Calculation Info */}
  {(openingBalance && Object.values(openingBalance).some((v: any) => v > 0)) && (
- <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded">
+ <div className="bg-info-soft border-l-4 border-info-border p-4 mb-4 rounded">
  <div className="flex items-start gap-2">
- <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+ <CheckCircle className="w-5 h-5 text-info mt-0.5 flex-shrink-0" />
  <div>
- <h4 className="text-sm font-semibold text-blue-900">Automatic Stock Carry-Forward Active</h4>
- <p className="text-xs text-blue-700 mt-1">
+ <h4 className="text-sm font-semibold text-info">Automatic Stock Carry-Forward Active</h4>
+ <p className="text-xs text-info mt-1">
  Stock calculation: <span className="font-mono">Opening Balance + This Month Produced - Sent to Stores</span>
  <span className="block mt-1">Chicken/Veg base stock also subtracts Kurkure prepared.</span>
  </p>
- <p className="text-xs text-blue-600 mt-1">
+ <p className="text-xs text-info mt-1">
  {latestRecalibration && latestRecalibration.date
  ? `Opening balance from recalibration on ${formatDateIST(latestRecalibration.date)} (IST)`
  : 'Opening balance auto-calculated from previous month\'s closing stock'
@@ -1278,108 +1165,108 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  let stockValueColor = '';
  
  if (stock < 0) {
- stockStatus = '⚠️ Over-distributed';
- stockStatusColor = 'bg-red-100 border-red-300 text-red-800';
- stockValueColor = 'text-red-600';
+ stockStatus = 'Over-distributed';
+ stockStatusColor = 'bg-danger-soft border-danger-border text-danger';
+ stockValueColor = 'text-danger';
  } else if (hasData && isCriticalStock) {
- stockStatus = '🔴 Critical: Below Low Threshold';
- stockStatusColor = 'bg-red-100 border-red-300 text-red-800';
- stockValueColor = 'text-red-600';
+ stockStatus = 'Critical: below low level';
+ stockStatusColor = 'bg-danger-soft border-danger-border text-danger';
+ stockValueColor = 'text-danger';
  } else if (hasData && isLowStock) {
- stockStatus = '🟠 Low: Between Low & Medium';
- stockStatusColor = 'bg-orange-100 border-orange-300 text-orange-800';
- stockValueColor = 'text-orange-600';
+ stockStatus = 'Low: between low and medium';
+ stockStatusColor = 'bg-primary-soft border-border text-primary';
+ stockValueColor = 'text-primary';
  } else if (hasData && isMediumStock) {
- stockStatus = '🟡 Medium: Between Medium & High';
- stockStatusColor = 'bg-yellow-100 border-yellow-300 text-yellow-800';
- stockValueColor = 'text-yellow-700';
+ stockStatus = 'Medium: between medium and high';
+ stockStatusColor = 'bg-warning-soft border-warning-border text-warning';
+ stockValueColor = 'text-warning';
  } else if (hasData && isHighStock) {
- stockStatus = '🟢 Healthy: Above High Threshold';
- stockStatusColor = 'bg-green-100 border-green-300 text-green-800';
- stockValueColor = 'text-green-600';
+ stockStatus = 'Healthy: above high level';
+ stockStatusColor = 'bg-success-soft border-success-border text-success';
+ stockValueColor = 'text-success';
  }
  
  const stockPercentage = produced > 0 ? ((stock / produced) * 100).toFixed(0) : '0';
  
  const alertLabel = stock < 0 ? 'OVER' : isCriticalStock ? 'CRITICAL' : isLowStock ? 'LOW' : isMediumStock ? 'MEDIUM' : '';
  const alertClasses = stock < 0 || isCriticalStock || isLowStock
- ? 'bg-red-100 border-red-300 text-red-700'
+ ? 'bg-danger-soft border-danger-border text-danger'
  : isMediumStock
- ? 'bg-orange-100 border-orange-300 text-orange-700'
+ ? 'bg-primary-soft border-border text-primary'
  : '';
- const compactValueColor = stock < 0 || isCriticalStock || isLowStock ? 'text-red-600' : `text-${color}-800`;
+ const compactValueColor = stock < 0 || isCriticalStock || isLowStock ? 'text-danger' : `text-${color}-800`;
  
  return (
- <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-2.5 relative`}>
+ <div key={key} className={`from- bg-surface border border-border${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-2.5 relative`}>
  {alertLabel && (
  <div className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded border ${alertClasses}`}>
  <AlertCircle className="w-3 h-3" />
- <span className="text-[10px] font-semibold uppercase">{alertLabel}</span>
+ <span className="text-caption font-semibold uppercase">{alertLabel}</span>
  </div>
  )}
- <h3 className="text-xs font-semibold text-gray-900 mb-1.5 pr-14 truncate">{label}</h3>
+ <h3 className="text-xs font-semibold text-text mb-1.5 pr-14 truncate">{label}</h3>
  {opening > 0 && (
- <div className="text-[11px] text-blue-700 mb-1">
+ <div className="text-caption text-info mb-1">
  Opening: <span className="font-semibold">{opening}</span>
  </div>
  )}
- <div className="flex justify-between items-center text-[11px] text-gray-600">
+ <div className="flex justify-between items-center text-caption text-text-2">
  <span>Produced: <span className={`font-semibold text-${color}-700`}>{produced}</span></span>
  <span>Sent: <span className={`font-semibold text-${color}-700`}>{sent}</span></span>
  </div>
- <div className="border-t border-gray-300 mt-1.5 pt-1.5 flex items-center justify-between">
- <span className="text-[10px] font-medium text-gray-500">Available</span>
+ <div className="border-t border-border-strong mt-1.5 pt-1.5 flex items-center justify-between">
+ <span className="text-caption font-medium text-text-3">Available</span>
  <div className={`text-sm font-bold ${compactValueColor}`}>
  {stock} pcs / {Math.round(stock / momosPerPlate)} pl
  </div>
  </div>
  {!hasData && (
- <p className="text-[10px] text-yellow-700 font-semibold mt-1">Track in production logging</p>
+ <p className="text-caption text-warning font-semibold mt-1">Track in production logging</p>
  )}
  </div>
  );
  
  return (
- <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-xl p-4 hover:shadow-lg transition-all duration-300`}>
- <h3 className="text-sm font-semibold text-gray-900 mb-3">{label}</h3>
+ <div key={key} className={`from- bg-surface border border-border${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-4 transition-all duration-300`}>
+ <h3 className="text-sm font-semibold text-text mb-3">{label}</h3>
  
  <div className="space-y-2">
  {!hasData ? (
  // Show placeholder for items without production data
- <div className="bg-white/80 rounded-lg p-3">
- <p className="text-xs text-gray-600 mb-1">Current Stock</p>
+ <div className="bg-surface rounded-lg p-3">
+ <p className="text-xs text-text-2 mb-1">Current Stock</p>
  <div className="flex items-baseline gap-2">
- <span className="text-2xl font-bold text-gray-400">0</span>
- <span className="text-xs text-gray-500">{unit || 'pieces'}</span>
+ <span className="text-2xl font-bold text-text-3">0</span>
+ <span className="text-xs text-text-3">{unit || 'pieces'}</span>
  </div>
- <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-2 py-1 mt-2">
- <p className="text-xs text-yellow-800">
- 💡 Track in production logging to see stock
+ <div className="bg-warning-soft border border-warning-border rounded-lg px-2 py-1 mt-2">
+ <p className="text-xs text-warning">
+ Track in production logging to see stock
  </p>
  </div>
  </div>
  ) : (
  <>
  {opening > 0 && (
- <div className="flex justify-between items-center bg-blue-100 px-3 py-2 rounded-lg">
- <span className="text-sm text-blue-700 font-semibold">Opening Balance:</span>
- <span className="text-xl font-bold text-blue-800">{opening}</span>
+ <div className="flex justify-between items-center bg-info-soft px-3 py-2 rounded-lg">
+ <span className="text-sm text-info font-semibold">Opening Balance:</span>
+ <span className="text-xl font-bold text-info">{opening}</span>
  </div>
  )}
  
  <div className="flex justify-between items-center">
- <span className="text-xs text-gray-600">This Month Produced:</span>
+ <span className="text-xs text-text-2">This Month Produced:</span>
  <span className={`text-lg font-bold text-${color}-600`}>{produced}</span>
  </div>
  
  <div className="flex justify-between items-center">
- <span className="text-xs text-gray-600">Sent to Stores:</span>
+ <span className="text-xs text-text-2">Sent to Stores:</span>
  <span className={`text-lg font-bold text-${color}-700`}>{sent}</span>
  </div>
  
- <div className="border-t-2 border-gray-300 pt-2 mt-2">
+ <div className="border-t-2 border-border-strong pt-2 mt-2">
  <div className="flex justify-between items-center">
- <span className="text-xs font-semibold text-gray-700">Stock Available:</span>
+ <span className="text-xs font-semibold text-text-2">Stock Available:</span>
  <div className="text-right">
  <div className={`text-2xl font-bold ${stockValueColor || `text-${color}-800`}`}>
  {stock} pcs / {Math.round(stock / momosPerPlate)} plates
@@ -1388,16 +1275,16 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
  {produced > 0 && (
  <div className="mt-2">
- <div className="flex justify-between text-xs text-gray-600 mb-1">
+ <div className="flex justify-between text-xs text-text-2 mb-1">
  <span>{stockPercentage}% remaining</span>
  </div>
- <div className="w-full bg-gray-200 rounded-full h-2">
+ <div className="w-full bg-surface-3 rounded-full h-2">
  <div 
  className={`h-2 rounded-full ${
- isCriticalStock || stock < 0 ? 'bg-red-500' : 
- isLowStock ? 'bg-orange-500' :
- isMediumStock ? 'bg-yellow-500' :
- isHighStock ? 'bg-green-500' :
+ isCriticalStock || stock < 0 ? 'bg-danger' : 
+ isLowStock ? 'bg-primary' :
+ isMediumStock ? 'bg-warning' :
+ isHighStock ? 'bg-success' :
  `bg-${color}-500`
  }`}
  style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
@@ -1416,19 +1303,19 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  )}
  
  {/* Show Alert Thresholds */}
- <div className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 mt-2">
+ <div className="bg-surface-2 border border-border rounded-lg px-2 py-1 mt-2">
  <div className="grid grid-cols-3 gap-1 text-xs">
  <div>
- <div className="text-gray-600">Low</div>
- <div className="font-semibold text-red-600">{thresholds.low}</div>
+ <div className="text-text-2">Low</div>
+ <div className="font-semibold text-danger">{thresholds.low}</div>
  </div>
  <div>
- <div className="text-gray-600">Med</div>
- <div className="font-semibold text-yellow-600">{thresholds.medium}</div>
+ <div className="text-text-2">Med</div>
+ <div className="font-semibold text-warning">{thresholds.medium}</div>
  </div>
  <div>
- <div className="text-gray-600">High</div>
- <div className="font-semibold text-green-600">{thresholds.high}</div>
+ <div className="text-text-2">High</div>
+ <div className="font-semibold text-success">{thresholds.high}</div>
  </div>
  </div>
  </div>
@@ -1482,30 +1369,30 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  const maxFinal = Math.max(...rows.map(r => r.totalFinal));
 
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-4">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Factory className="w-6 h-6 text-indigo-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Factory className="w-6 h-6 text-info" />
  Production House Leaderboard
  </h2>
- <p className="text-sm text-gray-600">Output, yield and wastage rate by house for the selected date range</p>
+ <p className="text-sm text-text-2">Output, yield and wastage rate by house for the selected date range</p>
  </div>
  <div className="space-y-3">
  {rows.map((r, idx) => (
  <div key={r.id} className="flex items-center gap-3">
- <span className="w-5 text-sm font-bold text-gray-400 flex-shrink-0 text-right">{idx + 1}</span>
+ <span className="w-5 text-sm font-bold text-text-3 flex-shrink-0 text-right">{idx + 1}</span>
  <div className="flex-1 min-w-0">
  <div className="flex items-center justify-between gap-2 mb-1">
- <span className="text-sm font-semibold text-gray-900 truncate">{r.name}</span>
- <span className="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+ <span className="text-sm font-semibold text-text truncate">{r.name}</span>
+ <span className="text-xs text-text-3 flex-shrink-0 tabular-nums">
  {r.totalFinal.toLocaleString()} pcs
  {r.yieldPcsPerKg !== null && ` · ${r.yieldPcsPerKg} pcs/kg`}
  {' · '}
- <span className={r.wastagePct > 5 ? 'text-red-600 font-medium' : 'text-gray-500'}>{r.wastagePct}% waste</span>
+ <span className={r.wastagePct > 5 ? 'text-danger font-medium' : 'text-text-3'}>{r.wastagePct}% waste</span>
  </span>
  </div>
- <div className="w-full bg-gray-100 rounded-full h-2">
- <div className="h-2 rounded-full bg-indigo-500" style={{ width: `${maxFinal > 0 ? Math.max(4, (r.totalFinal / maxFinal) * 100) : 0}%` }} />
+ <div className="w-full bg-surface-2 rounded-full h-2">
+ <div className="h-2 rounded-full bg-info" style={{ width: `${maxFinal > 0 ? Math.max(4, (r.totalFinal / maxFinal) * 100) : 0}%` }} />
  </div>
  </div>
  </div>
@@ -1527,19 +1414,19 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  if (productionLedgerRangeLoading) {
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6 text-center text-sm text-gray-500">
+ <div className="bg-surface rounded-lg p-6 mb-6 text-center text-sm text-text-3">
  Loading production ledger…
  </div>
  );
  }
  if (sortedEntries.length === 0) {
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-teal-600" />
+ <div className="bg-surface rounded-lg p-6 mb-6">
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Package className="w-6 h-6 text-success" />
  Production Ledger
  </h2>
- <p className="text-sm text-gray-600">
+ <p className="text-sm text-text-2">
  Dough/stuffing/batter/coating carry-forward tracking starts {PRODUCTION_LEDGER_GO_LIVE_DATE} - no closed days yet for this house in the selected range.
  </p>
  </div>
@@ -1630,19 +1517,19 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  .filter((r) => r.piecesMade > 0 || r.consumedKg > 0);
 
  return (
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-4">
- <h2 className="text-xl text-gray-900 mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-teal-600" />
+ <h2 className="text-xl text-text mb-1 flex items-center gap-2">
+ <Package className="w-6 h-6 text-success" />
  Production Ledger
  </h2>
- <p className="text-sm text-gray-600">Dough/stuffing/batter/coating pools, carried forward day to day - tracking since {PRODUCTION_LEDGER_GO_LIVE_DATE}</p>
+ <p className="text-sm text-text-2">Dough/stuffing/batter/coating pools, carried forward day to day - tracking since {PRODUCTION_LEDGER_GO_LIVE_DATE}</p>
  </div>
 
  <div className="overflow-x-auto mb-6">
  <table className="w-full text-sm">
  <thead>
- <tr className="text-left text-gray-500 border-b border-gray-200">
+ <tr className="text-left text-text-3 border-b border-border">
  <th className="py-2 pr-2 font-medium">Pool</th>
  <th className="py-2 px-2 font-medium">Prepared (period)</th>
  <th className="py-2 px-2 font-medium">Utilization</th>
@@ -1656,18 +1543,18 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  ? Math.round((r.closingActual / r.avgDailyConsumption) * 10) / 10
  : null;
  return (
- <tr key={r.id} className="border-b border-gray-100 last:border-0">
- <td className="py-2 pr-2 text-gray-700">{r.label}</td>
- <td className="py-2 px-2 tabular-nums text-gray-900">{r.prepared.toFixed(2)} kg</td>
+ <tr key={r.id} className="border-b border-border last:border-0">
+ <td className="py-2 pr-2 text-text-2">{r.label}</td>
+ <td className="py-2 px-2 tabular-nums text-text">{r.prepared.toFixed(2)} kg</td>
  <td className="py-2 px-2 tabular-nums">
- {r.utilizationPct === null ? <span className="text-gray-400">—</span> : `${r.utilizationPct}%`}
+ {r.utilizationPct === null ? <span className="text-text-3">—</span> : `${r.utilizationPct}%`}
  </td>
- <td className="py-2 px-2 tabular-nums text-gray-900">
- {r.closingActual === null ? <span className="text-gray-400">—</span> : `${r.closingActual.toFixed(2)} kg`}
+ <td className="py-2 px-2 tabular-nums text-text">
+ {r.closingActual === null ? <span className="text-text-3">—</span> : `${r.closingActual.toFixed(2)} kg`}
  </td>
  <td className="py-2 pl-2 tabular-nums">
- {daysCover === null ? <span className="text-gray-400">—</span> : (
- <span className={daysCover > 7 ? 'text-amber-600 font-medium' : 'text-gray-700'}>{daysCover} days</span>
+ {daysCover === null ? <span className="text-text-3">—</span> : (
+ <span className={daysCover > 7 ? 'text-warning font-medium' : 'text-text-2'}>{daysCover} days</span>
  )}
  </td>
  </tr>
@@ -1683,12 +1570,12 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  .filter((r) => r.days >= 3);
  if (risky.length === 0) return null;
  return (
- <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+ <div className="mb-6 bg-warning-soft border border-warning-border rounded-lg p-4">
  <div className="flex items-center gap-2 mb-2">
- <AlertCircle className="w-4 h-4 text-amber-600" />
- <span className="text-sm font-semibold text-amber-800">Leftover sitting unused for several days</span>
+ <AlertCircle className="w-4 h-4 text-warning" />
+ <span className="text-sm font-semibold text-warning">Leftover sitting unused for several days</span>
  </div>
- <ul className="text-xs text-amber-800 space-y-1">
+ <ul className="text-xs text-warning space-y-1">
  {risky.map((r) => (
  <li key={r.id}>{r.label} - untouched for {r.days} day{r.days === 1 ? '' : 's'} in a row</li>
  ))}
@@ -1699,11 +1586,11 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  <div className="mb-6">
  <div className="flex items-center gap-2 mb-3">
- <label className="text-xs text-gray-500">Pool:</label>
+ <label className="text-xs text-text-3">Pool:</label>
  <select
  value={activePoolId}
  onChange={(e) => setSelectedLedgerPoolId(e.target.value)}
- className="text-sm border border-gray-300 rounded-lg px-2 py-1"
+ className="text-sm border border-border-strong rounded-lg px-2 py-1"
  >
  {utilizationRows.map((r) => (
  <option key={r.id} value={r.id}>{r.label}</option>
@@ -1714,13 +1601,13 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={trendData}>
  <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 11 }} />
- <YAxis tick={{ fontSize: 11 }} />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} />
  <Tooltip />
  <Legend />
- <Line type="monotone" dataKey={`${activePoolId}_opening`} name="Opening" stroke="#94a3b8" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey={`${activePoolId}_prepared`} name="Prepared" stroke="#0d9488" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey={`${activePoolId}_closing`} name="Closing (counted)" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey={`${activePoolId}_opening`} name="Opening" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey={`${activePoolId}_prepared`} name="Prepared" stroke="var(--chart-2)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+ <Line type="monotone" dataKey={`${activePoolId}_closing`} name="Closing (counted)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
  </LineChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -1728,12 +1615,12 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  {actualYieldRows.length > 0 && (
  <div>
- <h3 className="text-base font-bold text-gray-900 tracking-tight mb-1">Actual Material Yield (Ledger)</h3>
- <p className="text-xs text-gray-500 mb-3">Pieces made per kg actually drawn from that type's own pool - the actually-consumed counterpart to the prepared-based Raw Material Yield chart above, covering only ledger-tracked dates</p>
+ <h3 className="text-base font-bold text-text tracking-tight mb-1">Actual Material Yield (Ledger)</h3>
+ <p className="text-xs text-text-3 mb-3">Pieces made per kg actually drawn from that type's own pool - the actually-consumed counterpart to the prepared-based Raw Material Yield chart above, covering only ledger-tracked dates</p>
  <div className="overflow-x-auto">
  <table className="w-full text-sm">
  <thead>
- <tr className="text-left text-gray-500 border-b border-gray-200">
+ <tr className="text-left text-text-3 border-b border-border">
  <th className="py-2 pr-2 font-medium">Momo Type</th>
  <th className="py-2 px-2 font-medium">Pieces Made</th>
  <th className="py-2 px-2 font-medium">Kg Consumed</th>
@@ -1742,11 +1629,11 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </thead>
  <tbody>
  {actualYieldRows.map((r) => (
- <tr key={r.key} className="border-b border-gray-100 last:border-0">
- <td className="py-2 pr-2 text-gray-700">{r.label}</td>
- <td className="py-2 px-2 tabular-nums text-gray-900">{r.piecesMade.toLocaleString()}</td>
- <td className="py-2 px-2 tabular-nums text-gray-900">{r.consumedKg.toFixed(2)} kg</td>
- <td className="py-2 pl-2 tabular-nums text-gray-900">{r.yieldPcsPerKg === null ? <span className="text-gray-400">—</span> : r.yieldPcsPerKg}</td>
+ <tr key={r.key} className="border-b border-border last:border-0">
+ <td className="py-2 pr-2 text-text-2">{r.label}</td>
+ <td className="py-2 px-2 tabular-nums text-text">{r.piecesMade.toLocaleString()}</td>
+ <td className="py-2 px-2 tabular-nums text-text">{r.consumedKg.toFixed(2)} kg</td>
+ <td className="py-2 pl-2 tabular-nums text-text">{r.yieldPcsPerKg === null ? <span className="text-text-3">—</span> : r.yieldPcsPerKg}</td>
  </tr>
  ))}
  </tbody>
@@ -1761,10 +1648,10 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  {/* Wastage Analysis Charts - trend charts below now follow the shared
  productionDateRange selector at the top of this tab, same as every other trended
  section on this page, instead of their own separate "as of" date. */}
- <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+ <div className="bg-surface rounded-lg p-6 mb-6">
  <div className="mb-6">
- <h2 className="text-xl text-gray-900 mb-1">Wastage Analysis</h2>
- <p className="text-sm text-gray-600">Track and minimize production wastage</p>
+ <h2 className="text-xl text-text mb-1">Wastage Analysis</h2>
+ <p className="text-sm text-text-2">Track and minimize production wastage</p>
  </div>
 
  {/* Helper function for filtering production data by production house */}
@@ -1812,9 +1699,9 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  if (filteredProduction.length === 0) {
  return (
- <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
- <p className="text-yellow-800 font-medium">⚠️ No production data found</p>
- <p className="text-sm text-yellow-700 mt-1">
+ <div className="bg-warning-soft border border-warning-border rounded-lg p-4 mb-6">
+ <p className="text-warning font-medium">No production data found</p>
+ <p className="text-sm text-warning mt-1">
  Please select a production house or ensure production data has been logged.
  </p>
  </div>
@@ -1823,9 +1710,9 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  if (recordsWithWastage.length === 0 && filteredProduction.length > 0) {
  return (
- <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
- <p className="text-blue-800 font-medium">ℹ️ No wastage data recorded</p>
- <p className="text-sm text-blue-700 mt-1">
+ <div className="bg-info-soft border border-info-border rounded-lg p-4 mb-6">
+ <p className="text-info font-medium">No wastage data recorded</p>
+ <p className="text-sm text-info mt-1">
  Found {filteredProduction.length} production record(s), but no wastage has been logged yet.
  Wastage values can be entered in the Production Management section.
  </p>
@@ -1874,19 +1761,19 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  if (currentDates.length === 0) return null;
 
  return (
- <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4 mb-6">
- <h3 className="text-gray-900 font-bold mb-1">Daily Wastage Trend</h3>
- <p className="text-xs text-gray-600 mb-3">Total kg wasted per day for the selected date range · dotted line is the matching previous period</p>
+ <div className="rounded-lg p-4 mb-6 bg-surface border border-border">
+ <h3 className="text-text font-bold mb-1">Daily Wastage Trend</h3>
+ <p className="text-xs text-text-2 mb-3">Total kg wasted per day for the selected date range · dotted line is the matching previous period</p>
  <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={wastageChartData}>
- <CartesianGrid strokeDasharray="3 3" stroke="#fca5a5" />
- <XAxis dataKey="label" tick={{ fontSize: 10 }} />
- <YAxis tick={{ fontSize: 10 }} unit="kg" />
+ <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-1)" />
+ <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+ <YAxis tick={{ fontSize: 12 }} unit="kg" />
  <Tooltip />
  <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="wastage" name="Wastage (kg)" stroke="#dc2626" strokeWidth={2} dot={{ r: 2 }} />
- <Line type="monotone" dataKey="prev_wastage" name="Wastage (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
+ <Line type="monotone" dataKey="wastage" name="Wastage (kg)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} />
+ <Line type="monotone" dataKey="prev_wastage" name="Wastage (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
  </LineChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -1895,9 +1782,9 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  })()}
 
  {/* Wastage Breakdown by Type with Time Filter */}
- <div className="bg-white rounded-lg border-2 border-gray-200 p-6">
+ <div className="bg-surface rounded-lg border-2 border-border p-6">
  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
- <h3 className="text-xl text-gray-900">Wastage Breakdown by Type</h3>
+ <h3 className="text-xl text-text">Wastage Breakdown by Type</h3>
 
  {/* Time Filter for Wastage */}
  <div className="flex flex-wrap gap-2">
@@ -1907,8 +1794,8 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
  className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
  wastageTimeFilter === filter
- ? 'bg-gray-900 text-white'
- : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+ ? 'bg-text text-on-primary'
+ : 'bg-surface-2 text-text-2 hover:bg-surface-3'
  }`}
  >
  {filter.charAt(0).toUpperCase() + filter.slice(1)}
@@ -2001,7 +1888,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  a.period.localeCompare(b.period)
  ).map((item, index) => ({ ...item, uniqueKey: `wastage-breakdown-${index}` }));
  })()}>
- <CartesianGrid key="wastage-breakdown-grid" strokeDasharray="3 3" stroke="#e0e0e0" />
+ <CartesianGrid key="wastage-breakdown-grid" strokeDasharray="3 3" stroke="var(--chart-grid)" />
  <XAxis 
  key="wastage-breakdown-xaxis"
  dataKey="period" 
@@ -2013,10 +1900,10 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <YAxis key="wastage-breakdown-yaxis" tick={{ fontSize: 12 }} label={{ value: 'kg', angle: -90, position: 'insideLeft' }} />
  <Tooltip key="wastage-breakdown-tooltip" content={<WastageTooltip />} />
  <Legend key="wastage-breakdown-legend" />
- <Bar key="dough-bar" dataKey="dough" name="Dough" fill="#dc2626" />
- <Bar key="stuffing-bar" dataKey="stuffing" name="Stuffing" fill="#f97316" />
- <Bar key="batter-bar" dataKey="batter" name="Batter" fill="#fbbf24" />
- <Bar key="coating-bar" dataKey="coating" name="Coating" fill="#14b8a6" />
+ <Bar key="dough-bar" dataKey="dough" name="Dough" fill="var(--chart-1)" />
+ <Bar key="stuffing-bar" dataKey="stuffing" name="Stuffing" fill="var(--chart-1)" />
+ <Bar key="batter-bar" dataKey="batter" name="Batter" fill="var(--chart-3)" />
+ <Bar key="coating-bar" dataKey="coating" name="Coating" fill="var(--chart-2)" />
  </BarChart>
  </ResponsiveContainer>
  )}</LazyChart>
@@ -2024,14 +1911,14 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  {/* SOP Maintenance Section - Cluster Head Only */}
  {isClusterHead && (
- <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border-2 border-blue-200 p-6 mt-6">
+ <div className="rounded-lg border-2 border-border p-6 mt-6 bg-surface">
  <div className="flex justify-between items-center mb-6">
  <div>
- <h3 className="text-xl text-gray-900 flex items-center gap-2">
- <ClipboardCheck className="w-6 h-6 text-blue-600" />
+ <h3 className="text-xl text-text flex items-center gap-2">
+ <ClipboardCheck className="w-6 h-6 text-info" />
  SOP Maintenance - Threshold Limits
  </h3>
- <p className="text-sm text-gray-600 mt-1">Set standard ingredient usage per piece (in grams)</p>
+ <p className="text-sm text-text-2 mt-1">Set standard ingredient usage per piece (in grams)</p>
  </div>
  {!editingSop ? (
  <button
@@ -2040,7 +1927,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempDiversionPercent(sopDiversionPercent);
  setEditingSop(true);
  }}
- className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+ className="px-4 py-2 bg-info text-on-primary rounded-lg hover:bg-info transition-colors flex items-center gap-2"
  >
  <Edit className="w-4 h-4" />
  Edit SOP
@@ -2055,7 +1942,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  // TODO: Save to backend
  toast.success('SOP thresholds and diversion limit updated successfully');
  }}
- className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+ className="px-4 py-2 bg-success text-on-primary rounded-lg hover:bg-success transition-colors flex items-center gap-2"
  >
  <Check className="w-4 h-4" />
  Save
@@ -2065,7 +1952,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setEditingSop(false);
  setTempSopThresholds(null);
  }}
- className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors flex items-center gap-2"
+ className="px-4 py-2 bg-border-strong text-text-2 rounded-lg hover:bg-border-strong transition-colors flex items-center gap-2"
  >
  <X className="w-4 h-4" />
  Cancel
@@ -2075,17 +1962,17 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  </div>
 
  {/* SOP Diversion Percentage Setting */}
- <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+ <div className="bg-warning-soft border border-warning-border rounded-lg p-4 mb-6">
  <div className="flex items-center justify-between">
  <div>
- <h4 className="text-gray-900 font-semibold flex items-center gap-2">
- <AlertCircle className="w-5 h-5 text-yellow-600" />
+ <h4 className="text-text font-semibold flex items-center gap-2">
+ <AlertCircle className="w-5 h-5 text-warning" />
  Maximum Allowed Diversion from SOP
  </h4>
- <p className="text-sm text-gray-600 mt-1">Set the acceptable deviation range (±%) from SOP standards. Using too little OR too much is non-compliant.</p>
+ <p className="text-sm text-text-2 mt-1">Set the acceptable deviation range (±%) from SOP standards. Using too little OR too much is non-compliant.</p>
  </div>
  <div className="flex items-center gap-3">
- <label className="text-sm text-gray-700">Max Diversion:</label>
+ <label className="text-sm text-text-2">Max Diversion:</label>
  <input
  type="number"
  min="0"
@@ -2098,9 +1985,9 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  }
  }}
  disabled={!editingSop}
- className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+ className="w-20 px-3 py-2 border border-border-strong rounded-md focus:ring-2 focus:ring-ring disabled:bg-surface-2"
  />
- <span className="text-gray-700">%</span>
+ <span className="text-text-2">%</span>
  </div>
  </div>
  </div>
@@ -2118,11 +2005,11 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  };
 
  return (
- <div key={key} className="bg-white rounded-lg p-4 border border-gray-200">
- <h4 className="text-gray-900 mb-3">{momoNames[key]}</h4>
+ <div key={key} className="bg-surface rounded-lg p-4 border border-border">
+ <h4 className="text-text mb-3">{momoNames[key]}</h4>
  <div className="space-y-2">
  <div>
- <label className="text-xs text-gray-600">Dough (g/pc)</label>
+ <label className="text-xs text-text-2">Dough (g/pc)</label>
  <input
  type="number"
  value={values.dough}
@@ -2135,11 +2022,11 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  });
  }
  }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+ className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
  />
  </div>
  <div>
- <label className="text-xs text-gray-600">Stuffing (g/pc)</label>
+ <label className="text-xs text-text-2">Stuffing (g/pc)</label>
  <input
  type="number"
  value={values.stuffing}
@@ -2152,12 +2039,12 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  });
  }
  }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+ className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
  />
  </div>
  {values.batter !== undefined && (
  <div>
- <label className="text-xs text-gray-600">Batter (g/pc)</label>
+ <label className="text-xs text-text-2">Batter (g/pc)</label>
  <input
  type="number"
  value={values.batter}
@@ -2170,13 +2057,13 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  });
  }
  }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+ className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
  />
  </div>
  )}
  {values.coating !== undefined && (
  <div>
- <label className="text-xs text-gray-600">Coating (g/pc)</label>
+ <label className="text-xs text-text-2">Coating (g/pc)</label>
  <input
  type="number"
  value={values.coating}
@@ -2189,7 +2076,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  });
  }
  }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-white' : 'bg-gray-100'}`}
+ className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
  />
  </div>
  )}
@@ -2202,11 +2089,11 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  )}
 
  {/* Daily Usage vs SOP Compliance */}
- <div className="bg-white rounded-lg border-2 border-gray-200 p-6 mt-6">
+ <div className="bg-surface rounded-lg border-2 border-border p-6 mt-6">
  <div className="mb-6">
  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
- <h3 className="text-xl text-gray-900 flex items-center gap-2">
- <TrendingUp className="w-6 h-6 text-blue-600" />
+ <h3 className="text-xl text-text flex items-center gap-2">
+ <TrendingUp className="w-6 h-6 text-info" />
  Daily Ingredient Usage & SOP Compliance
  </h3>
 
@@ -2217,7 +2104,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  onChange={setSopComplianceDate}
  />
  </div>
- <p className="text-sm text-gray-600">Regular momos only - Actual usage per piece vs SOP limits with diversion %</p>
+ <p className="text-sm text-text-2">Regular momos only - Actual usage per piece vs SOP limits with diversion %</p>
  </div>
 
  <div className="space-y-6">
@@ -2328,8 +2215,8 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
 
  if (last5Days.length === 0) {
  return (
- <div className="text-center py-12 text-gray-500">
- <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+ <div className="text-center py-12 text-text-3">
+ <AlertCircle className="w-12 h-12 mx-auto mb-3 text-text-3" />
  <p>No approved production data found for {formatDateIST(sopComplianceDate)}</p>
  <p className="text-sm mt-1">Production entries must be approved to appear here</p>
  </div>
@@ -2337,8 +2224,8 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  }
 
  return last5Days.map(({ date, usage }) => (
- <div key={date} className="border border-gray-200 rounded-lg p-4">
- <h4 className="text-gray-900 mb-4">{formatDateIST(date)}</h4>
+ <div key={date} className="border border-border rounded-lg p-4">
+ <h4 className="text-text mb-4">{formatDateIST(date)}</h4>
  
  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
  {Object.entries(usage).map(([momoType, data]: [string, any]) => {
@@ -2384,54 +2271,54 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  return (
  <div 
  key={momoType} 
- className={`p-3 rounded-lg border-2 ${overallCompliance ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}
+ className={`p-3 rounded-lg border-2 ${overallCompliance ? 'bg-success-soft border-success-border' : 'bg-danger-soft border-danger-border'}`}
  >
  <div className="flex items-center justify-between mb-2">
- <p className="text-sm text-gray-900">{momoNames[momoType]}</p>
+ <p className="text-sm text-text">{momoNames[momoType]}</p>
  {overallCompliance ? (
- <Check className="w-5 h-5 text-green-600" />
+ <Check className="w-5 h-5 text-success" />
  ) : (
- <AlertCircle className="w-5 h-5 text-red-600" />
+ <AlertCircle className="w-5 h-5 text-danger" />
  )}
  </div>
- <p className="text-xs text-gray-600 mb-2">Qty: {data.quantity} pcs</p>
+ <p className="text-xs text-text-2 mb-2">Qty: {data.quantity} pcs</p>
  
  <div className="space-y-1 text-xs">
- <div className={`flex justify-between items-center ${!doughCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+ <div className={`flex justify-between items-center ${!doughCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
  <span>Dough:</span>
  <div className="text-right">
  <div>{avgDough.toFixed(1)}g / {sopThresholds[momoType].dough}g</div>
- <div className={`text-[10px] ${Math.abs(doughDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+ <div className={`text-caption ${Math.abs(doughDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
  {doughDiversion > 0 ? '+' : ''}{doughDiversion.toFixed(1)}%
  </div>
  </div>
  </div>
- <div className={`flex justify-between items-center ${!stuffingCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+ <div className={`flex justify-between items-center ${!stuffingCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
  <span>Stuffing:</span>
  <div className="text-right">
  <div>{avgStuffing.toFixed(1)}g / {sopThresholds[momoType].stuffing}g</div>
- <div className={`text-[10px] ${Math.abs(stuffingDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+ <div className={`text-caption ${Math.abs(stuffingDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
  {stuffingDiversion > 0 ? '+' : ''}{stuffingDiversion.toFixed(1)}%
  </div>
  </div>
  </div>
  {sopThresholds[momoType].batter && (
- <div className={`flex justify-between items-center ${!batterCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+ <div className={`flex justify-between items-center ${!batterCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
  <span>Batter:</span>
  <div className="text-right">
  <div>{avgBatter.toFixed(1)}g / {sopThresholds[momoType].batter}g</div>
- <div className={`text-[10px] ${Math.abs(batterDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+ <div className={`text-caption ${Math.abs(batterDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
  {batterDiversion > 0 ? '+' : ''}{batterDiversion.toFixed(1)}%
  </div>
  </div>
  </div>
  )}
  {sopThresholds[momoType].coating && (
- <div className={`flex justify-between items-center ${!coatingCompliance ? 'text-red-700 font-semibold' : 'text-gray-700'}`}>
+ <div className={`flex justify-between items-center ${!coatingCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
  <span>Coating:</span>
  <div className="text-right">
  <div>{avgCoating.toFixed(1)}g / {sopThresholds[momoType].coating}g</div>
- <div className={`text-[10px] ${Math.abs(coatingDiversion) > sopDiversionPercent ? 'text-red-600' : 'text-green-600'}`}>
+ <div className={`text-caption ${Math.abs(coatingDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
  {coatingDiversion > 0 ? '+' : ''}{coatingDiversion.toFixed(1)}%
  </div>
  </div>

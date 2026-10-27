@@ -1,253 +1,240 @@
-// Pieces several Insights tabs share: chart tooltips, the period picker, the "vs last period"
-// renderers and the lazily loaded screens more than one tab opens. Moved verbatim from
-// Analytics.tsx (WP2 step 1).
-import { Calendar, ArrowUp, ArrowDown } from 'lucide-react';
-import { type TooltipProps } from 'recharts';
-import { getTodayIST } from '../../../utils/timezone';
-import { type AnalyticsData, type TimeFilterChoice, TIME_FILTER_OPTIONS } from '../useAnalyticsData';
+// Pieces every Insights tab shares, in the warm-ledger look: the chart card and the one chart
+// component the tabs draw with (colours from chart-theme only), the tooltips, the "vs last
+// period" helpers and the money formatting. Charts are built inside <LazyChart> render functions
+// only - a recharts element made outside one would capture the library before it has loaded.
+import * as React from 'react';
+import type { TooltipProps } from 'recharts';
+import { LazyChart, ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Cell } from '../../charts/lazyRecharts';
+import { CHART_COLORS, CHART_SERIES, ChartLegendChips, ChartTooltipCard, chartAxisProps, chartGridProps, chartCursor, type LegendChip } from '../../ui/chart-theme';
+import { Card } from '../../ui/card';
+import { EmptyState } from '../../ui/empty-state';
+import { formatCompactINR, formatINR, formatNumberIN } from '../../ui/money';
+import type { StatDelta } from '../../ui/stat-tile';
+import { cn } from '../../ui/utils';
+import { type AnalyticsData } from '../useAnalyticsData';
 
+export { CHART_COLORS, CHART_SERIES };
 
+/** Whole rupees, Indian grouping: ₹3,12,400. */
+export const inr = (value: number | null | undefined) => formatINR(value === null || value === undefined ? value : Math.round(value));
+/** "12.4%" (one decimal), or "–" when there is nothing to divide by. */
+export const pct = (part: number, whole: number) => (whole ? `${((part / whole) * 100).toFixed(1)}%` : '–');
 
-
-
-// Custom Tooltip Component for Bar Charts
-export const CustomTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
- if (active && payload && payload.length) {
- return (
- <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
- <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
- {payload.map((entry: any, index: number) => (
- <div key={index} className="flex items-center gap-2 mt-1">
- <div 
- className="w-3 h-3 rounded-full" 
- style={{ backgroundColor: entry.color }}
- />
- <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
- {entry.name}:
- </span>
- <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- ₹{entry.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
- </span>
- </div>
- ))}
- </div>
- );
- }
- return null;
-};
-
-// Custom Tooltip Component for Pie Charts
-export const CustomPieTooltip = ({ active, payload }: TooltipProps<any, any>) => {
- if (active && payload && payload.length) {
- const data = payload[0];
- return (
- <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
- <div className="flex items-center gap-2 mb-2">
- <div 
- className="w-4 h-4 rounded-full" 
- style={{ backgroundColor: data.payload.fill }}
- />
- <p className="text-gray-900" style={{ fontSize: '14px', fontWeight: '600' }}>
- {data.name}
- </p>
- </div>
- <div className="space-y-1">
- <div className="flex justify-between gap-4">
- <span className="text-gray-600" style={{ fontSize: '13px' }}>Amount:</span>
- <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- ₹{data.value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
- </span>
- </div>
- <div className="flex justify-between gap-4">
- <span className="text-gray-600" style={{ fontSize: '13px' }}>Percentage:</span>
- <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- {data.payload.percentage}%
- </span>
- </div>
- </div>
- </div>
- );
- }
- return null;
-};
-
-// Custom Tooltip for Production (Quantity in pieces)
-export const ProductionTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
- if (active && payload && payload.length) {
- return (
- <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
- <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
- {payload.map((entry: any, index: number) => (
- <div key={index} className="flex items-center gap-2 mt-1">
- <div 
- className="w-3 h-3 rounded-full" 
- style={{ backgroundColor: entry.color }}
- />
- <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
- {entry.name}:
- </span>
- <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- {entry.value.toLocaleString()} pcs
- </span>
- </div>
- ))}
- </div>
- );
- }
- return null;
-};
-
-// Custom Tooltip for Wastage (Weight in kg)
-export const WastageTooltip = ({ active, payload, label }: TooltipProps<any, any>) => {
- if (active && payload && payload.length) {
- return (
- <div className="bg-white px-4 py-3 rounded-xl shadow-lg border-2 border-gray-100">
- <p className="text-gray-900 mb-2" style={{ fontSize: '14px', fontWeight: '600' }}>{label}</p>
- {payload.map((entry: any, index: number) => (
- <div key={index} className="flex items-center gap-2 mt-1">
- <div 
- className="w-3 h-3 rounded-full" 
- style={{ backgroundColor: entry.color }}
- />
- <span className="text-gray-700" style={{ fontSize: '13px', fontWeight: '500' }}>
- {entry.name}:
- </span>
- <span className="text-gray-900" style={{ fontSize: '13px', fontWeight: '700' }}>
- {entry.value.toFixed(2)} kg
- </span>
- </div>
- ))}
- </div>
- );
- }
- return null;
-};
-
-// Date-range filter used across the Analytics tabs. Mobile gets a compact
-// dropdown (the pill row clips/truncates on narrow screens); desktop keeps
-// the pill row.
-export function TimeFilterBar({ value, onChange, range, onRangeChange }: {
- value: TimeFilterChoice;
- onChange: (v: TimeFilterChoice) => void;
- range: { from: string; to: string };
- onRangeChange: (r: { from: string; to: string }) => void;
-}) {
- return (
- <div className="flex flex-col gap-2 w-full sm:w-auto min-w-0">
- <select
- value={value}
- onChange={(e) => onChange(e.target.value as TimeFilterChoice)}
- className="sm:hidden w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
- >
- {TIME_FILTER_OPTIONS.map((filter) => (
- <option key={filter.value} value={filter.value}>{filter.label}</option>
- ))}
- </select>
- <div className="hidden sm:flex gap-2 overflow-x-auto pb-0">
- {TIME_FILTER_OPTIONS.map((filter) => (
- <button
- key={filter.value}
- onClick={() => onChange(filter.value)}
- className={`px-4 py-2 rounded-lg text-sm transition-colors whitespace-nowrap ${
- value === filter.value
- ? 'bg-gray-900 text-white'
- : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
- }`}
- >
- {filter.label}
- </button>
- ))}
- </div>
- {value === 'custom' && (
- <div className="flex flex-wrap items-center gap-2 bg-gray-50 rounded-lg p-2">
- <Calendar className="w-4 h-4 text-gray-500 flex-shrink-0" />
- <label className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
- From
- <input type="date" value={range.from} max={range.to} onChange={(e) => e.target.value && onRangeChange({ ...range, from: e.target.value })} className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white" />
- </label>
- <label className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
- To
- <input type="date" value={range.to} min={range.from} max={getTodayIST()} onChange={(e) => e.target.value && onRangeChange({ ...range, to: e.target.value })} className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white" />
- </label>
- </div>
- )}
- </div>
- );
+/** A StatTile delta from two figures (none when there is nothing to compare with). */
+export function deltaOf(current: number, previous: number, label: string, goodWhen: 'up' | 'down' = 'up'): StatDelta | undefined {
+  if (!previous || !Number.isFinite(previous) || !Number.isFinite(current)) return undefined;
+  return { value: ((current - previous) / Math.abs(previous)) * 100, label, goodWhen };
+}
+/** A point difference between two percentages ("+1.2 pts"). */
+export function pointsDelta(current: number, previous: number, label: string, goodWhen: 'up' | 'down' = 'up'): StatDelta {
+  const diff = current - previous;
+  const rounded = Math.round(diff * 10) / 10;
+  return { value: diff, label, goodWhen, text: `${rounded > 0 ? '+' : rounded < 0 ? '−' : ''}${Math.abs(rounded)} pts` };
 }
 
-// The small "+x% vs last period" lines and the chart legend that tells previous-period
-// (dashed) series apart.
-export function makeRenderers(d: AnalyticsData) {
- const { pctChange, getPreviousPeriodLabel } = d;
+/** Short "vs …" label for the selected period (e.g. "vs last month"). */
+export function shortPrevLabel(d: AnalyticsData): string {
+  switch (d.timeFilter) {
+    case 'today':
+    case 'yesterday':
+      return 'vs same day last week';
+    case 'thisWeek':
+    case 'lastWeek':
+      return 'vs last week';
+    case 'thisMonth':
+      return 'vs last month';
+    case 'lastMonth':
+      return 'vs month before';
+    default:
+      return 'vs period before';
+  }
+}
 
- const renderPctChange = (current: number, previous: number, goodDirection: 'up' | 'down' = 'up') => {
- const change = pctChange(current, previous);
- if (change === null) return null;
- const isGood = goodDirection === 'up' ? change >= 0 : change <= 0;
- const rounded = Math.abs(change) < 0.1 ? '0.0' : Math.abs(change).toFixed(1);
- return (
- <div className={`flex items-center gap-1 text-xs mt-0.5 ${isGood ? 'text-emerald-700' : 'text-red-700'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span>{rounded}% {getPreviousPeriodLabel()}</span>
- </div>
- );
- };
- // Same as renderPctChange, but for the Overview cards' saturated gradient backgrounds -
- // dark-on-dark emerald/red text there would be unreadable, so this uses a translucent
- // white pill instead and leans on the arrow direction rather than a color swap for
- // good/bad (the card's own background color already carries that signal there).
- const renderPctChangeOnColor = (current: number, previous: number) => {
- // A zero previous-period value (e.g. no discrepancies logged last month) makes "%
- // change" undefined, not zero - pctChange returns null there and the card used to
- // just show nothing, which read as "comparison forgotten" rather than "there wasn't
- // one to compare against". Show that explicitly instead of going silent.
- if (!previous) {
- if (!current) return null; // both periods are genuinely zero - nothing worth saying
- return (
- <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
- <span>New this period {getPreviousPeriodLabel()}</span>
- </div>
- );
- }
- const change = pctChange(current, previous);
- if (change === null) return null;
- const rounded = Math.abs(change) < 0.1 ? '0.0' : Math.abs(change).toFixed(1);
- return (
- <div className="inline-flex items-center gap-1 text-[11px] font-medium mt-1.5 bg-white/20 rounded-full px-2 py-0.5 text-white">
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span>{rounded}% {getPreviousPeriodLabel()}</span>
- </div>
- );
- };
+// ---- Tooltips (recharts `content`) -------------------------------------------------------------
+export const CustomTooltip = (props: TooltipProps<any, any>) => <ChartTooltipCard {...(props as any)} money />;
+export const CustomPieTooltip = (props: TooltipProps<any, any>) => (
+  <ChartTooltipCard {...(props as any)} formatValue={(v: number, _n: string) => `${inr(v)}${(props.payload?.[0]?.payload as any)?.percentage !== undefined ? ` · ${(props.payload?.[0]?.payload as any).percentage}%` : ''}`} />
+);
+export const ProductionTooltip = (props: TooltipProps<any, any>) => <ChartTooltipCard {...(props as any)} formatValue={(v: number) => `${formatNumberIN(v)} pcs`} />;
+export const WastageTooltip = (props: TooltipProps<any, any>) => <ChartTooltipCard {...(props as any)} formatValue={(v: number) => `${v.toFixed(2)} kg`} />;
 
- // Recharts' default <Legend> draws every entry as the same solid line swatch - it
- // ignores strokeDasharray, so a "Revenue" entry and its dashed "Revenue (prev period)"
- // sibling render as two identical green marks with no way to tell which is which just
- // from the legend. This custom renderer draws the swatch itself, dashed for any entry
- // whose dataKey is the zipPrev "prev_X" convention used across the comparison charts.
- const renderPrevAwareLegend = (props: any) => {
- const payload = props?.payload;
- if (!payload || payload.length === 0) return null;
- return (
- <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 mt-2 list-none p-0">
- {payload.map((entry: any, index: number) => {
- const isPrev = typeof entry.dataKey === 'string' && entry.dataKey.startsWith('prev_');
- return (
- <li key={`legend-${entry.dataKey || entry.value || index}`} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
- <svg width="18" height="10" className="flex-shrink-0" aria-hidden="true">
- <line
- x1="0" y1="5" x2="18" y2="5"
- stroke={entry.color}
- strokeWidth={2}
- strokeDasharray={isPrev ? '4 3' : undefined}
- />
- </svg>
- <span style={{ color: entry.color }}>{entry.value}</span>
- </li>
- );
- })}
- </ul>
- );
- };
- return { renderPctChange, renderPctChangeOnColor, renderPrevAwareLegend };
+// ---- Chart card ---------------------------------------------------------------------------------
+export function ChartCard({
+  title,
+  caption,
+  legend,
+  actions,
+  children,
+  footer,
+  className,
+}: {
+  title: React.ReactNode;
+  caption?: React.ReactNode;
+  legend?: LegendChip[];
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card className={cn('min-w-0 gap-3 lg:p-5', className)}>
+      <div className="flex min-h-8 items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h3 className="text-subtitle font-semibold text-text">{title}</h3>
+          {caption && <p className="text-label text-text-3">{caption}</p>}
+        </div>
+        {actions && <div className="-mt-1.5 -mr-2 flex shrink-0 items-center">{actions}</div>}
+      </div>
+      {legend && legend.length > 0 && <ChartLegendChips items={legend} />}
+      {children}
+      {footer && <div className="border-t border-border pt-3 text-body-sm text-text-2">{footer}</div>}
+    </Card>
+  );
+}
+
+/** What a chart shows when the period has nothing to draw. */
+export function ChartEmpty({ title = 'No data for this period', body }: { title?: string; body?: React.ReactNode }) {
+  return <EmptyState compact title={title} body={body ?? 'Pick another period or store.'} />;
+}
+
+// ---- The chart ----------------------------------------------------------------------------------
+export type SeriesSpec = {
+  key: string;
+  name: string;
+  color: string;
+  kind?: 'line' | 'bar';
+  stack?: string;
+  /** Previous-period lines are dashed. */
+  dashed?: boolean;
+  /** Per-bar colours (e.g. one colour a category). */
+  cellColors?: string[];
+};
+export type ValueFormat = 'money' | 'number' | 'percent' | ((value: number) => string);
+
+const formatterFor = (format: ValueFormat) =>
+  typeof format === 'function'
+    ? format
+    : format === 'money'
+      ? (v: number) => inr(v)
+      : format === 'percent'
+        ? (v: number) => `${Math.round(v * 10) / 10}%`
+        : (v: number) => formatNumberIN(Math.round(v * 10) / 10);
+const axisFor = (format: ValueFormat) =>
+  typeof format === 'function'
+    ? format
+    : format === 'money'
+      ? (v: number) => formatCompactINR(v)
+      : format === 'percent'
+        ? (v: number) => `${v}%`
+        : (v: number) => formatNumberIN(v);
+
+/** Legend chips for a series list: solid series once each, and one dashed "Last period" chip. */
+export function legendFor(series: SeriesSpec[], prevLabel = 'Last period'): LegendChip[] {
+  const chips: LegendChip[] = series.filter((s) => !s.dashed).map((s) => ({ label: s.name, color: s.color, shape: s.kind === 'bar' ? 'square' : 'line' }));
+  if (series.some((s) => s.dashed)) chips.push({ label: prevLabel, color: CHART_COLORS.previous, dashed: true });
+  return chips;
+}
+
+export function TrendChart({
+  data,
+  series,
+  xKey = 'period',
+  height = 240,
+  format = 'money',
+  axisFormat,
+  layout = 'horizontal',
+  refLines,
+  ariaLabel,
+  categoryWidth = 96,
+}: {
+  data: any[];
+  series: SeriesSpec[];
+  xKey?: string;
+  height?: number;
+  format?: ValueFormat;
+  axisFormat?: ValueFormat;
+  /** "vertical" = horizontal bars (category labels down the side). */
+  layout?: 'horizontal' | 'vertical';
+  refLines?: { y: number; color: string }[];
+  ariaLabel: string;
+  categoryWidth?: number;
+}) {
+  const fmt = formatterFor(format);
+  const tick = axisFor(axisFormat ?? format);
+  const vertical = layout === 'vertical';
+  return (
+    <div role="img" aria-label={ariaLabel} className="min-w-0">
+      <LazyChart height={height}>
+        {() => (
+          <ResponsiveContainer width="100%" height={height}>
+            <ComposedChart data={data} layout={layout} margin={{ top: 4, right: 8, bottom: 0, left: vertical ? 0 : -4 }} barCategoryGap={vertical ? 8 : '20%'}>
+              <CartesianGrid {...chartGridProps} vertical={vertical} horizontal={!vertical} />
+              {vertical ? (
+                <>
+                  <XAxis type="number" {...chartAxisProps} tickFormatter={tick} />
+                  <YAxis type="category" dataKey={xKey} {...chartAxisProps} width={categoryWidth} interval={0} tickFormatter={(v: string) => (String(v).length > 14 ? `${String(v).slice(0, 13)}…` : v)} />
+                </>
+              ) : (
+                <>
+                  <XAxis dataKey={xKey} {...chartAxisProps} minTickGap={20} interval="preserveStartEnd" />
+                  <YAxis {...chartAxisProps} width={52} tickFormatter={tick} allowDecimals={format !== 'number'} />
+                </>
+              )}
+              <Tooltip content={<ChartTooltipCard formatValue={(v: number) => fmt(v)} />} cursor={chartCursor} />
+              {series.map((s) =>
+                s.kind === 'bar' ? (
+                  <Bar key={s.key} dataKey={s.key} name={s.name} fill={s.color} stackId={s.stack} maxBarSize={vertical ? 16 : 28} radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]} isAnimationActive={false}>
+                    {s.cellColors?.map((c, i) => <Cell key={i} fill={c} />)}
+                  </Bar>
+                ) : (
+                  <Line
+                    key={s.key}
+                    type="monotone"
+                    dataKey={s.key}
+                    name={s.name}
+                    stroke={s.dashed ? CHART_COLORS.previous : s.color}
+                    strokeWidth={s.dashed ? 1.5 : 2.5}
+                    strokeDasharray={s.dashed ? '4 4' : undefined}
+                    dot={false}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                ),
+              )}
+              {refLines?.map((r, i) => <ReferenceLine key={i} y={r.y} stroke={r.color} strokeDasharray="6 4" ifOverflow="extendDomain" />)}
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </LazyChart>
+    </div>
+  );
+}
+
+// ---- Small figures row under a chart (e.g. order totals) ----------------------------------------
+export function FigureRow({ items }: { items: { label: React.ReactNode; value: React.ReactNode; tone?: 'default' | 'danger' | 'success' }[] }) {
+  return (
+    <dl className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(items.length, 4)}, minmax(0, 1fr))` }}>
+      {items.map((item, i) => (
+        <div key={i} className="flex min-w-0 flex-col">
+          <dt className="truncate text-label text-text-3">{item.label}</dt>
+          <dd className={cn('num text-body-md font-semibold', item.tone === 'danger' ? 'text-danger' : item.tone === 'success' ? 'text-success' : 'text-text')}>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// ---- Kept for the production tab: a legend that tells previous-period (dashed) series apart ---
+export function makeRenderers(_d: AnalyticsData) {
+  const renderPrevAwareLegend = (props: any) => {
+    const { payload } = props;
+    if (!payload || payload.length === 0) return null;
+    const items: LegendChip[] = payload.map((entry: any) => ({
+      label: entry.value,
+      color: entry.color,
+      dashed: typeof entry.payload?.strokeDasharray === 'string' && entry.payload.strokeDasharray.length > 0,
+    }));
+    return <ChartLegendChips items={items} className="mt-2 justify-center" />;
+  };
+  return { renderPrevAwareLegend };
 }
