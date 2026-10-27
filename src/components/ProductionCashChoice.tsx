@@ -32,14 +32,17 @@ export function productionCashChoiceAvailable(amount: number, cover: CashCover |
   return productionShouldCover(cover, amount, before.store, before.production);
 }
 
-export function ProductionCashChoice({ checked, onChange, amount, cover, editingItem }: {
+export function ProductionCashChoice({ checked, onChange, amount, cover, editingItem, always = false }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   amount: number;
   cover: CashCover | null;
   editingItem?: EditedBill | null;
+  /** The owner's Quick Add: offer production cash whenever the store has a production house, not
+   *  only when the store's cash falls short (owner, 27 Oct 2026). */
+  always?: boolean;
 }) {
-  if (!productionCashChoiceAvailable(amount, cover, editingItem)) return null;
+  if (!always && !productionCashChoiceAvailable(amount, cover, editingItem)) return null;
   const before = cover ? cashBefore(cover, editingItem) : null;
   return (
     <label className="flex items-start gap-2 p-3 border border-warning-border bg-warning-soft rounded-lg cursor-pointer">

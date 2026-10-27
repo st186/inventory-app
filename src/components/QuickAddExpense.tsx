@@ -22,7 +22,6 @@ import {
   buildExpenseCandidates,
   searchExpenseCandidates,
 } from '../utils/expenseMatcher';
-import { productionShouldCover } from '../utils/cashSource';
 import { useCashCover, type LoadCashCover } from './useCashCover';
 import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
@@ -218,9 +217,9 @@ export function QuickAddExpense({
       ? { entityType: 'production_house' as const, productionHouseId: targetProductionHouseId }
       : { entityType: 'store' as const, storeId: (storeOptions?.length ? pickedStoreId : effectiveStoreId) || undefined };
 
-  // A store bill comes off the store's own cash. Only when the store's cash for the day can't
-  // cover it and the linked production house's cash can is there a tick box (unticked) to take
-  // it from production's cash instead.
+  // A store bill comes off the store's own cash. The owner gets a tick box (unticked) to take it
+  // from the linked production house's cash instead - whenever the store has one, not only when
+  // the store's cash falls short (owner, 27 Oct 2026; staff never see it, as before).
   const storeIdForCash = (storeOptions?.length ? pickedStoreId : effectiveStoreId) || '';
   const productionCashHouseId = ownerPaymentOption && entity === 'store' && storeIdForCash
     ? productionHouseForStore?.(storeIdForCash) || null
@@ -228,7 +227,7 @@ export function QuickAddExpense({
   const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, entryDate);
   const [fromProductionCash, setFromProductionCash] = useState(false);
   const enteredAmount = parseFloat(amount) || 0;
-  const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId && productionShouldCover(cashCover, enteredAmount);
+  const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId;
   const useProductionCash = productionCanCover && fromProductionCash;
 
   // Split: the two parts as typed (the same shape the edit forms save).
@@ -670,7 +669,7 @@ export function QuickAddExpense({
             redesign (owner, 27 Oct 2026). Split stays in the full expense form. */}
         <PaidFromField value={paidFrom} onChange={setPaidFrom} showOwner={ownerPaymentOption} allowed={ownerPaymentOption ? ['owner', 'cash', 'online'] : ['cash']} entity={entity === 'store' ? 'store' : 'production'}>
           {productionCanCover && (
-            <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} />
+            <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} always />
           )}
           {paidFrom === 'both' && (
             <SplitAmounts cash={splitCash} online={splitOnline} total={enteredAmount} onChange={(next) => { setSplitCash(next.cash); setSplitOnline(next.online); }} />
