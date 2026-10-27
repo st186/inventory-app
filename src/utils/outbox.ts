@@ -165,8 +165,11 @@ function wire() {
   });
 }
 
+// Every 30 s while anything could still go by itself - including entries left unsure by a dropped
+// signal while the server's features weren't known yet (the app opened offline): once the server
+// answers and says it dedupes, those go too.
 function scheduleFlushes() {
-  const waiting = entries.some(sendsByItself);
+  const waiting = entries.some((e) => sendsByItself(e) || (e.state === 'unsure' && e.uncertainty === 'network'));
   if (waiting && !flushTimer) {
     flushTimer = setInterval(() => { if (isAppVisible()) flush(); }, FLUSH_EVERY_MS);
   } else if (!waiting && flushTimer) {
@@ -186,10 +189,14 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// Entries left "sending" by an app that was closed mid-request: nobody knows if they arrived.
+// Entries left "sending" by an app that was closed mid-request: nobody knows if they arrived. (Runs
+// inside the lock, re-reading storage first: another tab may have finished sending it meanwhile.)
 async function recoverInterrupted() {
   for (const entry of entries) {
     if (entry.state !== 'sending' || sendingNow.has(entry.id)) continue;
+    const stored = await idbGet<OutboxEntry>('outbox', entry.id);
+    if (!stored && !notDurable.has(entry.id)) { await drop(entry.id); continue; }
+    if (stored && stored.state !== 'sending') { replaceLocal(stored); notify(); continue; }
     await update(entry.id, {
       state: safeToRepeat(entry, 'network') ? 'queued' : 'unsure',
       mayHaveArrived: true,

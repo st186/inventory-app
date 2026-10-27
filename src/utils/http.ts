@@ -5,8 +5,8 @@
 //  - a time limit on every request (reads 20 s, writes 45 s, uploads 90 s, slow jobs 2 min), so no
 //    spinner sits there for minutes;
 //  - reads retried with backoff on network errors and 5xx. Writes are never retried automatically
-//    unless the server dedupes them (feature 'idempotency-v1'), so a lost answer can't turn one
-//    expense into two;
+//    unless the server dedupes them (feature 'idempotency-v1': then on network errors and 503 only,
+//    with the same Idempotency-Key), so a lost answer can't turn one expense into two;
 //  - one network call for identical reads in flight at the same time, and a 60 s memory copy of the
 //    reference lists (employees, stores...) that screens fetch again on every visit;
 //  - the optional headers the server advertises in GET /app-version `features`.
