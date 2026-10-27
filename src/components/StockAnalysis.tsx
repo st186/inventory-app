@@ -698,7 +698,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           <button
             key={p}
             onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`min-h-11 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               period === p ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
             }`}
           >
@@ -851,7 +851,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
         ) : attendanceError ? (
           <div className="p-6 text-center text-sm text-danger">
             Could not load attendance: {attendanceError}.{' '}
-            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="underline">Try again</button>
+            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="min-h-11 px-2 underline">Try again</button>
           </div>
         ) : (
           <div className="p-4 space-y-4">
@@ -868,7 +868,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
                     {attendanceReport.totalExpected > 0 ? ` (${Math.round((attendanceReport.totalFilled / attendanceReport.totalExpected) * 100)}%)` : ''}.
                     Approved leave days are not counted as missing, and today is not counted until the day is over.
                     {' '}Based on {timesheets.length} timesheets loaded.{' '}
-                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="text-info underline">Reload</button>
+                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="min-h-11 px-2 text-primary underline">Reload</button>
                   </p>
                   <div className="border border-border rounded-lg overflow-x-auto">
                     <table className="w-full text-sm">

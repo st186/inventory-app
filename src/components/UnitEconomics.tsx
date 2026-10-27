@@ -274,7 +274,7 @@ export function UnitEconomics({
                 type="button"
                 aria-pressed={basis === key}
                 onClick={() => setBasis(key)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${basis === key ? 'bg-surface text-info' : 'text-text-2 hover:text-text'}`}
+                className={`min-h-11 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${basis === key ? 'bg-surface text-text shadow-e1' : 'text-text-2 hover:text-text'}`}
               >
                 {label}
               </button>

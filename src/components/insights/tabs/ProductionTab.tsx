@@ -723,7 +723,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds)));
  setShowStockAlertModal(true);
  }}
- className="px-4 py-2 text-text rounded-lg transition-all flex items-center gap-2 bg-surface border border-border"
+ className="min-h-11 px-4 py-2 text-text rounded-md transition-colors flex items-center gap-2 bg-surface border border-border-strong hover:bg-surface-2"
  title="Configure Stock Alert Thresholds"
  >
  <Settings className="w-5 h-5" />
@@ -736,7 +736,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  setTempMomosPerPlate(momosPerPlate);
  setShowPlateSettingsModal(true);
  }}
- className="px-4 py-2 text-text rounded-lg transition-all flex items-center gap-2 bg-surface border border-border"
+ className="min-h-11 px-4 py-2 text-text rounded-md transition-colors flex items-center gap-2 bg-surface border border-border-strong hover:bg-surface-2"
  title="Configure Momos Per Plate"
  >
  <Settings className="w-5 h-5" />
@@ -1792,7 +1792,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
  <button
  key={filter}
  onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
- className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+ className={`min-h-11 px-3 py-1.5 rounded-md text-sm transition-colors ${
  wastageTimeFilter === filter
  ? 'bg-primary-soft text-primary border-primary'
  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
