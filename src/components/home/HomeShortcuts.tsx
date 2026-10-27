@@ -1,6 +1,6 @@
-// Stub (WP0b): one-tap links to the day's main places for this login, built from the navigation,
-// until WP1 replaces the Home screens with the "Today" checklist and attention list.
-import { useEffect, useRef } from 'react';
+// One-tap links to the day's main places for this login, built from the navigation. The Home
+// screens now lead with their checklist / attention list instead; the shell's role preview still
+// lists these under its Home placeholder.
 import { ListGroup, ListRow } from '../ui/list-row';
 import { useT } from '../../utils/i18n';
 import { useShell } from '../shell/ShellContext';
@@ -26,15 +26,8 @@ export function HomeShortcuts({ extra = [] }: { extra?: string[] }) {
   );
 }
 
-/** Scrolls the profile card into view when Home opens from Account > Complete your profile. */
-export function useFocusProfile() {
+/** True when Home was opened from Account > Complete your profile (#/home?focus=profile): Home then opens the profile sheet. */
+export function useFocusProfile(): boolean {
   const { router } = useShell();
-  const ref = useRef<HTMLDivElement>(null);
-  const focus = router.route.params.focus;
-  useEffect(() => {
-    if (focus !== 'profile') return;
-    const timer = setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
-    return () => clearTimeout(timer);
-  }, [focus]);
-  return ref;
+  return router.route.params.focus === 'profile';
 }
