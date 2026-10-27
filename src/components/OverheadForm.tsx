@@ -6,6 +6,7 @@ import { X, Loader2 } from 'lucide-react';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
 import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
+import { AssetHint } from './assets/AssetHint';
 import type { CashCover } from '../utils/cashSource';
 
 type Props = {
@@ -326,6 +327,7 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
                 suggestions={descriptionSuggestions}
                 required
               />
+              <AssetHint name={formData.description} category={formData.category} source="overhead" date={selectedDate} />
             </div>
           )}
 
