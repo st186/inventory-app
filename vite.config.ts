@@ -77,6 +77,10 @@
           // toasts and Capacitor's core) get a 'vendor' chunk - otherwise they'd land in the
           // recharts chunk and every screen would download the charts.
           manualChunks(id) {
+            // The re-export list the lazy chart loader imports (components/charts) rides with
+            // recharts itself; on its own Rollup could pack unrelated shared code beside it and
+            // the home screen would then load the charts through that.
+            if (/[\\/]components[\\/]charts[\\/]rechartsParts\.ts$/.test(id)) return 'recharts';
             if (!id.includes('node_modules')) return;
             if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|victory-vendor|d3-[^\\/]+)[\\/]/.test(id)) return 'recharts';
             if (/[\\/]node_modules[\\/]xlsx[\\/]/.test(id)) return 'xlsx';

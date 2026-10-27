@@ -1,40 +1,51 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { TrendingUp, TrendingDown, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus, BarChart3, Wallet, ChevronDown, ChevronUp, ChevronRight, Clock, CalendarDays, Smartphone, Briefcase, Receipt, Zap, Home, Target, AlertTriangle, XCircle, Percent } from 'lucide-react';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, TooltipProps, LineChart, Line, ReferenceLine, ComposedChart, AreaChart, Area } from 'recharts';
+import type { TooltipProps } from 'recharts';
+// Charts come through lazyRecharts so the overview's numbers paint before the ~430 KB chart
+// library has loaded; every chart below sits inside a <LazyChart> render function.
+import { LazyChart, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceLine, ComposedChart, AreaChart, Area } from './charts/lazyRecharts';
 import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
 import { formatDateTimeIST, formatDateIST, getTodayIST, addDays, utcToIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
 import { employeeBelongsToStore } from '../utils/entityAccess';
-import { SalaryBreakdownModal } from './SalaryBreakdownModal';
 import { BunnyLanguagePicker } from './BunnyLanguagePicker';
 import { setScreenTab } from '../utils/screenContext';
-import { CommissionBreakdownModal, InterestBreakdownModal } from './CostBreakdownModals';
 import { buildSmoothedCosts } from '../utils/dailyCostSmoothing';
 import { buildSalaryBreakdown, monthAdd, monthLabel } from '../utils/salaryBreakdown';
-import { DataCapture } from './DataCapture';
-import { ProductionRequests } from './ProductionRequests';
-import { SalesData as SalesDataComponent } from './SalesData';
-import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { DatePicker } from './DatePicker';
-import { RecalibrationReports } from './RecalibrationReports';
-import { StockAnalysis } from './StockAnalysis';
 import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, costBucketFor, canonicalCategory, expenseCategoryLabel, isSpreadCategory, isDatedProfitCost } from '../utils/inventoryData';
 import { buildSpreadCosts } from '../utils/spreadCosts';
 import { buildOnlineCostIndex, onlineCostsForRange } from '../utils/onlineCosts';
-import { UnitEconomics, normalizePnl, type PnlBreakdown, type CostLineKey } from './UnitEconomics';
+import { normalizePnl, type PnlBreakdown, type CostLineKey } from './unitEconomicsModel';
 import { buildPnl } from '../utils/pnl';
 import { DailyBriefCard } from './insights/DailyBriefCard';
 import { ForecastCard } from './insights/ForecastCard';
-import { TrendsGrowth } from './insights/TrendsGrowth';
 import { useInsightsOverview } from './insights/useInsightsOverview';
-import { CostLineModal, type CostLineGroup } from './CostLineModal';
+import type { CostLineGroup } from './CostLineModal';
 import { counterValueByChannel } from '../utils/channelFoodValue';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { logger } from '../utils/logger';
-import { ExpenseBreakdownModal } from './ExpenseBreakdownModal';
 import { getSettlementPeriod, settlementOverlapsPeriod } from '../utils/settlementPeriod';
 import { MOMO_TYPES, ALL_POOL_IDS, getPoolLabel } from '../constants/momoTypes';
+import { SectionSkeleton, ModalSkeleton } from './LoadingSkeleton';
+
+// Every tab other than the overview, and every pop-up, loads its own code the first time it
+// is opened - the owner/manager home screen used to carry all of them (and the chart and
+// spreadsheet libraries behind them) before it could show anything.
+const DataCapture = lazy(() => import('./DataCapture').then((m) => ({ default: m.DataCapture })));
+const ProductionRequests = lazy(() => import('./ProductionRequests').then((m) => ({ default: m.ProductionRequests })));
+const SalesDataComponent = lazy(() => import('./SalesData').then((m) => ({ default: m.SalesData })));
+const MonthlyStockRecalibration = lazy(() => import('./MonthlyStockRecalibration').then((m) => ({ default: m.MonthlyStockRecalibration })));
+const RecalibrationReports = lazy(() => import('./RecalibrationReports').then((m) => ({ default: m.RecalibrationReports })));
+const StockAnalysis = lazy(() => import('./StockAnalysis').then((m) => ({ default: m.StockAnalysis })));
+const UnitEconomics = lazy(() => import('./UnitEconomics').then((m) => ({ default: m.UnitEconomics })));
+const TrendsGrowth = lazy(() => import('./insights/TrendsGrowth').then((m) => ({ default: m.TrendsGrowth })));
+const SalaryBreakdownModal = lazy(() => import('./SalaryBreakdownModal').then((m) => ({ default: m.SalaryBreakdownModal })));
+const CommissionBreakdownModal = lazy(() => import('./CostBreakdownModals').then((m) => ({ default: m.CommissionBreakdownModal })));
+const InterestBreakdownModal = lazy(() => import('./CostBreakdownModals').then((m) => ({ default: m.InterestBreakdownModal })));
+const CostLineModal = lazy(() => import('./CostLineModal').then((m) => ({ default: m.CostLineModal })));
+const ExpenseBreakdownModal = lazy(() => import('./ExpenseBreakdownModal').then((m) => ({ default: m.ExpenseBreakdownModal })));
 
 interface AnalyticsProps {
  context: InventoryContextType;
@@ -466,6 +477,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  !effectiveStoreId || s.storeId === effectiveStoreId
  );
  }, [context.categorySalesData, effectiveStoreId]);
+ // Kept stable between renders so the SLA tab doesn't redo its work on every small change here.
+ const stockAnalysisStoreIds = useMemo(
+ () => (effectiveStoreId ? [effectiveStoreId] : (context.stores || []).map((st) => st.id)),
+ [effectiveStoreId, context.stores]
+ );
 
  // DEBUG: Log the effective store ID being used
  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
@@ -4067,6 +4083,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  : <>Showing every cost on the day it was paid.</>}
  </p>
  <div className="min-w-[260px]">
+ <LazyChart height={300}>{() => (
  <ResponsiveContainer width="100%" height={300}>
  <LineChart data={profitChartData.map((item, index) => ({ ...item, id: `profit-${item.date}-${index}`, key: `data-${index}` }))}>
  <CartesianGrid key="profit-line-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -4085,6 +4102,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line key="profit-line" type="monotone" dataKey="profit" stroke="#3b82f6" strokeWidth={2.5} name="Profit" dot={{ fill: '#3b82f6', r: 4 }} />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  </div>
 
@@ -4098,6 +4116,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </div>
  {profitChartData.length > 0 ? (
  <>
+ <LazyChart height={200}>{() => (
  <ResponsiveContainer width="100%" height={200}>
  <BarChart data={profitChartData.map((item, index) => ({ ...item, uniqueKey: `profit-bar-${item.date}-${index}` }))}>
  <CartesianGrid key="daily-profit-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -4113,6 +4132,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar key="profit-bar" dataKey="profit" fill="#10b981" name="Daily Profit" radius={[4, 4, 0, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  <div className="mt-4 grid grid-cols-2 gap-3">
  <div className="bg-green-50 p-3 rounded-lg">
  <div className="text-xs text-gray-600 mb-1">Best Day</div>
@@ -4147,6 +4167,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Commission % Trend
  </h3>
  {commissionAdSpendChartData.length > 0 ? (
+ <LazyChart height={220}>{() => (
  <ResponsiveContainer width="100%" height={220}>
  <LineChart data={commissionAdSpendChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -4156,6 +4177,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="commissionPct" stroke="#f97316" strokeWidth={2} name="Commission %" dot={{ r: 3 }} />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  ) : (
  <div className="text-center text-gray-500 py-8 text-sm">No settlements in this period</div>
  )}
@@ -4167,6 +4189,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Ad Spend Trend
  </h3>
  {commissionAdSpendChartData.length > 0 ? (
+ <LazyChart height={220}>{() => (
  <ResponsiveContainer width="100%" height={220}>
  <BarChart data={commissionAdSpendChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -4176,6 +4199,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="adSpend" fill="#0ea5e9" name="Ad Spend" radius={[4, 4, 0, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  ) : (
  <div className="text-center text-gray-500 py-8 text-sm">No settlements in this period</div>
  )}
@@ -4197,6 +4221,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Channel Mix Over Time
  </h3>
  {channelMixChartData.length > 0 ? (
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <BarChart data={channelMixChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -4209,6 +4234,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="Swiggy" stackId="channel" fill="#f97316" radius={[4, 4, 0, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  ) : (
  <div className="text-center text-gray-500 py-8 text-sm">No data available</div>
  )}
@@ -4381,6 +4407,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <TimeFilterBar value={timeFilterChoice} onChange={setTimeFilterChoice} range={customDateRange} onRangeChange={setDateRange} />
  </div>
  </div>
+ <Suspense fallback={<SectionSkeleton />}>
  <UnitEconomics
  pnl={pnl}
  periodLabel={getPeriodLabel()}
@@ -4398,6 +4425,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  normalizedEstimate={fixedCostAccrual?.estimatedAmount || 0}
  defaultBasis={lastDay >= getTodayIST() ? 'normalized' : 'paid'}
  />
+ </Suspense>
  </div>
  );
  })()}
@@ -4484,6 +4512,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Expenses as % of Revenue
  </h3>
  {profitChartData.length > 0 ? (
+ <LazyChart height={240}>{() => (
  <ResponsiveContainer width="100%" height={240}>
  <LineChart data={profitChartData.map(d => ({ ...d, expensePct: d.revenue > 0 ? Math.round((d.expenses / d.revenue) * 1000) / 10 : 0 }))}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -4493,6 +4522,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="expensePct" stroke="#e11d48" strokeWidth={2} name="Expenses % of Revenue" dot={{ r: 3 }} />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  ) : (
  <div className="text-center text-gray-500 py-8 text-sm">No data available</div>
  )}
@@ -4506,6 +4536,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="relative mb-8">
  <div className="relative bg-white rounded-2xl p-3 sm:p-8 shadow-sm border border-gray-100">
  <div className="relative">
+ <LazyChart height={320}>{() => (
  <ResponsiveContainer width="100%" height={320}>
  <PieChart key="expense-breakdown-pie-chart">
  <defs key="expense-pie-defs">
@@ -4542,6 +4573,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Tooltip key="expense-pie-tooltip" content={<CustomPieTooltip />} />
  </PieChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  {/* Center summary */}
  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
  <p className="text-xs text-gray-500">Total expenses</p>
@@ -4923,6 +4955,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {metrics.fixedCostsTotal > 0 ? (
  <div className="overflow-x-auto">
  <div className="min-w-[260px]">
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <BarChart
  data={[
@@ -4947,6 +4980,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </Bar>
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  </div>
  ) : (
@@ -5016,6 +5050,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {cashReconciliationChartData.length === 0 ? (
  <div className="text-sm text-gray-500 py-8 text-center">No sales data for this period.</div>
  ) : (
+ <LazyChart height={300}>{() => (
  <ResponsiveContainer width="100%" height={300}>
  <BarChart data={cashReconciliationChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5027,6 +5062,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="Paytm Offset" fill="#f59e0b" radius={[4, 4, 0, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  )}
  </div>
 
@@ -5152,6 +5188,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </h3>
  <div className="overflow-x-auto">
  <div className="min-w-[260px]">
+ <LazyChart height={300}>{() => (
  <ResponsiveContainer width="100%" height={300}>
  <BarChart data={salesChartData.map((item, index) => ({ ...item, uniqueKey: `sales-${item.period}-${index}` }))} barCategoryGap="25%">
  <CartesianGrid key="sales-channel-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -5164,6 +5201,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line key="total-line" type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} dot={{ fill: '#f59e0b', r: 5 }} name="Total Sales Trend" />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  </div>
  </div>
@@ -5255,6 +5293,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {dayCount > 1 && (
  <div className="p-3 rounded-lg border border-gray-100">
  <div className="text-xs text-gray-500 mb-2">Revenue trend, {getPeriodLabel()}</div>
+ <LazyChart height={64}>{() => (
  <ResponsiveContainer width="100%" height={64}>
  <AreaChart data={profitChartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
  <defs>
@@ -5267,6 +5306,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Area type="monotone" dataKey="revenue" stroke="#f97316" strokeWidth={2} fill="url(#perfInsightRevenueFill)" />
  </AreaChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  )}
  </>
@@ -5292,6 +5332,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {itemPerformanceData.top10.length === 0 ? (
  <div className="text-sm text-gray-500 py-8 text-center">No item sales data for this period.</div>
  ) : (
+ <LazyChart height={420}>{() => (
  <ResponsiveContainer width="100%" height={420}>
  <BarChart data={itemPerformanceData.top10} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }} barCategoryGap={10}>
  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -5301,6 +5342,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={16} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  )}
  </div>
 
@@ -5310,6 +5352,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {itemPerformanceData.top10.length === 0 ? (
  <div className="text-sm text-gray-500 py-8 text-center">No item sales data for this period.</div>
  ) : (
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <BarChart data={itemPerformanceData.top10.slice(0, 5)} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }} barCategoryGap={14}>
  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -5322,6 +5365,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="Swiggy" stackId="ch" fill="#f97316" opacity={0.5} barSize={14} radius={[0, 4, 4, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  )}
  </div>
  </div>
@@ -5358,7 +5402,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </div>
  )}
 
+ <Suspense fallback={<SectionSkeleton />}>
  <SalesDataComponent context={context} selectedStoreId={effectiveStoreId} />
+ </Suspense>
  </div>
  )}
  </div>
@@ -5457,6 +5503,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Revenue & Profit Trend
  </h3>
  <p className="text-xs text-gray-500 mb-3">Dotted lines are the matching previous period (same weekday/week/date-of-month, depending on the filter above)</p>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <LineChart data={profitChartDataWithPrev}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5472,6 +5519,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_profit" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="4 3" name="Profit (prev period)" dot={false} connectNulls />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  {/* Orders per Day - offline (POS) vs Zomato vs Swiggy order counts, from real per-order
@@ -5502,6 +5550,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </span>
  </div>
  <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={ordersPerDayChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5519,6 +5568,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <ReferenceLine y={onlineOrdersMedian} stroke="#6366f1" strokeDasharray="6 4" strokeWidth={2} ifOverflow="extendDomain" />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-100">
  <div className="text-center">
  <p className="text-xs text-gray-500 uppercase tracking-wide">Offline</p>
@@ -5555,6 +5605,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <p className="text-sm text-gray-500 py-8 text-center">No hourly order data yet - this fills in from today's sync onward.</p>
  ) : (
  <>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={ordersByHourChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5568,6 +5619,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_online" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4 3" name="Online (prev period)" dot={false} connectNulls />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  {peakHour && (
  <p className="text-sm text-gray-700 mt-4 pt-4 border-t border-gray-100 text-center">
  <span className="font-semibold text-indigo-600">Peak: {peakHour.label}</span>{' '}
@@ -5593,6 +5645,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
  <div className="lg:col-span-2">
  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Orders per day · dotted = previous period</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <ComposedChart data={serviceTypeChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5608,9 +5661,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_HomeDelivery" stroke="#8b5cf6" strokeWidth={1.5} strokeDasharray="4 3" name="Delivery (prev)" dot={false} connectNulls />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  <div>
  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Revenue share (period)</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <PieChart>
  <Pie
@@ -5633,6 +5688,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
  </PieChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  </div>
  )}
@@ -5650,6 +5706,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  ) : (
  <>
  <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={avgOrderValueChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5663,6 +5720,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_onlineAOV" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4 3" name="Online AOV (prev)" dot={false} connectNulls />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </>
  )}
  </div>
@@ -5680,6 +5738,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  ) : (
  <>
  <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={discountPctChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5693,6 +5752,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_onlinePct" stroke="#e11d48" strokeWidth={1.5} strokeDasharray="4 3" name="Online discount % (prev)" dot={false} connectNulls />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </>
  )}
  </div>
@@ -5711,6 +5771,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <p className="text-sm text-gray-500 py-8 text-center">No payment-mode data yet - this fills in from today's sync onward.</p>
  ) : (
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <PieChart>
  <Pie data={paymentModeBreakdownData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={(entry: any) => entry.name}>
@@ -5719,6 +5780,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
  </PieChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  <div className="space-y-2">
  {paymentModeBreakdownData.map((d) => (
  <div key={d.name} className="flex items-center justify-between text-sm">
@@ -5746,6 +5808,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  ) : (
  <>
  <p className="text-xs text-gray-500 mb-2">Dotted lines are the matching previous period</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <ComposedChart data={cancellationChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5759,6 +5822,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_onlineCancelled" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" name="Online cancelled (prev)" dot={false} connectNulls />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  <p className="text-sm text-gray-700 mt-4 pt-4 border-t border-gray-100 text-center">
  Total value cancelled: <span className="font-semibold text-red-600">₹{cancellationTrendData.reduce((s, d) => s + d.cancelledAmount, 0).toLocaleString()}</span>
  </p>
@@ -5790,6 +5854,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Most common band <span className="font-semibold text-purple-700">{orderValueHistogramData.modalBucket.label}</span> ({orderValueHistogramData.modalBucket.current.toLocaleString()} orders)
  </span>
  </div>
+ <LazyChart height={300}>{() => (
  <ResponsiveContainer width="100%" height={300}>
  <BarChart data={orderValueHistogramData.rows}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -5801,6 +5866,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar dataKey="previous" name="Previous period" fill="#d8b4fe" radius={[4, 4, 0, 0]} />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </>
  )}
  </div>
@@ -5819,7 +5885,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </button>
  {showActivityLog && (
  <div className="px-4 sm:px-6 pb-4 sm:pb-6">
+ <Suspense fallback={<SectionSkeleton minHeight={240} />}>
  <DataCapture context={context} selectedStoreId={selectedStoreId} />
+ </Suspense>
  </div>
  )}
  </div>
@@ -6331,6 +6399,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {/* Daily output mix, stacked by momo type */}
  <div className="bg-gray-50 rounded-lg p-4">
  <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Output by Momo Type</h3>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -6344,12 +6413,14 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_totalFinal" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  {/* Period share by momo type */}
  <div className="bg-gray-50 rounded-lg p-4">
  <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Production Mix (This Period)</h3>
  {hasAnyOutput ? (
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <PieChart>
  <Pie data={periodMix.filter(m => m.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={95} label={(entry: any) => `${entry.name}: ${entry.value}`}>
@@ -6361,6 +6432,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Legend content={renderPrevAwareLegend} />
  </PieChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  ) : (
  <div className="h-[280px] flex items-center justify-center text-sm text-gray-500">No production logged for this period</div>
  )}
@@ -6370,6 +6442,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="bg-gray-50 rounded-lg p-4">
  <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Raw Material Yield</h3>
  <p className="text-xs text-gray-500 mb-3">Pieces produced per kg of raw material used (dough+stuffing for momos, batter+coating for kurkure) · higher is more efficient</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -6383,6 +6456,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_kurkureYield" name="Kurkure yield (previous period)" stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  {/* Wastage rate as a % of total raw material, so it's comparable across days
@@ -6390,6 +6464,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="bg-gray-50 rounded-lg p-4">
  <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1">Wastage Rate</h3>
  <p className="text-xs text-gray-500 mb-3">Wasted raw material as a % of total raw material used that day · lower is better</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={outputChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -6401,6 +6476,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_wastagePct" name="Wastage % (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  </div>
  </div>
@@ -6497,6 +6573,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
  <div className="bg-gray-50 rounded-lg p-4">
  <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-4">Daily Usage by Type</h3>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={sauceChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -6510,6 +6587,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_totalSauce" name="Total (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  <div className="bg-gray-50 rounded-lg p-4">
@@ -6599,6 +6677,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </h2>
  <p className="text-sm text-gray-600">Total pieces produced by day of week, summed across the selected date range · dotted line is the matching previous period</p>
  </div>
+ <LazyChart height={280}>{() => (
  <ResponsiveContainer width="100%" height={280}>
  <ComposedChart data={weekdayChartData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -6610,6 +6689,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_totalFinal" name="Pieces produced (previous period)" stroke="#334155" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
  </ComposedChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  );
  })()}
@@ -7512,6 +7592,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  ))}
  </select>
  </div>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={trendData}>
  <CartesianGrid strokeDasharray="3 3" />
@@ -7524,6 +7605,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey={`${activePoolId}_closing`} name="Closing (counted)" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  {actualYieldRows.length > 0 && (
@@ -7677,6 +7759,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4 mb-6">
  <h3 className="text-gray-900 font-bold mb-1">Daily Wastage Trend</h3>
  <p className="text-xs text-gray-600 mb-3">Total kg wasted per day for the selected date range · dotted line is the matching previous period</p>
+ <LazyChart height={260}>{() => (
  <ResponsiveContainer width="100%" height={260}>
  <LineChart data={wastageChartData}>
  <CartesianGrid strokeDasharray="3 3" stroke="#fca5a5" />
@@ -7688,6 +7771,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Line type="monotone" dataKey="prev_wastage" name="Wastage (previous period)" stroke="#dc2626" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
  </LineChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
  );
  })()}
@@ -7715,6 +7799,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </div>
  </div>
 
+ <LazyChart height={400}>{() => (
  <ResponsiveContainer width="100%" height={400}>
  <BarChart data={(() => {
  // Use consistent production house filtering logic
@@ -7816,6 +7901,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  <Bar key="coating-bar" dataKey="coating" name="Coating" fill="#14b8a6" />
  </BarChart>
  </ResponsiveContainer>
+ )}</LazyChart>
  </div>
 
  {/* SOP Maintenance Section - Cluster Head Only */}
@@ -8252,18 +8338,22 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Items" in the Store Stock Status card. */}
  {activeView === 'production-requests' && (
  <div>
+ <Suspense fallback={<SectionSkeleton />}>
  <ProductionRequests
  context={context}
  highlightRequestId={highlightRequestId || null}
  selectedStoreId={effectiveStoreId}
  onNavigateToManageItems={onNavigateToManageItems}
  />
+ </Suspense>
  </div>
  )}
 
  {/* Trends & Growth - weekday pattern, item mix, festival effects, calendar, AI growth ideas */}
  {activeView === 'trends' && analyticsMode === 'store' && (
+ <Suspense fallback={<SectionSkeleton />}>
  <TrendsGrowth accessToken={context.user?.accessToken || ''} storeId={insightsStoreId} canManage={canManageInsights} />
+ </Suspense>
  )}
 
  {/* Store-Production SLA Analysis View - its own top-level Store Analytics tab (not a modal
@@ -8271,13 +8361,15 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  production requests. */}
  {activeView === 'stock-request-analysis' && (
  <div>
+ <Suspense fallback={<SectionSkeleton />}>
  <StockAnalysis
  requests={stockAnalysisRequests}
  finishedProducts={stockAnalysisFinishedProducts}
  salesData={stockAnalysisSalesData}
- storeIds={effectiveStoreId ? [effectiveStoreId] : (context.stores || []).map((st) => st.id)}
+ storeIds={stockAnalysisStoreIds}
  accessToken={context.user?.accessToken}
  />
+ </Suspense>
  </div>
  )}
 
@@ -8285,17 +8377,20 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  Requests sub-tab above - this is the production-house side, still its own tab) */}
  {activeView === 'recalibration-reports' && (
  <div>
+ <Suspense fallback={<SectionSkeleton />}>
  <RecalibrationReports
  context={context}
  selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : selectedStoreId}
  onOpenRecalibration={() => setShowRecalibration(true)}
  locationType="production_house"
  />
+ </Suspense>
  </div>
  )}
- 
+
  {/* Monthly Stock Recalibration Modal */}
  {showRecalibration && (
+ <Suspense fallback={<ModalSkeleton />}>
  <MonthlyStockRecalibration
  context={context}
  selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : effectiveStoreId}
@@ -8325,6 +8420,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  }}
  isProductionHouse={analyticsMode === 'production'}
  />
+ </Suspense>
  )}
 
  {/* Stock Alert Thresholds Modal */}
@@ -8722,7 +8818,9 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </div>
  )}
 
- {/* Expense Breakdown Modal */}
+ {/* Expense Breakdown Modal (only one of these is ever open, so they share one loading
+ fallback while the chosen pop-up's code arrives) */}
+ <Suspense fallback={<ModalSkeleton />}>
  {selectedExpenseCategory && selectedExpenseCategory.type === 'salary' && (
  <SalaryBreakdownModal
  totalAmount={selectedExpenseCategory.amount}
@@ -8772,6 +8870,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  onClose={() => setSelectedExpenseCategory(null)}
  />
  )}
+ </Suspense>
  </div>
  );
 }

@@ -5,26 +5,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Scale, Info, ChevronRight } from 'lucide-react';
-import type { PnlBreakdown } from '../utils/pnl';
+import type { PnlBreakdown, CostLineKey, UnitEconomicsTrendPoint } from './unitEconomicsModel';
 
-// The P&L shape now lives with the one function that builds it (utils/pnl.ts); re-exported so
-// existing imports from here keep working.
-export type { PnlBreakdown };
-
-// Swap month-end salaries, rent and electricity for their day-by-day share of the period
-// (utils/dailyCostSmoothing.ts), so a month in progress isn't flattered by bills not yet paid.
-export function normalizePnl(p: PnlBreakdown, accrued: { staff: number; occupancy: number }): PnlBreakdown {
-  const staff = p.staff - (p.staffSmoothable || 0) + accrued.staff;
-  const occupancy = p.occupancy - (p.occupancySmoothable || 0) + accrued.occupancy;
-  return { ...p, staff, occupancy, netProfit: p.netProfit - (staff - p.staff) - (occupancy - p.occupancy) };
-}
-
-// Cost lines on the ladder that open a detail view when tapped.
-export type CostLineKey =
-  | 'food' | 'packaging' | 'commission' | 'ads' | 'marketing' | 'staff'
-  | 'occupancy' | 'otherOpex' | 'depreciation' | 'interest' | 'shortages';
-
-export type UnitEconomicsTrendPoint = { month: string; label: string; partial: boolean; pnl: PnlBreakdown };
+// The P&L shape lives with the one function that builds it (utils/pnl.ts), and the smoothing
+// and cost-line keys in unitEconomicsModel.ts (Analytics needs them without loading this
+// screen); re-exported so existing imports from here keep working.
+export type { PnlBreakdown, CostLineKey, UnitEconomicsTrendPoint };
+export { normalizePnl } from './unitEconomicsModel';
 
 type Props = {
   pnl: PnlBreakdown;
