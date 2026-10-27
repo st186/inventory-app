@@ -1,16 +1,34 @@
+// Insights > Items > daily sales data: momo pieces sold by type (from the POS sync or an
+// uploaded sales file), the price each channel really pays per piece, the weekly pattern and
+// the day records. Layout: one primary action (Sync from POS for the cluster head, Upload for
+// everyone else) with the rest in the overflow menu, a period chip, then headline → chart →
+// breakdown list. Long explanations sit behind "How it works"; tables only from 1024 px.
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from './ui/button';
 import { Callout } from './ui/callout';
+import { Card } from './ui/card';
 import { confirm } from './ui/confirm';
+import { FilterChips } from './ui/chip';
+import { EmptyState } from './ui/empty-state';
+import { Field, controlClasses } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { formatNumberIN } from './ui/money';
 import { ResponsiveModal } from './ui/responsive-modal';
-import { Upload, Calendar, TrendingUp, Package, Trash2, Download, FileSpreadsheet, CheckCircle, AlertCircle, BarChart3, Settings, TrendingDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { Delayed, SkeletonListRows, SkeletonStatTile } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { cn } from './ui/utils';
+import { addDaysISO, friendlyDateLabel, presetLabel, shortDateLabel, type RangePreset } from './ui/date-utils';
+import { Upload, Calendar, TrendingUp, Trash2, FileSpreadsheet, Settings, ArrowUp, ArrowDown, RefreshCw, Plus, Tags, Loader2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { DatePicker } from './DatePicker';
 import { getAssignedStoreIds } from '../utils/entityAccess';
 import { getTodayIST } from '../utils/timezone';
+import { useT } from '../utils/i18n';
+import { HowItWorks, MiniFigures, OverflowMenu, PeriodChip, SectionHeading } from './insights/parts/common';
+import { CHART_COLORS, ChartCard, TrendChart, legendFor } from './insights/tabs/shared';
 
 interface SalesDataProps {
   context: InventoryContextType;
@@ -95,6 +113,17 @@ interface SalesRecord {
 
 type TimeFilter = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'lastYear' | 'custom';
 
+// The shared period chip's presets mapped onto this screen's own filter keys (the screen keeps
+// its own date maths). "Previous week" and "Last year" aren't chip presets; a custom range
+// covers them.
+const SALES_PERIOD_OPTIONS: Partial<Record<RangePreset, TimeFilter>> = {
+  today: 'today', yesterday: 'yesterday', thisWeek: 'thisWeek', thisMonth: 'thisMonth', lastMonth: 'previousMonth', thisYear: 'thisYear', custom: 'custom',
+};
+const RECORDS_SHOWN = 10;
+const RECORDS_PERIOD_OPTIONS: Partial<Record<RangePreset, TimeFilter>> = {
+  today: 'today', yesterday: 'yesterday', thisWeek: 'thisWeek', thisMonth: 'thisMonth', lastMonth: 'previousMonth', custom: 'custom',
+};
+
 // Default pieces per plate for each momo type
 const DEFAULT_PIECES_PER_PLATE: Record<keyof CategoryData, number> = {
   'Chicken Momos': 6,
@@ -117,6 +146,10 @@ const DEFAULT_PRICE_PER_PLATE: Record<keyof CategoryData, number> = {
 };
 
 export function SalesData({ context, selectedStoreId }: SalesDataProps) {
+  const { t, lang } = useT();
+  const [showUpload, setShowUpload] = useState(false);
+  const [openRecordId, setOpenRecordId] = useState<string | null>(null);
+  const [showAllRecords, setShowAllRecords] = useState(false);
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -648,6 +681,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       await api.saveSalesData(record, context.user?.accessToken || '');
 
       toast.success(`Sales data uploaded for ${finalDate}`);
+      setShowUpload(false);
 
       // Reload data
       await loadSalesData();
@@ -680,19 +714,6 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
   const getTotalPieces = (data: CategoryData): number => {
     return Object.values(data).reduce((sum, val) => sum + val, 0);
-  };
-
-  const getChartColor = (index: number): string => {
-    const colors = [
-      'var(--danger)', // red - Chicken Momos
-      'var(--chart-1)', // orange - Chicken Cheese Momos
-      'var(--chart-2)', // green - Veg Momos
-      'var(--chart-4)', // blue - Paneer Momos
-      'var(--chart-3)', // yellow - Corn Cheese Momos
-      'var(--chart-2)', // purple - Chicken Kurkure Momos
-      'var(--chart-4)'  // cyan - Veg Kurkure Momos
-    ];
-    return colors[index % colors.length];
   };
 
   // Helper to get readable filter label
@@ -880,1386 +901,1069 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     };
   };
 
+  // ---- Figures for the screen: the same calculations as before, worked out once here --------
+  const CATEGORY_LIST = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
+  const presetOfFilter = (Object.entries(SALES_PERIOD_OPTIONS) as [RangePreset, TimeFilter][]).find(([, f]) => f === timeFilter)?.[0];
+  const periodName = timeFilter === 'custom'
+    ? `${shortDateLabel(dateRange.from, lang)} – ${shortDateLabel(dateRange.to, lang)}`
+    : presetOfFilter ? presetLabel(presetOfFilter, lang) : getFilterLabel(timeFilter);
+
+  // Sales trends by category: this period vs the matching period before.
+  const trend = (() => {
+    const categories = CATEGORY_LIST;
+
+    // Get date ranges for current and comparison periods
+    const currentRange = getDateRange(timeFilter, dateRange);
+    const comparisonRange = getComparisonRange(timeFilter, dateRange);
+
+    // Calculate totals for current period
+    const currentTotals: Record<string, number> = {};
+    categories.forEach(cat => currentTotals[cat] = 0);
+
+    salesRecords.forEach(r => {
+      if (r.date >= currentRange.start && r.date <= currentRange.end) {
+        Object.entries(r.data).forEach(([category, count]) => {
+          if (category in currentTotals) {
+            currentTotals[category] += count;
+          }
+        });
+      }
+    });
+
+    // Calculate totals for comparison period
+    const comparisonTotals: Record<string, number> = {};
+    categories.forEach(cat => comparisonTotals[cat] = 0);
+
+    salesRecords.forEach(r => {
+      if (r.date >= comparisonRange.start && r.date <= comparisonRange.end) {
+        Object.entries(r.data).forEach(([category, count]) => {
+          if (category in comparisonTotals) {
+            comparisonTotals[category] += count;
+          }
+        });
+      }
+    });
+
+    const rows = categories.map((category) => {
+      const current = currentTotals[category] || 0;
+      const previous = comparisonTotals[category] || 0;
+
+      // Calculate percentage change
+      let percentChange = 0;
+      if (previous > 0) {
+        percentChange = ((current - previous) / previous) * 100;
+      } else if (current > 0) {
+        percentChange = 100; // If no previous data but we have current, it's 100% increase
+      }
+      return { category, current, previous, percentChange };
+    });
+
+    return { currentRange, comparisonRange, rows };
+  })();
+
+  // Summary: total pieces, top category, average per record and the number of records.
+  const summary = (() => {
+    const categoryTotals: Record<string, number> = {
+      'Chicken Momos': 0,
+      'Chicken Cheese Momos': 0,
+      'Veg Momos': 0,
+      'Paneer Momos': 0,
+      'Corn Cheese Momos': 0,
+      'Chicken Kurkure Momos': 0,
+      'Veg Kurkure Momos': 0
+    };
+
+    // Same date-range function the category figures use.
+    const { start, end } = getDateRange(timeFilter, dateRange);
+    const filteredRecords = salesRecords.filter(r => r.date >= start && r.date <= end);
+
+    filteredRecords.forEach(r => {
+      Object.entries(r.data).forEach(([category, count]) => {
+        categoryTotals[category] += count;
+      });
+    });
+
+    const grandTotal = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
+    const topCategory = Object.entries(categoryTotals)
+      .sort((a, b) => b[1] - a[1])[0];
+    const avgPerRecord = filteredRecords.length > 0 ? Math.round(grandTotal / filteredRecords.length) : 0;
+    const previousTotal = trend.rows.reduce((s, r) => s + r.previous, 0);
+    return { grandTotal, topCategory, avgPerRecord, recordCount: filteredRecords.length, filteredRecords, previousTotal };
+  })();
+
+  // Pieces a day for the chart (whole months when the period is longer than two months), with
+  // the matching day of the period before as the dashed line.
+  const dailyChart = (() => {
+    const piecesOn = (date: string) => salesRecords
+      .filter(r => r.date === date)
+      .reduce((s, r) => s + Object.values(r.data).reduce((a, b) => a + (b || 0), 0), 0);
+    const days = (start: string, end: string) => {
+      const out: string[] = [];
+      let d = start;
+      let guard = 0;
+      while (d && d <= end && guard < 400) {
+        out.push(d);
+        d = addDaysISO(d, 1);
+        guard++;
+      }
+      return out;
+    };
+    const current = days(trend.currentRange.start, trend.currentRange.end);
+    if (current.length < 2) return { data: [] as any[], monthly: false };
+    if (current.length > 62) {
+      const byMonth = new Map<string, number>();
+      current.forEach(d => byMonth.set(d.slice(0, 7), (byMonth.get(d.slice(0, 7)) || 0) + piecesOn(d)));
+      return { data: [...byMonth.entries()].map(([m, pieces]) => ({ period: shortDateLabel(`${m}-01`, lang).replace(/^1 /, ''), pieces })), monthly: true };
+    }
+    const previous = days(trend.comparisonRange.start, trend.comparisonRange.end);
+    return {
+      data: current.map((d, i) => ({ period: shortDateLabel(d, lang), pieces: piecesOn(d), prev_pieces: previous[i] ? piecesOn(previous[i]) : null })),
+      monthly: false,
+    };
+  })();
+
+  // Revenue per item by channel - real per-menu-item price (not rolled up to just the 7 momo
+  // categories), split Offline vs Zomato vs Swiggy, from Ciferon's per-order item detail
+  // (Step D). Offline revenue is the item's real POS price (no commission to remove).
+  // Zomato/Swiggy revenue is each order's real net payout (from an uploaded settlement) split
+  // across its items proportional to their value share - i.e. already net of that order's
+  // discount and aggregator commission, not gross sale price.
+  type ChannelKey = 'Offline' | 'Zomato' | 'Swiggy';
+  const CHANNELS: ChannelKey[] = ['Offline', 'Zomato', 'Swiggy'];
+  const channelTable = (() => {
+    const settlementOrderMap = new Map<string, { grossValue: number; netPayout: number }>();
+    aggregatorSettlements.forEach(s => {
+      (s.orders || []).forEach(o => {
+        if (o.orderId) settlementOrderMap.set(String(o.orderId), { grossValue: o.grossValue, netPayout: o.netPayout });
+      });
+    });
+
+    // Ciferon's own OrderItemWrapperList names the SAME dish inconsistently - different
+    // word order ("Veg Steamed Momos" vs "Steamed Veg Momos"), different piece-count
+    // notation ("[6 Pieces]" vs "(6 Pieces)" vs none), and different channel/variant
+    // suffixes ("-O Normal" vs "-O Butter Brushed") - sometimes even under different
+    // underlying ProductIds for what's conceptually one dish, so catalog/ID-based
+    // matching alone can't unify them. For a plain style+filling momo (steamed, fried,
+    // peri peri, etc. - not a burger/platter/meal/combo, which are genuinely different
+    // products), rebuild the name from its classified category plus an
+    // order-independent style keyword search, so naming drift collapses to one name.
+    const isSpecialProduct = (name: string) =>
+      /burger|platter|meal|combo|mania|samosa|nugget|popcorn|fries|drink|cola|water|beverage|soup|mojito|mocktail|cake/i.test(name);
+
+    const extractMomoStyle = (nameLower: string): string | null => {
+      if (nameLower.includes('makhni') || nameLower.includes('makhani')) return 'Butter Makhni';
+      if (nameLower.includes('afghani')) return 'Afghani';
+      if (nameLower.includes('hot garlic')) return 'Hot Garlic';
+      if (nameLower.includes('korean')) return 'Spicy Korean';
+      if (nameLower.includes('chilli')) return 'Chilli';
+      if (nameLower.includes('peri peri')) return 'Peri Peri Fried';
+      if (nameLower.includes('pan fried')) return 'Pan Fried';
+      if (nameLower.includes('butter fried')) return 'Butter Fried';
+      if (nameLower.includes('jhol')) return 'Jhol';
+      if (nameLower.includes('kurkure')) return null; // already baked into the category name
+      if (nameLower.includes('fried')) return 'Fried';
+      if (nameLower.includes('steamed')) return 'Steamed';
+      return null;
+    };
+
+    // Product-type grouping (separate from momo category) so the list reads as sections:
+    // Momos, Meals, Mania Combos, Platter, Extras (burgers + anything else - drinks,
+    // desserts, addon lines).
+    type ItemGroup = 'Momos' | 'Meals' | 'Mania Combos' | 'Platter' | 'Extras';
+    const GROUP_ORDER: ItemGroup[] = ['Momos', 'Meals', 'Mania Combos', 'Platter', 'Extras'];
+    const classifyItemGroup = (productName: string): ItemGroup => {
+      const n = productName.toLowerCase();
+      if (n.includes('mania') && n.includes('combo')) return 'Mania Combos';
+      if (n.includes('meal')) return 'Meals';
+      if (n.includes('platter')) return 'Platter';
+      if (/burger|drink|cola|water|beverage|soup|mojito|mocktail|cake|samosa|nugget|popcorn|fries/i.test(n)) return 'Extras';
+      return 'Momos';
+    };
+
+    const nameByProductId = new Map(menuItemPrices.map(m => [String(m.productId), m.productName]));
+    const normalizeItemName = (productId: number | null, productName: string, category: string | null): string => {
+      if (category && !isSpecialProduct(productName)) {
+        const style = extractMomoStyle(productName.toLowerCase());
+        return style ? `${style} ${category}` : category;
+      }
+      if (productId !== null && nameByProductId.has(String(productId))) {
+        return nameByProductId.get(String(productId))!;
+      }
+      return productName
+        .replace(/\s*-\s*A$/i, '')
+        .replace(/\s*-\s*O\b.*$/i, '')
+        .replace(/\s*\[\s*\d+\s*pieces?\s*\]/i, '')
+        .replace(/\s*\(\s*\d+\s*pieces?\s*\)/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const itemStats = new Map<string, { category: string | null; group: ItemGroup } & Record<ChannelKey, { pieces: number; revenue: number }>>();
+    const ensure = (displayName: string, category: string | null, group: ItemGroup) => {
+      let entry = itemStats.get(displayName);
+      if (!entry) {
+        entry = { category, group, Offline: { pieces: 0, revenue: 0 }, Zomato: { pieces: 0, revenue: 0 }, Swiggy: { pieces: 0, revenue: 0 } };
+        itemStats.set(displayName, entry);
+      }
+      return entry;
+    };
+
+    let totalOnlineOrders = 0, matchedOnlineOrders = 0;
+
+    orderItemDetail.forEach(rec => {
+      rec.orders.forEach(order => {
+        const items = order.items.filter(i => i.category);
+        if (!order.externalId) {
+          // Offline - the item's own `total` is the real price paid, no commission involved.
+          items.forEach(item => {
+            const displayName = normalizeItemName(item.productId, item.productName, item.category);
+            const entry = ensure(displayName, item.category, classifyItemGroup(item.productName));
+            entry.Offline.pieces += item.quantity * extractPiecesPerUnit(item.productName);
+            entry.Offline.revenue += item.total;
+          });
+          return;
+        }
+
+        totalOnlineOrders++;
+        const settlementOrder = settlementOrderMap.get(order.externalId);
+        if (!settlementOrder) return; // no uploaded settlement covers this order yet
+        matchedOnlineOrders++;
+
+        const channel: ChannelKey = order.paymentMode === 'Swiggy' ? 'Swiggy' : 'Zomato';
+        const itemsWithValue = items.filter(i => i.total > 0);
+        const orderSubtotal = itemsWithValue.reduce((sum, i) => sum + i.total, 0);
+        if (orderSubtotal <= 0) return;
+
+        itemsWithValue.forEach(item => {
+          const displayName = normalizeItemName(item.productId, item.productName, item.category);
+          const entry = ensure(displayName, item.category, classifyItemGroup(item.productName));
+          const share = item.total / orderSubtotal;
+          entry[channel].pieces += item.quantity * extractPiecesPerUnit(item.productName);
+          entry[channel].revenue += settlementOrder.netPayout * share; // after discount + commission
+        });
+      });
+    });
+
+    const sortValue = (row: { Offline: { pieces: number }; Zomato: { pieces: number }; Swiggy: { pieces: number } }) => {
+      switch (itemChannelSort.col) {
+        case 'offline': return row.Offline.pieces;
+        case 'zomato': return row.Zomato.pieces;
+        case 'swiggy': return row.Swiggy.pieces;
+        default: return row.Offline.pieces + row.Zomato.pieces + row.Swiggy.pieces;
+      }
+    };
+
+    const allRows = Array.from(itemStats.entries())
+      .map(([productName, v]) => ({ productName, ...v }))
+      .filter(row => CHANNELS.some(ch => row[ch].pieces > 0));
+    const hasData = allRows.length > 0;
+
+    // Grouped into sections (Momos, Meals, Mania Combos, Platter, Extras), sorted
+    // independently within each group so the sort choice doesn't scramble the sections.
+    const groupedRows = GROUP_ORDER
+      .map(group => ({
+        group,
+        rows: allRows
+          .filter(row => row.group === group)
+          .sort((a, b) => itemChannelSort.dir === 'desc' ? sortValue(b) - sortValue(a) : sortValue(a) - sortValue(b)),
+      }))
+      .filter(g => g.rows.length > 0);
+
+    return { hasData, groupedRows, totalOnlineOrders, matchedOnlineOrders };
+  })();
+
+  const toggleSort = (col: typeof itemChannelSort.col) => {
+    setItemChannelSort(prev => prev.col === col ? { col, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' });
+  };
+
+  // Real order-level effective price - exact (not estimated) figures, joining Ciferon's
+  // per-order item detail (Step D, OrderReport/Sale) to an uploaded settlement's own per-order
+  // payout via ExternalId = the settlement's Order ID. Each order's real net payout is split
+  // across its line items proportional to their share of the order's value, then aggregated
+  // per momo type.
+  const orderLevel = (() => {
+    const categories = Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>;
+
+    const settlementOrderMap = new Map<string, { grossValue: number; netPayout: number }>();
+    aggregatorSettlements.forEach(s => {
+      (s.orders || []).forEach(o => {
+        if (o.orderId) settlementOrderMap.set(String(o.orderId), { grossValue: o.grossValue, netPayout: o.netPayout });
+      });
+    });
+
+    const catStats: Record<string, { pieces: number; grossValue: number; netPayout: number }> = {};
+    categories.forEach(cat => { catStats[cat] = { pieces: 0, grossValue: 0, netPayout: 0 }; });
+    let totalOnlineOrders = 0, matchedOrders = 0, offlineOrders = 0;
+
+    orderItemDetail.forEach(rec => {
+      rec.orders.forEach(order => {
+        if (!order.externalId) { offlineOrders++; return; } // offline order, no aggregator payout to join
+        totalOnlineOrders++;
+        const settlementOrder = settlementOrderMap.get(order.externalId);
+        if (!settlementOrder) return; // this order's aggregator settlement hasn't been uploaded yet
+        matchedOrders++;
+
+        const itemsWithValue = order.items.filter(i => i.category && i.total > 0);
+        const orderSubtotal = itemsWithValue.reduce((sum, i) => sum + i.total, 0);
+        if (orderSubtotal <= 0) return;
+
+        itemsWithValue.forEach(item => {
+          const cat = item.category as string;
+          if (!(cat in catStats)) return;
+          const share = item.total / orderSubtotal;
+          const pieces = item.quantity * extractPiecesPerUnit(item.productName);
+          catStats[cat].pieces += pieces;
+          catStats[cat].grossValue += settlementOrder.grossValue * share;
+          catStats[cat].netPayout += settlementOrder.netPayout * share;
+        });
+      });
+    });
+
+    const rows = categories
+      .filter(cat => catStats[cat].pieces !== 0)
+      .map(cat => {
+        const s = catStats[cat];
+        const effectivePerMomo = s.netPayout / s.pieces;
+        const plates = piecesPerPlate[cat] || 6;
+        return { cat, ...s, effectivePerMomo, platePrice: effectivePerMomo * plates };
+      });
+    return { rows, totalOnlineOrders, matchedOrders, offlineOrders, hasMatches: matchedOrders > 0 };
+  })();
+
+  // Weekly pattern: average pieces by day of the week across all records.
+  const weekly = (() => {
+    const dayOfWeekData: Record<string, { counts: Record<string, number[]>, dayName: string }> = {
+      '0': { dayName: 'Sunday', counts: {} },
+      '1': { dayName: 'Monday', counts: {} },
+      '2': { dayName: 'Tuesday', counts: {} },
+      '3': { dayName: 'Wednesday', counts: {} },
+      '4': { dayName: 'Thursday', counts: {} },
+      '5': { dayName: 'Friday', counts: {} },
+      '6': { dayName: 'Saturday', counts: {} }
+    };
+    const categories = CATEGORY_LIST;
+    Object.keys(dayOfWeekData).forEach(day => {
+      categories.forEach(cat => {
+        dayOfWeekData[day].counts[cat] = [];
+      });
+    });
+
+    // Collect all sales for each day of the week
+    salesRecords.forEach(record => {
+      const date = new Date(record.date);
+      const dayOfWeek = date.getDay().toString();
+
+      Object.entries(record.data).forEach(([category, count]) => {
+        if (dayOfWeekData[dayOfWeek].counts[category]) {
+          dayOfWeekData[dayOfWeek].counts[category].push(count);
+        }
+      });
+    });
+
+    // Calculate averages for all days
+    const allDaysData = Object.entries(dayOfWeekData).map(([dayNum, day]) => {
+      const avgData: any = { day: day.dayName, dayNum: parseInt(dayNum) };
+      categories.forEach(category => {
+        const values = day.counts[category];
+        const avg = values.length > 0
+          ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
+          : 0;
+        avgData[category] = avg;
+      });
+      return avgData;
+    });
+
+    // Best day for each category (across all days)
+    const bestDays: Record<string, { day: string, avg: number }> = {};
+    categories.forEach(category => {
+      let maxAvg = 0;
+      let bestDay = '';
+      allDaysData.forEach(dayData => {
+        if (dayData[category] > maxAvg) {
+          maxAvg = dayData[category];
+          bestDay = dayData.day;
+        }
+      });
+      bestDays[category] = { day: bestDay, avg: maxAvg };
+    });
+
+    const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
+    const rows = categories.map(category => {
+      const current = selectedDayFullData?.[category] || 0;
+      const bestDay = bestDays[category];
+      let percentDiff = 0;
+      const isBestDay = selectedDayFullData?.day === bestDay.day;
+      if (bestDay.avg > 0 && current > 0) {
+        percentDiff = ((current - bestDay.avg) / bestDay.avg) * 100;
+      }
+      return { category, current, bestDay, isBestDay, percentDiff };
+    });
+
+    // Busiest and quietest day overall
+    const busiestDay = allDaysData.reduce((prev, curr) => {
+      const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
+      const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
+      return currTotal > prevTotal ? curr : prev;
+    });
+    const busiestDayTotal = categories.reduce((sum, cat) => sum + (busiestDay[cat] || 0), 0);
+    const quietestDay = allDaysData.reduce((prev, curr) => {
+      const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
+      const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
+      return currTotal < prevTotal ? curr : prev;
+    });
+    const quietestDayTotal = categories.reduce((sum, cat) => sum + (quietestDay[cat] || 0), 0);
+
+    // Most popular item on the selected day
+    const topItemOnSelectedDay = selectedDayFullData ?
+      Object.entries(selectedDayFullData)
+        .filter(([key]) => categories.includes(key))
+        .sort((a, b) => (b[1] as number) - (a[1] as number))[0]
+      : null;
+
+    return { rows, busiestDay, busiestDayTotal, quietestDay, quietestDayTotal, topItemOnSelectedDay };
+  })();
+
+  const daysOfWeek = [
+    { num: 0, name: 'Sun' }, { num: 1, name: 'Mon' }, { num: 2, name: 'Tue' }, { num: 3, name: 'Wed' },
+    { num: 4, name: 'Thu' }, { num: 5, name: 'Fri' }, { num: 6, name: 'Sat' },
+  ];
+
+  const openRecord = salesRecords.find(r => r.id === openRecordId) || null;
+  const storeNameFor = (record: SalesRecord) => record.storeName && record.storeName !== 'Unknown Store'
+    ? record.storeName
+    : (context.stores?.find(s => s.id === record.storeId)?.name || record.storeName || 'Unknown Store');
+  const fmt = (n: number) => formatNumberIN(n);
+  const rupees2 = (n: number) => `₹${n.toFixed(2)}`;
+  const channelLabel = (ch: ChannelKey) => (ch === 'Offline' ? 'Counter' : ch);
+  const changeChip = (row: { current: number; previous: number; percentChange: number }) => {
+    if (row.previous > 0) {
+      const up = row.percentChange > 0;
+      const down = row.percentChange < 0;
+      return (
+        <StatusChip tone={up ? 'success' : down ? 'danger' : 'neutral'} icon={up ? ArrowUp : down ? ArrowDown : undefined}>
+          <span className="num">{Math.abs(row.percentChange).toFixed(1)}%</span>
+        </StatusChip>
+      );
+    }
+    if (row.current > 0) return <StatusChip tone="info">{t('wp8.new')}</StatusChip>;
+    return <StatusChip tone="neutral">–</StatusChip>;
+  };
+
+  // ---- Sheets ----------------------------------------------------------------------------------
+  const uploadSheet = (
+    <ResponsiveModal
+      open={showUpload}
+      onOpenChange={(open) => { if (!uploading) setShowUpload(open); }}
+      title={t('wp8.sales.uploadTitle')}
+      description="An item-wise sales export (.xlsx, .xls or .csv) from the POS"
+      size="form"
+      footer={
+        <Button asChild size="lg" fullWidth loading={uploading} aria-disabled={uploading || undefined}>
+          <label className={uploading ? 'pointer-events-none opacity-50' : 'cursor-pointer'}>
+            {uploading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Upload aria-hidden="true" />}
+            {uploading ? t('wp8.sales.uploading') : t('wp8.sales.chooseFile')}
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} disabled={uploading} className="sr-only" />
+          </label>
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        <Field label={t('wp8.sales.fileDate')} helper={t('wp8.sales.fileDateHelp')}>
+          <input
+            type="date"
+            value={selectedDate}
+            max={getTodayIST()}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className={controlClasses}
+          />
+        </Field>
+        <div className="flex flex-col gap-2">
+          <h3 className="text-subtitle font-semibold text-text">What the file needs</h3>
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-body-sm text-text-2">
+            <li>Columns named <span className="font-medium text-text">Item</span> and <span className="font-medium text-text">Total Quantity</span></li>
+            <li>Item names that include the momo type, e.g. "Chicken Pan-Fried Momos (8 pcs)"</li>
+            <li>Quantity as the number of plates or items sold</li>
+          </ul>
+        </div>
+        <Callout tone="neutral" title="The date can come from the file name">
+          A name like "Itemwise sales_Store_27_10_2026.xlsx" or "2026-10-27.xlsx" uses that date; otherwise the sales date above is used.
+        </Callout>
+      </div>
+    </ResponsiveModal>
+  );
+
+  const plateSheet = (
+    <ResponsiveModal
+      open={showPlateConfig}
+      onOpenChange={setShowPlateConfig}
+      title="Plate configuration"
+      description="How many pieces make a plate, and a plate's price, for each momo type"
+      size="detail"
+      footer={<Button size="lg" variant="secondary" fullWidth onClick={() => setShowPlateConfig(false)}>{t('common.done')}</Button>}
+    >
+      <div className="flex flex-col gap-4">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+          {(Object.keys(piecesPerPlate) as Array<keyof CategoryData>).map((category) => (
+            <div key={category} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+              <span className="min-w-0 flex-1 text-body-md font-medium text-text">{category}</span>
+              <div className="grid grid-cols-2 gap-3 sm:w-64">
+                <label className="flex min-w-0 flex-col gap-1 text-caption text-text-3">
+                  Pieces a plate
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={piecesPerPlate[category]}
+                    onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
+                    className={cn(controlClasses, 'num h-11 text-right')}
+                  />
+                </label>
+                <label className="flex min-w-0 flex-col gap-1 text-caption text-text-3">
+                  Price a plate (₹)
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={pricePerPlate[category]}
+                    onChange={(e) => updatePriceConfig(category, parseFloat(e.target.value) || 0)}
+                    className={cn(controlClasses, 'num h-11 text-right')}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+        {isSavingPlateConfig && <p className="text-caption text-text-3">Saving…</p>}
+        <Callout tone="info" title={t('wp8.howItWorks')}>
+          Pieces are shown as plates with this. With 6 pieces a plate, 262 chicken momos sold show as 262 pcs / 44 plates.
+        </Callout>
+      </div>
+    </ResponsiveModal>
+  );
+
+  // Menu item prices - real Offline vs Online price per menu item, keyed by Ciferon's
+  // ProductId. Zomato and Swiggy share one Online price (Ciferon pushes the same "Online
+  // Submenu" price list to both). Editable here since menu prices change over time.
+  const menuGroups = (Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => ({
+    category: cat,
+    items: menuItemPrices
+      .filter(i => i.momoCategory === cat)
+      .sort((a, b) => a.productName.localeCompare(b.productName)),
+  })).filter(g => g.items.length > 0);
+
+  const menuSheet = (
+    <ResponsiveModal
+      open={showMenuItemPrices}
+      onOpenChange={(open) => { if (!open) { setShowMenuItemPrices(false); setShowAddMenuItem(false); } }}
+      onBack={showAddMenuItem ? () => setShowAddMenuItem(false) : undefined}
+      title={showAddMenuItem ? 'Add a menu item' : 'Menu item prices'}
+      description={showAddMenuItem
+        ? "For a menu item Ciferon hasn't sent a price for yet (e.g. an alternate-portion SKU) - find its Product ID and Name in Ciferon's own order export, or from an \"unmatched item\" note elsewhere in the app."
+        : `Counter and online (Zomato / Swiggy) price for each menu item${!isClusterHead ? ' - view only' : ''}`}
+      size="detail"
+      footer={showAddMenuItem ? (
+        <>
+          <Button size="lg" variant="secondary" onClick={() => setShowAddMenuItem(false)} disabled={isSavingNewMenuItem}>{t('common.cancel')}</Button>
+          <Button size="lg" className="flex-1" loading={isSavingNewMenuItem} onClick={handleAddMenuItem}>Save item</Button>
+        </>
+      ) : (
+        <Button size="lg" variant="secondary" fullWidth onClick={() => setShowMenuItemPrices(false)}>{t('common.done')}</Button>
+      )}
+    >
+      {showAddMenuItem ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Product ID (Ciferon's)">
+            <input type="text" value={newMenuItem.productId} onChange={(e) => setNewMenuItem(prev => ({ ...prev, productId: e.target.value }))} placeholder="e.g. 1108056" className={controlClasses} />
+          </Field>
+          <Field label="Product name">
+            <input type="text" value={newMenuItem.productName} onChange={(e) => setNewMenuItem(prev => ({ ...prev, productName: e.target.value }))} placeholder="e.g. Chicken Steamed Momos (8 pcs) - A" className={controlClasses} />
+          </Field>
+          <Field label="Category">
+            <select value={newMenuItem.momoCategory} onChange={(e) => setNewMenuItem(prev => ({ ...prev, momoCategory: e.target.value as keyof CategoryData }))} className={controlClasses}>
+              {(Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Pieces a unit">
+            <input type="number" inputMode="numeric" value={newMenuItem.piecesPerUnit} onChange={(e) => setNewMenuItem(prev => ({ ...prev, piecesPerUnit: e.target.value }))} className={cn(controlClasses, 'num')} />
+          </Field>
+          <Field label="Counter price (₹)">
+            <input type="number" inputMode="decimal" value={newMenuItem.offlinePrice} onChange={(e) => setNewMenuItem(prev => ({ ...prev, offlinePrice: e.target.value }))} className={cn(controlClasses, 'num')} />
+          </Field>
+          <Field label="Online price (₹)">
+            <input type="number" inputMode="decimal" value={newMenuItem.onlinePrice} onChange={(e) => setNewMenuItem(prev => ({ ...prev, onlinePrice: e.target.value }))} className={cn(controlClasses, 'num')} />
+          </Field>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {isClusterHead && (
+            <Button variant="secondary" leadingIcon={<Plus />} onClick={() => setShowAddMenuItem(true)} className="self-start">Add a menu item</Button>
+          )}
+          {menuItemPrices.length === 0 ? (
+            <EmptyState compact icon={FileSpreadsheet} title="No menu items set up yet" />
+          ) : (
+            menuGroups.map(({ category, items }) => (
+              <ListGroup key={category} title={category} meta={`${items.length}`}>
+                {items.map(item => (
+                  <div key={item.productId} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+                    <span className="min-w-0 flex-1 text-body-sm font-medium text-text">{item.productName}</span>
+                    <div className="grid grid-cols-2 gap-3 sm:w-64">
+                      {(['offlinePrice', 'onlinePrice'] as const).map(field => (
+                        <label key={field} className="flex min-w-0 flex-col gap-1 text-caption text-text-3">
+                          {field === 'offlinePrice' ? 'Counter' : 'Online'}
+                          {isClusterHead ? (
+                            <input
+                              type="number"
+                              value={item[field]}
+                              onChange={(e) => handleMenuPriceChange(item, field, parseFloat(e.target.value) || 0)}
+                              className={cn(controlClasses, 'num h-11 text-right')}
+                              disabled={isSavingMenuPrice === item.productId}
+                            />
+                          ) : (
+                            <span className="num text-body-sm font-semibold text-text">₹{item[field].toFixed(2)}</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </ListGroup>
+            ))
+          )}
+        </div>
+      )}
+    </ResponsiveModal>
+  );
+
+  const recordSheet = (
+    <ResponsiveModal
+      open={!!openRecord}
+      onOpenChange={(open) => { if (!open) setOpenRecordId(null); }}
+      title={openRecord ? friendlyDateLabel(openRecord.date, lang) : ''}
+      description={openRecord ? `${storeNameFor(openRecord)} · ${fmt(getTotalPieces(openRecord.data))} pieces` : undefined}
+      size="form"
+      footer={openRecord ? (
+        <Button
+          size="lg"
+          variant="danger-ghost"
+          fullWidth
+          leadingIcon={<Trash2 />}
+          onClick={async () => { const id = openRecord.id; setOpenRecordId(null); await handleDelete(id); }}
+        >
+          {t('wp8.sales.deleteRecord')}
+        </Button>
+      ) : undefined}
+    >
+      {openRecord && (() => {
+        const totalPieces = getTotalPieces(openRecord.data);
+        return (
+          <div className="flex flex-col gap-4">
+            <ListGroup>
+              {Object.entries(openRecord.data).map(([category, count]) => {
+                const safeCount = count || 0;
+                const percentage = totalPieces > 0 ? ((safeCount / totalPieces) * 100).toFixed(1) : '0';
+                const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
+                const plates = Math.floor(safeCount / piecesPerPlateValue);
+                return (
+                  <ListRow
+                    key={category}
+                    density="compact"
+                    title={category}
+                    subtitle={`${plates} plates · ${percentage}%`}
+                    trailing={<span className="num text-body-md font-semibold text-text">{fmt(safeCount)}</span>}
+                  />
+                );
+              })}
+            </ListGroup>
+            <p className="text-caption text-text-3">
+              {openRecord.uploadedBy === 'pos-sync' ? 'Synced from the POS' : `Uploaded by ${openRecord.uploadedBy}`} · {new Date(openRecord.uploadedAt).toLocaleString()}
+            </p>
+          </div>
+        );
+      })()}
+    </ResponsiveModal>
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-text-2">Loading sales data...</p>
-        </div>
+      <div className="flex flex-col gap-4" aria-busy="true">
+        <Delayed>
+          <SkeletonStatTile hero />
+          <SkeletonListRows count={5} />
+        </Delayed>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Header & Upload Section */}
-      <div className="bg-primary-soft rounded-2xl shadow-lg p-6 border border-border-strong">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
-              <FileSpreadsheet className="w-6 h-6 text-text" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-text tracking-tight">
-                Daily Sales Data
-              </h2>
-              <p className="text-sm text-text-3">
-                Upload daily sales XLSX files to track momo sales by category
-              </p>
-            </div>
-          </div>
+  const sortOptions: { value: typeof itemChannelSort.col; label: string }[] = [
+    { value: 'pcs', label: 'Total pcs' },
+    { value: 'offline', label: 'Counter' },
+    { value: 'zomato', label: 'Zomato' },
+    { value: 'swiggy', label: 'Swiggy' },
+  ];
+  const SortIcon = itemChannelSort.dir === 'desc' ? ArrowDown : ArrowUp;
 
-          <div className="flex flex-col sm:flex-row gap-3">
-            <DatePicker
-              value={selectedDate}
-              onChange={setSelectedDate}
-              max={getTodayIST()}
+  return (
+    <div className="flex flex-col gap-6" lang={lang}>
+      {/* Daily sales data: one primary action, the rest in the overflow menu, the file help in the upload sheet */}
+      <section className="flex flex-col gap-4" aria-labelledby="sales-data-title">
+        <SectionHeading
+          id="sales-data-title"
+          title={t('wp8.sales.title')}
+          caption={t('wp8.sales.caption')}
+          actions={
+            <OverflowMenu
+              items={[
+                isClusterHead && { label: t('wp8.sales.upload'), icon: <Upload className="size-4" aria-hidden="true" />, onSelect: () => setShowUpload(true) },
+                { label: t('wp8.sales.plateConfig'), icon: <Settings className="size-4" aria-hidden="true" />, onSelect: () => setShowPlateConfig(true) },
+                { label: t('wp8.sales.menuPrices'), icon: <Tags className="size-4" aria-hidden="true" />, onSelect: () => setShowMenuItemPrices(true) },
+              ]}
+            />
+          }
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <PeriodChip
+            value={timeFilter}
+            options={SALES_PERIOD_OPTIONS}
+            custom={dateRange}
+            onChange={(f, custom) => { setTimeFilter(f); if (custom) setDateRange(custom); }}
+          />
+          {isClusterHead ? (
+            <Button leadingIcon={<RefreshCw />} loading={isSyncingCategoryData} onClick={handleSyncFromPOS}>
+              {isSyncingCategoryData ? t('wp8.sales.syncing') : t('wp8.sales.sync')}
+            </Button>
+          ) : (
+            <Button leadingIcon={<Upload />} onClick={() => setShowUpload(true)}>{t('wp8.sales.upload')}</Button>
+          )}
+        </div>
+
+        {salesRecords.length === 0 ? (
+          <Card>
+            <EmptyState
+              compact
+              icon={FileSpreadsheet}
+              title={t('wp8.sales.empty')}
+              body={t('wp8.sales.emptyBody')}
+            />
+          </Card>
+        ) : (
+          <>
+            <StatTile
+              hero
+              label={`${t('wp8.sales.piecesSold')} · ${periodName}`}
+              value={fmt(summary.grandTotal)}
+              delta={summary.previousTotal > 0 ? { value: ((summary.grandTotal - summary.previousTotal) / summary.previousTotal) * 100, label: 'vs the period before' } : undefined}
+              caption={summary.recordCount > 0
+                ? `Most sold: ${summary.topCategory?.[0] || 'N/A'} · ${fmt(summary.topCategory?.[1] || 0)} pcs · ${summary.recordCount === 1 ? t('wp8.record') : t('wp8.records', { n: summary.recordCount })}, avg ${fmt(summary.avgPerRecord)} pcs each`
+                : t('wp8.sales.noRecordsRange')}
             />
 
-            <button
-              onClick={() => setShowPlateConfig(!showPlateConfig)}
-              className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="font-medium">Plate Config</span>
-            </button>
-
-            <button
-              onClick={() => setShowMenuItemPrices(!showMenuItemPrices)}
-              className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
-              title="Offline vs Online price per real menu item (Zomato/Swiggy share one Online price via Ciferon's Online Submenu)"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="font-medium">Menu Item Prices</span>
-            </button>
-
-            {isClusterHead && (
-              <button
-                onClick={handleSyncFromPOS}
-                disabled={isSyncingCategoryData}
-                className="min-h-11 px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                title="Pull momo category counts for the selected period straight from Ciferon POS, instead of uploading an XLSX for each day"
+            {dailyChart.data.length > 0 && (
+              <ChartCard
+                title={t('wp8.sales.perDay')}
+                caption={periodName}
+                legend={legendFor([
+                  { key: 'pieces', name: t('wp8.sales.piecesSold'), color: CHART_COLORS.primary, kind: 'bar' },
+                  ...(dailyChart.monthly ? [] : [{ key: 'prev_pieces', name: 'Last period', color: CHART_COLORS.previous, dashed: true }]),
+                ], t('insights.lastPeriod'))}
               >
-                <Package className="w-4 h-4" />
-                <span className="font-medium">{isSyncingCategoryData ? 'Syncing...' : 'Sync from POS'}</span>
-              </button>
+                <TrendChart
+                  data={dailyChart.data}
+                  series={[
+                    { key: 'pieces', name: t('wp8.sales.piecesSold'), color: CHART_COLORS.primary, kind: 'bar' },
+                    ...(dailyChart.monthly ? [] : [{ key: 'prev_pieces', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true }]),
+                  ]}
+                  format="number"
+                  height={220}
+                  ariaLabel={`Momo pieces sold a day, ${periodName}: ${fmt(summary.grandTotal)} in all`}
+                />
+              </ChartCard>
             )}
 
-            <label className={`px-6 py-2.5 bg-primary   text-on-primary rounded-xl   transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-              <Upload className="w-4 h-4" />
-              <span className="font-medium">{uploading ? 'Uploading...' : 'Upload XLSX'}</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={handleFileUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
-          </div>
-        </div>
-
-        {/* Info Banner */}
-        <div className="mt-4 bg-info-soft border border-info-border rounded-xl p-4">
-          <div className="flex gap-3">
-            <AlertCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-info">
-              <p className="font-medium mb-1">File Format Requirements:</p>
-              <ul className="list-disc list-inside space-y-1 text-info">
-                <li>Must contain columns: <code className="bg-info-soft px-1 rounded">Item</code> and <code className="bg-info-soft px-1 rounded">Total Quantity</code></li>
-                <li>Item names should include momo type (e.g., "Chicken Pan-Fried Momos (8 pcs)")</li>
-                <li>Quantity should be the number of plates/items sold</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Plate Configuration Modal */}
-      <ResponsiveModal
-        open={showPlateConfig}
-        onOpenChange={setShowPlateConfig}
-        title="Plate configuration"
-        description="How many pieces make a plate, and a plate's price, for each momo type"
-        size="detail"
-        footer={<Button size="lg" variant="secondary" fullWidth onClick={() => setShowPlateConfig(false)}>Done</Button>}
-      >
-            <div className="space-y-4">
-              {(Object.keys(piecesPerPlate) as Array<keyof CategoryData>).map((category, index) => (
-                <div key={category} className="flex items-center justify-between p-4 bg-surface-2 rounded-xl border-2 border-border">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-4 h-4 rounded-full"
-                      style={{ backgroundColor: getChartColor(index) }}
-                    />
-                    <label className="text-text font-medium">{category}</label>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={piecesPerPlate[category]}
-                        onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
-                        className="min-h-11 w-20 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
-                      />
-                      <span className="text-text-2 text-sm">pcs/plate</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-text-2 text-sm">₹</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={pricePerPlate[category]}
-                        onChange={(e) => updatePriceConfig(category, parseFloat(e.target.value) || 0)}
-                        className="min-h-11 w-24 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
-                      />
-                      <span className="text-text-2 text-sm">/plate</span>
-                    </div>
-                  </div>
-                </div>
+            <ListGroup title={t('wp8.sales.byType')} meta={periodName}>
+              {trend.rows.map((row) => (
+                <ListRow
+                  key={row.category}
+                  title={row.category}
+                  subtitle={row.previous > 0
+                    ? `${fmt(row.previous)} pcs the period before`
+                    : row.current > 0 ? 'New sales in this period' : 'No data for both periods'}
+                  trailing={
+                    <span className="flex flex-col items-end gap-1">
+                      <span className="num text-body-md font-semibold text-text">{fmt(row.current)}</span>
+                      {changeChip(row)}
+                    </span>
+                  }
+                />
               ))}
-              {isSavingPlateConfig && <p className="text-xs text-text-3">Saving...</p>}
-            </div>
+            </ListGroup>
+          </>
+        )}
+      </section>
 
-            <Callout tone="info" title="How it works" className="mt-4">
-              Pieces are shown as plates with this. With 6 pieces a plate, 262 chicken momos sold show as 262 pcs / 44 plates.
-            </Callout>
-      </ResponsiveModal>
-
-      {/* Menu Item Prices Modal - real Offline vs Online price per menu item, keyed by
-          Ciferon's ProductId. Zomato and Swiggy share one Online price (Ciferon pushes the
-          same "Online Submenu" price list to both). Seeded from the store's real POS export
-          + Online Submenu export; editable here since menu prices change over time. */}
-      {showMenuItemPrices && (() => {
-        const categories = Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>;
-        const grouped = categories.map(cat => ({
-          category: cat,
-          items: menuItemPrices
-            .filter(i => i.momoCategory === cat)
-            .sort((a, b) => a.productName.localeCompare(b.productName)),
-        })).filter(g => g.items.length > 0);
-
-        return (
-          <ResponsiveModal
-            open
-            onOpenChange={(open) => { if (!open) setShowMenuItemPrices(false); }}
-            title="Menu item prices"
-            description={`Counter and online (Zomato / Swiggy) price for each menu item${!isClusterHead ? ' - view only' : ''}`}
-            size="detail"
-            footer={<Button size="lg" variant="secondary" fullWidth onClick={() => setShowMenuItemPrices(false)}>Done</Button>}
-          >
-              <div className="space-y-6">
-                {isClusterHead && (
-                  <div className="border border-dashed border-success-border rounded-xl p-4 bg-success-soft">
-                    {!showAddMenuItem ? (
-                      <button
-                        onClick={() => setShowAddMenuItem(true)}
-                        className="min-h-11 text-sm font-medium text-success hover:text-success flex items-center gap-1.5"
-                      >
-                        <span className="text-lg leading-none">+</span> Add New Item
-                      </button>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-text">Add New Item</h4>
-                          <p className="text-xs text-text-3">
-                            For a menu item Ciferon hasn't sent a price for yet (e.g. an alternate-portion SKU) - find its Product ID and Name in Ciferon's own order export, or from an "unmatched item" note elsewhere in the app.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Product ID (Ciferon's)</label>
-                            <input
-                              type="text"
-                              value={newMenuItem.productId}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, productId: e.target.value }))}
-                              placeholder="e.g. 1108056"
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Product Name</label>
-                            <input
-                              type="text"
-                              value={newMenuItem.productName}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, productName: e.target.value }))}
-                              placeholder="e.g. Chicken Steamed Momos (8 pcs) - A"
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Category</label>
-                            <select
-                              value={newMenuItem.momoCategory}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, momoCategory: e.target.value as keyof CategoryData }))}
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            >
-                              {(Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Pieces Per Unit</label>
-                            <input
-                              type="number"
-                              value={newMenuItem.piecesPerUnit}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, piecesPerUnit: e.target.value }))}
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Offline Price (₹)</label>
-                            <input
-                              type="number"
-                              value={newMenuItem.offlinePrice}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, offlinePrice: e.target.value }))}
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-text-2 mb-1">Online Price (₹)</label>
-                            <input
-                              type="number"
-                              value={newMenuItem.onlinePrice}
-                              onChange={(e) => setNewMenuItem(prev => ({ ...prev, onlinePrice: e.target.value }))}
-                              className="min-h-11 w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={() => setShowAddMenuItem(false)}
-                            className="min-h-11 px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2 rounded-lg transition-colors"
-                            disabled={isSavingNewMenuItem}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={handleAddMenuItem}
-                            disabled={isSavingNewMenuItem}
-                            className="min-h-11 px-4 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
-                          >
-                            {isSavingNewMenuItem ? 'Saving...' : 'Save Item'}
-                          </button>
-                        </div>
+      {/* Price per piece by channel */}
+      <Card className="gap-4 lg:p-5">
+        <SectionHeading
+          as="h3"
+          title={t('wp8.sales.channelPrice')}
+          caption={`${channelTable.matchedOnlineOrders} of ${channelTable.totalOnlineOrders} online orders in this period matched a settlement`}
+        />
+        <HowItWorks title={t('wp8.sales.channelPrice')}>
+          <p>Every menu item, not rolled up to the 7 momo categories. Counter is the real POS price.</p>
+          <p>Zomato and Swiggy are the real effective price after that order's discount and commission - only orders matched to an uploaded settlement count ({channelTable.matchedOnlineOrders} of {channelTable.totalOnlineOrders} online orders in this period matched so far).</p>
+          <p>Upload the settlement covering these dates in Money → Payouts to fill in the rest.</p>
+        </HowItWorks>
+        {!channelTable.hasData ? (
+          <EmptyState
+            compact
+            icon={FileSpreadsheet}
+            title="No item detail from the POS in this period"
+            body={isClusterHead ? 'Use "Sync from POS" above.' : 'Ask a cluster head to sync from the POS for this period.'}
+          />
+        ) : (
+          <>
+            <FilterChips
+              aria-label="Sort by"
+              value={itemChannelSort.col}
+              onValueChange={toggleSort}
+              options={sortOptions.map(o => ({
+                value: o.value,
+                label: (
+                  <span className="inline-flex items-center gap-1">
+                    {o.label}
+                    {itemChannelSort.col === o.value && <SortIcon className="size-3.5" aria-label={itemChannelSort.dir === 'desc' ? 'most first' : 'fewest first'} />}
+                  </span>
+                ),
+              }))}
+            />
+            {/* Phones and tablets: a list per section */}
+            <div className="flex flex-col gap-4 lg:hidden">
+              {channelTable.groupedRows.map(({ group, rows }) => (
+                <ListGroup key={group} overline={group}>
+                  {rows.map(row => (
+                    <div key={row.productName} className="flex flex-col gap-2 px-4 py-3">
+                      <div className="flex min-w-0 flex-col">
+                        <span className="text-body-md font-medium text-text">{row.productName}</span>
+                        <span className="text-label text-text-3">{row.category || '-'}</span>
                       </div>
-                    )}
-                  </div>
-                )}
-                {menuItemPrices.length === 0 ? (
-                  <p className="text-sm text-text-3">No menu items configured yet.</p>
-                ) : (
-                  grouped.map(({ category, items }) => (
-                    <div key={category}>
-                      <h4 className="text-lg font-semibold text-text mb-2">{category}</h4>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b-2 border-border">
-                              <th className="text-left py-2 px-3 font-semibold text-text-2">Menu Item</th>
-                              <th className="text-right py-2 px-3 font-semibold text-text-2">Offline Price</th>
-                              <th className="text-right py-2 px-3 font-semibold text-text-2">Online Price</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {items.map(item => (
-                              <tr key={item.productId} className="border-b border-border">
-                                <td className="py-2 px-3 text-text">{item.productName}</td>
-                                <td className="py-2 px-3 text-right">
-                                  {isClusterHead ? (
-                                    <input
-                                      type="number"
-                                      value={item.offlinePrice}
-                                      onChange={(e) => handleMenuPriceChange(item, 'offlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="min-h-11 w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
-                                      disabled={isSavingMenuPrice === item.productId}
-                                    />
-                                  ) : (
-                                    <span className="text-text-2">₹{item.offlinePrice.toFixed(2)}</span>
-                                  )}
-                                </td>
-                                <td className="py-2 px-3 text-right">
-                                  {isClusterHead ? (
-                                    <input
-                                      type="number"
-                                      value={item.onlinePrice}
-                                      onChange={(e) => handleMenuPriceChange(item, 'onlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="min-h-11 w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
-                                      disabled={isSavingMenuPrice === item.productId}
-                                    />
-                                  ) : (
-                                    <span className="text-text-2">₹{item.onlinePrice.toFixed(2)}</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <MiniFigures
+                        items={CHANNELS.map(ch => {
+                          const v = row[ch];
+                          return {
+                            label: channelLabel(ch),
+                            value: v.pieces > 0 ? `${rupees2(v.revenue / v.pieces)}/pc` : '–',
+                            sub: v.pieces > 0 ? `${fmt(v.pieces)} pcs` : 'none',
+                            tone: v.pieces > 0 ? 'default' : 'muted',
+                          };
+                        })}
+                      />
                     </div>
-                  ))
-                )}
-              </div>
-
-          </ResponsiveModal>
-        );
-      })()}
-
-      {/* Sales Analytics Charts */}
-      {salesRecords.length > 0 && (
-        <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
-                <BarChart3 className="w-5 h-5 text-text" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-text tracking-tight">Sales Trends by Category</h2>
-                <p className="text-sm text-text-3">Analyze momo sales patterns across different time periods</p>
-              </div>
-            </div>
-
-            {/* Time Filter */}
-            <div className="flex gap-2 flex-wrap">
-              {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'thisYear', 'lastYear', 'custom'] as TimeFilter[]).map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setTimeFilter(filter)}
-                  className={`min-h-11 px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
-                    timeFilter === filter
-                      ? 'bg-surface border border-border   text-text shadow-lg'
-                      : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-                  }`}
-                >
-                  {getFilterLabel(filter)}
-                </button>
+                  ))}
+                </ListGroup>
               ))}
             </div>
-          </div>
-
-          {/* Custom Date Range Picker */}
-          {timeFilter === 'custom' && (
-            <div className="mb-6 bg-info-soft border border-info-border rounded-xl p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <DatePicker
-                  label="From Date"
-                  value={dateRange.from}
-                  onChange={(date) => setDateRange({ ...dateRange, from: date })}
-                />
-                <DatePicker
-                  label="To Date"
-                  value={dateRange.to}
-                  onChange={(date) => setDateRange({ ...dateRange, to: date })}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Metrics Grid with Comparisons */}
-          {(() => {
-            const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
-
-            // Get date ranges for current and comparison periods
-            const currentRange = getDateRange(timeFilter, dateRange);
-            const comparisonRange = getComparisonRange(timeFilter, dateRange);
-
-            // Calculate totals for current period
-            const currentTotals: Record<string, number> = {};
-            categories.forEach(cat => currentTotals[cat] = 0);
-
-            salesRecords.forEach(r => {
-              if (r.date >= currentRange.start && r.date <= currentRange.end) {
-                Object.entries(r.data).forEach(([category, count]) => {
-                  if (category in currentTotals) {
-                    currentTotals[category] += count;
-                  }
-                });
-              }
-            });
-
-            // Calculate totals for comparison period
-            const comparisonTotals: Record<string, number> = {};
-            categories.forEach(cat => comparisonTotals[cat] = 0);
-
-            salesRecords.forEach(r => {
-              if (r.date >= comparisonRange.start && r.date <= comparisonRange.end) {
-                Object.entries(r.data).forEach(([category, count]) => {
-                  if (category in comparisonTotals) {
-                    comparisonTotals[category] += count;
-                  }
-                });
-              }
-            });
-
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {categories.map((category, index) => {
-                  const current = currentTotals[category] || 0;
-                  const previous = comparisonTotals[category] || 0;
-
-                  // Calculate percentage change
-                  let percentChange = 0;
-                  if (previous > 0) {
-                    percentChange = ((current - previous) / previous) * 100;
-                  } else if (current > 0) {
-                    percentChange = 100; // If no previous data but we have current, it's 100% increase
-                  }
-
-                  const isIncrease = percentChange > 0;
-                  const isDecrease = percentChange < 0;
-                  const color = getChartColor(index);
-
-                  return (
-                    <div
-                      key={category}
-                      className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
-                      style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <h3 className="text-sm font-semibold text-text-2">{category}</h3>
-                        <div
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: color }}
-                        />
-                      </div>
-
-                      <div className="mb-3">
-                        <p className="text-4xl font-bold text-text mb-1">
-                          {current.toLocaleString()}
-                        </p>
-                        <p className="text-xs text-text-3">pieces sold</p>
-                      </div>
-
-                      {previous > 0 && (
-                        <div className="flex items-center gap-2">
-                          <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
-                            isIncrease ? 'bg-success-soft' : isDecrease ? 'bg-danger-soft' : 'bg-surface-2'
-                          }`}>
-                            {isIncrease && <ArrowUp className="w-3 h-3 text-success" />}
-                            {isDecrease && <ArrowDown className="w-3 h-3 text-danger" />}
-                            <span className={`text-xs font-semibold ${
-                              isIncrease ? 'text-success' : isDecrease ? 'text-danger' : 'text-text-2'
-                            }`}>
-                              {Math.abs(percentChange).toFixed(1)}%
-                            </span>
-                          </div>
-                          <span className="text-xs text-text-3">
-                            vs previous
-                          </span>
-                        </div>
-                      )}
-
-                      {previous === 0 && current > 0 && (
-                        <div className="text-xs text-info font-medium">
-                          New sales in this period
-                        </div>
-                      )}
-
-                      {previous === 0 && current === 0 && (
-                        <div className="text-xs text-text-3">
-                          No data for both periods
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
-          {/* Summary Stats */}
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-            {(() => {
-              const categoryTotals: Record<string, number> = {
-                'Chicken Momos': 0,
-                'Chicken Cheese Momos': 0,
-                'Veg Momos': 0,
-                'Paneer Momos': 0,
-                'Corn Cheese Momos': 0,
-                'Chicken Kurkure Momos': 0,
-                'Veg Kurkure Momos': 0
-              };
-
-              // Same date-range function the category cards above use - this used to
-              // recompute its own cutoff date by hand (no upper bound at all outside
-              // 'custom', and plain local Date mutations instead of getDateRange's
-              // IST-safe string handling), so it silently disagreed with the cards
-              // whenever "today" landed near a month/week boundary.
-              const { start, end } = getDateRange(timeFilter, dateRange);
-              const filteredRecords = salesRecords.filter(r => r.date >= start && r.date <= end);
-
-              filteredRecords.forEach(r => {
-                Object.entries(r.data).forEach(([category, count]) => {
-                  categoryTotals[category] += count;
-                });
-              });
-
-              const grandTotal = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
-              const topCategory = Object.entries(categoryTotals)
-                .sort((a, b) => b[1] - a[1])[0];
-
-              return (
-                <>
-                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Total Sales</p>
-                    <p className="text-2xl font-semibold">
-                      {grandTotal.toLocaleString()}
-                    </p>
-                    <p className="text-xs text-text-2 mt-1">pieces</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Top Category</p>
-                    <p className="text-lg font-semibold">
-                      {topCategory?.[0]?.split(' ')[0] || 'N/A'}
-                    </p>
-                    <p className="text-xs text-text-2 mt-1">{topCategory?.[1]?.toLocaleString() || 0} pcs</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Avg per Period</p>
-                    <p className="text-2xl font-semibold">
-                      {filteredRecords.length > 0 ? Math.round(grandTotal / filteredRecords.length).toLocaleString() : 0}
-                    </p>
-                    <p className="text-xs text-text-2 mt-1">pieces</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Data Points</p>
-                    <p className="text-2xl font-semibold">
-                      {filteredRecords.length}
-                    </p>
-                    <p className="text-xs text-text-2 mt-1">records</p>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
-      {/* Revenue Per Item By Channel - real per-menu-item price (not rolled up to just the 7
-          momo categories), split Offline vs Zomato vs Swiggy, from Ciferon's per-order item
-          detail (Step D). Offline revenue is the item's real POS price (no commission to
-          remove). Zomato/Swiggy revenue is each order's real net payout (from an uploaded
-          settlement) split across its items proportional to their value share - i.e. already
-          net of that order's discount and aggregator commission, not gross sale price. */}
-      {(() => {
-        const settlementOrderMap = new Map<string, { grossValue: number; netPayout: number }>();
-        aggregatorSettlements.forEach(s => {
-          (s.orders || []).forEach(o => {
-            if (o.orderId) settlementOrderMap.set(String(o.orderId), { grossValue: o.grossValue, netPayout: o.netPayout });
-          });
-        });
-
-        // Ciferon's own OrderItemWrapperList names the SAME dish inconsistently - different
-        // word order ("Veg Steamed Momos" vs "Steamed Veg Momos"), different piece-count
-        // notation ("[6 Pieces]" vs "(6 Pieces)" vs none), and different channel/variant
-        // suffixes ("-O Normal" vs "-O Butter Brushed") - sometimes even under different
-        // underlying ProductIds for what's conceptually one dish, so catalog/ID-based
-        // matching alone can't unify them. For a plain style+filling momo (steamed, fried,
-        // peri peri, etc. - not a burger/platter/meal/combo, which are genuinely different
-        // products), rebuild the name from its classified category plus an
-        // order-independent style keyword search, so naming drift collapses to one name.
-        const isSpecialProduct = (name: string) =>
-          /burger|platter|meal|combo|mania|samosa|nugget|popcorn|fries|drink|cola|water|beverage|soup|mojito|mocktail|cake/i.test(name);
-
-        const extractMomoStyle = (nameLower: string): string | null => {
-          if (nameLower.includes('makhni') || nameLower.includes('makhani')) return 'Butter Makhni';
-          if (nameLower.includes('afghani')) return 'Afghani';
-          if (nameLower.includes('hot garlic')) return 'Hot Garlic';
-          if (nameLower.includes('korean')) return 'Spicy Korean';
-          if (nameLower.includes('chilli')) return 'Chilli';
-          if (nameLower.includes('peri peri')) return 'Peri Peri Fried';
-          if (nameLower.includes('pan fried')) return 'Pan Fried';
-          if (nameLower.includes('butter fried')) return 'Butter Fried';
-          if (nameLower.includes('jhol')) return 'Jhol';
-          if (nameLower.includes('kurkure')) return null; // already baked into the category name
-          if (nameLower.includes('fried')) return 'Fried';
-          if (nameLower.includes('steamed')) return 'Steamed';
-          return null;
-        };
-
-        // Product-type grouping (separate from momo category) so the table reads as
-        // sections: Momos, Meals, Mania Combos, Platter, Extras (burgers + anything else -
-        // drinks, desserts, addon lines).
-        type ItemGroup = 'Momos' | 'Meals' | 'Mania Combos' | 'Platter' | 'Extras';
-        const GROUP_ORDER: ItemGroup[] = ['Momos', 'Meals', 'Mania Combos', 'Platter', 'Extras'];
-        const classifyItemGroup = (productName: string): ItemGroup => {
-          const n = productName.toLowerCase();
-          if (n.includes('mania') && n.includes('combo')) return 'Mania Combos';
-          if (n.includes('meal')) return 'Meals';
-          if (n.includes('platter')) return 'Platter';
-          if (/burger|drink|cola|water|beverage|soup|mojito|mocktail|cake|samosa|nugget|popcorn|fries/i.test(n)) return 'Extras';
-          return 'Momos';
-        };
-
-        const nameByProductId = new Map(menuItemPrices.map(m => [String(m.productId), m.productName]));
-        const normalizeItemName = (productId: number | null, productName: string, category: string | null): string => {
-          if (category && !isSpecialProduct(productName)) {
-            const style = extractMomoStyle(productName.toLowerCase());
-            return style ? `${style} ${category}` : category;
-          }
-          if (productId !== null && nameByProductId.has(String(productId))) {
-            return nameByProductId.get(String(productId))!;
-          }
-          return productName
-            .replace(/\s*-\s*A$/i, '')
-            .replace(/\s*-\s*O\b.*$/i, '')
-            .replace(/\s*\[\s*\d+\s*pieces?\s*\]/i, '')
-            .replace(/\s*\(\s*\d+\s*pieces?\s*\)/i, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        };
-
-        type ChannelKey = 'Offline' | 'Zomato' | 'Swiggy';
-        const CHANNELS: ChannelKey[] = ['Offline', 'Zomato', 'Swiggy'];
-        const itemStats = new Map<string, { category: string | null; group: ItemGroup } & Record<ChannelKey, { pieces: number; revenue: number }>>();
-        const ensure = (displayName: string, category: string | null, group: ItemGroup) => {
-          let entry = itemStats.get(displayName);
-          if (!entry) {
-            entry = { category, group, Offline: { pieces: 0, revenue: 0 }, Zomato: { pieces: 0, revenue: 0 }, Swiggy: { pieces: 0, revenue: 0 } };
-            itemStats.set(displayName, entry);
-          }
-          return entry;
-        };
-
-        let totalOnlineOrders = 0, matchedOnlineOrders = 0;
-
-        orderItemDetail.forEach(rec => {
-          rec.orders.forEach(order => {
-            const items = order.items.filter(i => i.category);
-            if (!order.externalId) {
-              // Offline - the item's own `total` is the real price paid, no commission involved.
-              items.forEach(item => {
-                const displayName = normalizeItemName(item.productId, item.productName, item.category);
-                const entry = ensure(displayName, item.category, classifyItemGroup(item.productName));
-                entry.Offline.pieces += item.quantity * extractPiecesPerUnit(item.productName);
-                entry.Offline.revenue += item.total;
-              });
-              return;
-            }
-
-            totalOnlineOrders++;
-            const settlementOrder = settlementOrderMap.get(order.externalId);
-            if (!settlementOrder) return; // no uploaded settlement covers this order yet
-            matchedOnlineOrders++;
-
-            const channel: ChannelKey = order.paymentMode === 'Swiggy' ? 'Swiggy' : 'Zomato';
-            const itemsWithValue = items.filter(i => i.total > 0);
-            const orderSubtotal = itemsWithValue.reduce((sum, i) => sum + i.total, 0);
-            if (orderSubtotal <= 0) return;
-
-            itemsWithValue.forEach(item => {
-              const displayName = normalizeItemName(item.productId, item.productName, item.category);
-              const entry = ensure(displayName, item.category, classifyItemGroup(item.productName));
-              const share = item.total / orderSubtotal;
-              entry[channel].pieces += item.quantity * extractPiecesPerUnit(item.productName);
-              entry[channel].revenue += settlementOrder.netPayout * share; // after discount + commission
-            });
-          });
-        });
-
-        const sortValue = (row: { Offline: { pieces: number }; Zomato: { pieces: number }; Swiggy: { pieces: number } }) => {
-          switch (itemChannelSort.col) {
-            case 'offline': return row.Offline.pieces;
-            case 'zomato': return row.Zomato.pieces;
-            case 'swiggy': return row.Swiggy.pieces;
-            default: return row.Offline.pieces + row.Zomato.pieces + row.Swiggy.pieces;
-          }
-        };
-
-        const allRows = Array.from(itemStats.entries())
-          .map(([productName, v]) => ({ productName, ...v }))
-          .filter(row => CHANNELS.some(ch => row[ch].pieces > 0));
-        const hasData = allRows.length > 0;
-
-        // Grouped into sections (Momos, Meals, Mania Combos, Platter, Extras), sorted
-        // independently within each group so the sort buttons don't scramble the sections.
-        const groupedRows = GROUP_ORDER
-          .map(group => ({
-            group,
-            rows: allRows
-              .filter(row => row.group === group)
-              .sort((a, b) => itemChannelSort.dir === 'desc' ? sortValue(b) - sortValue(a) : sortValue(a) - sortValue(b)),
-          }))
-          .filter(g => g.rows.length > 0);
-
-        const toggleSort = (col: typeof itemChannelSort.col) => {
-          setItemChannelSort(prev => prev.col === col ? { col, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' });
-        };
-        const sortArrow = (col: typeof itemChannelSort.col) => itemChannelSort.col === col ? (itemChannelSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
-
-        return (
-          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-text" />
-                </div>
-                <h2 className="text-xl font-bold text-text tracking-tight">Revenue Per Item By Channel</h2>
-              </div>
-              {isClusterHead && (
-                <button
-                  onClick={handleSyncFromPOS}
-                  disabled={isSyncingCategoryData}
-                  className="min-h-11 px-4 py-2 bg-primary text-on-primary rounded-xl text-sm   transition-all shadow-lg disabled:opacity-50 flex items-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  {isSyncingCategoryData ? 'Syncing...' : 'Sync from POS'}
-                </button>
-              )}
-            </div>
-            <p className="text-sm text-text-2 mb-4">
-              Every menu item, not rolled up to the 7 momo categories. Offline is the real POS price. Zomato/Swiggy
-              are the real effective price after that order's discount and commission - only orders matched to an
-              uploaded settlement count ({matchedOnlineOrders} of {totalOnlineOrders} online orders in this period
-              matched so far; upload the settlement covering these dates in the Aggregator Payout tab to fill in the rest).
-            </p>
-            {hasData && (
-              <div className="flex flex-wrap items-center gap-2 mb-3">
-                <span className="text-xs text-text-3">Sort by:</span>
-                {(['pcs', 'offline', 'zomato', 'swiggy'] as const).map(col => (
-                  <button
-                    key={col}
-                    onClick={() => toggleSort(col)}
-                    className={`hit-44 px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
-                      itemChannelSort.col === col ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-                    }`}
-                  >
-                    {col === 'pcs' ? 'Total Pcs' : col}{sortArrow(col)}
-                  </button>
-                ))}
-              </div>
-            )}
-            {!hasData ? (
-              <p className="text-sm text-text-3">
-                No POS-synced item detail in this period yet - {isClusterHead ? 'use "Sync from POS" above.' : 'ask a cluster head to sync from POS for this period.'}
-              </p>
-            ) : (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-surface">
-                    <tr className="border-b-2 border-border">
-                      <th className="text-left py-2 px-3 font-semibold text-text-2">Menu Item</th>
-                      <th className="text-left py-2 px-3 font-semibold text-text-2">Category</th>
-                      {CHANNELS.map(ch => (
-                        <th key={ch} colSpan={2} className="text-right py-2 px-3 font-semibold text-text-2 border-l border-border">{ch}</th>
-                      ))}
-                    </tr>
-                    <tr className="border-b-2 border-border text-xs text-text-3">
-                      <th className="py-1 px-3"></th>
-                      <th className="py-1 px-3"></th>
-                      {CHANNELS.map(ch => (
-                        <React.Fragment key={ch}>
-                          <th className="text-right py-1 px-3 font-normal border-l border-border">Pcs</th>
-                          <th className="text-right py-1 px-3 font-normal">₹/Pc</th>
-                        </React.Fragment>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedRows.map(({ group, rows: groupRows }) => (
-                      <React.Fragment key={group}>
-                        <tr className="bg-success-soft">
-                          <td colSpan={2 + CHANNELS.length * 2} className="py-1.5 px-3 font-semibold text-success text-xs uppercase tracking-wide">
-                            {group}
-                          </td>
-                        </tr>
-                        {groupRows.map(row => (
-                          <tr key={row.productName} className="border-b border-border hover:bg-surface-2">
-                            <td className="py-2 px-3 text-text">{row.productName}</td>
-                            <td className="py-2 px-3 text-text-2">{row.category || '-'}</td>
-                            {CHANNELS.map(ch => {
-                              const v = row[ch];
-                              return (
-                                <React.Fragment key={ch}>
-                                  <td className="py-2 px-3 text-right text-text-2 border-l border-border">{v.pieces > 0 ? v.pieces.toLocaleString() : '-'}</td>
-                                  <td className="py-2 px-3 text-right font-semibold text-success">{v.pieces > 0 ? `₹${(v.revenue / v.pieces).toFixed(2)}` : '-'}</td>
-                                </React.Fragment>
-                              );
-                            })}
-                          </tr>
-                        ))}
+            {/* Desktop: the full table */}
+            <div className="hidden lg:block">
+              <Table containerClassName="max-h-[600px] overflow-y-auto">
+                <TableHeader sticky>
+                  <TableRow>
+                    <TableHead rowSpan={2}>Menu item</TableHead>
+                    <TableHead rowSpan={2}>Category</TableHead>
+                    {CHANNELS.map(ch => <TableHead key={ch} colSpan={2} numeric className="border-l border-border">{channelLabel(ch)}</TableHead>)}
+                  </TableRow>
+                  <TableRow>
+                    {CHANNELS.map(ch => (
+                      <React.Fragment key={ch}>
+                        <TableHead numeric className="border-l border-border">Pcs</TableHead>
+                        <TableHead numeric>₹ a pc</TableHead>
                       </React.Fragment>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* Real Order-Level Effective Price - exact (not estimated) figures, joining Ciferon's
-          per-order item detail (Step D, OrderReport/Sale) to an uploaded settlement's own
-          per-order payout via ExternalId = the settlement's Order ID. Each order's real net
-          payout is split across its line items proportional to their share of the order's
-          value, then aggregated per momo type - replacing the channel-blended and
-          Plate-Config-price estimates with a real, commission-and-discount-adjusted number. */}
-      {orderItemDetail.length > 0 && (() => {
-        const categories = Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>;
-
-        const settlementOrderMap = new Map<string, { grossValue: number; netPayout: number }>();
-        aggregatorSettlements.forEach(s => {
-          (s.orders || []).forEach(o => {
-            if (o.orderId) settlementOrderMap.set(String(o.orderId), { grossValue: o.grossValue, netPayout: o.netPayout });
-          });
-        });
-
-        const catStats: Record<string, { pieces: number; grossValue: number; netPayout: number }> = {};
-        categories.forEach(cat => { catStats[cat] = { pieces: 0, grossValue: 0, netPayout: 0 }; });
-        let totalOnlineOrders = 0, matchedOrders = 0, offlineOrders = 0;
-
-        orderItemDetail.forEach(rec => {
-          rec.orders.forEach(order => {
-            if (!order.externalId) { offlineOrders++; return; } // offline order, no aggregator payout to join
-            totalOnlineOrders++;
-            const settlementOrder = settlementOrderMap.get(order.externalId);
-            if (!settlementOrder) return; // this order's aggregator settlement hasn't been uploaded yet
-            matchedOrders++;
-
-            const itemsWithValue = order.items.filter(i => i.category && i.total > 0);
-            const orderSubtotal = itemsWithValue.reduce((sum, i) => sum + i.total, 0);
-            if (orderSubtotal <= 0) return;
-
-            itemsWithValue.forEach(item => {
-              const cat = item.category as string;
-              if (!(cat in catStats)) return;
-              const share = item.total / orderSubtotal;
-              const pieces = item.quantity * extractPiecesPerUnit(item.productName);
-              catStats[cat].pieces += pieces;
-              catStats[cat].grossValue += settlementOrder.grossValue * share;
-              catStats[cat].netPayout += settlementOrder.netPayout * share;
-            });
-          });
-        });
-
-        const hasMatches = matchedOrders > 0;
-
-        return (
-          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
-                <TrendingUp className="w-5 h-5 text-text" />
-              </div>
-              <h2 className="text-xl font-bold text-text tracking-tight">Real Order-Level Effective Price</h2>
-            </div>
-            <p className="text-sm text-text-2 mb-4">
-              Exact, not an estimate - each Zomato/Swiggy order's real payout (from an uploaded settlement) is matched
-              to that same order's real momo content (from Ciferon) via its Order ID, then split across items
-              proportional to their share of the order's value. {matchedOrders} of {totalOnlineOrders} online orders
-              in this period matched an uploaded settlement ({offlineOrders} offline orders excluded - nothing to join them to).
-            </p>
-            {!hasMatches ? (
-              <p className="text-sm text-text-3">
-                No online orders in this period matched an uploaded settlement yet - upload the Zomato/Swiggy
-                settlement covering these dates in the Aggregator Payout tab, then check back here.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b-2 border-border">
-                      <th className="text-left py-2 px-3 font-semibold text-text-2">Momo Type</th>
-                      <th className="text-right py-2 px-3 font-semibold text-text-2">Pieces (matched orders)</th>
-                      <th className="text-right py-2 px-3 font-semibold text-text-2">Gross Value</th>
-                      <th className="text-right py-2 px-3 font-semibold text-text-2">Net Payout</th>
-                      <th className="text-right py-2 px-3 font-semibold text-text-2">Effective ₹/Momo</th>
-                      <th className="text-right py-2 px-3 font-semibold text-text-2">Effective Plate Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {categories.map(cat => {
-                      const s = catStats[cat];
-                      if (s.pieces === 0) return null;
-                      const effectivePerMomo = s.netPayout / s.pieces;
-                      const plates = piecesPerPlate[cat] || 6;
-                      return (
-                        <tr key={cat} className="border-b border-border hover:bg-surface-2">
-                          <td className="py-2 px-3 text-text">{cat}</td>
-                          <td className="py-2 px-3 text-right text-text-2">{s.pieces.toFixed(0)}</td>
-                          <td className="py-2 px-3 text-right text-text-2">₹{s.grossValue.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right text-text-2">₹{s.netPayout.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right font-semibold text-text">₹{effectivePerMomo.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right font-semibold text-info">₹{(effectivePerMomo * plates).toFixed(2)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* Day of Week Analysis */}
-      {salesRecords.length > 0 && (() => {
-        // Group sales by day of week
-        const dayOfWeekData: Record<string, { counts: Record<string, number[]>, dayName: string }> = {
-          '0': { dayName: 'Sunday', counts: {} },
-          '1': { dayName: 'Monday', counts: {} },
-          '2': { dayName: 'Tuesday', counts: {} },
-          '3': { dayName: 'Wednesday', counts: {} },
-          '4': { dayName: 'Thursday', counts: {} },
-          '5': { dayName: 'Friday', counts: {} },
-          '6': { dayName: 'Saturday', counts: {} }
-        };
-
-        // Initialize category arrays for each day
-        const categories = ['Chicken Momos', 'Chicken Cheese Momos', 'Veg Momos', 'Paneer Momos', 'Corn Cheese Momos', 'Chicken Kurkure Momos', 'Veg Kurkure Momos'];
-        Object.keys(dayOfWeekData).forEach(day => {
-          categories.forEach(cat => {
-            dayOfWeekData[day].counts[cat] = [];
-          });
-        });
-
-        // Collect all sales for each day of the week
-        salesRecords.forEach(record => {
-          const date = new Date(record.date);
-          const dayOfWeek = date.getDay().toString();
-
-          Object.entries(record.data).forEach(([category, count]) => {
-            if (dayOfWeekData[dayOfWeek].counts[category]) {
-              dayOfWeekData[dayOfWeek].counts[category].push(count);
-            }
-          });
-        });
-
-        // Calculate averages for all days
-        const allDaysData = Object.entries(dayOfWeekData).map(([dayNum, day]) => {
-          const avgData: any = { day: day.dayName, dayNum: parseInt(dayNum) };
-
-          categories.forEach(category => {
-            const values = day.counts[category];
-            const avg = values.length > 0
-              ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
-              : 0;
-            avgData[category] = avg;
-          });
-
-          return avgData;
-        });
-
-        // Get data for selected day only - restructure so each category is its own row
-        const selectedDayData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-
-        // Transform data: instead of one row with 7 columns, create 7 rows with category and average
-        const chartData = selectedDayData ? categories.map((category, index) => ({
-          category,
-          average: selectedDayData[category],
-          fill: getChartColor(index)
-        })) : [];
-
-        // Days of week for toggle buttons
-        const daysOfWeek = [
-          { num: 0, name: 'Sun', fullName: 'Sunday' },
-          { num: 1, name: 'Mon', fullName: 'Monday' },
-          { num: 2, name: 'Tue', fullName: 'Tuesday' },
-          { num: 3, name: 'Wed', fullName: 'Wednesday' },
-          { num: 4, name: 'Thu', fullName: 'Thursday' },
-          { num: 5, name: 'Fri', fullName: 'Friday' },
-          { num: 6, name: 'Sat', fullName: 'Saturday' }
-        ];
-
-        return (
-          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
-            <div className="mb-6">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-text" />
-                </div>
-                <h2 className="text-xl font-bold text-text tracking-tight">Weekly Pattern Analysis</h2>
-              </div>
-              <p className="text-sm text-text-2 mb-4">
-                Average momo sales by day of the week across all records
-              </p>
-
-              {/* Day Toggle Buttons */}
-              <div className="flex gap-2 flex-wrap">
-                {daysOfWeek.map((day) => (
-                  <button
-                    key={day.num}
-                    onClick={() => setSelectedDayOfWeek(day.num)}
-                    className={`min-h-11 px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
-                      selectedDayOfWeek === day.num
-                        ? 'bg-surface border border-border   text-text shadow-lg'
-                        : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-                    }`}
-                  >
-                    {day.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-{/* Metrics Grid for Selected Day */}
-            {(() => {
-              // Find best day for each category (across all days) for comparison
-              const bestDays: Record<string, { day: string, avg: number }> = {};
-
-              categories.forEach(category => {
-                let maxAvg = 0;
-                let bestDay = '';
-
-                allDaysData.forEach(dayData => {
-                  if (dayData[category] > maxAvg) {
-                    maxAvg = dayData[category];
-                    bestDay = dayData.day;
-                  }
-                });
-
-                bestDays[category] = { day: bestDay, avg: maxAvg };
-              });
-
-              const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-
-              return (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {categories.map((category, index) => {
-                    const current = selectedDayFullData?.[category] || 0;
-                    const bestDay = bestDays[category];
-
-                    // Calculate percentage compared to best day
-                    let percentDiff = 0;
-                    const isBestDay = selectedDayFullData?.day === bestDay.day;
-
-                    if (bestDay.avg > 0 && current > 0) {
-                      percentDiff = ((current - bestDay.avg) / bestDay.avg) * 100;
-                    }
-
-                    const color = getChartColor(index);
-
-                    return (
-                      <div
-                        key={category}
-                        className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
-                        style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <h3 className="text-sm font-semibold text-text-2">{category}</h3>
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: color }}
-                          />
-                        </div>
-
-                        <div className="mb-3">
-                          <p className="text-4xl font-bold text-text mb-1">
-                            {Math.round(current).toLocaleString()}
-                          </p>
-                          <p className="text-xs text-text-3">avg pieces/day</p>
-                        </div>
-
-                        {isBestDay ? (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-warning-soft">
-                            <span className="text-xs font-semibold text-warning">
-                              <TrendingUp className="size-3.5" aria-hidden="true" /> Best day
-                            </span>
-                          </div>
-                        ) : current > 0 && bestDay.avg > 0 ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
-                                percentDiff >= 0 ? 'bg-success-soft' : 'bg-danger-soft'
-                              }`}>
-                                {percentDiff >= 0 ? <ArrowUp className="w-3 h-3 text-success" /> : <ArrowDown className="w-3 h-3 text-danger" />}
-                                <span className={`text-xs font-semibold ${
-                                  percentDiff >= 0 ? 'text-success' : 'text-danger'
-                                }`}>
-                                  {Math.abs(percentDiff).toFixed(1)}%
-                                </span>
-                              </div>
-                              <span className="text-xs text-text-3">
-                                vs {bestDay.day.slice(0, 3)}
-                              </span>
-                            </div>
-                            <p className="text-xs text-text-3">
-                              Best: {Math.round(bestDay.avg)} on {bestDay.day}
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="text-xs text-text-3">
-                            No sales data
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-
-            {/* Day of Week Insights */}
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(() => {
-                // Find best day for each category (across all days)
-                const bestDays: Record<string, { day: string, avg: number }> = {};
-
-                categories.forEach(category => {
-                  let maxAvg = 0;
-                  let bestDay = '';
-
-                  allDaysData.forEach(dayData => {
-                    if (dayData[category] > maxAvg) {
-                      maxAvg = dayData[category];
-                      bestDay = dayData.day;
-                    }
-                  });
-
-                  bestDays[category] = { day: bestDay, avg: maxAvg };
-                });
-
-                // Find overall busiest day
-                const busiestDay = allDaysData.reduce((prev, curr) => {
-                  const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
-                  const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
-                  return currTotal > prevTotal ? curr : prev;
-                });
-
-                const busiestDayTotal = categories.reduce((sum, cat) => sum + (busiestDay[cat] || 0), 0);
-
-                // Find quietest day
-                const quietestDay = allDaysData.reduce((prev, curr) => {
-                  const prevTotal = categories.reduce((sum, cat) => sum + (prev[cat] || 0), 0);
-                  const currTotal = categories.reduce((sum, cat) => sum + (curr[cat] || 0), 0);
-                  return currTotal < prevTotal ? curr : prev;
-                });
-
-                const quietestDayTotal = categories.reduce((sum, cat) => sum + (quietestDay[cat] || 0), 0);
-
-                // Find most popular item on the CURRENTLY SELECTED day
-                const selectedDayFullData = allDaysData.find(d => d.dayNum === selectedDayOfWeek);
-                const topItemOnSelectedDay = selectedDayFullData ?
-                  Object.entries(selectedDayFullData)
-                    .filter(([key]) => categories.includes(key))
-                    .sort((a, b) => (b[1] as number) - (a[1] as number))[0]
-                  : null;
-
-                return (
-                  <>
-                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Busiest day</p>
-                      <p className="text-xl font-semibold">
-                        {busiestDay.day}
-                      </p>
-                      <p className="text-xs text-text-2 mt-1">{busiestDayTotal.toLocaleString()} pcs avg</p>
-                    </div>
-                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Quietest day</p>
-                      <p className="text-xl font-semibold">
-                        {quietestDay.day}
-                      </p>
-                      <p className="text-xs text-text-2 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
-                    </div>
-                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
-                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Top seller today</p>
-                      <p className="text-base font-semibold">
-                        {topItemOnSelectedDay?.[0] || 'N/A'}
-                      </p>
-                      <p className="text-xs text-text-2 mt-1">
-                        {topItemOnSelectedDay ? `${(topItemOnSelectedDay[1] as number).toLocaleString()} pcs avg` : 'No data'}
-                      </p>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Sales Records - date filter (collapsed by default) so this doesn't render every
-          record ever uploaded, all expanded, in one indefinitely-scrolling list. */}
-      {salesRecords.length > 0 && (
-        <div className="bg-surface rounded-2xl shadow-lg border border-border overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setShowRecordsFilter(!showRecordsFilter)}
-            className="min-h-11 w-full flex items-center justify-between gap-2 px-4 sm:px-6 py-3 text-left"
-          >
-            <span className="text-sm font-semibold text-text-2 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-text-3" />
-              Filter by Date
-              <span className="text-xs font-normal text-text-3">
-                ({filteredSalesRecords.length} of {salesRecords.length} record{salesRecords.length !== 1 ? 's' : ''})
-              </span>
-            </span>
-            {showRecordsFilter ? <ChevronUp className="w-5 h-5 text-text-3" /> : <ChevronDown className="w-5 h-5 text-text-3" />}
-          </button>
-          {showRecordsFilter && (
-            <div className="px-4 sm:px-6 pb-4">
-              <select
-                value={recordsDateFilter}
-                onChange={(e) => setRecordsDateFilter(e.target.value as TimeFilter)}
-                className="min-h-11 sm:hidden w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text mb-2"
-              >
-                {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'custom'] as TimeFilter[]).map((f) => (
-                  <option key={f} value={f}>{f === 'previousWeek' ? 'Last Week' : f === 'previousMonth' ? 'Last Month' : f.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</option>
-                ))}
-              </select>
-              <div className="hidden sm:flex gap-2 flex-wrap">
-                {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'custom'] as TimeFilter[]).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => setRecordsDateFilter(f)}
-                    className={`min-h-11 px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
-                      recordsDateFilter === f ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-                    }`}
-                  >
-                    {f === 'previousWeek' ? 'Last Week' : f === 'previousMonth' ? 'Last Month' : f.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}
-                  </button>
-                ))}
-              </div>
-              {recordsDateFilter === 'custom' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                  <DatePicker
-                    label="From Date"
-                    value={recordsCustomRange.from}
-                    onChange={(date) => setRecordsCustomRange({ ...recordsCustomRange, from: date })}
-                  />
-                  <DatePicker
-                    label="To Date"
-                    value={recordsCustomRange.to}
-                    onChange={(date) => setRecordsCustomRange({ ...recordsCustomRange, to: date })}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {filteredSalesRecords.length === 0 ? (
-        <div className="bg-surface rounded-2xl shadow-lg p-12 text-center border border-border">
-          <FileSpreadsheet className="w-16 h-16 text-text-disabled mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-text mb-2">{salesRecords.length === 0 ? 'No Sales Data Yet' : 'No records in this date range'}</h3>
-          <p className="text-text-2">{salesRecords.length === 0 ? 'Upload your first sales file to get started' : 'Try a wider date range above.'}</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {filteredSalesRecords.map((record, idx) => {
-            const totalPieces = getTotalPieces(record.data);
-            const recordDate = new Date(record.date);
-            const isCollapsed = collapsedRecords.has(record.id);
-
-            // Resolve store name - fallback to context.stores if record.storeName is missing or "Unknown Store"
-            const displayStoreName = record.storeName && record.storeName !== 'Unknown Store'
-              ? record.storeName
-              : (context.stores?.find(s => s.id === record.storeId)?.name || record.storeName || 'Unknown Store');
-
-            return (
-              <div key={record.id} className="bg-surface rounded-2xl shadow-lg border border-border overflow-hidden hover:shadow-xl transition-shadow duration-300">
-                {/* Header */}
-                <div
-                  className="bg-surface border border-border p-4 text-text cursor-pointer"
-                  onClick={() => toggleRecordCollapse(record.id)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Calendar className="w-5 h-5" />
-                      <div>
-                        <h3 className="font-semibold">
-                          {recordDate.toLocaleDateString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric'
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {channelTable.groupedRows.map(({ group, rows }) => (
+                    <React.Fragment key={group}>
+                      <TableRow className="bg-surface-2 hover:bg-surface-2">
+                        <TableCell colSpan={2 + CHANNELS.length * 2} className="overline-label py-2">{group}</TableCell>
+                      </TableRow>
+                      {rows.map(row => (
+                        <TableRow key={row.productName}>
+                          <TableCell>{row.productName}</TableCell>
+                          <TableCell className="text-text-2">{row.category || '-'}</TableCell>
+                          {CHANNELS.map(ch => {
+                            const v = row[ch];
+                            return (
+                              <React.Fragment key={ch}>
+                                <TableCell numeric className="border-l border-border text-text-2">{v.pieces > 0 ? v.pieces.toLocaleString() : '-'}</TableCell>
+                                <TableCell numeric className="font-semibold">{v.pieces > 0 ? rupees2(v.revenue / v.pieces) : '-'}</TableCell>
+                              </React.Fragment>
+                            );
                           })}
-                        </h3>
-                        <p className="text-sm text-text-2">
-                          {displayStoreName} • Total: {totalPieces.toLocaleString()} pieces
-                        </p>
-                      </div>
-                    </div>
+                        </TableRow>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </Card>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(record.id);
-                        }}
-                        className="min-h-11 p-2 hover:bg-surface rounded-lg transition-colors"
-                        title="Delete record"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                      <button
-                        className="min-h-11 p-2 hover:bg-surface rounded-lg transition-all duration-300"
-                        title={isCollapsed ? "Expand" : "Collapse"}
-                      >
-                        <svg
-                          className={`w-5 h-5 transform transition-transform duration-300 ${isCollapsed ? '' : 'rotate-180'}`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Category Grid */}
-                {!isCollapsed && (
-                  <div className="p-6">
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {Object.entries(record.data).map(([category, count], index) => {
-                        const safeCount = count || 0;
-                        const percentage = totalPieces > 0 ? ((safeCount / totalPieces) * 100).toFixed(1) : '0';
-                        const color = getChartColor(index);
-                        const piecesPerPlateValue = piecesPerPlate[category as keyof CategoryData] || 6;
-                        const plates = Math.floor(safeCount / piecesPerPlateValue);
-
-                        return (
-                          <div
-                            key={category}
-                            className="bg-surface-2 rounded-xl p-4 border-2 border-border hover:shadow-md transition-all duration-300"
-                            style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <Package className="w-5 h-5 text-text-3" />
-                              <span className="text-xs font-semibold text-text-3 bg-surface-3 px-2 py-1 rounded-full">
-                                {percentage}%
-                              </span>
-                            </div>
-                            <h4 className="text-sm text-text-2 mb-1">{category}</h4>
-                            <p className="text-2xl text-text" style={{ fontWeight: '700' }}>
-                              {safeCount.toLocaleString()}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <p className="text-xs text-text-3">pieces</p>
-                              <span className="text-xs text-text-3">•</span>
-                              <p className="text-xs text-text-2 font-semibold">{plates} plates</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Upload Info */}
-                    <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-sm text-text-3">
-                      {record.uploadedBy === 'pos-sync' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-info-soft text-info text-xs font-medium rounded-full border border-info-border">
-                          <CheckCircle className="size-3.5" aria-hidden="true" /> Synced from the POS
+      {/* Real price from settled orders */}
+      {orderItemDetail.length > 0 && (
+        <Card className="gap-4 lg:p-5">
+          <SectionHeading
+            as="h3"
+            title={t('wp8.sales.orderPrice')}
+            caption={`${orderLevel.matchedOrders} of ${orderLevel.totalOnlineOrders} online orders matched an uploaded settlement`}
+          />
+          <HowItWorks title={t('wp8.sales.orderPrice')}>
+            <p>Exact, not an estimate. Each Zomato or Swiggy order's real payout (from an uploaded settlement) is matched to that same order's momos (from the POS) by its order ID, then split across the items by their share of the order's value.</p>
+            <p>{orderLevel.matchedOrders} of {orderLevel.totalOnlineOrders} online orders in this period matched an uploaded settlement. {orderLevel.offlineOrders} counter orders are left out - there is no payout to match them to.</p>
+          </HowItWorks>
+          {!orderLevel.hasMatches ? (
+            <EmptyState
+              compact
+              icon={FileSpreadsheet}
+              title="No settled orders in this period yet"
+              body="Upload the Zomato or Swiggy settlement covering these dates in Money → Payouts, then check back here."
+            />
+          ) : (
+            <>
+              <div className="lg:hidden">
+                <ListGroup>
+                  {orderLevel.rows.map(r => (
+                    <ListRow
+                      key={r.cat}
+                      title={r.cat}
+                      subtitle={`${r.pieces.toFixed(0)} pcs · gross ${rupees2(r.grossValue)} · payout ${rupees2(r.netPayout)}`}
+                      trailing={
+                        <span className="flex flex-col items-end">
+                          <span className="num text-body-md font-semibold text-text">{rupees2(r.effectivePerMomo)}</span>
+                          <span className="num text-caption text-text-3">{rupees2(r.platePrice)} a plate</span>
                         </span>
-                      ) : (
-                        <span>Uploaded by {record.uploadedBy}</span>
-                      )}
-                      <span>{new Date(record.uploadedAt).toLocaleString()}</span>
-                    </div>
-                  </div>
-                )}
+                      }
+                    />
+                  ))}
+                </ListGroup>
               </div>
-            );
-          })}
-        </div>
+              <div className="hidden lg:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Momo type</TableHead>
+                      <TableHead numeric>Pieces (matched orders)</TableHead>
+                      <TableHead numeric>Gross value</TableHead>
+                      <TableHead numeric>Net payout</TableHead>
+                      <TableHead numeric>Effective ₹ a momo</TableHead>
+                      <TableHead numeric>Effective plate price</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orderLevel.rows.map(r => (
+                      <TableRow key={r.cat}>
+                        <TableCell>{r.cat}</TableCell>
+                        <TableCell numeric className="text-text-2">{r.pieces.toFixed(0)}</TableCell>
+                        <TableCell numeric className="text-text-2">{rupees2(r.grossValue)}</TableCell>
+                        <TableCell numeric className="text-text-2">{rupees2(r.netPayout)}</TableCell>
+                        <TableCell numeric className="font-semibold">{rupees2(r.effectivePerMomo)}</TableCell>
+                        <TableCell numeric className="font-semibold">{rupees2(r.platePrice)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </Card>
       )}
+
+      {/* Weekly pattern */}
+      {salesRecords.length > 0 && (
+        <section className="flex flex-col gap-3" aria-labelledby="sales-weekly-title">
+          <SectionHeading as="h3" id="sales-weekly-title" title={t('wp8.sales.weekly')} caption="Average momo pieces sold by day of the week, across all records" />
+          <FilterChips
+            aria-label="Day of the week"
+            value={String(selectedDayOfWeek)}
+            onValueChange={(v) => setSelectedDayOfWeek(Number(v))}
+            options={daysOfWeek.map(d => ({ value: String(d.num), label: d.name }))}
+          />
+          <StatGrid columns={3}>
+            <StatTile label={t('wp8.sales.busiest')} value={weekly.busiestDay.day} caption={`${fmt(weekly.busiestDayTotal)} pcs avg`} />
+            <StatTile label={t('wp8.sales.quietest')} value={weekly.quietestDay.day} caption={`${fmt(weekly.quietestDayTotal)} pcs avg`} />
+            <StatTile
+              className="col-span-2 lg:col-span-1"
+              label={`${t('wp8.sales.topSeller')} · ${daysOfWeek[selectedDayOfWeek]?.name}`}
+              value={<span className="text-title">{weekly.topItemOnSelectedDay?.[0] || 'N/A'}</span>}
+              caption={weekly.topItemOnSelectedDay ? `${(weekly.topItemOnSelectedDay[1] as number).toLocaleString()} pcs avg` : 'No data'}
+            />
+          </StatGrid>
+          <ListGroup>
+            {weekly.rows.map(r => (
+              <ListRow
+                key={r.category}
+                title={r.category}
+                subtitle={r.bestDay.avg > 0 ? `Best: ${Math.round(r.bestDay.avg)} on ${r.bestDay.day}` : 'No sales data'}
+                trailing={
+                  <span className="flex flex-col items-end gap-1">
+                    <span className="num text-body-md font-semibold text-text">{fmt(Math.round(r.current))} <span className="text-caption font-normal text-text-3">a day</span></span>
+                    {r.isBestDay ? (
+                      <StatusChip tone="brand" icon={TrendingUp}>{t('wp8.bestDay')}</StatusChip>
+                    ) : r.current > 0 && r.bestDay.avg > 0 ? (
+                      <StatusChip tone={r.percentDiff >= 0 ? 'success' : 'danger'} icon={r.percentDiff >= 0 ? ArrowUp : ArrowDown}>
+                        <span className="num">{Math.abs(r.percentDiff).toFixed(1)}%</span> vs {r.bestDay.day.slice(0, 3)}
+                      </StatusChip>
+                    ) : null}
+                  </span>
+                }
+              />
+            ))}
+          </ListGroup>
+        </section>
+      )}
+
+      {/* Sales records: a list; a record opens a sheet with its momo types */}
+      {salesRecords.length > 0 && (
+        <ListGroup
+          title={t('wp8.sales.records')}
+          meta={`${filteredSalesRecords.length} of ${salesRecords.length}`}
+          action={
+            <PeriodChip
+              value={recordsDateFilter}
+              options={RECORDS_PERIOD_OPTIONS}
+              custom={recordsCustomRange}
+              onChange={(f, custom) => { setRecordsDateFilter(f); if (custom) setRecordsCustomRange(custom); }}
+            />
+          }
+          empty={<EmptyState compact icon={Calendar} title={t('wp8.sales.noRecordsRange')} body="Try a wider date range." />}
+        >
+          {filteredSalesRecords.slice(0, showAllRecords ? undefined : RECORDS_SHOWN).map((record) => (
+            <ListRow
+              key={record.id}
+              title={friendlyDateLabel(record.date, lang)}
+              subtitle={`${storeNameFor(record)} · ${fmt(getTotalPieces(record.data))} pieces`}
+              chip={<StatusChip tone={record.uploadedBy === 'pos-sync' ? 'info' : 'neutral'}>{record.uploadedBy === 'pos-sync' ? t('wp8.sales.fromPos') : t('wp8.sales.fromFile')}</StatusChip>}
+              onClick={() => setOpenRecordId(record.id)}
+              chevron
+            />
+          ))}
+          {!showAllRecords && filteredSalesRecords.length > RECORDS_SHOWN && (
+            <ListRow
+              muted
+              title={t('common.seeAll', { n: filteredSalesRecords.length })}
+              onClick={() => setShowAllRecords(true)}
+              chevron="down"
+            />
+          )}
+        </ListGroup>
+      )}
+
+      {uploadSheet}
+      {plateSheet}
+      {menuSheet}
+      {recordSheet}
     </div>
   );
 }
