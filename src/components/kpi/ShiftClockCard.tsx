@@ -5,6 +5,7 @@ import { CheckCircle2, Clock, Loader2, LogIn, LogOut, MapPin, MapPinOff, Radar, 
 import { toast } from 'sonner';
 import * as kpi from './kpiApi';
 import { ShiftConsent } from './ShiftConsent';
+import { onAppVisibilityChange, useForegroundInterval } from '../../utils/appVisibility';
 import {
   clearLocalEvent, ensureShiftTracking, localEvents, onShiftTrackerChange, promptText, subscribeShiftTracker, type TrackerStatus,
 } from './shiftTracker';
@@ -81,19 +82,17 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
     load();
     const offTracker = subscribeShiftTracker((s) => setTracker({ status: s.status, inside: s.inside }));
     const offChange = onShiftTrackerChange(() => { load(); });
-    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', onVisible);
-    const minute = setInterval(() => setTick((n) => n + 1), 60000); // keeps "hours so far" fresh
-    return () => { offTracker(); offChange(); document.removeEventListener('visibilitychange', onVisible); clearInterval(minute); };
+    const offVisible = onAppVisibilityChange((visible) => { if (visible) load(); });
+    return () => { offTracker(); offChange(); offVisible(); };
   }, [load]);
+  // Keeps "hours so far" fresh - only while the app is in front (it catches up on return).
+  useForegroundInterval(() => setTick((n) => n + 1), 60000, { resumeAfterMs: 0 });
 
+  const refreshTeam = useCallback(() => { kpi.getTeamPending().then((r) => setTeam(r.pending || [])).catch(() => {}); }, []);
   useEffect(() => {
-    if (!isLead) return;
-    const refresh = () => kpi.getTeamPending().then((r) => setTeam(r.pending || [])).catch(() => {});
-    refresh();
-    const t = setInterval(refresh, 5 * 60000);
-    return () => clearInterval(t);
-  }, [isLead]);
+    if (isLead) refreshTeam();
+  }, [isLead, refreshTeam]);
+  useForegroundInterval(refreshTeam, isLead ? 5 * 60000 : null);
 
   if (!today?.required) return null;
   const employeeId = today.employeeId;

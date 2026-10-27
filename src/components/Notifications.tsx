@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import * as api from '../utils/api';
 import { getNavigationTarget } from '../utils/notificationNavigation';
 import { isNativePushSupported } from '../utils/nativePushNotifications';
+import { useForegroundInterval } from '../utils/appVisibility';
 
 type NotificationsProps = {
  // Mirrors the push-notification deep-link shape (see notificationNavigation.ts /
@@ -16,9 +17,15 @@ type NotificationsProps = {
 // nativePushNotifications.ts) with its own tray, tap-to-open, and (for approvals) inline
 // action buttons - a second in-app bell/dropdown showing the same list is redundant there
 // and was only ever meant for the web app, where there's no OS notification tray to lean
-// on. Rendering nothing here (rather than just hiding the badge) also skips the 30-second
-// poll entirely on native, since nothing on that platform reads it.
+// on. Rendering nothing here (rather than just hiding the badge) also skips the poll
+// entirely on native, since nothing on that platform reads it.
 const HIDE_ON_NATIVE = isNativePushSupported();
+
+// Web only: how often the bell re-checks while the tab is open and in front. A tab left in the
+// background used to keep polling every 30 seconds all day (659 calls in 9 hours from the
+// owner's account); now it stops while hidden and catches up on return if it has been a while.
+const POLL_MS = 60000;
+const RESUME_REFRESH_MS = 15000;
 
 export function Notifications({ onNavigate }: NotificationsProps) {
  const [notifications, setNotifications] = useState<api.Notification[]>([]);
@@ -33,16 +40,15 @@ export function Notifications({ onNavigate }: NotificationsProps) {
 
  useEffect(() => {
  // Nothing on native ever reads this component's own state (it renders null below),
- // so skip the fetch and the 30-second poll entirely rather than doing pointless work
- // in the background on every screen.
+ // so skip the fetch and the poll entirely rather than doing pointless work in the
+ // background on every screen.
  if (HIDE_ON_NATIVE) return;
 
  loadNotifications();
-
- // Refresh notifications every 30 seconds
- const interval = setInterval(loadNotifications, 30000);
- return () => clearInterval(interval);
  }, []);
+
+ // Refresh every minute while the page is in front; paused while it's hidden.
+ useForegroundInterval(() => { loadNotifications(); }, HIDE_ON_NATIVE ? null : POLL_MS, { resumeAfterMs: RESUME_REFRESH_MS });
 
  const loadNotifications = async () => {
  try {
