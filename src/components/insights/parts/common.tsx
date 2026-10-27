@@ -3,7 +3,8 @@
 // secondary actions, and a period chip that drives a screen's own filter keys through the shared
 // DateRangeChip (so each screen keeps its own date maths and its numbers stay the same).
 import * as React from 'react';
-import { Info, MoreVertical } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Info, MoreVertical } from 'lucide-react';
+import { SelectChip } from '../../ui/chip';
 import { DateRangeChip } from '../../ui/date-range-chip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../ui/dropdown-menu';
 import { IconButton } from '../../ui/icon-button';
@@ -145,6 +146,100 @@ export function PeriodChip<F extends string>({
         else onChange(key);
       }}
     />
+  );
+}
+
+/**
+ * A chip showing the current choice ("Last 30 days ▾") that opens a sheet of options - for a
+ * screen's own short option list that the shared date presets don't cover.
+ */
+export function OptionChip<T extends string>({
+  value,
+  options,
+  onChange,
+  title,
+  icon,
+  className,
+}: {
+  value: T;
+  options: { value: T; label: React.ReactNode; description?: React.ReactNode }[];
+  onChange: (value: T) => void;
+  title: React.ReactNode;
+  icon?: React.ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const current = options.find((o) => o.value === value);
+  return (
+    <>
+      <SelectChip
+        className={className}
+        leadingIcon={icon ?? <CalendarDays aria-hidden="true" />}
+        trailingIcon={<ChevronDown aria-hidden="true" />}
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+      >
+        {current?.label ?? value}
+      </SelectChip>
+      <ResponsiveModal open={open} onOpenChange={setOpen} title={title} size="form">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border" role="listbox">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="option"
+              aria-selected={o.value === value}
+              onClick={() => { onChange(o.value); setOpen(false); }}
+              className="flex min-h-13 w-full items-center gap-3 px-4 py-2.5 text-left outline-none hover:bg-surface-2/60 focus-visible:bg-surface-2 active:bg-surface-2"
+            >
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn('text-body-md', o.value === value ? 'font-semibold text-text' : 'text-text')}>{o.label}</span>
+                {o.description && <span className="text-label text-text-3">{o.description}</span>}
+              </span>
+              {o.value === value && <Check className="size-5 shrink-0 text-primary" aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+      </ResponsiveModal>
+    </>
+  );
+}
+
+/**
+ * A list row whose details must not be cut off (ListRow clamps its subtitle to two lines):
+ * optional icon well, title, any number of detail lines, and something on the right.
+ */
+export function TextRow({
+  icon: Icon,
+  iconTone = 'neutral',
+  title,
+  lines,
+  trailing,
+  className,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  iconTone?: 'neutral' | 'warning' | 'danger' | 'success';
+  title: React.ReactNode;
+  lines?: React.ReactNode[];
+  trailing?: React.ReactNode;
+  className?: string;
+}) {
+  const well = { neutral: 'bg-surface-2 text-text-2', warning: 'bg-warning-soft text-warning', danger: 'bg-danger-soft text-danger', success: 'bg-success-soft text-success' }[iconTone];
+  return (
+    <div className={cn('flex items-start gap-3 px-4 py-3', className)}>
+      {Icon && (
+        <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-md', well)} aria-hidden="true">
+          <Icon className="size-5" />
+        </span>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-body-md font-medium text-text">{title}</span>
+        {lines?.filter(Boolean).map((line, i) => (
+          <span key={i} className="text-label text-text-3">{line}</span>
+        ))}
+      </div>
+      {trailing && <div className="flex shrink-0 flex-col items-end gap-1">{trailing}</div>}
+    </div>
   );
 }
 

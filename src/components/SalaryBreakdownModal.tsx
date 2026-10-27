@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Users, AlertTriangle, Download, ChevronDown, ChevronUp, Lock, CheckCircle2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Users, AlertTriangle, Download, Lock, CheckCircle2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Callout } from './ui/callout';
 import { CHART_SERIES } from './ui/chart-theme';
@@ -8,7 +8,7 @@ import { ListGroup, ListRow } from './ui/list-row';
 import { ResponsiveModal } from './ui/responsive-modal';
 import { StatGrid, StatTile } from './ui/stat-tile';
 import { StatusChip } from './ui/status-chip';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { TextRow } from './insights/parts/common';
 import { ChartCard, ChartEmpty, TrendChart } from './insights/tabs/shared';
 import * as api from '../utils/api';
 import { SalaryBreakdownData, monthLabel } from '../utils/salaryBreakdown';
@@ -125,7 +125,6 @@ export function SalaryBreakdownModal({ totalAmount, data, periodLabel, canSeeEmp
               {/* Per employee: a list on phones (tap a person for their payouts), a table from 1024 px */}
               <ListGroup
                 title="By employee"
-                className="lg:hidden"
                 action={data.employees.length > 0 ? <Button variant="secondary" size="sm" leadingIcon={<Download />} onClick={exportCsv}>Export CSV</Button> : undefined}
                 empty={<EmptyState compact icon={Users} title="No employee payouts in this period" />}
               >
@@ -155,64 +154,6 @@ export function SalaryBreakdownModal({ totalAmount, data, periodLabel, canSeeEmp
                   );
                 })}
               </ListGroup>
-              <div className="hidden flex-col gap-2.5 lg:flex">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-subtitle font-semibold text-text">By employee</h2>
-                  {data.employees.length > 0 && <Button variant="secondary" size="sm" leadingIcon={<Download />} onClick={exportCsv}>Export CSV</Button>}
-                </div>
-                {data.employees.length === 0 ? (
-                  <EmptyState compact icon={Users} title="No employee payouts in this period" />
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Employee</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead numeric>Base</TableHead>
-                        <TableHead numeric>Variable</TableHead>
-                        <TableHead numeric>Total</TableHead>
-                        <TableHead numeric>Share</TableHead>
-                        <TableHead className="w-12"><span className="sr-only">Details</span></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.employees.map((e) => {
-                        const open = expanded === e.employeeId;
-                        return (
-                          <Fragment key={e.employeeId}>
-                            <TableRow className="cursor-pointer" onClick={() => setExpanded(open ? null : e.employeeId)}>
-                              <TableCell className="font-medium">
-                                {e.name}
-                                {e.archived && <StatusChip tone="neutral" className="ml-2">Archived</StatusChip>}
-                              </TableCell>
-                              <TableCell className="capitalize text-text-2">{e.type}</TableCell>
-                              <TableCell numeric>{inr(e.base)}</TableCell>
-                              <TableCell numeric>{e.variable > 0 ? inr(e.variable) : '-'}</TableCell>
-                              <TableCell numeric className="font-semibold">{inr(e.total)}</TableCell>
-                              <TableCell numeric className="text-text-3">{payoutTotal > 0 ? ((e.total / payoutTotal) * 100).toFixed(1) : 0}%</TableCell>
-                              <TableCell className="text-text-3">{open ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}</TableCell>
-                            </TableRow>
-                            {open && (
-                              <TableRow className="bg-surface-2 hover:bg-surface-2">
-                                <TableCell colSpan={7}>
-                                  <div className="flex flex-col gap-1">
-                                    {data.payouts.filter((p) => p.employeeId === e.employeeId).map((p) => (
-                                      <div key={p.id} className="flex justify-between text-label text-text-2">
-                                        <span>{p.date} · for {monthLabel(p.forMonth)} · paid from {p.paidFrom}</span>
-                                        <span className="num">{inr(p.amount)}{p.variablePay > 0 ? ` (incl. ${inr(p.variablePay)} variable)` : ''}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
 
               {data.personalExpenses.length > 0 && (
                 <ListGroup title="Personal expenses counted in salaries">
@@ -235,19 +176,19 @@ export function SalaryBreakdownModal({ totalAmount, data, periodLabel, canSeeEmp
                 empty={<ListRow icon={CheckCircle2} iconTone="success" title="Nothing unusual" subtitle="Every payout is matched, in line with last month, and paid from Paytm." />}
               >
                 {data.unmatched.count > 0 && (
-                  <ListRow icon={AlertTriangle} iconTone="warning" title={`${data.unmatched.count} payout${data.unmatched.count === 1 ? '' : 's'} (${inr(data.unmatched.amount)}) not matched`} subtitle="Couldn't be matched to an employee record, so they're left out of this total." />
+                  <TextRow icon={AlertTriangle} iconTone="warning" title={`${data.unmatched.count} payout${data.unmatched.count === 1 ? '' : 's'} (${inr(data.unmatched.amount)}) not matched`} lines={["Couldn't be matched to an employee record, so they're left out of this total."]} />
                 )}
                 {data.notPaidThisPeriod.length > 0 && (
-                  <ListRow icon={AlertTriangle} iconTone="warning" title="Not paid yet this period (paid last month)" subtitle={data.notPaidThisPeriod.map((n) => `${n.name} (${inr(n.prevTotal)})`).join(', ')} />
+                  <TextRow icon={AlertTriangle} iconTone="warning" title="Not paid yet this period (paid last month)" lines={[data.notPaidThisPeriod.map((n) => `${n.name} (${inr(n.prevTotal)})`).join(', ')]} />
                 )}
                 {data.bigChanges.map((c) => (
-                  <ListRow key={c.employeeId} icon={AlertTriangle} iconTone="warning" title={c.name} subtitle={`${inr(c.total)} vs ${inr(c.prevTotal)} last month (${c.percent >= 0 ? '+' : ''}${c.percent.toFixed(0)}%)`} />
+                  <TextRow key={c.employeeId} icon={AlertTriangle} iconTone="warning" title={c.name} lines={[`${inr(c.total)} vs ${inr(c.prevTotal)} last month (${c.percent >= 0 ? '+' : ''}${c.percent.toFixed(0)}%)`]} />
                 ))}
                 {data.nonPaytmPayouts.length > 0 && (
-                  <ListRow icon={AlertTriangle} iconTone="warning" title="Not paid from Paytm" subtitle={`So they don't reduce the Paytm balance: ${data.nonPaytmPayouts.map((p) => `${p.name} ${inr(p.amount)} from ${p.paidFrom}`).join(', ')}`} />
+                  <TextRow icon={AlertTriangle} iconTone="warning" title="Not paid from Paytm" lines={[`So they don't reduce the Paytm balance: ${data.nonPaytmPayouts.map((p) => `${p.name} ${inr(p.amount)} from ${p.paidFrom}`).join(', ')}`]} />
                 )}
                 {advances.map((a) => (
-                  <ListRow key={a.id} icon={AlertTriangle} iconTone="warning" title={`${a.employeeName}: open salary advance`} subtitle={`${inr(a.remainingAmount)} still to deduct (${inr(a.monthlyDeduction)} a month until ${a.endMonth})`} />
+                  <TextRow key={a.id} icon={AlertTriangle} iconTone="warning" title={`${a.employeeName}: open salary advance`} lines={[`${inr(a.remainingAmount)} still to deduct (${inr(a.monthlyDeduction)} a month until ${a.endMonth})`]} />
                 ))}
               </ListGroup>
             </>

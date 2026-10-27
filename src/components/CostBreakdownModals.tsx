@@ -5,7 +5,7 @@ import { ListGroup, ListRow } from './ui/list-row';
 import { ResponsiveModal } from './ui/responsive-modal';
 import { StatSplit, StatTile } from './ui/stat-tile';
 import { StatusChip } from './ui/status-chip';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { TextRow } from './insights/parts/common';
 import type { AggregatorSettlement, OnlineLoan } from '../utils/api';
 import { settlementShareInRange, type OnlineCosts } from '../utils/onlineCosts';
 import { getTodayIST } from '../utils/timezone';
@@ -134,58 +134,24 @@ export function CommissionBreakdownModal({
         title="Settlements in this period"
         footer="Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it."
         empty={<EmptyState compact title="No settlements cover this period" />}
-        className="lg:hidden"
       >
         {sorted.map((s) => (
-          <ListRow
+          <TextRow
             key={s.id}
-            title={<span className="capitalize">{s.aggregator}</span>}
-            subtitle={`Orders ${shortDate(s.periodStart || s.settlementDate)} - ${shortDate(s.periodEnd || s.settlementDate)} · paid ${shortDate(s.settlementDate)} · order value ${inr2((s.grossSales || 0) - gstOf(s))}${s.adSpend ? ` · ads ${inr2(s.adSpend)}` : ''} · payout ${inr2(s.netPayout || 0)}`}
+            title={<span className="capitalize">{s.aggregator} · {shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</span>}
+            lines={[
+              `Paid ${shortDate(s.settlementDate)} · order value ${inr2((s.grossSales || 0) - gstOf(s))}`,
+              `Ad spend ${s.adSpend ? inr2(s.adSpend) : '-'} · net payout ${inr2(s.netPayout || 0)}`,
+            ]}
             trailing={
-              <span className="flex flex-col items-end">
+              <>
                 <span className="num text-body-md font-semibold text-text">{inr2(commissionExGst(s))}</span>
                 <span className="num text-caption text-text-3">{pctOf(s)}%</span>
-              </span>
+              </>
             }
           />
         ))}
       </ListGroup>
-      <div className="hidden flex-col gap-2 lg:flex">
-        <h3 className="text-subtitle font-semibold text-text">Settlements in this period</h3>
-        {sorted.length === 0 ? (
-          <EmptyState compact title="No settlements cover this period" />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Aggregator</TableHead>
-                <TableHead>Orders from</TableHead>
-                <TableHead>Paid on</TableHead>
-                <TableHead numeric>Order value</TableHead>
-                <TableHead numeric>Commission</TableHead>
-                <TableHead numeric>%</TableHead>
-                <TableHead numeric>Ad spend</TableHead>
-                <TableHead numeric>Net payout</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sorted.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-medium capitalize">{s.aggregator}</TableCell>
-                  <TableCell className="text-text-2">{shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</TableCell>
-                  <TableCell className="text-text-2">{shortDate(s.settlementDate)}</TableCell>
-                  <TableCell numeric>{inr2((s.grossSales || 0) - gstOf(s))}</TableCell>
-                  <TableCell numeric className="font-semibold">{inr2(commissionExGst(s))}</TableCell>
-                  <TableCell numeric>{pctOf(s)}%</TableCell>
-                  <TableCell numeric>{s.adSpend ? inr2(s.adSpend) : '-'}</TableCell>
-                  <TableCell numeric>{inr2(s.netPayout || 0)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        <p className="text-label text-text-3">Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it.</p>
-      </div>
     </Shell>
   );
 }
@@ -236,44 +202,19 @@ export function InterestBreakdownModal({
         <EmptyState compact icon={Landmark} title="No interest-bearing loans accrue in this period" />
       ) : (
         <>
-          <ListGroup className="lg:hidden">
+          <ListGroup>
             {rows.map(({ loan, days, interest }) => (
-              <ListRow
+              <TextRow
                 key={loan.id}
                 title={loan.investorName || 'Unknown lender'}
-                subtitle={`${inr(loan.loanAmount)} at ${loan.interestRate}% a month · taken ${shortDate(loan.loanDate)} · ${days} days in period · ${statusText(loan)}`}
+                lines={[
+                  `${inr(loan.loanAmount)} at ${loan.interestRate}% a month · taken ${shortDate(loan.loanDate)}`,
+                  <span className="capitalize">{days} days in period · {statusText(loan)}</span>,
+                ]}
                 trailing={<span className="num text-body-md font-semibold text-text">{inr2(interest)}</span>}
               />
             ))}
           </ListGroup>
-          <div className="hidden lg:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Lender</TableHead>
-                  <TableHead>Taken on</TableHead>
-                  <TableHead numeric>Principal</TableHead>
-                  <TableHead numeric>Rate / month</TableHead>
-                  <TableHead numeric>Days in period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead numeric>Interest</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map(({ loan, days, interest }) => (
-                  <TableRow key={loan.id}>
-                    <TableCell className="font-medium">{loan.investorName || 'Unknown lender'}</TableCell>
-                    <TableCell className="text-text-2">{shortDate(loan.loanDate)}</TableCell>
-                    <TableCell numeric>{inr(loan.loanAmount)}</TableCell>
-                    <TableCell numeric>{loan.interestRate}%</TableCell>
-                    <TableCell numeric>{days}</TableCell>
-                    <TableCell className="capitalize text-text-2">{statusText(loan)}</TableCell>
-                    <TableCell numeric className="font-semibold">{inr2(interest)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
         </>
       )}
       <p className="text-label text-text-3">Interest accrues daily at principal × monthly rate × days ÷ 30, from the day the loan was taken until it is repaid (or the end of the period).</p>
