@@ -14,7 +14,7 @@ import { confirm } from '../ui/confirm';
 import { useT } from '../../utils/i18n';
 import type { EventBundle, EventRecord } from '../../utils/eventsApi';
 import { eventOutboxEntries, subscribeEventOutbox } from '../../utils/eventOutbox';
-import { EventStatusChip, dateRange, dayNumber, useEventsApi, useLoad } from './eventsShared';
+import { EventStatusChip, dateRange, dayNumber, localNum, useEventsApi, useLoad } from './eventsShared';
 import { EventOverviewTab } from './EventOverviewTab';
 import { EventSalesTab } from './EventSalesTab';
 import { EventStockTab } from './EventStockTab';
@@ -110,7 +110,7 @@ export function EventDetail({ eventId, onBack, initialTab }: { eventId: string; 
         {ev && (
           <div className="flex items-center gap-2 px-4 pb-2 lg:px-4">
             <EventStatusChip status={ev.status} size="sm" />
-            {dayN && <span className="text-label text-text-2">{t('event.dayOf', { n: dayN, total: days })}</span>}
+            {dayN && <span className="text-label text-text-2">{t('event.dayOf', { n: localNum(dayN, lang), total: localNum(days, lang) })}</span>}
             {bundle?.permissions.isIncharge && <span className="text-label text-text-3">· {t('event.youIncharge')}</span>}
           </div>
         )}

@@ -176,15 +176,17 @@ export function daySales(day: Row | null | undefined): DaySales {
 
 // ── Rent ──
 
-// Rent is a total for the event or so much a day. The P&L counts the agreed rent (a total from
-// the first day; a daily rent for each day so far); rent payments are logged as expenses only to
-// move cash, and count as the rent themselves only when no agreed rent was entered.
+// Rent is a total for the event or so much a day. The P&L counts the agreed rent day by day (a
+// total spread evenly over the event days), all of it by the last day; rent payments are logged
+// as expenses only to move cash, and count as the rent themselves only when no agreed rent was
+// entered.
 export function agreedRent(ev: Row, throughDate: string): number {
   const amount = Math.max(0, num(ev?.rent?.amount));
   if (!amount) return 0;
-  const days = eventDays(ev).filter((d) => d <= throughDate);
+  const all = eventDays(ev);
+  const days = all.filter((d) => d <= throughDate);
   if (!days.length) return 0;
-  return ev?.rent?.mode === 'per_day' ? amount * days.length : amount;
+  return ev?.rent?.mode === 'per_day' ? amount * days.length : round2((amount * days.length) / all.length);
 }
 export function rentForDay(ev: Row, date: string): number {
   const amount = Math.max(0, num(ev?.rent?.amount));
@@ -400,16 +402,15 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
     if (row) row.expenses = round2(row.expenses + num(e.amount));
   }
 
-  // Agreed rent spread over the event days it covers; with none agreed, the rent payments.
+  // Agreed rent, a day's share for each event day so far (a total rent spread evenly over the
+  // event days), so "profit so far" isn't sunk by the whole rent on day one; by the last day or at
+  // closing it is all counted. With no agreed rent, the rent payments count instead.
   const agreed = Math.max(0, num(ev?.rent?.amount));
   if (agreed) {
-    for (const d of allDays) {
-      const row = rows.get(d)!;
-      if (ev?.rent?.mode === 'per_day') row.rent = d <= through ? agreed : 0;
-      else row.rent = through >= first ? round2(agreed / allDays.length) : 0;
-    }
-    // A total rent is owed in full once the event has started, whatever day it is now.
-    if (ev?.rent?.mode !== 'per_day' && through >= first) {
+    const share = ev?.rent?.mode === 'per_day' ? agreed : agreed / allDays.length;
+    for (const d of allDays) rows.get(d)!.rent = d <= through ? round2(share) : 0;
+    // Rounding: the days of a total rent add up to the total exactly once all are counted.
+    if (ev?.rent?.mode !== 'per_day' && through >= last) {
       const spread = allDays.reduce((s, d) => s + rows.get(d)!.rent, 0);
       rows.get(last)!.rent = round2(rows.get(last)!.rent + (agreed - spread));
     }

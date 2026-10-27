@@ -20,7 +20,7 @@ import { Callout } from '../ui/callout';
 import { useT } from '../../utils/i18n';
 import type { EventListRow } from '../../utils/eventsApi';
 import type { EventMomoKey } from '../../utils/eventRules';
-import { EventStatusChip, MOMO_KEYS, dateRange, momoLabel, useEventsApi, useLoad } from './eventsShared';
+import { MOMO_KEYS, dateRange, momoLabel, useEventsApi, useLoad } from './eventsShared';
 import { EventFormSheet } from './EventFormSheet';
 import { EventDetail, type EventTab } from './EventDetail';
 
@@ -57,8 +57,10 @@ export function EventsPage({ onBack, initialEventId, initialTab, onOpenEvent }: 
       icon={CalendarDays}
       title={e.name}
       subtitle={[dateRange(e.startDate, e.endDate, lang), e.venue, e.status === 'planned' ? null : `Profit ₹${Math.round(e.profit).toLocaleString('en-IN')}`].filter(Boolean).join(' · ')}
-      chip={<EventStatusChip status={e.status} size="sm" />}
-      amount={e.status === 'planned' ? null : e.sales}
+      // The group heading says live / upcoming; a closed event's row needs no chip either.
+      amount={e.status === 'planned' ? undefined : e.sales}
+      trailing={e.status === 'planned' ? <span className="num text-label text-text-2">{`${e.dayCount} days`}</span> : undefined}
+      chevron
       onClick={() => open(e.id)}
     />
   );

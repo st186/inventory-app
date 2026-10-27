@@ -32,6 +32,9 @@ const BN_MONTHS = ['জানু', 'ফেব্রু', 'মার্চ', 'এ
 const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
 const bnNum = (s: string) => s.replace(/\d/g, (d) => BN_DIGITS[Number(d)]);
 
+// A count in the person's script (Bengali digits for Bengali).
+export const localNum = (n: number, lang: Lang) => (lang === 'bn' ? bnNum(String(n)) : String(n));
+
 export function shortDate(date: string, lang: Lang = 'en'): string {
   if (!date) return '';
   const [, m, d] = date.split('-').map(Number);

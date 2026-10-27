@@ -78,12 +78,7 @@ export function EventMoneyTab({ bundle, onChanged }: { bundle: EventBundle; onCh
             iconTone={x.status === 'approved' ? 'success' : x.status === 'rejected' ? 'danger' : 'neutral'}
             title={`₹${x.requestedAmount.toLocaleString('en-IN')} · ${shortDate(x.date, lang)}`}
             subtitle={[x.note, x.requestedByName, x.status === 'approved' ? (x.fundingSource === 'production_cash' ? "From production's cash" : "From the store's Paytm") : null, x.rejectionReason].filter(Boolean).join(' · ')}
-            trailing={x.status === 'pending' && p.canRunStock ? (
-              <div className="flex gap-1.5">
-                <Button size="sm" variant="ghost" onClick={() => reject(x)}>Reject</Button>
-                <Button size="sm" onClick={() => setApproving(x)}>Approve</Button>
-              </div>
-            ) : topupChip(x)}
+            trailing={x.status === 'pending' && p.canRunStock ? <Button size="sm" onClick={() => setApproving(x)}>Review</Button> : topupChip(x)}
           />
         ))}
       </ListGroup>
@@ -119,7 +114,7 @@ export function EventMoneyTab({ bundle, onChanged }: { bundle: EventBundle; onCh
       <ListGroup
         title="Expenses"
         meta={<Money value={live.filter((e) => e.category !== 'rent').reduce((s, e) => s + e.amount, 0)} className="text-label font-semibold" />}
-        action={p.canEnter ? <Button size="sm" leadingIcon={<Plus />} onClick={() => setExpenseOpen(true)}>{t('expense.add')}</Button> : undefined}
+        action={p.canEnter ? <Button size="sm" variant="secondary" leadingIcon={<Plus />} onClick={() => setExpenseOpen(true)}>{t('expense.add')}</Button> : undefined}
         empty={t('event.nothingYet')}
       >
         {bundle.expenses.map((e) => (
@@ -139,7 +134,7 @@ export function EventMoneyTab({ bundle, onChanged }: { bundle: EventBundle; onCh
       <ExpenseSheet open={expenseOpen} onOpenChange={setExpenseOpen} bundle={bundle} onDone={onChanged} />
       <AskCashSheet open={cashOpen} onOpenChange={setCashOpen} bundle={bundle} onDone={onChanged} />
       <MoneyMoveSheet account={moveOpen} onClose={() => setMoveOpen(null)} bundle={bundle} onDone={onChanged} />
-      <ApproveCashSheet topup={approving} onClose={() => setApproving(null)} bundle={bundle} onDone={onChanged} />
+      <ApproveCashSheet topup={approving} onClose={() => setApproving(null)} onReject={(x) => { setApproving(null); void reject(x); }} bundle={bundle} onDone={onChanged} />
     </div>
   );
 }
@@ -247,7 +242,7 @@ function AskCashSheet({ open, onOpenChange, bundle, onDone }: { open: boolean; o
   );
 }
 
-function ApproveCashSheet({ topup, onClose, bundle, onDone }: { topup: EventTopup | null; onClose: () => void; bundle: EventBundle; onDone: () => void }) {
+function ApproveCashSheet({ topup, onClose, onReject, bundle, onDone }: { topup: EventTopup | null; onClose: () => void; onReject: (t: EventTopup) => void; bundle: EventBundle; onDone: () => void }) {
   const api = useEventsApi();
   const [source, setSource] = React.useState<'store_paytm' | 'production_cash'>('store_paytm');
   const [busy, setBusy] = React.useState(false);
@@ -269,10 +264,15 @@ function ApproveCashSheet({ topup, onClose, bundle, onDone }: { topup: EventTopu
     }
   };
   return (
-    <ResponsiveModal open={!!topup} onOpenChange={(o) => { if (!o) onClose(); }} title="Approve event cash" description={topup ? `₹${topup.requestedAmount.toLocaleString('en-IN')} for ${bundle.event.name}` : undefined} footer={<Button size="lg" className="w-full" loading={busy} onClick={approve}>Approve</Button>}>
+    <ResponsiveModal open={!!topup} onOpenChange={(o) => { if (!o) onClose(); }} title="Approve event cash" description={topup ? `₹${topup.requestedAmount.toLocaleString('en-IN')} for ${bundle.event.name}` : undefined} footer={(
+      <div className="flex w-full gap-2">
+        <Button variant="secondary" size="lg" disabled={busy} onClick={() => topup && onReject(topup)}>Reject</Button>
+        <Button size="lg" className="flex-1" loading={busy} onClick={approve}>Approve</Button>
+      </div>
+    )}>
       <div className="flex flex-col gap-4">
         {error && <Callout tone="danger" title={error} live />}
-        {topup?.note && <p className="text-body text-text-2">{topup.note}</p>}
+        {topup && <p className="text-body text-text-2">{[topup.note, topup.requestedByName].filter(Boolean).join(' · ')}</p>}
         <Field label="Where does the money come from?">
           <SegmentedControl
             aria-label="Where the money comes from" value={source}
