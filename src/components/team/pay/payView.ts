@@ -106,7 +106,7 @@ export function buildPayView(input: PayInput) {
   }));
   const permanentRowList: PayRow[] = permanentRows.people.map((p) => {
     const salary = monthlySalaryOf(p.employee);
-    const covered = salaryCovered(p.payouts, p.personalExpenses);
+    const covered = salaryCovered(p.payouts);
     return {
       key: p.employee.id,
       employee: p.employee,

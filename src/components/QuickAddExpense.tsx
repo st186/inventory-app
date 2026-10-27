@@ -666,7 +666,9 @@ export function QuickAddExpense({
           <PriceWarning flag={priceFlag} onFix={isBeverage ? (packageType === 'carton' ? undefined : applyPriceFix) : (isBundlePurchase ? undefined : applyPriceFix)} />
         )}
 
-        <PaidFromField value={paidFrom} onChange={setPaidFrom} showOwner={ownerPaymentOption} entity={entity === 'store' ? 'store' : 'production'}>
+        {/* Quick Add: staff pay cash only; the owner chooses owner / cash / Paytm, as before the
+            redesign (owner, 27 Oct 2026). Split stays in the full expense form. */}
+        <PaidFromField value={paidFrom} onChange={setPaidFrom} showOwner={ownerPaymentOption} allowed={ownerPaymentOption ? ['owner', 'cash', 'online'] : ['cash']} entity={entity === 'store' ? 'store' : 'production'}>
           {productionCanCover && (
             <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} />
           )}

@@ -11,28 +11,34 @@ import { SegmentedControl } from '../ui/segmented-control';
 
 export type PaidFrom = 'cash' | 'online' | 'both' | 'owner';
 
-export function PaidFromField({ value, onChange, showOwner, entity, children }: {
+export function PaidFromField({ value, onChange, showOwner, entity, allowed, children }: {
   value: PaidFrom;
   onChange: (value: PaidFrom) => void;
   showOwner?: boolean;
   entity?: 'store' | 'production';
+  /** Limit the choices (Quick Add: cash only for staff; owner, cash or Paytm for the owner). */
+  allowed?: PaidFrom[];
   /** Shown under the choice (production cash tick box, split amounts). */
   children?: React.ReactNode;
 }) {
   const { t } = useT();
   const options: { value: PaidFrom; label: string }[] = [
-    { value: 'cash', label: t('money.cash') },
-    { value: 'online', label: t('money.paytm') },
-    { value: 'both', label: t('money.split') },
+    { value: 'cash' as const, label: t('money.cash') },
+    { value: 'online' as const, label: t('money.paytm') },
+    { value: 'both' as const, label: t('money.split') },
     ...(showOwner ? [{ value: 'owner' as const, label: t('paid.ownerOption') }] : []),
-  ];
+  ].filter((o) => !allowed || allowed.includes(o.value));
   const hint = value === 'cash'
     ? (entity === 'production' ? t('paid.hint.cashProduction') : t('paid.hint.cashStore'))
     : value === 'online' ? t('paid.hint.paytm') : value === 'both' ? t('paid.hint.split') : t('paid.hint.owner');
   return (
     <div className="flex flex-col gap-2">
       <span className="text-body-sm font-medium text-text">{t('money.paidFrom')}</span>
-      <SegmentedControl aria-label={t('money.paidFrom')} value={value} onValueChange={onChange} options={options} />
+      {options.length > 1 ? (
+        <SegmentedControl aria-label={t('money.paidFrom')} value={value} onValueChange={onChange} options={options} />
+      ) : (
+        <span className="text-body text-text">{options[0]?.label}</span>
+      )}
       <span className="text-caption text-text-3">{hint}</span>
       {children}
     </div>

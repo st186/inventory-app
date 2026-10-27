@@ -325,15 +325,14 @@ export function monthlySlips(personPayouts: PayPayout[], overheads: PayOverhead[
 
 // ---- New in the redesign: what is still due ---------------------------------------------------
 // Team → Pay shows "To pay / Paid / Still due" for permanent staff. "To pay" is the fixed monthly
-// salary (monthlySalaryOf: monthlySalary, else the salary structure); a person's salary counts as
-// covered by what reached them for the month: the transfers, the advance instalments recovered
-// from them, and personal expenses booked as their salary. Contract staff are paid by the day as
-// they work, so nothing is "due" for them.
+// salary (monthlySalaryOf: monthlySalary, else the salary structure); still due = salary − advance
+// recovered − transfers already made (owner, 27 Oct 2026; personal expenses don't count). Contract
+// staff are paid by the day as they work, so nothing is "due" for them.
 
 export type PayStatus = 'paid' | 'partlyPaid' | 'due' | 'noSalary';
 
-export function salaryCovered(empPayouts: PayPayout[], personalExpenses: number): number {
-  return empPayouts.reduce((sum, p) => sum + (p.amount || 0) + (p.advanceDeduction || 0), 0) + personalExpenses;
+export function salaryCovered(empPayouts: PayPayout[]): number {
+  return empPayouts.reduce((sum, p) => sum + (p.amount || 0) + (p.advanceDeduction || 0), 0);
 }
 
 export function payStatusOf(salary: number, covered: number): PayStatus {
