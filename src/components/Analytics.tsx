@@ -23,6 +23,7 @@ import { INVENTORY_CATEGORIES, OVERHEAD_CATEGORIES, FIXED_COST_CATEGORIES, costB
 import { buildSpreadCosts } from '../utils/spreadCosts';
 import { buildOnlineCostIndex, onlineCostsForRange } from '../utils/onlineCosts';
 import { UnitEconomics, normalizePnl, type PnlBreakdown, type CostLineKey } from './UnitEconomics';
+import { buildPnl } from '../utils/pnl';
 import { DailyBriefCard } from './insights/DailyBriefCard';
 import { ForecastCard } from './insights/ForecastCard';
 import { TrendsGrowth } from './insights/TrendsGrowth';
@@ -1831,94 +1832,26 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  });
  }, [fixedCostsData, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts]);
 
- const pnlForMonth = useCallback((ym: string): PnlBreakdown => {
- const today = getTodayIST();
- const start = `${ym}-01`;
- const end = addDays(`${monthAdd(ym, 1)}-01`, -1);
- const inMonth = (d?: string) => !!d && d >= start && d <= end;
- const sum = (items: any[], pick: (x: any) => number) => items.reduce((t, x) => t + pick(x), 0);
- const inStoreOrHouse = (item: any) => !effectiveStoreId ||
- item.storeId === effectiveStoreId ||
- (!!effectiveProductionHouseIdForCosts && item.entityType === 'production_house' && item.productionHouseId === effectiveProductionHouseIdForCosts);
- const storeOnly = (item: any) => !effectiveStoreId || item.storeId === effectiveStoreId;
- const storeEmployeeIds = new Set(filteredEmployeesData.map((e: any) => e.id));
- const employeeIds = new Set(employeesData.map((e: any) => e.id));
-
- const monthSales = salesData.filter((x: any) => inMonth(x.date) && storeOnly(x));
- const monthOnline = storeOnlineSales.filter((x: any) => inMonth(x.date));
- const counterRevenue = sum(monthSales, (x) => (x.paytmAmount || 0) + (x.cashAmount || 0));
- const zomatoRevenue = sum(monthOnline, (x) => x.zomatoSales || 0);
- const swiggyRevenue = sum(monthOnline, (x) => x.swiggySales || 0);
- const onlineRevenue = sum(monthSales, (x) => x.onlineSales || 0) + zomatoRevenue + swiggyRevenue;
- const online = onlineCostsForRange(onlineCostIndex, storeOnlineSales, storeOnlinePayouts, start, end, today);
-
- const line = {
- food: 0, packaging: 0, marketing: 0, staff: 0, occupancy: 0, otherOpex: 0,
- };
- const addCost = (category: string, source: 'inventory' | 'overhead' | 'fixedcost', amount: number) => {
- const bucket = costBucketFor(category, source);
- const canonical = canonicalCategory(category);
- if (bucket === 'food' && source === 'inventory') line[canonical === 'packaging' ? 'packaging' : 'food'] += amount;
- else if (bucket === 'operating' && source !== 'fixedcost') line[canonical === 'marketing' ? 'marketing' : 'otherOpex'] += amount;
- else if (bucket === 'fixed') line.occupancy += amount;
- };
- inventoryData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x))
- .forEach((x: any) => addCost(x.category || '', 'inventory', x.totalCost || 0));
- const monthOverheads = overheadData.filter((x: any) =>
- (x.category === 'personal_expense' && x.expenseMonth ? x.expenseMonth === ym : inMonth(x.date)) && inStoreOrHouse(x)
- );
- monthOverheads.filter((x: any) => !isCommissionEntry(x)).forEach((x: any) => addCost(x.category || '', 'overhead', x.amount || 0));
- fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x))
- .forEach((x: any) => addCost(x.category || '', 'fixedcost', x.amount || 0));
-
- // Equipment, the scooter and yearly subscriptions are spread over their life; bulk packaging
- // stock over the days it's used.
- const spread = buildSpreadCosts(spreadSourceRecords, start, end > today ? today : end);
- const packagingStock = spread.byCategory.packaging_bulk || 0;
- const software = spread.byCategory.software_subscription || 0;
- line.packaging += packagingStock;
- line.otherOpex += software;
- const depreciation = spread.total - packagingStock - software;
-
- const monthPayouts = payoutsData.filter((x: any) =>
- (x.forMonth ? x.forMonth === ym : inMonth(x.date)) &&
- employeeIds.has(x.employeeId) &&
- (!effectiveStoreId || storeEmployeeIds.has(x.employeeId))
- );
- line.staff = sum(monthPayouts, (x) => x.amount || 0) + sum(monthOverheads.filter((x: any) => x.category === 'personal_expense'), (x) => x.amount || 0);
- // The parts the normalized view spreads over the month instead (same rules as dailyCostSmoothing).
- const isContractEmp = (id: string) => { const e = employeesData.find((emp: any) => emp.id === id); return (e?.type || e?.employmentType) === 'contract'; };
- const staffSmoothable = sum(monthPayouts.filter((x: any) => !isContractEmp(x.employeeId)), (x) => x.amount || 0);
- const occupancySmoothable = sum(fixedCostsData.filter((x: any) => inMonth(x.date) && inStoreOrHouse(x) && (x.category === 'rent' || x.category === 'electricity')), (x) => x.amount || 0);
- const interest = calculateAccruedInterest(start, end, effectiveStoreId || undefined);
-
- // Approved cash shortages are deducted by the Net Profit card (see calculateCashDiscrepancy),
- // so they're deducted here too or the month wouldn't match what that month showed.
- const shortages = sum(
- monthSales.filter((x: any) => x.approvalRequired === false && x.approvedBy),
- (x) => {
- const offset = x.salesDiscrepancy !== undefined ? x.salesDiscrepancy : (x.cashOffset || 0);
- return offset < 0 ? Math.abs(offset) : 0;
- }
- );
-
- const revenue = counterRevenue + onlineRevenue;
- const costs = line.food + line.packaging + online.commission + online.ads + line.marketing + line.staff +
- line.occupancy + line.otherOpex + depreciation + interest + shortages;
- return {
- revenue, counterRevenue, onlineRevenue, zomatoRevenue, swiggyRevenue,
- onlineDiscounts: online.discounts,
- food: line.food, packaging: line.packaging, commission: online.commission,
- platformAds: online.ads, marketing: line.marketing,
- staff: line.staff, occupancy: line.occupancy, otherOpex: line.otherOpex,
- depreciation, interest, shortages,
- netProfit: revenue - costs,
- estimatedCommission: online.estimatedCommission + online.estimatedAds,
- estimatedDays: online.estimatedDays,
- staffSmoothable,
- occupancySmoothable,
- };
- }, [salesData, inventoryData, overheadData, fixedCostsData, storeOnlineSales, storeOnlinePayouts, onlineCostIndex, payoutsData, employeesData, filteredEmployeesData, effectiveStoreId, effectiveProductionHouseIdForCosts, onlineLoans, spreadSourceRecords]);
+ // The month's P&L itself is utils/pnl.ts's buildPnl - shared with the Export page and the
+ // Business Audit Report so every screen and export shows the same profit.
+ const pnlForMonth = useCallback((ym: string): PnlBreakdown => buildPnl({
+ start: `${ym}-01`,
+ end: addDays(`${monthAdd(ym, 1)}-01`, -1),
+ storeId: effectiveStoreId,
+ data: {
+ sales: salesData,
+ inventory: inventoryData,
+ overheads: overheadData,
+ fixedCosts: fixedCostsData,
+ onlineSales: onlineSalesData || [],
+ onlinePayouts: onlinePayoutData || [],
+ settlements: aggregatorSettlements || [],
+ payouts: payoutsData,
+ employees: employeesData,
+ stores: context.stores || [],
+ loans: onlineLoans,
+ },
+ }), [salesData, inventoryData, overheadData, fixedCostsData, onlineSalesData, onlinePayoutData, aggregatorSettlements, payoutsData, employeesData, context.stores, effectiveStoreId, onlineLoans]);
 
  // ---- Loss carry-forward. A month that ends in a loss is brought forward into the next
  // month's realized profit, and stays there until later profits pay it back (a running

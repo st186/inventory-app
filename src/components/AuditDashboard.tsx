@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LogOut, BarChart3, DollarSign, Package, Users, TrendingUp, Factory, Eye, ShieldCheck, KeyRound } from 'lucide-react';
 import type { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData, InventoryContextType } from '../App';
 import * as api from '../utils/api';
@@ -6,7 +6,8 @@ import { Analytics } from './Analytics';
 import { InventoryView } from './InventoryView';
 import { PayrollManagement } from './PayrollManagement';
 import { ProductionManagement } from './ProductionManagement';
-import { getTodayIST } from '../utils/timezone';
+import { getTodayIST, formatDateIST } from '../utils/timezone';
+import { salesDayStatus, hasRealCashCount } from '../utils/cashCount';
 
 type Props = {
  user: { email: string; name: string; role: string; employeeId: string | null; accessToken: string };
@@ -49,6 +50,40 @@ export function AuditDashboard({
  const [activeView, setActiveView] = useState<'analytics' | 'inventory' | 'sales' | 'production' | 'payroll'>('analytics');
  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
  const [selectedDate, setSelectedDate] = useState<string>(getTodayIST());
+ const [salesRowsShown, setSalesRowsShown] = useState(50);
+
+ // Zomato/Swiggy sales, old payout entries and settlement files aren't passed in by App, and
+ // without them Analytics showed no online revenue or commission for the auditor - so this
+ // read-only dashboard loads them itself.
+ const [onlineSalesData, setOnlineSalesData] = useState<api.OnlineSalesEntry[]>([]);
+ const [onlinePayoutData, setOnlinePayoutData] = useState<api.OnlinePayoutEntry[]>([]);
+ const [aggregatorSettlements, setAggregatorSettlements] = useState<api.AggregatorSettlement[]>([]);
+ useEffect(() => {
+ if (!user.accessToken) return;
+ let cancelled = false;
+ Promise.all([
+ api.getOnlineSalesData(user.accessToken),
+ api.getOnlinePayoutData(user.accessToken),
+ api.getAggregatorSettlements(user.accessToken).catch(() => []),
+ ]).then(([online, payouts, settlements]) => {
+ if (cancelled) return;
+ setOnlineSalesData(online || []);
+ setOnlinePayoutData(payouts || []);
+ setAggregatorSettlements(settlements || []);
+ });
+ return () => { cancelled = true; };
+ }, [user.accessToken]);
+
+ // Newest first, without sorting the prop array in place (that reordered App's own copy).
+ const sortedSales = useMemo(() => [...salesData].sort((a, b) => String(b.date).localeCompare(String(a.date))), [salesData]);
+ const onlineByStoreDay = useMemo(() => {
+ const map = new Map<string, number>();
+ onlineSalesData.forEach((o) => {
+ const key = `${o.storeId}|${o.date}`;
+ map.set(key, (map.get(key) || 0) + (o.zomatoSales || 0) + (o.swiggySales || 0));
+ });
+ return map;
+ }, [onlineSalesData]);
 
  // Create a read-only context object for components that need it
  const contextValue: InventoryContextType = {
@@ -62,9 +97,9 @@ export function AuditDashboard({
  stockRequests,
  productionRequests,
  onlineCashRecalibrations: [],
- onlineSalesData: [],
- onlinePayoutData: [],
- aggregatorSettlements: [],
+ onlineSalesData,
+ onlinePayoutData,
+ aggregatorSettlements,
  stores,
  managedStoreIds: [],
  managedProductionHouseIds: [],
@@ -251,44 +286,44 @@ export function AuditDashboard({
  </td>
  </tr>
  ) : (
- salesData
- .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
- .slice(0, 50)
+ sortedSales
+ .slice(0, salesRowsShown)
  .map((sale) => {
  const store = stores.find(s => s.id === sale.storeId);
+ // Online sales live in their own table now (the record's own onlineSales is always 0).
+ const online = onlineByStoreDay.get(`${sale.storeId}|${sale.date}`) ?? (sale.posOnlineSales || 0);
+ const status = salesDayStatus(sale);
  return (
  <tr key={sale.id} className="border-b border-gray-100 hover:bg-gray-50">
- <td className="py-3 px-4 text-sm text-gray-900">
- {new Date(sale.date).toLocaleDateString('en-IN', {
- day: '2-digit',
- month: 'short',
- year: 'numeric'
- })}
+ <td className="py-3 px-4 text-sm text-gray-900 whitespace-nowrap">
+ {formatDateIST(sale.date)}
  </td>
  <td className="py-3 px-4 text-sm text-gray-700">
  {store?.name || 'Unknown Store'}
  </td>
  <td className="py-3 px-4 text-sm text-gray-900 text-right">
- ₹{sale.offlineSales.toLocaleString('en-IN')}
+ ₹{(sale.offlineSales || 0).toLocaleString('en-IN')}
  </td>
  <td className="py-3 px-4 text-sm text-gray-900 text-right">
- ₹{sale.onlineSales.toLocaleString('en-IN')}
+ ₹{online.toLocaleString('en-IN')}
  </td>
  <td className="py-3 px-4 text-sm text-gray-900 text-right">
- ₹{sale.cashAmount.toLocaleString('en-IN')}
+ ₹{(sale.cashAmount || 0).toLocaleString('en-IN')}
  </td>
  <td className="py-3 px-4 text-sm text-gray-900 text-right">
- ₹{sale.paytmAmount.toLocaleString('en-IN')}
+ ₹{(sale.paytmAmount || 0).toLocaleString('en-IN')}
  </td>
  <td className="py-3 px-4 text-center">
  <span
  className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
- sale.approvalStatus === 'approved'
+ !hasRealCashCount(sale)
+ ? 'bg-gray-100 text-gray-700'
+ : sale.approvalStatus === 'approved'
  ? 'bg-green-100 text-green-800'
  : 'bg-yellow-100 text-yellow-800'
  }`}
  >
- {sale.approvalStatus === 'approved' ? 'Approved' : 'Pending'}
+ {status}
  </span>
  </td>
  </tr>
@@ -298,6 +333,17 @@ export function AuditDashboard({
  </tbody>
  </table>
  </div>
+ {sortedSales.length > salesRowsShown && (
+ <div className="flex items-center justify-between gap-3 mt-4 text-sm text-gray-600">
+ <span>Showing {salesRowsShown} of {sortedSales.length} days</span>
+ <button
+ onClick={() => setSalesRowsShown((n) => n + 50)}
+ className="px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800"
+ >
+ Show 50 more
+ </button>
+ </div>
+ )}
  </div>
  )}
 

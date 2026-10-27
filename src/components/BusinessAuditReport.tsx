@@ -6,6 +6,12 @@ import { InventoryContextType, SalesData } from '../App';
 import { DatePicker } from './DatePicker';
 import { getTodayIST } from '../utils/timezone';
 import { settlementDueBy } from '../utils/payoutSchedule';
+import { buildPnl, pnlCosts } from '../utils/pnl';
+import { monthPeriod, customPeriod, previousPeriod, datesInRange } from '../utils/reportPeriods';
+import { monthAdd } from '../utils/salaryBreakdown';
+import { hasRealCashCount } from '../utils/cashCount';
+import { buildOnlineCostIndex } from '../utils/onlineCosts';
+import { settlementOrderDates } from '../utils/reports/ledgers';
 
 interface Props {
   context: InventoryContextType;
@@ -14,25 +20,9 @@ interface Props {
 
 type Period = 'thisMonth' | 'lastMonth' | 'custom';
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function todayISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function daysBetweenInclusive(start: string, end: string): string[] {
-  const days: string[] = [];
-  const cursor = new Date(start + 'T00:00:00');
-  const last = new Date(end + 'T00:00:00');
-  while (cursor <= last) {
-    days.push(`${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}-${pad2(cursor.getDate())}`);
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return days;
-}
+// IST calendar dates throughout - a device clock in local time rolls the day at the wrong moment.
+const todayISO = getTodayIST;
+const daysBetweenInclusive = datesInRange;
 
 function daysAgo(dateStr: string): number {
   const then = new Date(dateStr.substring(0, 10) + 'T00:00:00');
@@ -72,34 +62,28 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
   const [salesData, setSalesData] = useState<SalesData[] | null>(null);
   const [productionCash, setProductionCash] = useState<api.ProductionCashEntry[]>([]);
   const [payouts, setPayouts] = useState<api.Payout[]>([]);
+  const [employees, setEmployees] = useState<api.Employee[]>([]);
+  const [loans, setLoans] = useState<api.OnlineLoan[]>([]);
   const [loading, setLoading] = useState(true);
 
   const accessToken = context.user?.accessToken || '';
   const targetProductionHouseId = context.productionHouses?.[0]?.id;
 
-  const { rangeStart, rangeEnd } = useMemo(() => {
-    const now = new Date();
-    if (period === 'thisMonth') {
-      return { rangeStart: `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`, rangeEnd: todayISO() };
-    }
-    if (period === 'lastMonth') {
-      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-      return {
-        rangeStart: `${lastMonthStart.getFullYear()}-${pad2(lastMonthStart.getMonth() + 1)}-01`,
-        rangeEnd: `${lastMonthEnd.getFullYear()}-${pad2(lastMonthEnd.getMonth() + 1)}-${pad2(lastMonthEnd.getDate())}`,
-      };
-    }
-    return { rangeStart: customRange.from || todayISO(), rangeEnd: customRange.to || todayISO() };
+  const reportPeriod = useMemo(() => {
+    const thisMonth = todayISO().slice(0, 7);
+    if (period === 'thisMonth') return monthPeriod(thisMonth);
+    if (period === 'lastMonth') return monthPeriod(monthAdd(thisMonth, -1));
+    return customPeriod(customRange.from || todayISO(), customRange.to || todayISO());
   }, [period, customRange]);
+  const rangeStart = reportPeriod.start;
+  const rangeEnd = reportPeriod.dataEnd;
 
-  // Previous period of equal length, for every trend arrow in this report.
+  // The previous period for every trend arrow: last month for a month (only as many days as
+  // this one has so far while it's running), or the same number of days before a custom range.
   const { prevStart, prevEnd } = useMemo(() => {
-    const periodMs = new Date(rangeEnd).getTime() - new Date(rangeStart).getTime();
-    const prevEndDate = new Date(new Date(rangeStart).getTime() - 24 * 60 * 60 * 1000);
-    const prevStartDate = new Date(prevEndDate.getTime() - periodMs);
-    return { prevStart: prevStartDate.toISOString().substring(0, 10), prevEnd: prevEndDate.toISOString().substring(0, 10) };
-  }, [rangeStart, rangeEnd]);
+    const prev = previousPeriod(reportPeriod);
+    return { prevStart: prev.start, prevEnd: prev.dataEnd };
+  }, [reportPeriod]);
 
   // This report needs the full-fidelity sales: records (actualCashInHand, discrepancy,
   // approval state, posOnlineSales) and Production Cash entries - neither is preloaded
@@ -114,12 +98,17 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
       api.fetchSalesData(accessToken),
       targetProductionHouseId ? api.getProductionCashRange(accessToken, targetProductionHouseId, prevStart, rangeEnd) : Promise.resolve([]),
       api.getPayouts(),
+      // Archived employees too: a released employee's salaries still count in the months they worked.
+      Promise.all([api.getEmployees(), api.getArchivedEmployees().catch(() => [])]).then(([a, b]) => [...(a || []), ...(b || [])]),
+      api.getOnlineLoans(accessToken).catch(() => []),
     ])
-      .then(([sales, prodCash, allPayouts]) => {
+      .then(([sales, prodCash, allPayouts, allEmployees, allLoans]) => {
         if (cancelled) return;
         setSalesData(sales);
         setProductionCash(prodCash);
         setPayouts(allPayouts);
+        setEmployees(allEmployees);
+        setLoans(allLoans);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -134,13 +123,13 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
     return salesData.filter((s) => s.date >= rangeStart && s.date <= rangeEnd && inScope(s.storeId));
   }, [salesData, rangeStart, rangeEnd, selectedStoreId]);
 
+  // Settlements that pay for orders in this period, judged by their orders' own dates - the
+  // stored period isn't reliable (July's daily Zomato files all say 1-31 Jul), same rule as
+  // the Settlement check on the Sales screen.
   const scopedSettlements = useMemo(() => {
-    return (context.aggregatorSettlements || []).filter((s) => {
-      if (!inScope(s.storeId)) return false;
-      const coverStart = s.periodStart || s.settlementDate;
-      const coverEnd = s.periodEnd || s.settlementDate;
-      return coverEnd >= rangeStart && coverStart <= rangeEnd;
-    });
+    return (context.aggregatorSettlements || []).filter((s) =>
+      inScope(s.storeId) && settlementOrderDates(s).some((d) => d >= rangeStart && d <= rangeEnd)
+    );
   }, [context.aggregatorSettlements, selectedStoreId, rangeStart, rangeEnd]);
 
   const periodDays = useMemo(() => daysBetweenInclusive(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
@@ -149,23 +138,25 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
   // the trend vs. an equal-length previous period - a compliance % means little without the
   // revenue/cost scale it sits on top of. ----
   const financials = useMemo(() => {
+    // The same profit and loss as Analytics and the exports (utils/pnl.ts): fixed costs, spread
+    // equipment, salaries by the month they cover, settlement-based commission, interest and
+    // approved shortages all included.
+    const data = {
+      sales: salesData || [],
+      inventory: context.inventory || [],
+      overheads: context.overheads || [],
+      fixedCosts: context.fixedCosts || [],
+      onlineSales: context.onlineSalesData || [],
+      onlinePayouts: context.onlinePayoutData || [],
+      settlements: context.aggregatorSettlements || [],
+      payouts,
+      employees,
+      stores: context.stores || [],
+      loans,
+    };
     const computeFor = (start: string, end: string) => {
-      const inRange = (d: string) => d >= start && d <= end;
-      const salesInRange = (salesData || []).filter((s) => inRange(s.date) && inScope(s.storeId));
-      const onlineInRange = (context.onlineSalesData || []).filter((s) => inRange(s.date) && inScope(s.storeId));
-      const inventoryInRange = (context.inventory || []).filter((i) => inRange(i.date) && inScope(i.storeId));
-      const overheadInRange = (context.overheads || []).filter((o) => inRange(o.date) && inScope(o.storeId));
-      const payoutsInRange = payouts.filter((p) => inRange(p.date) && inScope(p.storeId));
-
-      const offlineRevenue = salesInRange.reduce((sum, s) => sum + (s.offlineSales || 0), 0);
-      const onlineRevenue = onlineInRange.reduce((sum, s) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
-      const revenue = offlineRevenue + onlineRevenue;
-      const inventorySpend = inventoryInRange.reduce((sum, i) => sum + (i.totalCost || 0), 0);
-      const overheadSpend = overheadInRange.reduce((sum, o) => sum + (o.amount || 0), 0);
-      const payoutSpend = payoutsInRange.reduce((sum, p) => sum + (p.amount || 0), 0);
-      const costs = inventorySpend + overheadSpend + payoutSpend;
-      const profit = revenue - costs;
-      return { revenue, offlineRevenue, onlineRevenue, inventorySpend, overheadSpend, payoutSpend, costs, profit };
+      const p = buildPnl({ start, end, storeId: selectedStoreId || null, data });
+      return { revenue: p.revenue, offlineRevenue: p.counterRevenue, onlineRevenue: p.onlineRevenue, costs: pnlCosts(p), profit: p.netProfit };
     };
 
     const current = computeFor(rangeStart, rangeEnd);
@@ -179,7 +170,7 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
       profitChangePct: pctChange(current.profit, previous.profit),
       costsChangePct: pctChange(current.costs, previous.costs),
     };
-  }, [salesData, context.onlineSalesData, context.inventory, context.overheads, payouts, rangeStart, rangeEnd, prevStart, prevEnd, selectedStoreId]);
+  }, [salesData, context.inventory, context.overheads, context.fixedCosts, context.onlineSalesData, context.onlinePayoutData, context.aggregatorSettlements, context.stores, payouts, employees, loans, rangeStart, rangeEnd, prevStart, prevEnd, selectedStoreId]);
 
   // ---- Daily revenue trend - the one chart on this page, so the KPI strip's totals have a
   // shape to them (a steady climb reads very differently from one huge day propping up an
@@ -201,13 +192,12 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
   // settlement whose period actually covers that day - plus the real ₹ of online sales
   // sitting on those unsettled days, not just a day count. ----
   const revenueCompleteness = useMemo(() => {
+    // A day is covered when a settlement includes orders from it, or an old manual payout entry
+    // exists for it (utils/onlineCosts.ts and SettlementCoverage.tsx use the same rule).
+    const index = buildOnlineCostIndex(context.aggregatorSettlements || [], selectedStoreId || null);
+    const manualDays = new Set((context.onlinePayoutData || []).filter((p) => inScope(p.storeId)).map((p) => p.date));
     return (['zomato', 'swiggy'] as const).map((aggregator) => {
-      const coveredDays = new Set<string>();
-      scopedSettlements
-        .filter((s) => s.aggregator === aggregator)
-        .forEach((s) => {
-          daysBetweenInclusive(s.periodStart || s.settlementDate, s.periodEnd || s.settlementDate).forEach((d) => coveredDays.add(d));
-        });
+      const coveredDays = new Set<string>([...index.covered[aggregator], ...manualDays]);
 
       const salesField = aggregator === 'zomato' ? 'zomatoSales' : 'swiggySales';
       const dailyOnlineSales = new Map<string, number>();
@@ -244,7 +234,7 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
         effectiveCommissionPct,
       };
     });
-  }, [scopedSettlements, context.onlineSalesData, periodDays, selectedStoreId]);
+  }, [scopedSettlements, context.aggregatorSettlements, context.onlinePayoutData, context.onlineSalesData, periodDays, selectedStoreId]);
 
   // ---- Cash Control Health: Store Cash + Production Cash reconciliation completion, and
   // every discrepancy still sitting unresolved, with its age. ----
@@ -252,7 +242,9 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
     // Only count days up to and including today - a future day in the selected range was
     // never going to have a count yet, and shouldn't drag the completion % down.
     const eligibleDays = periodDays.filter((d) => d <= todayISO());
-    const reconciledDays = eligibleDays.filter((d) => scopedSales.some((s) => s.date === d && s.actualCashInHand != null));
+    // The POS sync creates each day's record with a 0 cash count, so only a count a person
+    // actually saved makes a day reconciled.
+    const reconciledDays = eligibleDays.filter((d) => scopedSales.some((s) => s.date === d && hasRealCashCount(s)));
     const pendingDiscrepancies = scopedSales
       .filter((s) => s.approvalRequired && s.approvalStatus === 'pending')
       .map((s) => ({
