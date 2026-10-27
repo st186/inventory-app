@@ -6,6 +6,8 @@ import {
   CATEGORY_ITEMS,
   STORE_CATEGORY_ITEMS,
 } from '../utils/inventoryData';
+import { ItemCatalogCleanup } from './ItemCatalogCleanup';
+import { MiscExpenseRecategorize } from './MiscExpenseRecategorize';
 
 type Props = {
   onClose: () => void;
@@ -30,6 +32,8 @@ export function CategoryManagerModal({ onClose }: Props) {
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
   const [newCategoryEmoji, setNewCategoryEmoji] = useState('📦');
   const [savingCategory, setSavingCategory] = useState(false);
+
+  const [showItemCleanup, setShowItemCleanup] = useState(false);
 
   const [addingItemFor, setAddingItemFor] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -327,8 +331,24 @@ export function CategoryManagerModal({ onClose }: Props) {
               )}
             </div>
           )}
+
+          {/* Catalog clean-up tools (moved here from the Export page, which is downloads only). */}
+          <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
+            <h4 className="font-medium text-gray-900">Clean-up tools</h4>
+            <div className="border border-blue-200 bg-blue-50 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1">
+                <p className="font-medium text-blue-900">Item catalog clean-up</p>
+                <p className="text-sm text-blue-800">Review duplicate or misspelled items and add emoji + Bengali names - nothing changes until you approve each row.</p>
+              </div>
+              <button onClick={() => setShowItemCleanup(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm whitespace-nowrap">
+                Open clean-up
+              </button>
+            </div>
+            <MiscExpenseRecategorize />
+          </div>
         </div>
       </div>
+      {showItemCleanup && <ItemCatalogCleanup onClose={() => setShowItemCleanup(false)} />}
     </div>
   );
 }
