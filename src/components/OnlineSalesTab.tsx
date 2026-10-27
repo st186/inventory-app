@@ -905,7 +905,8 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     return { rows, total };
   }, [channelEconomicsByPlatform]);
 
-  const rupees = (n: number) => `₹${n.toFixed(2)}`;
+  // A settlement missing a figure shows a dash instead of breaking the whole screen.
+  const rupees = (n: number | undefined | null) => (typeof n === 'number' ? `₹${n.toFixed(2)}` : '—');
   const openUpload = () => { setShowUploadModal(true); setUploadStoreId(defaultUploadStoreId); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); };
   const stats = byAggregator[econPlatform];
   const trend = dailyPctTrend[econPlatform];
