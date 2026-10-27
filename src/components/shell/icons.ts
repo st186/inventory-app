@@ -1,0 +1,45 @@
+// navConfig's icon names -> lucide icons (one outline icon set, 24 px in the nav, 20 px in rows).
+import type { LucideIcon } from 'lucide-react';
+import {
+  BarChart3, Banknote, Bell, Bike, Boxes, Camera, CircleUserRound, ClipboardList, Clock, DatabaseBackup, Factory,
+  FileSearch, FileSpreadsheet, HandCoins, Home, IdCard, IndianRupee, Landmark, LayoutGrid, Layers, Network,
+  Package, PackageCheck, PackageX, PiggyBank, Receipt, ShoppingBasket, Store, Tags, Target, Users, Wallet, Wrench,
+} from 'lucide-react';
+import type { IconKey } from './navConfig';
+
+export const NAV_ICONS: Record<IconKey, LucideIcon> = {
+  home: Home,
+  insights: BarChart3,
+  money: Wallet,
+  stock: Package,
+  production: Factory,
+  team: Users,
+  more: LayoutGrid,
+  me: CircleUserRound,
+  pay: IndianRupee,
+  inbox: Bell,
+  sales: Receipt,
+  expenses: ShoppingBasket,
+  cash: Banknote,
+  payouts: Landmark,
+  loans: HandCoins,
+  requests: ClipboardList,
+  batches: Layers,
+  'on-hand': Boxes,
+  'out-of-stock': PackageX,
+  riders: Bike,
+  receive: PackageCheck,
+  people: Users,
+  attendance: Clock,
+  kpis: Target,
+  checks: Camera,
+  equipment: Wrench,
+  investments: PiggyBank,
+  items: Tags,
+  stores: Store,
+  hierarchy: Network,
+  reports: FileSpreadsheet,
+  audit: FileSearch,
+  backup: DatabaseBackup,
+  profile: IdCard,
+};

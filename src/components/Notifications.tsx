@@ -1,248 +1,137 @@
-import { useState, useEffect } from 'react';
-import { Bell, X, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
-import { toast } from 'sonner';
+// The notification list behind the bell, on every platform (the Android app used to hide it and
+// rely on the system tray only). One shared feed: the top bar's unread count and the Inbox page
+// read the same list, so a notification marked read in one place clears everywhere.
+//
+// Refreshed every minute while the app is in front (two on the Android app, where the system
+// tray already announces each one), paused while hidden, and caught up on return.
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import { AlertTriangle, Bell, Bike, Camera, CheckCircle2, Clock, Package, Wallet, XCircle } from 'lucide-react';
 import * as api from '../utils/api';
-import { getNavigationTarget } from '../utils/notificationNavigation';
-import { isNativePushSupported } from '../utils/nativePushNotifications';
 import { useForegroundInterval } from '../utils/appVisibility';
+import { isNativePushSupported } from '../utils/nativePushNotifications';
+import type { IconWellTone } from './ui/list-row';
+import type { I18nKey, I18nVars } from '../utils/i18n';
 
-type NotificationsProps = {
- // Mirrors the push-notification deep-link shape (see notificationNavigation.ts /
- // App.tsx's applyNavigationTarget) so a bell click and a push-notification tap
- // land on exactly the same place.
- onNavigate?: (view: string, tab?: string, highlightRequestId?: string) => void;
+export type NotificationsSource = {
+  list: () => Promise<{ notifications: api.Notification[]; unreadCount: number }>;
+  markRead: (id: string) => Promise<unknown>;
+  markAllRead: () => Promise<unknown>;
 };
 
-// The Android app already delivers every notification as a real system push (see
-// nativePushNotifications.ts) with its own tray, tap-to-open, and (for approvals) inline
-// action buttons - a second in-app bell/dropdown showing the same list is redundant there
-// and was only ever meant for the web app, where there's no OS notification tray to lean
-// on. Rendering nothing here (rather than just hiding the badge) also skips the poll
-// entirely on native, since nothing on that platform reads it.
-const HIDE_ON_NATIVE = isNativePushSupported();
+export const apiNotificationsSource: NotificationsSource = {
+  list: () => api.getNotifications(),
+  markRead: (id) => api.markNotificationAsRead(id),
+  markAllRead: () => api.markAllNotificationsAsRead(),
+};
 
-// Web only: how often the bell re-checks while the tab is open and in front. A tab left in the
-// background used to keep polling every 30 seconds all day (659 calls in 9 hours from the
-// owner's account); now it stops while hidden and catches up on return if it has been a while.
-const POLL_MS = 60000;
-const RESUME_REFRESH_MS = 15000;
+export type NotificationsFeed = {
+  items: api.Notification[];
+  /** The server's honest total (the list holds the latest 100). */
+  unreadCount: number;
+  status: 'loading' | 'ready' | 'error';
+  refresh: () => Promise<void>;
+  markRead: (id: string) => void;
+  /** Resolves false when the server refused (the caller shows a toast). */
+  markAllRead: () => Promise<boolean>;
+};
 
-export function Notifications({ onNavigate }: NotificationsProps) {
- const [notifications, setNotifications] = useState<api.Notification[]>([]);
- // Honest total unread count from the server (the full backlog, not just the 100 most
- // recent notifications shown in the list below) - see GET /notifications. Without this,
- // a user with more than 100 unread notifications would see "100 unread" forever, even
- // right after successfully clearing everything, because the badge was being derived
- // from the same capped list that's shown in the dropdown.
- const [unreadCount, setUnreadCount] = useState(0);
- const [isOpen, setIsOpen] = useState(false);
- const [loading, setLoading] = useState(false);
+const FeedContext = createContext<NotificationsFeed | null>(null);
 
- useEffect(() => {
- // Nothing on native ever reads this component's own state (it renders null below),
- // so skip the fetch and the poll entirely rather than doing pointless work in the
- // background on every screen.
- if (HIDE_ON_NATIVE) return;
+const POLL_MS = isNativePushSupported() ? 120_000 : 60_000;
+const RESUME_REFRESH_MS = 15_000;
 
- loadNotifications();
- }, []);
+export function NotificationsProvider({ source, children }: { source: NotificationsSource; children?: ReactNode }) {
+  const [items, setItems] = useState<api.Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [status, setStatus] = useState<NotificationsFeed['status']>('loading');
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const hasLoaded = useRef(false);
 
- // Refresh every minute while the page is in front; paused while it's hidden.
- useForegroundInterval(() => { loadNotifications(); }, HIDE_ON_NATIVE ? null : POLL_MS, { resumeAfterMs: RESUME_REFRESH_MS });
+  const refresh = useCallback(async () => {
+    try {
+      const { notifications, unreadCount: count } = await sourceRef.current.list();
+      setItems(notifications);
+      setUnreadCount(count);
+      setStatus('ready');
+      hasLoaded.current = true;
+    } catch {
+      // Not critical: keep what is on screen; show the error only if nothing ever loaded.
+      if (!hasLoaded.current) setStatus('error');
+    }
+  }, []);
 
- const loadNotifications = async () => {
- try {
- const { notifications: data, unreadCount: count } = await api.getNotifications();
- setNotifications(data);
- setUnreadCount(count);
- } catch (error) {
- // Silently handle all errors - notifications are non-critical
- // Common errors: user not logged in, network issues, server errors
- setNotifications([]);
- setUnreadCount(0);
- }
- };
+  useEffect(() => {
+    refresh();
+  }, [refresh, source]);
+  useForegroundInterval(() => { refresh(); }, POLL_MS, { resumeAfterMs: RESUME_REFRESH_MS });
 
- const handleMarkAsRead = async (id: string) => {
- try {
- await api.markNotificationAsRead(id);
- setNotifications(notifications.map(n =>
- n.id === id ? { ...n, read: true } : n
- ));
- setUnreadCount((c) => Math.max(0, c - 1));
- } catch (error) {
- console.error('Error marking notification as read:', error);
- }
- };
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const markRead = useCallback((id: string) => {
+    const wasUnread = itemsRef.current.some((n) => n.id === id && !n.read);
+    if (!wasUnread) return;
+    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    sourceRef.current.markRead(id).catch(() => undefined);
+  }, []);
 
- const handleMarkAllAsRead = async () => {
- setLoading(true);
- try {
- await api.markAllNotificationsAsRead();
- setNotifications(notifications.map(n => ({ ...n, read: true })));
- setUnreadCount(0);
- toast.success('All notifications marked as read.');
- } catch (error) {
- console.error('Error marking all as read:', error);
- // Previously silent - a failed request (auth hiccup, slow network on a large
- // backlog) looked identical to a successful one from the user's side, since nothing
- // told them it didn't work. Surface it so "still shows unread" has an explanation.
- toast.error('Could not mark all as read - check your connection and try again.');
- } finally {
- setLoading(false);
- }
- };
+  const markAllRead = useCallback(async () => {
+    try {
+      await sourceRef.current.markAllRead();
+      setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+      setUnreadCount(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
- const handleNotificationClick = (notification: api.Notification) => {
- // Mark as read
- if (!notification.read) {
- handleMarkAsRead(notification.id);
- }
-
- // Navigate based on notification type - uses the same resolver as push notifications
- // so a bell click and a push-notification tap always land on the same place.
- if (onNavigate) {
- const target = getNavigationTarget({
- type: notification.type,
- relatedId: notification.relatedId,
- });
- if (target) {
- onNavigate(target.view, target.tab, target.highlightRequestId);
- }
- }
-
- setIsOpen(false);
- };
-
- const getNotificationIcon = (type: string) => {
- if (type.includes('approved')) {
- return <CheckCircle className="w-5 h-5 text-green-600" />;
- } else if (type.includes('rejected')) {
- return <X className="w-5 h-5 text-red-600" />;
- } else if (type.includes('pending') || type.includes('request')) {
- return <Clock className="w-5 h-5 text-orange-600" />;
- } else if (type.includes('logged')) {
- return <CheckCircle className="w-5 h-5 text-blue-600" />;
- }
- return <AlertTriangle className="w-5 h-5 text-blue-600" />;
- };
-
- if (HIDE_ON_NATIVE) return null;
-
- return (
- <div className="relative">
- {/* Bell Icon Button */}
- <button
- onClick={() => setIsOpen(!isOpen)}
- className="relative p-2 text-white hover:bg-white/20 rounded-full transition-all border border-white/30"
- aria-label="Notifications"
- >
- <Bell className="w-6 h-6" />
- {unreadCount > 0 && (
- <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full animate-pulse shadow-lg">
- {unreadCount > 99 ? '99+' : unreadCount}
- </span>
- )}
- </button>
-
- {/* Dropdown */}
- {isOpen && (
- <>
- {/* Backdrop */}
- <div
- className="fixed inset-0 z-40"
- onClick={() => setIsOpen(false)}
- />
-
- {/* Notification Panel */}
- <div className="fixed md:absolute left-4 right-4 md:left-auto md:right-0 mt-2 md:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 max-h-[80vh] md:max-h-[600px] flex flex-col overflow-hidden">
- {/* Header */}
- <div className="flex items-center justify-between p-4 border-b border-gray-200">
- <div>
- <h3 className="font-bold text-gray-900 tracking-tight">Notifications</h3>
- {unreadCount > 0 && (
- <p className="text-xs text-gray-500 mt-1">
- {unreadCount} unread
- </p>
- )}
- </div>
- {unreadCount > 0 && (
- <button
- onClick={handleMarkAllAsRead}
- disabled={loading}
- className="text-sm text-orange-600 hover:text-orange-700 disabled:opacity-50 font-medium"
- >
- Mark all read
- </button>
- )}
- </div>
-
- {/* Notifications List */}
- <div className="overflow-y-auto flex-1">
- {notifications.length === 0 ? (
- <div className="p-8 text-center text-gray-500">
- <Bell className="w-12 h-12 mx-auto mb-2 opacity-30" />
- <p>No notifications</p>
- </div>
- ) : (
- <div className="divide-y divide-gray-100">
- {notifications.map((notification) => (
- <button
- key={notification.id}
- onClick={() => handleNotificationClick(notification)}
- className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
- !notification.read ? 'bg-blue-50' : ''
- }`}
- >
- <div className="flex gap-3">
- <div className="flex-shrink-0 mt-1">
- {getNotificationIcon(notification.type)}
- </div>
- <div className="flex-1 min-w-0">
- <p className={`text-sm ${!notification.read ? 'font-medium text-gray-900' : 'text-gray-700'}`}>
- {notification.title}
- </p>
- <p className="text-sm text-gray-600 mt-1 line-clamp-2">
- {notification.message}
- </p>
- <p className="text-xs text-gray-500 mt-1">
- {formatTimestamp(notification.createdAt)}
- </p>
- </div>
- {!notification.read && (
- <div className="flex-shrink-0">
- <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
- </div>
- )}
- </div>
- </button>
- ))}
- </div>
- )}
- </div>
- </div>
- </>
- )}
- </div>
- );
+  const value = useMemo(() => ({ items, unreadCount, status, refresh, markRead, markAllRead }), [items, unreadCount, status, refresh, markRead, markAllRead]);
+  return <FeedContext.Provider value={value}>{children}</FeedContext.Provider>;
 }
 
-function formatTimestamp(timestamp: string): string {
- const date = new Date(timestamp);
- const now = new Date();
- const diffMs = now.getTime() - date.getTime();
- const diffMins = Math.floor(diffMs / 60000);
- const diffHours = Math.floor(diffMs / 3600000);
- const diffDays = Math.floor(diffMs / 86400000);
+export function useNotifications(): NotificationsFeed {
+  const feed = useContext(FeedContext);
+  if (!feed) throw new Error('useNotifications() outside NotificationsProvider');
+  return feed;
+}
 
- if (diffMins < 1) return 'Just now';
- if (diffMins < 60) return `${diffMins}m ago`;
- if (diffHours < 24) return `${diffHours}h ago`;
- if (diffDays < 7) return `${diffDays}d ago`;
- 
- return date.toLocaleDateString('en-US', { 
- month: 'short', 
- day: 'numeric',
- year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
- });
+/** Icon and well tone by kind; colour only where the icon is the status. */
+export function notificationLook(type: string): { icon: LucideIcon; tone: IconWellTone } {
+  if (type.endsWith('_approved') || type === 'salary_credited' || type.endsWith('_fulfilled') || type === 'kpi_ready') return { icon: CheckCircle2, tone: 'success' };
+  if (type.endsWith('_rejected') || type.endsWith('_cancelled') || type === 'backup_failed') return { icon: XCircle, tone: 'danger' };
+  if (type === 'stock_out' || type === 'low_stock_alert' || type === 'eod_data_alert' || type.includes('discrepancy') || type === 'workplace_missed' || type === 'workplace_flag') return { icon: AlertTriangle, tone: 'warning' };
+  if (type.startsWith('rider_')) return { icon: Bike, tone: 'neutral' };
+  if (type.startsWith('workplace_')) return { icon: Camera, tone: 'neutral' };
+  if (type.includes('request') || type.startsWith('production') || type.startsWith('delivery') || type.includes('stock')) return { icon: Package, tone: 'neutral' };
+  if (type.startsWith('sales') || type.includes('cash') || type.includes('loan') || type.includes('paytm') || type === 'inventory_logged') return { icon: Wallet, tone: 'neutral' };
+  if (type.includes('pending') || type.includes('reminder') || type.includes('expiring')) return { icon: Clock, tone: 'neutral' };
+  return { icon: Bell, tone: 'neutral' };
+}
+
+type Translate = (key: I18nKey, vars?: I18nVars) => string;
+
+/** "Just now", "12 min ago", "3 h ago", then "Mon 27 Oct". */
+export function formatNotificationTime(timestamp: string, t: Translate, now = Date.now()): string {
+  const at = new Date(timestamp).getTime();
+  if (!Number.isFinite(at)) return '';
+  const minutes = Math.floor((now - at) / 60_000);
+  if (minutes < 1) return t('inbox.justNow');
+  if (minutes < 60) return t('inbox.minutesAgo', { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24 && new Date(at).toDateString() === new Date(now).toDateString()) return t('inbox.hoursAgo', { n: hours });
+  const d = new Date(at);
+  return `${t(`date.wd.${d.getDay()}` as I18nKey)} ${d.getDate()} ${t(`date.ms.${d.getMonth()}` as I18nKey)}`;
+}
+
+/** Splits the list into today's and earlier notifications (the phone's own day). */
+export function groupByDay(items: api.Notification[], now = Date.now()) {
+  const today = new Date(now).toDateString();
+  const sorted = [...items].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return {
+    today: sorted.filter((n) => new Date(n.createdAt).toDateString() === today),
+    earlier: sorted.filter((n) => new Date(n.createdAt).toDateString() !== today),
+  };
 }

@@ -1,4 +1,4 @@
-
+  import { Suspense, lazy } from "react";
   import { createRoot } from "react-dom/client";
   import App from "./App.tsx";
   import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
@@ -8,13 +8,19 @@
   import "./styles/fonts.css";
   import "./index.css";
 
-  // Mounted once at the root - toast.success()/toast.error() calls throughout the app
-  // (QuickAddExpense, SalesManagement, etc.) were firing correctly all along, but with
-  // no <Toaster/> anywhere in the tree there was nowhere for them to actually render,
-  // so every one of them silently did nothing on screen.
+  // The host for confirm() / promptText() (components/ui/confirm.tsx), mounted once. Loaded just
+  // after the first frame - the dialog code isn't needed to start - and if a confirm is asked for
+  // before it arrives, confirm.tsx mounts a host by itself.
+  const ConfirmProvider = lazy(() => import("./components/ui/confirm.tsx").then((m) => ({ default: m.ConfirmProvider })));
+
+  // Toasts sit bottom-centre above the bottom nav (the placement is part of the design, so no
+  // position / richColors here).
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <App />
-      <Toaster position="top-center" richColors />
+      <Toaster />
+      <Suspense fallback={null}>
+        <ConfirmProvider />
+      </Suspense>
     </ErrorBoundary>
   );

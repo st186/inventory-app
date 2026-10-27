@@ -5,10 +5,19 @@ import { VoiceButton } from './VoiceButton';
 import { BUNNY_LANGUAGES, languageOwner, speechLocale, useBunnyLanguage, type BunnyLanguage } from '../utils/bunnyLanguage';
 import { speak, speechSupported, stopSpeaking } from '../utils/voice';
 import { PAGE_LABELS, TAB_LABELS, captureScreenText, screenIsPrivate, useScreenContext } from '../utils/screenContext';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from './ui/sheet';
+import { IconButton } from './ui/icon-button';
+import { SegmentedControl } from './ui/segmented-control';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { useIsDesktop } from './ui/use-media-query';
+import { cn } from './ui/utils';
 
-// The floating Bunny button (bottom right, every screen) and its chat window. Bunny explains the
+// The Ask Bunny chat: opened from the bunny button in the top bar (owner and managers), a tall
+// bottom sheet on phones and a right-side panel from 768 px. Bunny explains the
 // screen the person is on - its visible text goes with each question, private pages and
-// data-ai-private parts left out - answers in their language (set on Home), can read answers
+// data-ai-private parts left out - answers in their language (Bunny's language, set in the
+// Account sheet), can read answers
 // aloud, and suggests questions to start with and follow-ups after each answer. Look-ups only:
 // Claude never changes anything here.
 //
@@ -75,9 +84,9 @@ const BY_SCREEN: Record<string, Texts> = {
 
 const say = (t: Texts, lang: BunnyLanguage) => t[lang] || t.en;
 
-// raised: the website's push-notification bell sits in the same corner, so Bunny goes above it.
-export function BunnyChat({ accessToken, storeId, raised = false }: { accessToken: string; storeId: string | null; raised?: boolean }) {
-  const [open, setOpen] = useState(false);
+export function BunnyChat({ accessToken, storeId, open, onOpenChange }: { accessToken: string; storeId: string | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const setOpen = onOpenChange;
+  const isDesktop = useIsDesktop();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [chatId, setChatId] = useState(newChatId);
   const [summary, setSummary] = useState('');
@@ -208,141 +217,156 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
   const lastAnswer = [...messages].reverse().find((m) => m.role === 'assistant' && !m.failed);
 
   return (
-    <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className={`fixed ${raised ? 'bottom-20' : 'bottom-6'} right-5 z-40 w-16 h-16 rounded-full bg-white border-[3px] border-violet-500 shadow-lg shadow-violet-600/30 hover:scale-105 active:scale-95 transition-transform flex items-center justify-center`}
-          aria-label={say(T.title, lang)}
-          title={say(T.title, lang)}
-        >
-          <img src="/bunny-logo.png" alt="" className="w-12 h-12 object-contain" draggable={false} />
-        </button>
-      )}
-
-      {open && (
-        <div
-          className="fixed z-50 inset-x-0 bottom-0 h-[85dvh] sm:inset-auto sm:bottom-6 sm:right-6 sm:w-[400px] sm:h-[620px] sm:max-h-[85dvh] bg-gray-50 rounded-t-2xl sm:rounded-2xl shadow-2xl border border-gray-200 flex flex-col"
-          role="dialog"
-          aria-label={say(T.title, lang)}
-          data-ai-private
-        >
-          <div className="flex items-start gap-3 p-4 border-b border-gray-200 bg-white rounded-t-2xl">
-            <div className="w-10 h-10 rounded-full bg-white border-2 border-violet-500 flex items-center justify-center flex-shrink-0"><img src="/bunny-logo.png" alt="" className="w-8 h-8 object-contain" /></div>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-gray-900">{say(T.title, lang)}</p>
-              <p className="text-[11px] text-gray-500 truncate">{say(T.about, lang)}: {screenName}</p>
-            </div>
-            <button type="button" onClick={() => setShowHistory(!showHistory)} className={`p-1.5 ${showHistory ? 'text-violet-700' : 'text-gray-400 hover:text-gray-700'}`} aria-label={say(T.history, lang)} title={say(T.history, lang)}>
-              <History className="w-4 h-4" />
-            </button>
-            {messages.length > 0 && (
-              <button type="button" onClick={startNewChat} className="p-1.5 text-gray-400 hover:text-gray-700" aria-label={say(T.newChat, lang)} title={say(T.newChat, lang)}>
-                <RotateCcw className="w-4 h-4" />
-              </button>
-            )}
-            <button type="button" onClick={() => setOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-700" aria-label="Close"><X className="w-5 h-5" /></button>
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetContent
+        side={isDesktop ? 'right' : 'bottom'}
+        hideClose
+        data-ai-private
+        className={cn('gap-0 p-0', isDesktop ? 'w-full sm:max-w-[420px]' : 'h-[88dvh]')}
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface py-2 pr-2 pl-4">
+          <img src="/bunny-logo.png" alt="" className="size-9 shrink-0 object-contain" draggable={false} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <SheetTitle className="text-subtitle">{say(T.title, lang)}</SheetTitle>
+            <SheetDescription className="truncate text-caption text-text-3">{say(T.about, lang)}: {screenName}</SheetDescription>
           </div>
+          <IconButton
+            label={say(T.history, lang)}
+            icon={<History />}
+            onClick={() => setShowHistory(!showHistory)}
+            className={showHistory ? 'text-primary' : undefined}
+            aria-pressed={showHistory}
+          />
+          {messages.length > 0 && <IconButton label={say(T.newChat, lang)} icon={<RotateCcw />} onClick={startNewChat} />}
+          <IconButton label="Close" icon={<X />} onClick={() => setOpen(false)} />
+        </div>
 
-          <div className="flex gap-1 px-4 py-2 bg-white border-b border-gray-100" role="group" aria-label="Language">
-            {BUNNY_LANGUAGES.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => setLang(l.id)}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold ${lang === l.id ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-600'}`}
-                aria-pressed={lang === l.id}
-              >
-                {l.label}
-              </button>
-            ))}
+        <div className="shrink-0 border-b border-border bg-surface px-4 py-2">
+          <SegmentedControl<BunnyLanguage>
+            aria-label="Bunny's language"
+            size="sm"
+            selectedTone="primary"
+            value={lang}
+            onValueChange={setLang}
+            options={BUNNY_LANGUAGES.map((l) => ({ value: l.id, label: l.label, lang: l.id }))}
+          />
+        </div>
+
+        {showHistory && (
+          <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-border bg-surface">
+            <p className="overline-label px-4 pt-3 pb-1">{say(T.history, lang)}</p>
+            {chats.length === 0 ? (
+              <p className="px-4 py-3 text-body-sm text-text-2">{say(T.noHistory, lang)}</p>
+            ) : (
+              <ul className="py-1">
+                {chats.map((c) => (
+                  <li key={c.id} className={cn('flex items-center gap-1 pr-2 pl-4', c.id === chatId && 'bg-primary-soft')}>
+                    <button type="button" onClick={() => openChat(c)} className="flex min-h-12 min-w-0 flex-1 flex-col justify-center text-left">
+                      <span className="truncate text-body-sm text-text">{c.title || '…'}</span>
+                      <span className="num text-caption text-text-3">
+                        {new Date(c.updatedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} · {c.messages.length}
+                      </span>
+                    </button>
+                    <IconButton label="Delete chat" variant="danger-ghost" size="sm" icon={<Trash2 />} onClick={() => deleteChat(c.id)} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+        )}
 
-          {showHistory && (
-            <div className="border-b border-gray-200 bg-white max-h-[45%] overflow-y-auto">
-              <p className="px-4 pt-3 text-xs font-semibold text-gray-600">{say(T.history, lang)}</p>
-              {chats.length === 0 ? (
-                <p className="px-4 py-3 text-sm text-gray-500">{say(T.noHistory, lang)}</p>
-              ) : (
-                <ul className="py-1">
-                  {chats.map((c) => (
-                    <li key={c.id} className={`flex items-center gap-2 px-4 py-2 ${c.id === chatId ? 'bg-violet-50' : ''}`}>
-                      <button type="button" onClick={() => openChat(c)} className="flex-1 min-w-0 text-left">
-                        <p className="text-sm text-gray-900 truncate">{c.title || '…'}</p>
-                        <p className="text-[11px] text-gray-500">{new Date(c.updatedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} · {c.messages.length}</p>
-                      </button>
-                      <button type="button" onClick={() => deleteChat(c.id)} className="p-1.5 text-gray-400 hover:text-rose-600" aria-label="Delete chat"><Trash2 className="w-4 h-4" /></button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {summarizedCount > 0 && <p className="text-[11px] text-gray-400 text-center">{say(T.summarised, lang)}</p>}
-            {messages.length === 0 && (
-              <>
-                <p className="text-sm text-gray-600">{say(T.hello, lang)}</p>
-                {isPrivate && <p className="text-xs text-amber-800 bg-amber-50 rounded-lg p-2">{say(T.privateScreen, lang)}</p>}
-                <div className="space-y-2">
-                  {starters.map((q) => (
-                    <button key={q} type="button" onClick={() => send(q)} className="w-full text-left px-3 py-2.5 rounded-xl border border-violet-200 bg-white text-sm text-gray-800 hover:bg-violet-50">
-                      <Sparkles className="w-3.5 h-3.5 inline mr-1.5 text-violet-500" />{q}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap ${
-                  m.role === 'user' ? 'bg-violet-600 text-white rounded-br-md'
-                    : m.failed ? 'bg-rose-50 text-rose-800 rounded-bl-md'
-                    : 'bg-white border border-gray-200 text-gray-800 rounded-bl-md'
-                }`}>
-                  {m.content.replace(/\*\*/g, '')}
-                  {m.role === 'assistant' && !m.failed && speechSupported() && (
-                    <button type="button" onClick={() => readAloud(i, m.content)} className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-violet-700">
-                      {speakingIndex === i ? <><Square className="w-3 h-3" /> {say(T.stop, lang)}</> : <><Volume2 className="w-3.5 h-3.5" /> {say(T.listen, lang)}</>}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            {busy && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl rounded-bl-md bg-white border border-gray-200 px-3.5 py-2.5 text-sm text-gray-500 inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {say(T.thinking, lang)}</div>
-              </div>
-            )}
-            {!busy && lastAnswer?.followUps && lastAnswer.followUps.length > 0 && messages[messages.length - 1] === lastAnswer && (
-              <div className="flex flex-wrap gap-2">
-                {lastAnswer.followUps.map((q) => (
-                  <button key={q} type="button" onClick={() => send(q)} className="px-3 py-1.5 rounded-full border border-violet-200 bg-white text-xs text-violet-800 hover:bg-violet-50 text-left">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-bg p-4">
+          {summarizedCount > 0 && <p className="text-center text-caption text-text-3">{say(T.summarised, lang)}</p>}
+          {messages.length === 0 && (
+            <>
+              <p className="text-body-sm text-text-2" lang={lang}>{say(T.hello, lang)}</p>
+              {isPrivate && <Callout tone="warning">{say(T.privateScreen, lang)}</Callout>}
+              <div className="space-y-2">
+                {starters.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => send(q)}
+                    lang={lang}
+                    className="flex min-h-11 w-full items-center gap-2 rounded-md border border-border-strong bg-surface px-3 py-2.5 text-left text-body-sm text-text outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Sparkles className="size-4 shrink-0 text-text-3" aria-hidden="true" />
                     {q}
                   </button>
                 ))}
               </div>
-            )}
-            <div ref={endRef} />
-          </div>
-
-          <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="p-3 border-t border-gray-200 bg-white flex gap-2 items-end rounded-b-2xl">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-              placeholder={say(T.placeholder, lang)}
-              rows={1}
-              className="flex-1 resize-none px-3 py-2.5 border border-gray-300 rounded-xl text-base bg-white"
-              aria-label={say(T.placeholder, lang)}
-            />
-            <VoiceButton onText={(text) => send(text, true)} busy={busy} />
-            <button type="submit" disabled={busy || !input.trim()} className="px-3 py-2.5 rounded-xl bg-violet-600 text-white disabled:opacity-50" aria-label="Send"><Send className="w-5 h-5" /></button>
-          </form>
+            </>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+              <div
+                lang={lang}
+                className={cn(
+                  'max-w-[88%] rounded-xl px-3.5 py-2.5 text-body-sm whitespace-pre-wrap',
+                  m.role === 'user'
+                    ? 'rounded-br-sm bg-primary text-on-primary'
+                    : m.failed
+                      ? 'rounded-bl-sm border border-danger-border bg-danger-soft text-danger'
+                      : 'rounded-bl-sm border border-border bg-surface text-text',
+                )}
+              >
+                {m.content.replace(/\*\*/g, '')}
+                {m.role === 'assistant' && !m.failed && speechSupported() && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1.5 -ml-2 text-primary"
+                    leadingIcon={speakingIndex === i ? <Square aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
+                    onClick={() => readAloud(i, m.content)}
+                  >
+                    {speakingIndex === i ? say(T.stop, lang) : say(T.listen, lang)}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+          {busy && (
+            <div className="flex justify-start">
+              <div className="inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-border bg-surface px-3.5 py-2.5 text-body-sm text-text-2">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" /> {say(T.thinking, lang)}
+              </div>
+            </div>
+          )}
+          {!busy && lastAnswer?.followUps && lastAnswer.followUps.length > 0 && messages[messages.length - 1] === lastAnswer && (
+            <div className="flex flex-wrap gap-2">
+              {lastAnswer.followUps.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => send(q)}
+                  lang={lang}
+                  className="min-h-9 rounded-full border border-border-strong bg-surface px-3 py-1.5 text-left text-label text-text outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+          <div ref={endRef} />
         </div>
-      )}
-    </>
+
+        <form
+          onSubmit={(e) => { e.preventDefault(); send(input); }}
+          className="flex shrink-0 items-end gap-2 border-t border-border bg-surface p-3 pb-[max(12px,env(safe-area-inset-bottom))]"
+        >
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+            placeholder={say(T.placeholder, lang)}
+            rows={1}
+            className="min-h-11 flex-1 resize-none rounded-md border border-border-strong bg-surface px-3 py-2.5 text-body text-text outline-none placeholder:text-text-3 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/30"
+            aria-label={say(T.placeholder, lang)}
+          />
+          <VoiceButton onText={(text) => send(text, true)} busy={busy} />
+          <IconButton type="submit" label="Send" variant="primary" icon={<Send />} disabled={busy || !input.trim()} className="rounded-md" />
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }

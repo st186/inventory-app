@@ -1,46 +1,43 @@
+import { APP_LANGUAGES, useAppLanguage, type AppLanguage } from '../utils/appLanguage';
 import { BUNNY_LANGUAGES, useBunnyLanguage, type BunnyLanguage } from '../utils/bunnyLanguage';
+import { SegmentedControl } from './ui/segmented-control';
+import { useT } from '../utils/i18n';
 
-// Home screen (above the leaves card): the language Bunny uses with this person - what the mic
-// listens for, the language of AI explanations and the voice that reads them aloud.
-// Compact on purpose: a one-line header and a three-way switch, so it stays small even with
-// large phone text sizes. The hint is shown in the chosen language only.
-const HINT: Record<BunnyLanguage, string> = {
-  en: 'Voice, answers and read-aloud',
-  bn: 'ভয়েস, উত্তর আর পড়ে শোনানোর ভাষা',
-  hi: 'आवाज़, जवाब और पढ़कर सुनाने की भाषा',
-};
+// The two language settings, both in the Account sheet (owner, 27 Oct 2026):
+//   App language     - the app's own words (menus, buttons, status words): utils/appLanguage.ts
+//   Bunny's language - what the mic listens for, AI answers and read-aloud: utils/bunnyLanguage.ts
+// A card with a one-line header and a three-way switch, each option in its own script.
 
-export function BunnyLanguagePicker() {
-  const [lang, setLang] = useBunnyLanguage();
+export function LanguagePicker({ kind }: { kind: 'app' | 'bunny' }) {
+  const { t } = useT();
+  const [appLang, setAppLang] = useAppLanguage();
+  const [bunnyLang, setBunnyLang] = useBunnyLanguage();
+  const isApp = kind === 'app';
+  const title = isApp ? t('account.appLanguage') : t('account.bunnyLanguage');
+  const options = (isApp ? APP_LANGUAGES : BUNNY_LANGUAGES).map((l) => ({ value: l.id, label: l.label, lang: l.id }));
   return (
-    <div className="w-full mb-3 rounded-2xl border border-gray-200 bg-white shadow-sm p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div className="w-9 h-9 rounded-full bg-violet-50 ring-1 ring-violet-200 flex items-center justify-center flex-shrink-0">
-          <img src="/bunny-logo.png" alt="" className="w-7 h-7 object-contain" draggable={false} />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-gray-900 leading-tight">Bunny's language</p>
-          <p className="text-xs text-gray-500 truncate" lang={lang}>{HINT[lang]}</p>
+    <section className="flex flex-col gap-2.5 rounded-lg border border-border bg-surface px-4 py-3.5" aria-label={title}>
+      <div className="flex items-center gap-2.5">
+        {!isApp && <img src="/bunny-logo.png" alt="" className="size-7 shrink-0 object-contain" draggable={false} />}
+        <div className="flex min-w-0 flex-col">
+          <span className="text-body-md font-medium text-text">{title}</span>
+          <span className="text-label text-text-3">{isApp ? t('account.appLanguageHint') : t('account.bunnyLanguageHint')}</span>
         </div>
       </div>
-      <div role="radiogroup" aria-label="Bunny's language" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-gray-100 sm:w-80 flex-shrink-0">
-        {BUNNY_LANGUAGES.map((l) => {
-          const on = lang === l.id;
-          return (
-            <button
-              key={l.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              lang={l.id}
-              onClick={() => setLang(l.id)}
-              className={`min-h-[40px] px-2 rounded-lg text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${on ? 'bg-white text-violet-700 shadow-sm ring-1 ring-violet-200' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              {l.label}
-            </button>
-          );
-        })}
-      </div>
+      {isApp ? (
+        <SegmentedControl<AppLanguage> aria-label={title} value={appLang} onValueChange={setAppLang} options={options} selectedTone="primary" />
+      ) : (
+        <SegmentedControl<BunnyLanguage> aria-label={title} value={bunnyLang} onValueChange={setBunnyLang} options={options} selectedTone="primary" />
+      )}
+    </section>
+  );
+}
+
+/** Bunny's language on its own (Analytics still shows it until WP2 removes it from there). */
+export function BunnyLanguagePicker() {
+  return (
+    <div className="mb-3">
+      <LanguagePicker kind="bunny" />
     </div>
   );
 }

@@ -190,7 +190,7 @@ export function createBrowserHistorySync({ onBack, canGoBack, onHashChange }: Sy
 
   const write = (hash: string) => {
     currentHash = hash;
-    const url = `${window.location.pathname}${hash}`;
+    const url = `${window.location.pathname}${window.location.search}${hash}`;
     window.history.replaceState({ ...(window.history.state || {}), bunny: true, guard }, '', url);
   };
 
@@ -199,7 +199,7 @@ export function createBrowserHistorySync({ onBack, canGoBack, onHashChange }: Sy
     const wantGuard = canGoBack();
     if (wantGuard && !guard) {
       currentHash = hash;
-      window.history.pushState({ bunny: true, guard: true }, '', `${window.location.pathname}${hash}`);
+      window.history.pushState({ bunny: true, guard: true }, '', `${window.location.pathname}${window.location.search}${hash}`);
       guard = true;
       return;
     }

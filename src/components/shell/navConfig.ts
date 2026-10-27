@@ -200,10 +200,10 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   };
   const chrome = { askBunny: p.canAskBunny, storeSwitcher: p.isClusterHead };
 
-  // --- Auditor: the read-only audit dashboard's five views, one per tab -----------------------
+  // --- Auditor: the read-only audit dashboard's five views, one per tab (Insights is their Home) --
   if (kind === 'auditor') {
     const views = [
-      ['audit/insights', 'nav.insights', 'insights', 'analytics'],
+      ['home', 'nav.insights', 'insights', 'analytics'],
       ['audit/expenses', 'shell.expenses', 'expenses', 'inventory'],
       ['audit/sales', 'shell.sales', 'sales', 'sales'],
       ['audit/production', 'shell.production', 'production', 'production'],
@@ -397,7 +397,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   } else if (kind === 'store-incharge' || kind === 'production-incharge') {
     add('me', 'nav.me', 'me', moreSpec, null);
     tabs = [
-      tab('home', 'nav.today', 'home', []),
+      tab('home', 'nav.home', 'home', []),
       kind === 'store-incharge'
         ? tab('stock', 'nav.stock', 'stock', subs('stock/requests', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders'))
         : tab('production', 'nav.production', 'production', subs('production/requests', 'production/batches', 'production/on-hand', 'production/riders', 'production/out-of-stock'), 'requestsToAccept'),
@@ -413,7 +413,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   } else if (kind === 'crew') {
     add('me', 'nav.me', 'me', moreSpec, null);
     tabs = [
-      tab('home', 'nav.today', 'home', []),
+      tab('home', 'nav.home', 'home', []),
       tab('stock', 'nav.stock', 'stock', subs('stock/receive', 'stock/out-of-stock')),
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
@@ -422,7 +422,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
     tabs = [
-      tab('home', 'nav.today', 'home', []),
+      tab('home', 'nav.home', 'home', []),
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];

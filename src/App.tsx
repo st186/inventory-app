@@ -1,60 +1,25 @@
-// Bhandar-IMS - Performance optimized with lazy loading
-import { isPhase1Live, type ProductionBatch } from './utils/batches';
-import { useState, useEffect, useMemo, useRef, lazy, Suspense, memo, startTransition, useCallback } from 'react';
-const InventoryView = lazy(() => import('./components/InventoryView').then(module => ({ default: module.InventoryView })));
-const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
-const SalesView = lazy(() => import('./components/SalesView').then(module => ({ default: module.SalesView })));
-const ClusterDashboard = lazy(() => import('./components/ClusterDashboard').then(module => ({ default: module.ClusterDashboard })));
-// Lazy load heavy components for better performance
-const SalesManagement = lazy(() => import('./components/SalesManagement').then(module => ({ default: module.SalesManagement })));
-const PayrollManagement = lazy(() => import('./components/PayrollManagement').then(module => ({ default: module.PayrollManagement })));
-const Analytics = lazy(() => import('./components/Analytics').then(module => ({ default: module.Analytics })));
-const ExportData = lazy(() => import('./components/ExportData').then(module => ({ default: module.ExportData })));
-const EmployeeDashboard = lazy(() => import('./components/EmployeeDashboard').then(module => ({ default: module.EmployeeDashboard })));
-const AuditDashboard = lazy(() => import('./components/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
-const ProductionManagement = lazy(() => import('./components/ProductionManagement').then(module => ({ default: module.ProductionManagement })));
-const ProductionHouseManagement = lazy(() => import('./components/ProductionHouseManagement').then(module => ({ default: module.ProductionHouseManagement })));
-const AssetsManagement = lazy(() => import('./components/AssetsManagement').then(module => ({ default: module.AssetsManagement })));
-const RiderProfile = lazy(() => import('./components/RiderProfile').then(module => ({ default: module.RiderProfile })));
-const StockOutLog = lazy(() => import('./components/StockOutLog').then(module => ({ default: module.StockOutLog })));
-const IncomingDeliveries = lazy(() => import('./components/dispatch/IncomingDeliveries').then(module => ({ default: module.IncomingDeliveries })));
-const RiderTrips = lazy(() => import('./components/RiderTrips').then(module => ({ default: module.RiderTrips })));
-const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInventoryManagement').then(module => ({ default: module.AdvancedInventoryManagement })));
-const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
-const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
+// Bunny Momos - the data (sign-in, loading, saving) for every screen. What is on screen - the top
+// bar, bottom nav / rail / sidebar, Account sheet, Inbox and each destination - is the app shell
+// in components/shell (WP0b); screens load on first use from shell/destinations/screens.ts.
+import type { ProductionBatch } from './utils/batches';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback } from 'react';
 import { AuthPage } from './components/AuthPage';
-// The attendance and store screens are rendered by AttendancePortal / AssetsManagement (both
-// lazy), so App doesn't import them itself - unused imports here kept them in the first-load bundle.
-const AttendancePortal = lazy(() => import('./components/AttendancePortal').then(module => ({ default: module.AttendancePortal })));
-const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').then(module => ({ default: module.EmployeeManagement })));
-import { Notifications } from './components/Notifications';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
-const BunnyChat = lazy(() => import('./components/BunnyChat').then(module => ({ default: module.BunnyChat })));
-const ProfileCompletionCard = lazy(() => import('./components/ProfileCompletionCard').then(module => ({ default: module.ProfileCompletionCard })));
-import { usePasswordPolicy, ChangePasswordDialog, PasswordExpiryBanner } from './components/PasswordSecurity';
-// Shift clock card, "Team KPIs" / "My KPIs" (components/kpi). The two views aren't added to the
-// activeView union (a line everyone edits); they are compared as strings instead.
-// Lazy like the cards below: none of them is needed for the first frame (shift tracking itself is
-// loaded eagerly through riderTracking/riderLocationSharing).
-const ShiftClockCard = lazy(() => import('./components/kpi/ShiftClockCard').then(module => ({ default: module.ShiftClockCard })));
-import { KpiNavButton } from './components/kpi/KpiNav';
-const TeamKpis = lazy(() => import('./components/kpi/TeamKpis').then(module => ({ default: module.TeamKpis })));
-const MyKpis = lazy(() => import('./components/kpi/MyKpis').then(module => ({ default: module.MyKpis })));
+import { usePasswordPolicy, PasswordExpiryBanner } from './components/PasswordSecurity';
 import { setLanguageOwner } from './utils/bunnyLanguage';
-import { setScreenPage } from './utils/screenContext';
-import { StoreSelector } from './components/StoreSelector';
-import { EquipmentNavButton } from './components/assets/EquipmentNavButton';
-// Workplace checks (daily photo proof that each area is clean) - all in components/workplace.
-const WorkplaceChecks = lazy(() => import('./components/workplace/WorkplaceChecks').then(module => ({ default: module.WorkplaceChecks })));
-import { WorkplaceDueCard } from './components/workplace/WorkplaceDueCard';
-import { ClipboardCheck } from 'lucide-react';
+import { setAppLanguageOwner } from './utils/appLanguage';
+import { AppShell } from './components/shell/AppShell';
+import { buildNav, type BadgeKey } from './components/shell/navConfig';
+import type { LegacyTarget } from './components/shell/router';
+import { apiNotificationsSource } from './components/Notifications';
+import { t } from './utils/i18n';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
 // polling is needed. (AttendanceReminderScheduler's file has since been deleted.)
-const PushNotificationStatus = lazy(() => import('./components/PushNotificationStatus').then(module => ({ default: module.PushNotificationStatus })));
-import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
-import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, KeyRound } from 'lucide-react';
+// Loaded on demand: the change-password form (blocking or as a sheet) and the audit dashboard.
+const ChangePasswordDialog = lazy(() => import('./components/ChangePasswordDialog').then(module => ({ default: module.ChangePasswordDialog })));
+const AuditDashboard = lazy(() => import('./components/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
 import { getSupabaseClient } from './utils/supabase/client';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import * as api from './utils/api';
@@ -417,33 +382,18 @@ function withProfile(person: AppUser, profile: dataCache.CachedProfile): AppUser
 }
 
 export default function App() {
- // All useState hooks must be at the top, before any conditional returns
- const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs' | 'workplace'>('analytics');
- // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
- const setActiveView = useCallback((view: typeof activeView) => {
- startTransition(() => { setActiveViewRaw(view); });
- }, []);
- // Remembers which view to return to from "Manage Items" (Inventory Items Master has
- // no other way back - it's not one of the buttons in the top nav bar itself).
- const [preManageItemsView, setPreManageItemsView] = useState<typeof activeView>('analytics');
- // Same idea, for Analytics' "Production Management" button - it's a full navigation
- // (not a sub-tab), so without this there was no way back to whichever Analytics view
- // sent the user here (CONFIRMED bug, found 2026-09-05).
- const [preProductionManagementView, setPreProductionManagementView] = useState<typeof activeView>('analytics');
+ // All useState hooks must be at the top, before any conditional returns. Which screen is open
+ // is the shell router's business (components/shell/router.ts), not state here.
  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null>(null);
- // Bunny chat: which screen is open (so it can explain it) and whose language choice applies.
- useEffect(() => { setScreenPage(activeView); }, [activeView]);
- // The old Stock Requests page is retired (owner, 27 Oct 2026): old links and notifications that
- // still ask for it open Analytics > Stock Requests instead.
+ // Whose language choices apply: Bunny's language (voice, AI answers) and the App language
+ // (menus, buttons) - English by default for owner/manager logins, Bengali for staff and riders.
  useEffect(() => {
- if (activeView === 'stock-requests') { setHighlightTab('production-requests'); setActiveView('analytics'); }
- // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [activeView]);
- useEffect(() => { setLanguageOwner(user?.employeeId || user?.email || null); }, [user?.employeeId, user?.email]);
+  const owner = user?.employeeId || user?.email || null;
+  setLanguageOwner(owner);
+  setAppLanguageOwner(owner, user ? { role: user.role, designation: user.designation } : null);
+ }, [user?.employeeId, user?.email, user?.role, user?.designation]);
  const [authError, setAuthError] = useState<string | null>(null);
  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
- const [highlightRequestId, setHighlightRequestId] = useState<string | null>(null);
- const [highlightTab, setHighlightTab] = useState<string | null>(null);
  const [inventory, setInventory] = useState<InventoryItem[]>([]);
  const [overheads, setOverheads] = useState<OverheadItem[]>([]);
  const [fixedCosts, setFixedCosts] = useState<FixedCostItem[]>([]);
@@ -464,8 +414,6 @@ export default function App() {
  // Total Cash in Hand) while the Cash Top-up list/status sat stale until the next full page
  // reload or the user's own approve/reject/submit action on it.
  const [dataRefreshedAt, setDataRefreshedAt] = useState(0);
- const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
- const [showPushNotificationPanel, setShowPushNotificationPanel] = useState(false);
  const [stores, setStores] = useState<api.Store[]>([]);
  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
  const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
@@ -917,22 +865,25 @@ export default function App() {
  // Shared by both the web-push (service worker) and native (Capacitor/FCM) navigation paths,
  // and by the in-app notification bell (Notifications.tsx) - one resolver, so every entry
  // point lands on the same place.
+ // The old { view, tab, highlightRequestId } targets go to the shell's router, which maps them to
+ // where each screen lives now (router.ts LEGACY_ALIASES). A tap that arrives before the shell is
+ // on screen (cold start from a notification) waits until it registers.
+ const navigatorRef = useRef<((target: LegacyTarget) => void) | null>(null);
+ const pendingTargetRef = useRef<LegacyTarget | null>(null);
+ const registerNavigator = useCallback((open: ((target: LegacyTarget) => void) | null) => {
+  navigatorRef.current = open;
+  if (open && pendingTargetRef.current) {
+   const pending = pendingTargetRef.current;
+   pendingTargetRef.current = null;
+   open(pending);
+  }
+ }, []);
  const applyNavigationTarget = useCallback((target: { view: string; tab?: string; highlightRequestId?: string }) => {
  console.log('🔔 [nav] applyNavigationTarget called with:', target);
- if (!target?.view) {
- console.log('🔔 [nav] No view on target, bailing out');
- return;
- }
- // Only plain "employee"-role users have a standalone Attendance tab; managers and
- // cluster heads reach the same screens through Employee Management's Attendance sub-tab.
- const view = target.view === 'attendance' && user?.role !== 'employee' ? 'employees' : target.view;
- setActiveView(view as typeof activeView);
- setHighlightTab(target.tab || null);
- if (target.highlightRequestId) {
- setHighlightRequestId(target.highlightRequestId);
- }
- console.log('🔔 [nav] Applied: view=', view, 'tab=', target.tab, 'highlightRequestId=', target.highlightRequestId);
- }, [setActiveView, user]);
+ if (!target?.view) return;
+ if (navigatorRef.current) navigatorRef.current(target);
+ else pendingTargetRef.current = target;
+ }, []);
 
  // Riders share their live location for the whole active ride, whichever screen is open
  // (it used to stop when they left the Riders screen mid-delivery).
@@ -1152,7 +1103,17 @@ export default function App() {
  // Entries still waiting to send stay on the phone and go out the next time this person signs
  // in - but they should know before leaving.
  const waiting = outbox.waitingCount();
- if (waiting > 0 && !confirm(`${waiting} ${waiting === 1 ? 'entry is' : 'entries are'} still waiting to send from this phone. They will send the next time you sign in here. Log out anyway?`)) return;
+ if (waiting > 0) {
+  // The confirm dialog's code loads only when it's needed.
+  const { confirm: ask } = await import('./components/ui/confirm');
+  const ok = await ask({
+   title: t('account.logoutWaitingTitle'),
+   body: t('account.logoutWaitingBody', { n: waiting }),
+   confirmLabel: t('account.logout'),
+   tone: 'danger',
+  });
+  if (!ok) return;
+ }
  // Tell the server this phone no longer belongs to this account, so their notifications (and the
  // rider's loud ride-request alert) stop arriving here after sign-out.
  try {
@@ -1178,7 +1139,6 @@ export default function App() {
  setUser(null);
  resetLoadedData();
  outbox.setOwner(null);
- setActiveView('sales');
  dataCache.invalidateAllCaches(); // Clear all caches on logout
  dataCache.setCacheUser(null);
  };
@@ -1596,25 +1556,6 @@ export default function App() {
  }
  };
 
- const clearAllData = async () => {
- if (!user) return;
- if (!confirm('⚠️ WARNING: This will delete ALL inventory, overhead, and sales data. This action cannot be undone. Are you sure?')) {
- return;
- }
- try {
- await api.clearAllData();
- setInventory([]);
- setOverheads([]);
- setFixedCosts([]);
- setSalesData([]);
- dataCache.invalidateAllCaches(); // Clear all caches when clearing all data
- alert('All data has been cleared successfully.');
- } catch (error) {
- console.error('Error clearing data:', error);
- alert('Failed to clear data. Please try again.');
- }
- };
-
  // Production House functions
  const addProductionHouse = async (house: Omit<api.ProductionHouse, 'id' | 'createdAt' | 'updatedAt'>) => {
  if (!user) return;
@@ -1787,109 +1728,64 @@ export default function App() {
  dataRefreshedAt
  }), [inventoryShown, overheadsShown, fixedCostsShown, salesShown, categorySalesData, onlineCashRecalibrations, onlineSalesData, onlinePayoutData, aggregatorSettlements, productionData, productionHouses, stockRequests, productionRequests, stores, managedStoreIds, managedProductionHouseIds, inventoryItems, stableActions, user, dataRefreshedAt]);
 
- // A plain employee (contract worker, or role: 'employee' with no incharge
- // designation) should only ever land on their own Payroll/Attendance section - not
- // Analytics/Sales/etc. `activeView` defaults to 'analytics' for every role on mount,
- // so without this redirect a plain employee would land straight on the full
- // Analytics page before ever touching the (now correctly hidden) nav buttons.
- // MUST be declared before any conditional return below (isCheckingAuth/isSetupMode/
- // !user) so this hook is always called on every render - putting it after one of
- // those returns caused a hooks-count mismatch (React error #310) once logged in.
- useEffect(() => {
- if (!user) return;
- // A rider only ever needs their rides, plus their own attendance/payouts.
-    if (user.designation === 'rider') {
-      if (!['riders', 'payroll', 'rider-profile', 'my-kpis'].includes(activeView)) setActiveView('riders');
-      return;
-    }
-    const isPlainEmployee = user.role === 'employee' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
- const restrictedViews = ['analytics', 'sales', 'inventory', 'production', 'export', 'backup', 'employees', 'stock-requests', 'advanced-inventory', 'inventory-items', 'assets'];
- if (isPlainEmployee && restrictedViews.includes(activeView)) {
- setActiveView('payroll');
- }
- }, [user, activeView]);
+ // What each login can open and where it sits (components/shell/navConfig.ts - the permission
+ // predicates that used to be spread through this file's four menus and two render chains).
+ // MUST stay above the conditional returns below (hooks run on every render).
+ const today = getTodayIST();
+ const nav = useMemo(
+  () => (user ? buildNav(user, { today, storeCount: stores.length }) : null),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [user?.role, user?.designation, user?.storeId, user?.employeeId, today, stores.length],
+ );
+
+ // Counts on the tabs, from data already loaded here: day closes waiting for the owner or
+ // operations manager, production days waiting for approval, store requests the production
+ // house hasn't accepted yet.
+ const badges = useMemo<Partial<Record<BadgeKey, number>>>(() => {
+  if (!nav) return {};
+  const p = nav.perms;
+  const approvers = p.isClusterHead || p.isOperationsManager;
+  return {
+   salesApprovals: approvers ? salesData.filter((s) => s.approvalRequested && s.approvalStatus !== 'approved' && !s.rejectedBy).length : 0,
+   productionApprovals: approvers ? productionData.filter((d) => d.approvalStatus === 'pending').length : 0,
+   requestsToAccept: p.isProductionIncharge ? productionRequests.filter((r) => r.status === 'pending').length : 0,
+  };
+ }, [nav, salesData, productionData, productionRequests]);
 
  // Password rotation: status, the blocking change-password screen and the expiry banner
  // (components/PasswordSecurity.tsx). A hook, so it sits above the conditional returns too.
  const passwordPolicy = usePasswordPolicy(user);
 
- // Show loading state while checking auth
+ // Checking the saved session: the same plain screen as index.html's start-up splash (the
+ // session is read from the phone, so this lasts a moment).
  if (isCheckingAuth) {
- const momoCount = 6;
- return (
- <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F49D1A' }}>
- <div className="text-center">
- <div className="relative w-64 h-14 mx-auto mb-6">
- <div className="absolute inset-0 flex items-center justify-between px-1">
- {Array.from({ length: momoCount }).map((_, i) => (
- <span
- key={i}
- className="text-2xl momo-eaten"
- style={{ animationDelay: `${(i / (momoCount - 1)) * 2.4 - 0.35}s` }}
- >
- 🥟
- </span>
- ))}
- </div>
- <img
- src="/bunny-logo.png"
- alt=""
- className="w-12 h-12 absolute top-1/2 bunny-walk"
- />
- </div>
- <p className="text-white font-medium">Loading...</p>
- </div>
- </div>
- );
+  return (
+   <div className="flex min-h-dvh flex-col items-center justify-center bg-bg" role="progressbar" aria-label="Loading Bunny Momos">
+    <img src="/bunny-logo.png" alt="" className="size-[88px] object-contain" />
+   </div>
+  );
  }
 
-
  // Show auth page if not logged in
- if (!user) {
- return (
- <AuthPage
- onLogin={handleLogin}
- onSignup={handleSignup}
- error={authError}
- />
- );
+ if (!user || !nav) {
+  return (
+   <AuthPage
+    onLogin={handleLogin}
+    onSignup={handleSignup}
+    error={authError}
+   />
+  );
  }
 
  // Password expired or reset by the owner: nothing else works until a new one is set (the server
  // refuses every other route with PASSWORD_EXPIRED), so this screen replaces the whole app.
  if (passwordPolicy.blocking) {
- return <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />;
+  return (
+   <Suspense fallback={<div className="min-h-dvh bg-bg" />}>
+    <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />
+   </Suspense>
+  );
  }
- // The same form as a sheet, opened from "Change password" in the menu or the banner.
- const passwordDialog = <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />;
-
- // Floating button + panel to let any logged-in user enable/check push notifications
- // The floating bell is for the website: it lets a browser user switch web push on and check it.
- // The Android app registers for push by itself at login, so there it is just clutter - hidden.
- const pushNotificationWidget = nativePushNotifications.isNativePushSupported() ? null : (
- <>
- <button
- onClick={() => setShowPushNotificationPanel(true)}
- className="fixed bottom-6 right-6 z-40 bg-orange-600 hover:bg-orange-700 text-white rounded-full p-3 shadow-lg transition-all"
- title="Push Notifications"
- >
- <Bell className="w-5 h-5" />
- </button>
- {showPushNotificationPanel && (
- <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
- <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 relative">
- <button
- onClick={() => setShowPushNotificationPanel(false)}
- className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
- >
- <X className="w-5 h-5" />
- </button>
- <Suspense fallback={null}><PushNotificationStatus userId={user.employeeId || user.email} /></Suspense>
- </div>
- </div>
- )}
- </>
- );
 
  // The status line under the top bar: "Updated 10 min ago · Refreshing…", offline, or what
  // couldn't be refreshed (with Retry). Crew and riders load no business lists, so for them it only
@@ -1906,1338 +1802,67 @@ export default function App() {
  />
  );
 
- // Cluster heads should only see the dashboard
- const isClusterHead = user.role === 'cluster_head';
- const isEmployee = user.role === 'employee';
- const isAudit = user.role === 'audit';
- const isStoreIncharge = user.role === 'employee' && user.designation === 'store_incharge';
- // Production incharge can be either employee OR manager with production_incharge designation
- const isProductionIncharge = user.designation === 'production_incharge';
- const isProductionHead = isProductionIncharge; // Alias for clarity
- const isAnyIncharge = isStoreIncharge || isProductionIncharge;
-  const isRider = user.designation === 'rider';
-  // Store crew (any plain employee at a store, not a rider or production crew) can receive
-  // and count deliveries - the incharge does it from Stock Requests.
-  const canReceiveStock = user.role === 'employee' && !isRider && !isAnyIncharge && user.designation !== 'production_ops' && !!user.storeId && isPhase1Live(getTodayIST());
-  // Production incharge, operations manager and cluster head can call riders / mark orders ready.
-  const canDispatchRiders = user.role === 'cluster_head' || user.designation === 'production_incharge' || (user.role === 'manager' && user.designation !== 'store_incharge');
- const isOperationsManager = user.role === 'manager' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
- const isManager = user.role === 'manager';
- const isStoreInchargeManager = user.role === 'manager' && user.designation === 'store_incharge';
- const canViewProduction = isProductionIncharge || isOperationsManager || isClusterHead;
- // Out-of-stock log (store SOP ST-28): whoever bills at the store - crew and the store incharge -
- // logs it; production incharge, operations manager and cluster head can open it (from the
- // stock-out notification) to see what's out.
- const canLogStockOuts = !!user.storeId && !isRider && user.designation !== 'production_ops' && user.designation !== 'production_incharge' && (user.role === 'employee' || isStoreInchargeManager);
- const canViewStockOuts = canLogStockOuts || isProductionIncharge || isOperationsManager || isClusterHead;
- const stockOutStores = canLogStockOuts && user.storeId
- ? [{ id: user.storeId, name: stores.find((st) => st.id === user.storeId)?.name || 'My store' }]
- : (stores || []).map((st) => ({ id: st.id, name: st.name }));
- const stockOutDefaultStore = user.storeId && String(user.storeId).startsWith('STORE-') ? user.storeId : (stores[0]?.id || null);
- // The floating Bunny chat (AI explanations of any screen): the cluster head and every manager
- // (store, production, operations). Audit and employee screens don't show it.
- const canAskBunny = isClusterHead || user.role === 'manager';
+ // Ask Bunny reads the business of the store in view: the owner's chosen store, else the store
+ // with a production house, else the first.
  const askBunnyStoreId = selectedStoreId || (stores || []).find((st) => st.productionHouseId)?.id || stores[0]?.id || null;
 
- // Debug: Log user permissions
- console.log('👤 User Permissions:', {
- role: user.role,
- designation: user.designation,
- isClusterHead,
- isEmployee,
- isManager,
- isStoreIncharge,
- isProductionIncharge,
- isOperationsManager,
- isAnyIncharge,
- canViewProduction
- });
- 
- console.log('📍 Current activeView:', activeView);
-
- // If audit user, show audit dashboard
- if (isAudit) {
  return (
- <>
- {pushNotificationWidget}
- {passwordDialog}
- <PasswordExpiryBanner policy={passwordPolicy} />
- {syncStatus}
- <AuditDashboard
- user={user}
- inventory={inventory}
- overheads={overheads}
- fixedCosts={fixedCosts}
- salesData={salesData}
- categorySalesData={categorySalesData}
- productionData={productionData}
- productionHouses={productionHouses}
- stockRequests={stockRequests}
- productionRequests={productionRequests}
- employees={employees}
- stores={stores}
- inventoryItems={inventoryItems}
- onLogout={handleLogout}
- onChangePassword={passwordPolicy.openDialog}
- onDataUpdate={loadData}
- />
- </>
- );
- }
-
- // If employee, show only employee dashboard
- if (isEmployee) {
- return (
- <>
- {pushNotificationWidget}
- {passwordDialog}
- <UpdateAvailableBanner />
-
- <div className="min-h-screen bg-gray-50">
- {/* Employee Navigation */}
- <nav className="bg-stone-900 shadow-xl sticky top-0 z-50">
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
- <div className="flex justify-between items-center py-3">
- <div className="flex items-center gap-4">
- <div className="bg-white/20 rounded-xl px-4 py-2 border border-white/30">
- <h1 className="text-xl sm:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
- <p className="text-xs text-white/90">
- {user.name} • {isStoreIncharge ? 'Store Incharge' : isProductionIncharge ? 'Production Head' : 'Employee'}
- </p>
- </div>
- </div>
- 
- {/* Notification bell and Refresh sit here, outside the hamburger menu, so
- anyone can reach either with one tap instead of opening the menu first. */}
- <div className="flex items-center gap-2">
- {isAnyIncharge && !nativePushNotifications.isNativePushSupported() && (
- <Notifications onNavigate={(view, tab, highlightRequestId) => applyNavigationTarget({ view, tab, highlightRequestId })} />
- )}
- <button
- onClick={handleRefreshData}
- disabled={isLoadingData}
- className="p-2 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all border border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
- title="Refresh data"
- >
- <RefreshCw className={`w-5 h-5 ${isLoadingData ? 'animate-spin' : ''}`} />
- </button>
- {/* Mobile Menu Button */}
- <button
- onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
- className="lg:hidden flex items-center gap-2 px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all border border-white/30"
- >
- {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
- </button>
- </div>
-
- {/* Desktop Menu */}
- <div className="hidden lg:flex gap-2">
- {/* Analytics is store/production-incharge only here - a plain employee
- (contract worker or role: 'employee' with no incharge designation) should
- only ever land on their own Payroll/Attendance section. */}
- {isAnyIncharge && (
- <button
- onClick={() => setActiveView('analytics')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'analytics'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <TrendingUp className="w-4 h-4" />
- <span>Analytics</span>
- </button>
- )}
- {isAnyIncharge && (
- <>
- <button
- onClick={() => setActiveView('inventory')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'inventory'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Package className="w-4 h-4" />
- <span>Expense</span>
- </button>
- <button
- onClick={() => setActiveView('sales')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'sales'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <DollarSign className="w-4 h-4" />
- <span>Sales</span>
- </button>
- </>
- )}
- {/* No "Stock Requests" button: it opened the old stock request page (stock_request_ records),
- which the momo requests in Analytics (Daily Stock Requests) replaced. The page is still
- reachable from old notifications; no data was removed. */}
- {isManager && (
- <>
- <button
- onClick={() => setActiveView('advanced-inventory')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'advanced-inventory'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Activity className="w-4 h-4" />
- <span>Inventory Analytics</span>
- </button>
- <button
- onClick={() => {
- setPreManageItemsView(activeView === 'inventory-items' ? 'analytics' : activeView);
- setActiveView('inventory-items');
- }}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'inventory-items'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Package className="w-4 h-4" />
- <span>Manage Items</span>
- </button>
- </>
- )}
-
- {(isRider || isAnyIncharge) && (
- <button
- onClick={() => setActiveView('riders')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'riders'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Bike className="w-4 h-4" />
- <span>{isRider ? 'My Rides' : 'Riders'}</span>
- </button>
- )}
-
- {isRider && (
- <button
- onClick={() => setActiveView('rider-profile')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'rider-profile'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Users className="w-4 h-4" />
- <span>My Profile</span>
- </button>
- )}
-
- {canReceiveStock && (
- <button
- onClick={() => setActiveView('receive-stock')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'receive-stock'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <PackageCheck className="w-4 h-4" />
- <span>Receive Stock</span>
- </button>
- )}
-
- {canLogStockOuts && (
- <button
- onClick={() => setActiveView('stock-outs')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'stock-outs'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <PackageX className="w-4 h-4" />
- <span>Out of Stock</span>
- </button>
- )}
-
- {!isRider && (
- <button
- onClick={() => setActiveView('workplace')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'workplace'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <ClipboardCheck className="w-4 h-4" />
- <span>Workplace checks</span>
- </button>
- )}
-
- <KpiNavButton view="my-kpis" variant="employee-desktop" active={(activeView as string) === 'my-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />
- {/* Payroll and Attendance for non-manager/cluster-head users */}
- <button
- onClick={() => setActiveView('payroll')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'payroll'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Users className="w-4 h-4" />
- <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
- </button>
- {!isRider && (
-<button
- onClick={() => setActiveView('attendance')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'attendance'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Clock className="w-4 h-4" />
- <span>Attendance</span>
- </button>
-)}
-
- {isAnyIncharge && (
- <button
- onClick={() => setActiveView('export')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
- activeView === 'export'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Download className="w-4 h-4" />
- <span>Export</span>
- </button>
- )}
- {isAnyIncharge && <EquipmentNavButton variant="staff-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />}
- {/* Notification bell and Refresh moved to the always-visible bar next to the
- hamburger menu button above, reachable without opening the desktop nav or
- the mobile menu. */}
- <button
- onClick={passwordPolicy.openDialog}
- className="flex items-center gap-2 px-4 py-2 bg-white/20 text-white rounded-xl hover:bg-white/30 transition-all border-2 border-white/30"
- >
- <KeyRound className="w-4 h-4" />
- <span>Change password</span>
- </button>
- <button
- onClick={handleLogout}
- className="flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white rounded-xl hover:bg-red-600 transition-all border-2 border-white/30"
- >
- <LogOut className="w-4 h-4" />
- <span>Logout</span>
- </button>
- </div>
- </div>
- 
- {/* Mobile Menu */}
- {isMobileMenuOpen && (
- <div className="lg:hidden border-t border-white/20 py-4 space-y-2">
- {/* Analytics is store/production-incharge only here too, mirroring the desktop
- menu right above - a plain employee (contract worker, or role: 'employee' with
- no incharge designation) should only get Payroll/Attendance. */}
- {isAnyIncharge && (
- <button
- onClick={() => {
- setActiveView('analytics');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'analytics'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <TrendingUp className="w-5 h-5" />
- <span>Analytics</span>
- </button>
- )}
- {isAnyIncharge && (
- <>
- <button
- onClick={() => {
- setActiveView('inventory');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'inventory'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Expense</span>
- </button>
- <button
- onClick={() => {
- setActiveView('sales');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'sales'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <DollarSign className="w-5 h-5" />
- <span>Sales</span>
- </button>
- </>
- )}
- {/* No "Stock Requests" button: it opened the old stock request page (stock_request_ records),
- which the momo requests in Analytics (Daily Stock Requests) replaced. The page is still
- reachable from old notifications; no data was removed. */}
- {isManager && (
- <>
- <button
- onClick={() => {
- setActiveView('advanced-inventory');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'advanced-inventory'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Activity className="w-5 h-5" />
- <span>Inventory Analytics</span>
- </button>
- <button
- onClick={() => {
- setPreManageItemsView(activeView === 'inventory-items' ? 'analytics' : activeView);
- setActiveView('inventory-items');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'inventory-items'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Manage Items</span>
- </button>
- </>
- )}
-
- {(isRider || isAnyIncharge) && (
- <button
- onClick={() => {
- setActiveView('riders');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'riders'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Bike className="w-5 h-5" />
- <span>{isRider ? 'My Rides' : 'Riders'}</span>
- </button>
- )}
-
- {isRider && (
- <button
- onClick={() => {
- setActiveView('rider-profile');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'rider-profile'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Users className="w-5 h-5" />
- <span>My Profile</span>
- </button>
- )}
-
- {canReceiveStock && (
- <button
- onClick={() => {
- setActiveView('receive-stock');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'receive-stock'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <PackageCheck className="w-5 h-5" />
- <span>Receive Stock</span>
- </button>
- )}
-
- {canLogStockOuts && (
- <button
- onClick={() => {
- setActiveView('stock-outs');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'stock-outs'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <PackageX className="w-5 h-5" />
- <span>Out of Stock</span>
- </button>
- )}
-
- {!isRider && (
- <button
- onClick={() => {
- setActiveView('workplace');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'workplace'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <ClipboardCheck className="w-5 h-5" />
- <span>Workplace checks</span>
- </button>
- )}
-
- <KpiNavButton view="my-kpis" variant="employee-mobile" active={(activeView as string) === 'my-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />
- {/* Payroll and Attendance for non-manager/cluster-head users */}
- <button
- onClick={() => {
- setActiveView('payroll');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'payroll'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Users className="w-5 h-5" />
- <span>{isAnyIncharge ? 'Payroll' : 'My Payouts'}</span>
- </button>
- {!isRider && (
-<button
- onClick={() => {
- setActiveView('attendance');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'attendance'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Clock className="w-5 h-5" />
- <span>Attendance</span>
- </button>
-)}
-
- {isAnyIncharge && (
- <button
- onClick={() => {
- setActiveView('export');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
- activeView === 'export'
- ? 'bg-white text-orange-600'
- : 'bg-white/20 text-white hover:bg-white/30'
- }`}
- >
- <Download className="w-5 h-5" />
- <span>Export</span>
- </button>
- )}
- {isAnyIncharge && <EquipmentNavButton variant="staff-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />}
- <button
- onClick={() => {
- passwordPolicy.openDialog();
- setIsMobileMenuOpen(false);
- }}
- className="w-full flex items-center gap-3 px-4 py-3 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all"
- >
- <KeyRound className="w-5 h-5" />
- <span>Change password · পাসওয়ার্ড বদলান</span>
- </button>
- <button
- onClick={handleLogout}
- className="w-full flex items-center gap-3 px-4 py-3 bg-red-500/90 text-white rounded-lg hover:bg-red-600 transition-all"
- >
- <LogOut className="w-5 h-5" />
- <span>Logout</span>
- </button>
- </div>
- )}
- </div>
- </nav>
- {/* Under the top bar rather than on one screen: plain employees and riders have no shared
- home screen, and a reminder push lands wherever their first screen is. */}
- <PasswordExpiryBanner policy={passwordPolicy} />
- {syncStatus}
-
- {/* Employee Main Content */}
- <main className="pb-6" data-ai-screen>
- {/* Aadhaar, phone and email still missing: asked for on the home screen until done. */}
- {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>}
- {/* Plain staff land on payroll, incharges on analytics: both count as home here. */}
- {!isRider && (activeView === 'analytics' || activeView === 'payroll') && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
- {/* Shift clock on each person's landing screen: incharges Analytics, riders their rides, crew My Payouts. */}
- {(isAnyIncharge ? activeView === 'analytics' : isRider ? activeView === 'riders' : activeView === 'payroll') && <Suspense fallback={null}><ShiftClockCard isLead={isAnyIncharge} /></Suspense>}
- <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'rider-profile' && isRider ? (
- <RiderProfile />
- ) : (activeView as string) === 'my-kpis' ? (
- <MyKpis />
- ) : activeView === 'receive-stock' && canReceiveStock ? (
- <IncomingDeliveries accessToken={user.accessToken || ''} storeId={user.storeId || ''} />
- ) : activeView === 'stock-outs' && canViewStockOuts ? (
- <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isAnyIncharge} />
- ) : activeView === 'workplace' && !isRider ? (
- <WorkplaceChecks initialTab={highlightTab} initialLocation={highlightRequestId} />
- ) : activeView === 'riders' && (isRider || isAnyIncharge) ? (
- <RiderTrips
- mode={isRider ? 'rider' : 'staff'}
- stockRequests={contextValue.productionRequests}
- canDispatch={canDispatchRiders}
- stores={(contextValue.stores || []).map((st) => ({ id: st.id, name: st.name }))}
- defaultStoreId={user.storeId || null}
- />
- ) : activeView === 'analytics' ? (
- <Analytics
- context={contextValue}
- highlightRequestId={highlightRequestId}
- initialTab={highlightTab}
- onNavigateToManageItems={() => {
- console.log('🔄 App.tsx: Changing activeView to inventory-items');
- setPreManageItemsView('analytics');
- setActiveView('inventory-items');
- }}
- onNavigateToProductionManagement={() => {
- setPreProductionManagementView(activeView);
- setActiveView('production');
- }}
- />
- ) : activeView === 'inventory' && isAnyIncharge ? (
- // Incharges on employee logins add and edit their own side's expenses too (owner, 27 Oct 2026).
- <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} employees={employees} />
- ) : activeView === 'sales' && isAnyIncharge ? (
- <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
- ) : activeView === 'production' && canViewProduction ? (
- <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} initialTab={highlightTab} onBack={() => setActiveView(preProductionManagementView)} />
- ) : activeView === 'payroll' ? (
- isAnyIncharge ? (
- <PayrollManagement 
- userRole={'manager' as 'manager' | 'cluster_head'} 
- selectedDate={getTodayIST()}
- userEmployeeId={user.employeeId}
- userName={user.name}
- selectedStoreId={user.storeId}
- isIncharge={true}
- inchargeDesignation={user.designation}
- />
- ) : (
- <EmployeeDashboard employeeId={user.employeeId || ''} />
- )
- ) : activeView === 'attendance' ? (
- <AttendancePortal
- user={{
- employeeId: user.employeeId,
- name: user.name,
- email: user.email,
- role: user.role
- }}
- isIncharge={isAnyIncharge}
- inchargeDesignation={user.designation}
- initialTab={highlightTab}
- stores={contextValue.stores}
- />
- ) : activeView === 'export' && isAnyIncharge ? (
- <ExportData
- userRole={'manager' as 'manager' | 'cluster_head'}
- selectedStoreId={user.storeId || null}
- currentUserId={user.email}
- context={contextValue}
- />
- ) : activeView === 'assets' && isAnyIncharge ? (
- <AssetsManagement context={contextValue} stores={stores} employees={employees} onRefreshStores={loadStores} />
- ) : activeView === 'advanced-inventory' && isManager ? (
- <AdvancedInventoryManagement 
- context={contextValue} 
- stores={stores}
- onNavigateToManageItems={() => {
- setPreManageItemsView('advanced-inventory');
- setActiveView('inventory-items');
- }}
- />
- ) : activeView === 'inventory-items' && (isManager || isAnyIncharge) ? (
- (() => {
- console.log('✅ Rendering InventoryItemsManagement:', { activeView, isManager, isAnyIncharge });
- return <InventoryItemsManagement context={contextValue} onBack={() => setActiveView(preManageItemsView)} />;
- })()
- ) : (
- (() => {
- console.log('❌ Falling through to EmployeeDashboard:', { activeView, isManager, isAnyIncharge });
- return <EmployeeDashboard employeeId={user.employeeId || ''} />;
- })()
- )}
- </Suspense>
- </main>
- </div>
- </>
- );
- }
-
- return (
- <>
- {pushNotificationWidget}
- {passwordDialog}
- {canAskBunny && <Suspense fallback={null}><BunnyChat accessToken={user.accessToken || ''} storeId={askBunnyStoreId} raised={!!pushNotificationWidget} /></Suspense>}
- <UpdateAvailableBanner />
-
- <div className="min-h-screen bg-gray-50">
- {/* Navigation */}
- <nav className="bg-stone-900 shadow-xl sticky top-0 z-50">
- <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8">
- <div className="flex justify-between items-center py-2 sm:py-3">
- <div className="flex items-center gap-2 sm:gap-4">
- <div className="bg-white/20 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-2 border border-white/30">
- <h1 className="text-base sm:text-xl lg:text-2xl text-white font-bold tracking-wide">Bhandar-IMS</h1>
- <p className="text-[10px] sm:text-xs text-white/90 truncate max-w-[160px] sm:max-w-none">
- {user.name} • {user.designation === 'store_incharge' ? 'Store Incharge' : user.designation === 'production_incharge' ? 'Production Incharge' : (user.role === 'manager' ? 'Operations Manager' : 'Cluster Head')}
- </p>
- </div>
- </div>
- 
- {/* Notifications Bell, Refresh & Mobile Menu Button - all reachable without
- opening the desktop nav or the mobile menu first. */}
- <div className="flex items-center gap-3">
- {/* Notifications bell - only on web. The Android app gets real system push
- notifications (see nativePushNotifications.ts), so this in-app bell is
- redundant there and just adds clutter. */}
- {!nativePushNotifications.isNativePushSupported() && (
- <Notifications onNavigate={(view, tab, highlightRequestId) => applyNavigationTarget({ view, tab, highlightRequestId })} />
- )}
- <button
- onClick={handleRefreshData}
- disabled={isLoadingData}
- className="p-2 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all border border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
- title="Refresh data"
- >
- <RefreshCw className={`w-5 h-5 ${isLoadingData ? 'animate-spin' : ''}`} />
- </button>
-
- {/* Mobile Menu Button */}
- <button
- onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
- className="lg:hidden flex items-center gap-2 px-4 py-2 bg-white/20 text-white rounded-xl hover:bg-white/30 transition-all border border-white/30"
- >
- {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
- </button>
- </div>
- 
- {/* Desktop Menu */}
- <div className="hidden lg:flex gap-2 flex-wrap">
- <button
- onClick={() => setActiveView('riders')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'riders'
- ? 'bg-white text-cyan-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Bike className="w-4 h-4" />
- <span>Riders</span>
- </button>
- <button
- onClick={() => setActiveView('workplace')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'workplace'
- ? 'bg-white text-orange-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <ClipboardCheck className="w-4 h-4" />
- <span className="hidden xl:inline">Workplace checks</span>
- </button>
- {isClusterHead ? (
- <>
- <button
- onClick={() => setActiveView('analytics')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'analytics'
- ? 'bg-white text-cyan-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <TrendingUp className="w-4 h-4" />
- <span className="hidden xl:inline">Analytics</span>
- </button>
- 
- <button
- onClick={() => setActiveView('inventory')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'inventory'
- ? 'bg-white text-green-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Package className="w-4 h-4" />
- <span className="hidden xl:inline">Expense</span>
- </button>
- <button
- onClick={() => setActiveView('sales')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'sales'
- ? 'bg-white text-fuchsia-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <DollarSign className="w-4 h-4" />
- <span className="hidden xl:inline">Sales</span>
- </button>
- {canLogStockOuts && (
- <button
- onClick={() => setActiveView('stock-outs')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'stock-outs'
- ? 'bg-white text-rose-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <PackageX className="w-4 h-4" />
- <span className="hidden xl:inline">Out of Stock</span>
- </button>
- )}
- <button
- onClick={() => setActiveView('employees')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'employees'
- ? 'bg-white text-violet-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <UserPlus className="w-4 h-4" />
- <span className="hidden xl:inline">Employees</span>
- </button>
- <button
- onClick={() => setActiveView('assets')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'assets'
- ? 'bg-white text-rose-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Package className="w-4 h-4" />
- <span className="hidden xl:inline">Investments & Assets</span>
- </button>
- <button
- onClick={() => setActiveView('export')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'export'
- ? 'bg-white text-yellow-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Download className="w-4 h-4" />
- <span className="hidden xl:inline">Export</span>
- </button>
- <button
- onClick={() => setActiveView('backup')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'backup'
- ? 'bg-white text-blue-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Database className="w-4 h-4" />
- <span className="hidden xl:inline">Backup</span>
- </button>
- </>
- ) : (
- <>
- <button
- onClick={() => setActiveView('analytics')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'analytics'
- ? 'bg-white text-cyan-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <TrendingUp className="w-4 h-4" />
- <span className="hidden xl:inline">Analytics</span>
- </button>
- <button
- onClick={() => setActiveView('sales')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'sales'
- ? 'bg-white text-fuchsia-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <DollarSign className="w-4 h-4" />
- <span className="hidden xl:inline">Sales</span>
- </button>
- {canLogStockOuts && (
- <button
- onClick={() => setActiveView('stock-outs')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'stock-outs'
- ? 'bg-white text-rose-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <PackageX className="w-4 h-4" />
- <span className="hidden xl:inline">Out of Stock</span>
- </button>
- )}
- <button
- onClick={() => setActiveView('inventory')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'inventory'
- ? 'bg-white text-green-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Package className="w-4 h-4" />
- <span className="hidden xl:inline">Expense</span>
- </button>
- <button
- onClick={() => setActiveView('employees')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'employees'
- ? 'bg-white text-violet-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <UserPlus className="w-4 h-4" />
- <span className="hidden xl:inline">Employees</span>
- </button>
- <button
- onClick={() => setActiveView('export')}
- className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
- activeView === 'export'
- ? 'bg-white text-yellow-600 shadow-lg font-semibold'
- : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
- }`}
- >
- <Download className="w-4 h-4" />
- <span className="hidden xl:inline">Export</span>
- </button>
- {/* Backup is owner-only (full data + restore), so managers no longer get the tab. */}
- <EquipmentNavButton variant="manager-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />
- </>
- )}
- {(isClusterHead || isOperationsManager) && <KpiNavButton view="team-kpis" variant="manager-desktop" active={(activeView as string) === 'team-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />}
- {!isClusterHead && <KpiNavButton view="my-kpis" variant="manager-desktop" active={(activeView as string) === 'my-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />}
- {/* Refresh moved to the always-visible bar next to the notification bell above. */}
- <button
- onClick={passwordPolicy.openDialog}
- className="flex items-center gap-2 px-4 py-2 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-all duration-300 transform hover:scale-105 border border-white/20"
- title="Change password"
- >
- <KeyRound className="w-4 h-4" />
- <span className="hidden xl:inline">Password</span>
- </button>
- <button
- onClick={handleLogout}
- className="flex items-center gap-2 px-4 py-2 bg-white/10 text-white rounded-xl hover:bg-red-500 transition-all duration-300 transform hover:scale-105 border border-white/20"
- >
- <LogOut className="w-4 h-4" />
- <span className="hidden xl:inline">Logout</span>
- </button>
- </div>
- </div>
- 
- {/* Mobile Menu */}
- {isMobileMenuOpen && (
- <div className="lg:hidden border-t border-white/20 py-3 space-y-1.5 max-h-[70vh] overflow-y-auto">
- <button
- onClick={() => {
- setActiveView('riders');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
- activeView === 'riders'
- ? 'bg-white text-orange-600 font-semibold shadow-sm'
- : 'bg-white/10 text-white hover:bg-white/20'
- }`}
- >
- <Bike className="w-5 h-5" />
- <span>Riders</span>
- </button>
- <button
- onClick={() => {
- setActiveView('workplace');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
- activeView === 'workplace'
- ? 'bg-white text-orange-600 font-semibold shadow-sm'
- : 'bg-white/10 text-white hover:bg-white/20'
- }`}
- >
- <ClipboardCheck className="w-5 h-5" />
- <span>Workplace checks</span>
- </button>
- {isClusterHead ? (
- <>
- <button
- onClick={() => {
- setActiveView('analytics');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
- activeView === 'analytics'
- ? 'bg-white text-orange-600 font-semibold shadow-sm'
- : 'bg-white/10 text-white hover:bg-white/20'
- }`}
- >
- <TrendingUp className="w-4 h-4" />
- <span>Analytics</span>
- </button>
- 
- <button
- onClick={() => {
- setActiveView('inventory');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'inventory'
- ? 'bg-[#C1E1C1] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0]'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Expense</span>
- </button>
- <button
- onClick={() => {
- setActiveView('sales');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'sales'
- ? 'bg-[#FFD4E5] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8]'
- }`}
- >
- <DollarSign className="w-5 h-5" />
- <span>Sales</span>
- </button>
- <button
- onClick={() => {
- setActiveView('employees');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'employees'
- ? 'bg-[#E6E6FA] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
- }`}
- >
- <UserPlus className="w-5 h-5" />
- <span>Employees</span>
- </button>
- <button
- onClick={() => {
- setActiveView('assets');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'assets'
- ? 'bg-[#FFE4CC] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5EE]'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Investments & Assets</span>
- </button>
- <button
- onClick={() => {
- setActiveView('export');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'export'
- ? 'bg-[#FFE5B4] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
- }`}
- >
- <Download className="w-5 h-5" />
- <span>Export</span>
- </button>
- <button
- onClick={() => {
- setActiveView('backup');
- setIsMobileMenuOpen(false);
- }}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
- activeView === 'backup'
- ? 'bg-[#B4D7FF] text-gray-800'
- : 'bg-gray-50 text-gray-700 hover:bg-[#E6F2FF]'
- }`}
- >
- <Database className="w-5 h-5" />
- <span>Backup</span>
- </button>
- </>
- ) : (
-                  <>
-                  <button
-                    onClick={() => {
-                      setActiveView('analytics');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'analytics'
-                        ? 'bg-[#D4A5FF] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F5F0FF]'
-                    }`}
-                  >
-                    <TrendingUp className="w-5 h-5" />
-                    <span>Analytics</span>
-                  </button>
-                  
-                  <button
-                    onClick={() => {
-                      setActiveView('sales');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'sales'
-                        ? 'bg-[#FFD4E5] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F8]'
-                    }`}
-                  >
-                    <DollarSign className="w-5 h-5" />
-                    <span>Sales</span>
-                  </button>
-                  {canLogStockOuts && (
-                    <button
-                      onClick={() => {
-                        setActiveView('stock-outs');
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                        activeView === 'stock-outs'
-                          ? 'bg-[#FFD4D4] text-gray-800'
-                          : 'bg-gray-50 text-gray-700 hover:bg-[#FFF5F5]'
-                      }`}
-                    >
-                      <PackageX className="w-5 h-5" />
-                      <span>Out of Stock</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      setActiveView('inventory');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'inventory'
-                        ? 'bg-[#C1E1C1] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F0FFF0]'
-                    }`}
-                  >
-                    <Package className="w-5 h-5" />
-                    <span>Expense</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('employees');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'employees'
-                        ? 'bg-[#E6E6FA] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#F8F8FF]'
-                    }`}
-                  >
-                    <UserPlus className="w-5 h-5" />
-                    <span>Employees</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveView('export');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      activeView === 'export'
-                        ? 'bg-[#FFE5B4] text-gray-800'
-                        : 'bg-gray-50 text-gray-700 hover:bg-[#FFF8DC]'
-                    }`}
-                  >
-                    <Download className="w-5 h-5" />
-                    <span>Export</span>
-                  </button>
-                  {/* Backup is owner-only (full data + restore), so managers no longer get it. */}
-                  <EquipmentNavButton variant="manager-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />
-                  </>
- )}
- {(isClusterHead || isOperationsManager) && <KpiNavButton view="team-kpis" variant="manager-mobile" active={(activeView as string) === 'team-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />}
- {!isClusterHead && <KpiNavButton view="my-kpis" variant="manager-mobile" active={(activeView as string) === 'my-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />}
- <button
- onClick={() => {
- passwordPolicy.openDialog();
- setIsMobileMenuOpen(false);
- }}
- className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 text-gray-700 rounded-lg hover:bg-[#E6F2FF] transition-colors"
- >
- <KeyRound className="w-5 h-5" />
- <span>Change password · পাসওয়ার্ড বদলান</span>
- </button>
- <button
- onClick={handleLogout}
- className="w-full flex items-center gap-3 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
- >
- <LogOut className="w-5 h-5" />
- <span>Logout</span>
- </button>
- </div>
- )}
- </div>
- </nav>
- {/* Under the top bar so it is the first thing on Home (and any screen a reminder opens). */}
- <PasswordExpiryBanner policy={passwordPolicy} />
-
- {/* Store Selector for Cluster Heads */}
- {isClusterHead && stores.length > 0 && (
- <div className="bg-gradient-to-br from-orange-50 via-amber-50 to-orange-50 border-b border-orange-100 px-4 py-6">
- <div className="max-w-7xl mx-auto">
- <StoreSelector
- stores={stores}
- selectedStoreId={selectedStoreId}
- onStoreChange={setSelectedStoreId}
- showAllStores={true}
- />
- </div>
- </div>
- )}
-
- {/* Last updated / refreshing / offline / couldn't refresh - one quiet line instead of the
-    blue "Loading inventory data..." bar and the red "Failed to load" bar. */}
- {syncStatus}
-
- {/* Main Content */}
- <main className="pb-6" data-ai-screen>
- {activeView === 'analytics' && <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>}
- {activeView === 'analytics' && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
- {activeView === 'analytics' && !isClusterHead && <Suspense fallback={null}><ShiftClockCard isLead /></Suspense>}
- <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
- {activeView === 'stock-outs' && canViewStockOuts ? (
- <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />
- ) : activeView === 'workplace' ? (
- <WorkplaceChecks initialTab={highlightTab} initialLocation={highlightRequestId} />
- ) : (activeView as string) === 'team-kpis' && (isClusterHead || isOperationsManager) ? (
- <TeamKpis />
- ) : (activeView as string) === 'my-kpis' && !isClusterHead ? (
- <MyKpis />
- ) : activeView === 'riders' ? (
- <RiderTrips
- mode="staff"
- stockRequests={contextValue.productionRequests}
- canDispatch={canDispatchRiders}
- stores={(stores || []).map((st) => ({ id: st.id, name: st.name }))}
- defaultStoreId={user.storeId || null}
- />
- ) : activeView === 'sales' ? (
- // Store incharge validates the day's sales (POS-reported once live) against the
- // cash they counted and owns reconciliation; everyone else (operations manager,
- // cluster head, etc.) gets a read-only view - the operations manager additionally
- // gets the cash top-up request capability from there.
- isStoreInchargeManager ? (
- <SalesManagement context={contextValue} selectedStoreId={selectedStoreId} />
- ) : (
- <SalesView context={contextValue} selectedStoreId={selectedStoreId} />
- )
- ) : activeView === 'inventory' ? (
- // Managers and the cluster head can add and edit expenses; others get a read-only view.
- user.role === 'manager' || user.role === 'cluster_head' ? (
- <InventoryManagement context={contextValue} selectedStoreId={selectedStoreId} employees={employees} />
- ) : (
- <InventoryView context={contextValue} selectedStoreId={selectedStoreId} />
- )
- ) : activeView === 'analytics' ? (
- <Analytics 
- context={contextValue} 
- selectedStoreId={selectedStoreId} 
- highlightRequestId={highlightRequestId}
- initialTab={highlightTab}
- onNavigateToManageItems={() => {
- console.log('🔄 App.tsx: Changing activeView to inventory-items');
- setActiveView('inventory-items');
- }}
- onNavigateToProductionManagement={() => {
- setPreProductionManagementView(activeView);
- setActiveView('production');
- }}
- />
- ) : activeView === 'export' ? (
- <ExportData
- userRole={user.role as 'manager' | 'cluster_head'}
- selectedStoreId={selectedStoreId}
- currentUserId={user.email}
- context={contextValue}
- />
- ) : activeView === 'backup' && isClusterHead ? (
- <BackupRestore context={contextValue} />
- ) : activeView === 'employees' ? (
- <EmployeeManagement
- user={{
- role: user.role,
- email: user.email,
- employeeId: user.employeeId || undefined,
- name: user.name,
- storeId: user.storeId || undefined,
- accessToken: user.accessToken
- }}
- selectedStoreId={selectedStoreId}
- initialAttendanceTab={highlightTab}
- />
- ) : activeView === 'assets' ? (
- <AssetsManagement 
- context={contextValue} 
- stores={stores}
- employees={employees}
- onRefreshStores={loadStores}
- />
- ) : activeView === 'production' && canViewProduction ? (
- <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} initialTab={highlightTab} onBack={() => setActiveView(preProductionManagementView)} />
- ) : activeView === 'advanced-inventory' ? (
- <AdvancedInventoryManagement 
- context={contextValue} 
- stores={stores}
- onNavigateToManageItems={() => {
- console.log('🔄 App.tsx (Manager): Changing activeView to inventory-items');
- setActiveView('inventory-items');
- }}
- />
- ) : activeView === 'inventory-items' ? (
- (() => {
- console.log('✅ Rendering InventoryItemsManagement (Manager section):', { activeView, isManager });
- return <InventoryItemsManagement context={contextValue} />;
- })()
- ) : (
- <ClusterDashboard context={contextValue} />
- )}
- </Suspense>
- </main>
- </div>
- </>
+  <>
+   {/* The change-password sheet (from the Account sheet or the expiry banner); loaded when opened. */}
+   {passwordPolicy.dialogOpen && (
+    <Suspense fallback={null}>
+     <ChangePasswordDialog policy={passwordPolicy} user={user} onLogout={handleLogout} />
+    </Suspense>
+   )}
+   <AppShell
+    nav={nav}
+    user={user}
+    context={contextValue}
+    stores={stores}
+    employees={employees}
+    selectedStoreId={nav.chrome.storeSwitcher ? selectedStoreId : null}
+    onStoreChange={setSelectedStoreId}
+    refreshStores={loadStores}
+    banners={
+     <>
+      <UpdateAvailableBanner />
+      <PasswordExpiryBanner policy={passwordPolicy} />
+      {syncStatus}
+     </>
+    }
+    badges={badges}
+    notificationsSource={apiNotificationsSource}
+    askBunnyStoreId={askBunnyStoreId}
+    passwordDaysLeft={passwordPolicy.status?.daysLeft ?? null}
+    onChangePassword={passwordPolicy.openDialog}
+    onLogout={handleLogout}
+    onRefresh={needsBusinessData(user) ? handleRefreshData : undefined}
+    refreshing={isLoadingData}
+    onEnableNativePush={() => nativePushNotifications.initializeNativePushNotifications(user.employeeId || user.email, applyNavigationTarget)}
+    onRegisterNavigator={registerNavigator}
+    renderAudit={nav.kind === 'auditor' ? (view) => (
+     <AuditDashboard
+      user={user}
+      inventory={inventory}
+      overheads={overheads}
+      fixedCosts={fixedCosts}
+      salesData={salesData}
+      categorySalesData={categorySalesData}
+      productionData={productionData}
+      productionHouses={productionHouses}
+      stockRequests={stockRequests}
+      productionRequests={productionRequests}
+      employees={employees}
+      stores={stores}
+      inventoryItems={inventoryItems}
+      onLogout={handleLogout}
+      onChangePassword={passwordPolicy.openDialog}
+      onDataUpdate={loadData}
+      view={view}
+      hideNav
+     />
+    ) : undefined}
+   />
+  </>
  );
 }

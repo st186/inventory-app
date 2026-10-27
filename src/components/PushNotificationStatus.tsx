@@ -1,367 +1,209 @@
-import { useState, useEffect } from 'react';
-import { Bell, BellOff, CheckCircle, XCircle, AlertCircle, RefreshCw } from 'lucide-react';
+// Push notifications status and switch, inside Account -> Notifications (it used to be the
+// floating bell bubble on the website).
+//   Website: browser support, server keys, permission, service worker and subscription, with
+//            Turn on / Turn off.
+//   Android app: the system permission; turning it on asks the phone and registers this device.
+import { useCallback, useEffect, useState } from 'react';
+import { Bell, BellOff, CheckCircle2, CircleAlert, RefreshCw, XCircle } from 'lucide-react';
 import * as pushNotifications from '../utils/pushNotifications';
+import { isNativePushSupported } from '../utils/nativePushNotifications';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { ListGroup, ListRow, IconWell } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
+import { useT } from '../utils/i18n';
 
-interface PushNotificationStatusProps {
-  userId: string;
+export type PushState = 'loading' | 'on' | 'off' | 'blocked' | 'unsupported';
+
+type WebChecks = { supported: boolean; permission: NotificationPermission; swRegistered: boolean; subscribed: boolean; vapidConfigured: boolean };
+
+async function fetchVapid(): Promise<{ configured?: boolean; publicKey?: string }> {
+  const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/vapid-public-key`, {
+    headers: { Authorization: `Bearer ${publicAnonKey}` },
+  });
+  if (!response.ok) throw new Error('Could not reach the notification server');
+  return response.json();
 }
 
-export function PushNotificationStatus({ userId }: PushNotificationStatusProps) {
-  const [status, setStatus] = useState<{
-    supported: boolean;
-    permission: NotificationPermission;
-    swRegistered: boolean;
-    subscribed: boolean;
-    vapidConfigured: boolean;
-    loading: boolean;
-  }>({
-    supported: pushNotifications.isPushNotificationSupported(),
-    permission: 'default',
-    swRegistered: false,
-    subscribed: false,
-    vapidConfigured: false,
-    loading: true,
-  });
+async function readWebChecks(): Promise<WebChecks> {
+  const supported = pushNotifications.isPushNotificationSupported();
+  if (!supported) return { supported: false, permission: 'denied', swRegistered: false, subscribed: false, vapidConfigured: false };
+  const permission = Notification.permission;
+  let vapidConfigured = false;
+  try {
+    vapidConfigured = (await fetchVapid()).configured === true;
+  } catch {
+    vapidConfigured = false;
+  }
+  let swRegistered = false;
+  let subscribed = false;
+  if ('serviceWorker' in navigator) {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    swRegistered = !!registration;
+    if (registration) subscribed = !!(await registration.pushManager.getSubscription());
+  }
+  return { supported, permission, swRegistered, subscribed, vapidConfigured };
+}
 
+async function readNativePermission(): Promise<PushState> {
+  try {
+    const { PushNotifications } = await import('@capacitor/push-notifications');
+    const status = await PushNotifications.checkPermissions();
+    if (status.receive === 'granted') return 'on';
+    if (status.receive === 'denied') return 'blocked';
+    return 'off';
+  } catch {
+    return 'unsupported';
+  }
+}
+
+/** On / off / blocked for the Account sheet row, and the actions behind it. */
+export function usePushStatus(userId: string, onEnableNative?: () => Promise<boolean>, enabled = true) {
+  const native = isNativePushSupported();
+  const [state, setState] = useState<PushState>('loading');
+  const [web, setWeb] = useState<WebChecks | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const checkStatus = async () => {
-    setStatus(prev => ({ ...prev, loading: true }));
+  const refresh = useCallback(async () => {
     setError(null);
-
-    try {
-      // Check if supported
-      const supported = pushNotifications.isPushNotificationSupported();
-      
-      if (!supported) {
-        setStatus({
-          supported: false,
-          permission: 'denied',
-          swRegistered: false,
-          subscribed: false,
-          vapidConfigured: false,
-          loading: false,
-        });
-        return;
-      }
-
-      // Check permission
-      const permission = Notification.permission;
-
-      // Check if VAPID is configured
-      const vapidResponse = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/vapid-public-key`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const vapidData = await vapidResponse.json();
-      const vapidConfigured = vapidData.configured === true;
-
-      // Check service worker registration
-      let swRegistered = false;
-      let subscribed = false;
-
-      if ('serviceWorker' in navigator) {
-        const registration = await navigator.serviceWorker.getRegistration('/');
-        swRegistered = !!registration;
-
-        if (registration) {
-          const subscription = await registration.pushManager.getSubscription();
-          subscribed = !!subscription;
-        }
-      }
-
-      setStatus({
-        supported,
-        permission,
-        swRegistered,
-        subscribed,
-        vapidConfigured,
-        loading: false,
-      });
-    } catch (err) {
-      console.error('Error checking push notification status:', err);
-      setError(err instanceof Error ? err.message : 'Unknown error');
-      setStatus(prev => ({ ...prev, loading: false }));
+    if (!enabled) {
+      setState('on');
+      return;
     }
-  };
+    if (native) {
+      setState(await readNativePermission());
+      return;
+    }
+    try {
+      const checks = await readWebChecks();
+      setWeb(checks);
+      if (!checks.supported || !checks.vapidConfigured) setState('unsupported');
+      else if (checks.permission === 'denied') setState('blocked');
+      else setState(checks.subscribed && checks.permission === 'granted' ? 'on' : 'off');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not check notifications');
+      setState('off');
+    }
+  }, [native, enabled]);
 
   useEffect(() => {
-    checkStatus();
-  }, [userId]);
+    refresh();
+  }, [refresh, userId]);
 
-  const handleEnableNotifications = async () => {
-    setStatus(prev => ({ ...prev, loading: true }));
+  const enable = useCallback(async () => {
+    setBusy(true);
     setError(null);
-
     try {
-      // Get VAPID public key
-      const vapidResponse = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/vapid-public-key`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      
-      if (!vapidResponse.ok) {
-        throw new Error('Failed to fetch VAPID key');
-      }
-
-      const vapidData = await vapidResponse.json();
-      
-      if (!vapidData.configured || !vapidData.publicKey) {
-        throw new Error('VAPID keys not configured on server');
-      }
-
-      // Request permission and subscribe (user-triggered, so this is allowed to prompt)
-      const result = await pushNotifications.enablePushNotifications(userId, vapidData.publicKey);
-
-      if (result.success) {
-        await checkStatus();
+      if (native) {
+        const ok = onEnableNative ? await onEnableNative() : false;
+        if (!ok) setError('The phone did not allow notifications. Turn them on for Bunny Momos in the phone settings.');
       } else {
-        throw new Error(result.message || 'Failed to enable push notifications');
+        const vapid = await fetchVapid();
+        if (!vapid.configured || !vapid.publicKey) throw new Error('Notifications are not set up on the server yet.');
+        const result = await pushNotifications.enablePushNotifications(userId, vapid.publicKey);
+        if (!result.success) throw new Error(result.message || 'Could not turn notifications on');
       }
     } catch (err) {
-      console.error('Error enabling push notifications:', err);
-      setError(err instanceof Error ? err.message : 'Failed to enable notifications');
-      setStatus(prev => ({ ...prev, loading: false }));
+      setError(err instanceof Error ? err.message : 'Could not turn notifications on');
+    } finally {
+      await refresh();
+      setBusy(false);
     }
-  };
+  }, [native, onEnableNative, refresh, userId]);
 
-  const handleDisableNotifications = async () => {
-    setStatus(prev => ({ ...prev, loading: true }));
+  const disable = useCallback(async () => {
+    setBusy(true);
     setError(null);
-
     try {
       await pushNotifications.unsubscribeFromPushNotifications(userId);
-      await checkStatus();
     } catch (err) {
-      console.error('Error disabling push notifications:', err);
-      setError(err instanceof Error ? err.message : 'Failed to disable notifications');
-      setStatus(prev => ({ ...prev, loading: false }));
+      setError(err instanceof Error ? err.message : 'Could not turn notifications off');
+    } finally {
+      await refresh();
+      setBusy(false);
     }
-  };
+  }, [refresh, userId]);
 
-  if (status.loading && !status.supported) {
-    return (
-      <div className="flex items-center gap-2 text-gray-500">
-        <RefreshCw className="w-4 h-4 animate-spin" />
-        <span className="text-sm">Checking push notification status...</span>
-      </div>
-    );
-  }
+  return { native, state, web, error, busy, refresh, enable, disable };
+}
+
+export function pushStateChip(state: PushState, t: ReturnType<typeof useT>['t']) {
+  if (state === 'on') return <StatusChip tone="success">{t('status.on')}</StatusChip>;
+  if (state === 'blocked') return <StatusChip tone="danger">{t('account.notificationsBlocked')}</StatusChip>;
+  if (state === 'unsupported') return <StatusChip tone="neutral">{t('account.notificationsUnsupported')}</StatusChip>;
+  if (state === 'off') return <StatusChip tone="warning">{t('status.off')}</StatusChip>;
+  return null;
+}
+
+function Check({ ok, label, detail }: { ok: boolean | null; label: string; detail: string }) {
+  return (
+    <ListRow
+      density="compact"
+      leading={<IconWell icon={ok ? CheckCircle2 : ok === false ? XCircle : CircleAlert} tone={ok ? 'success' : ok === false ? 'danger' : 'neutral'} />}
+      title={label}
+      subtitle={detail}
+    />
+  );
+}
+
+/** The detail panel: what is on, and the switch. */
+export function PushNotificationStatus({ userId, onEnableNative }: { userId: string; onEnableNative?: () => Promise<boolean> }) {
+  const { t } = useT();
+  const push = usePushStatus(userId, onEnableNative);
+  const { web, state } = push;
 
   return (
-    <div className="space-y-4">
-      {/* Status Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Browser Support */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.supported 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-red-50 border-red-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.supported ? (
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            ) : (
-              <XCircle className="w-5 h-5 text-red-600" />
-            )}
-            <span className="text-sm text-gray-900">Browser Support</span>
-          </div>
-          <p className="text-xs text-gray-600">
-            {status.supported ? 'Supported' : 'Not Supported'}
-          </p>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3.5">
+        <IconWell icon={state === 'on' ? Bell : BellOff} tone={state === 'on' ? 'success' : 'neutral'} size={40} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="text-body-md font-semibold text-text">{t('account.notifications')}</span>
+          <span className="text-label text-text-3">{t('account.notificationsHint')}</span>
         </div>
-
-        {/* VAPID Configuration */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.vapidConfigured 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-yellow-50 border-yellow-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.vapidConfigured ? (
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-            )}
-            <span className="text-sm text-gray-900">Server Config</span>
-          </div>
-          <p className="text-xs text-gray-600">
-            {status.vapidConfigured ? 'VAPID Keys Set' : 'Not Configured'}
-          </p>
-        </div>
-
-        {/* Permission Status */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.permission === 'granted' 
-            ? 'bg-green-50 border-green-200' 
-            : status.permission === 'denied'
-            ? 'bg-red-50 border-red-200'
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.permission === 'granted' ? (
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            ) : status.permission === 'denied' ? (
-              <XCircle className="w-5 h-5 text-red-600" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-gray-600" />
-            )}
-            <span className="text-sm text-gray-900">Permission</span>
-          </div>
-          <p className="text-xs text-gray-600 capitalize">
-            {status.permission}
-          </p>
-        </div>
-
-        {/* Service Worker */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.swRegistered 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.swRegistered ? (
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-gray-600" />
-            )}
-            <span className="text-sm text-gray-900">Service Worker</span>
-          </div>
-          <p className="text-xs text-gray-600">
-            {status.swRegistered ? 'Registered' : 'Not Registered'}
-          </p>
-        </div>
-
-        {/* Subscription Status */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.subscribed 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.subscribed ? (
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-gray-600" />
-            )}
-            <span className="text-sm text-gray-900">Push Subscription</span>
-          </div>
-          <p className="text-xs text-gray-600">
-            {status.subscribed ? 'Active' : 'Inactive'}
-          </p>
-        </div>
-
-        {/* Overall Status */}
-        <div className={`rounded-xl p-4 border-2 ${
-          status.subscribed && status.permission === 'granted'
-            ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300' 
-            : 'bg-gradient-to-br from-orange-50 to-yellow-50 border-orange-200'
-        }`}>
-          <div className="flex items-center gap-2 mb-1">
-            {status.subscribed && status.permission === 'granted' ? (
-              <Bell className="w-5 h-5 text-green-600" />
-            ) : (
-              <BellOff className="w-5 h-5 text-orange-600" />
-            )}
-            <span className="text-sm text-gray-900">Notifications</span>
-          </div>
-          <p className="text-xs text-gray-600">
-            {status.subscribed && status.permission === 'granted' ? 'Enabled' : 'Disabled'}
-          </p>
-        </div>
+        {pushStateChip(state, t)}
       </div>
 
-      {/* Error Message */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-          <div className="flex items-start gap-2">
-            <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm text-red-900">Error</p>
-              <p className="text-xs text-red-700 mt-1">{error}</p>
-            </div>
-          </div>
-        </div>
+      {push.native ? (
+        <ListGroup>
+          <Check ok={state === 'on' ? true : state === 'blocked' ? false : null} label="Android app" detail={state === 'on' ? 'Allowed on this phone' : state === 'blocked' ? 'Blocked in the phone settings' : 'Not allowed yet'} />
+        </ListGroup>
+      ) : (
+        web && (
+          <ListGroup>
+            <Check ok={web.supported} label="This browser" detail={web.supported ? 'Supports notifications' : 'No notifications here: use Chrome, Edge, Firefox or Safari 16+'} />
+            <Check ok={web.vapidConfigured} label="Server" detail={web.vapidConfigured ? 'Set up' : 'Not set up yet: ask the admin'} />
+            <Check ok={web.permission === 'granted' ? true : web.permission === 'denied' ? false : null} label="Permission" detail={web.permission === 'granted' ? 'Allowed' : web.permission === 'denied' ? 'Blocked' : 'Not asked yet'} />
+            <Check ok={web.subscribed} label="This device" detail={web.subscribed ? 'Receiving notifications' : web.swRegistered ? 'Not subscribed' : 'Not registered'} />
+          </ListGroup>
+        )
       )}
 
-      {/* Actions */}
-      <div className="flex gap-3">
-        {!status.subscribed && status.supported && status.vapidConfigured && (
-          <button
-            onClick={handleEnableNotifications}
-            disabled={status.loading || status.permission === 'denied'}
-            className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl hover:from-orange-600 hover:to-rose-600 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <Bell className="w-4 h-4" />
-            <span>Enable Push Notifications</span>
-          </button>
-        )}
+      {push.error && <Callout tone="danger">{push.error}</Callout>}
+      {state === 'blocked' && (
+        <Callout tone="warning" title={t('account.notificationsBlocked')}>
+          {push.native
+            ? 'Open the phone settings, find Bunny Momos, and allow notifications.'
+            : 'Click the lock icon in the address bar, set Notifications to Allow, then reload the page.'}
+        </Callout>
+      )}
 
-        {status.subscribed && (
-          <button
-            onClick={handleDisableNotifications}
-            disabled={status.loading}
-            className="flex-1 px-4 py-3 bg-gray-500 text-white rounded-xl hover:bg-gray-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <BellOff className="w-4 h-4" />
-            <span>Disable Notifications</span>
-          </button>
+      <div className="flex gap-2.5">
+        {state === 'off' && (
+          <Button size="lg" className="flex-1" loading={push.busy} onClick={push.enable} leadingIcon={<Bell aria-hidden="true" />}>
+            {t('account.enable')}
+          </Button>
         )}
-
-        <button
-          onClick={checkStatus}
-          disabled={status.loading}
-          className="px-4 py-3 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <RefreshCw className={`w-4 h-4 ${status.loading ? 'animate-spin' : ''}`} />
-          <span>Refresh</span>
-        </button>
+        {state === 'on' && !push.native && (
+          <Button variant="secondary" size="lg" className="flex-1" loading={push.busy} onClick={push.disable} leadingIcon={<BellOff aria-hidden="true" />}>
+            {t('account.disable')}
+          </Button>
+        )}
+        <Button variant="ghost" size="lg" onClick={push.refresh} disabled={push.busy} leadingIcon={<RefreshCw aria-hidden="true" />}>
+          {t('shell.refresh')}
+        </Button>
       </div>
-
-      {/* Help Text */}
-      {!status.supported && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-          <p className="text-sm text-yellow-900">
-            ⚠️ Your browser doesn't support push notifications. Please use Chrome, Firefox, Edge, or Safari 16+.
-          </p>
-        </div>
-      )}
-
-      {!status.vapidConfigured && status.supported && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-          <p className="text-sm text-yellow-900 mb-2">
-            ⚠️ Push notifications are not configured on the server.
-          </p>
-          <p className="text-xs text-yellow-800">
-            Ask your system administrator to configure VAPID keys in Supabase environment variables.
-          </p>
-        </div>
-      )}
-
-      {status.permission === 'denied' && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-          <p className="text-sm text-red-900 mb-2">
-            🚫 Notification permission was blocked
-          </p>
-          <p className="text-xs text-red-800">
-            To enable notifications:
-          </p>
-          <ol className="text-xs text-red-800 mt-2 space-y-1 list-decimal list-inside">
-            <li>Click the 🔒 or ⚙️ icon in your browser's address bar</li>
-            <li>Find "Notifications" and change it to "Allow"</li>
-            <li>Refresh this page</li>
-          </ol>
-        </div>
-      )}
     </div>
   );
 }
