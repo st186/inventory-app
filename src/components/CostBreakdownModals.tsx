@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
-import { X, Percent, Landmark } from 'lucide-react';
+import { Percent, Landmark } from 'lucide-react';
+import { ResponsiveModal } from './ui/responsive-modal';
 import type { AggregatorSettlement, OnlineLoan } from '../utils/api';
 import { settlementShareInRange, type OnlineCosts } from '../utils/onlineCosts';
 import { getTodayIST } from '../utils/timezone';
@@ -8,25 +9,12 @@ const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 const inr2 = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
-function Shell({ title, subtitle, icon, onClose, children }: { title: string; subtitle: string; icon: ReactNode; onClose: () => void; children: ReactNode }) {
+// A sheet on phones, a dialog on desktop (ui/responsive-modal).
+function Shell({ title, subtitle, onClose, children }: { title: string; subtitle: string; icon?: ReactNode; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 text-white p-6 flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">{icon}</div>
-            <div>
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">{title}</h2>
-              <p className="text-orange-100 mt-1 text-sm">{subtitle}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="text-white hover:bg-white/20 rounded-lg p-2 transition-colors flex-shrink-0" aria-label="Close">
-            <X className="w-6 h-6" />
-          </button>
-        </div>
-        <div className="overflow-y-auto p-4 sm:p-6 space-y-6">{children}</div>
-      </div>
-    </div>
+    <ResponsiveModal open onOpenChange={(o) => { if (!o) onClose(); }} title={title} description={subtitle} size="detail" bodyClassName="flex flex-col gap-6">
+      {children}
+    </ResponsiveModal>
   );
 }
 
@@ -89,27 +77,27 @@ export function CommissionBreakdownModal({
     <Shell
       title="Zomato & Swiggy Commission and Ads"
       subtitle={`${periodLabel} • Total ${inr(totalAmount)} • ${settlements.length} settlement${settlements.length === 1 ? '' : 's'}`}
-      icon={<Percent className="w-6 h-6 text-white" />}
+      icon={<Percent className="w-6 h-6 text-text-2" />}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {perAggregator.map((a) => (
-          <div key={a.agg} className="rounded-xl border border-gray-200 p-4">
+          <div key={a.agg} className="rounded-lg border border-border p-4">
             <div className="flex items-center justify-between">
-              <p className="font-semibold text-gray-900 capitalize">{a.agg}</p>
-              <span className="text-xs text-gray-500">{a.count} settlement{a.count === 1 ? '' : 's'} • {a.orders} orders</span>
+              <p className="font-semibold text-text capitalize">{a.agg}</p>
+              <span className="text-xs text-text-3">{a.count} settlement{a.count === 1 ? '' : 's'} • {a.orders} orders</span>
             </div>
             {a.count === 0 ? (
-              <p className="text-sm text-gray-400 mt-3">No settlement uploaded for this period.</p>
+              <p className="text-sm text-text-3 mt-3">No settlement uploaded for this period.</p>
             ) : (
               <>
-                <p className="text-2xl font-bold text-gray-900 tabular-nums mt-2">{inr(a.commission)}
-                  {a.pct !== null && <span className="ml-2 text-sm font-semibold text-rose-600">{a.pct.toFixed(1)}% of order value</span>}
+                <p className="text-2xl font-bold text-text tabular-nums mt-2">{inr(a.commission)}
+                  {a.pct !== null && <span className="ml-2 text-sm font-semibold text-danger">{a.pct.toFixed(1)}% of order value</span>}
                 </p>
                 <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                  <div><p className="text-gray-500">Order value</p><p className="font-semibold tabular-nums">{inr(a.gross)}</p></div>
-                  <div><p className="text-gray-500">Ad spend</p><p className="font-semibold tabular-nums">{inr(a.adSpend)}</p></div>
-                  <div><p className="text-gray-500">Net payout</p><p className="font-semibold tabular-nums">{inr(a.net)}</p></div>
+                  <div><p className="text-text-3">Order value</p><p className="font-semibold tabular-nums">{inr(a.gross)}</p></div>
+                  <div><p className="text-text-3">Ad spend</p><p className="font-semibold tabular-nums">{inr(a.adSpend)}</p></div>
+                  <div><p className="text-text-3">Net payout</p><p className="font-semibold tabular-nums">{inr(a.net)}</p></div>
                 </div>
               </>
             )}
@@ -117,7 +105,7 @@ export function CommissionBreakdownModal({
         ))}
       </div>
 
-      <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 text-sm">
+      <div className="rounded-lg border border-border divide-y divide-border text-sm">
         {[
           { label: 'Commission from settlement files', value: costs.settledCommission },
           { label: 'Commission from old manual payout entries', value: costs.legacyCommission },
@@ -130,31 +118,31 @@ export function CommissionBreakdownModal({
         ].filter((row) => Math.abs(row.value) > 0.5).map((row) => (
           <div key={row.label} className="flex items-start justify-between gap-4 px-4 py-3">
             <div>
-              <p className="text-gray-800">{row.label}</p>
-              {row.note && <p className="text-xs text-gray-500 mt-0.5">{row.note}</p>}
+              <p className="text-text">{row.label}</p>
+              {row.note && <p className="text-xs text-text-3 mt-0.5">{row.note}</p>}
             </div>
-            <p className="font-semibold tabular-nums text-gray-900">{inr(row.value)}</p>
+            <p className="font-semibold tabular-nums text-text">{inr(row.value)}</p>
           </div>
         ))}
         {costs.gstExcluded > 0.5 && (
-          <p className="px-4 py-3 text-xs text-gray-500">
+          <p className="px-4 py-3 text-xs text-text-3">
             Not counted: {inr(costs.gstExcluded)} GST the platforms collected from customers and paid to the government for us. It was never part of our revenue, so it isn't our cost.
           </p>
         )}
       </div>
 
-      <div className="rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <h3 className="text-base font-semibold text-gray-900">Settlements in this period</h3>
-          <p className="text-xs text-gray-500">Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it.</p>
+      <div className="rounded-lg border border-border overflow-hidden">
+        <div className="px-4 py-3 bg-surface-2 border-b border-border">
+          <h3 className="text-base font-semibold text-text">Settlements in this period</h3>
+          <p className="text-xs text-text-3">Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it.</p>
         </div>
         {sorted.length === 0 ? (
-          <p className="text-sm text-gray-500 p-5 text-center">No settlements cover this period.</p>
+          <p className="text-sm text-text-3 p-5 text-center">No settlements cover this period.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-100">
+                <tr className="text-left text-xs uppercase tracking-wide text-text-3 border-b border-border">
                   <th className="px-4 py-2">Aggregator</th>
                   <th className="px-4 py-2">Orders from</th>
                   <th className="px-4 py-2">Paid on</th>
@@ -167,13 +155,13 @@ export function CommissionBreakdownModal({
               </thead>
               <tbody>
                 {sorted.map((s) => (
-                  <tr key={s.id} className="border-b border-gray-50">
-                    <td className="px-4 py-2 capitalize font-medium text-gray-900">{s.aggregator}</td>
-                    <td className="px-4 py-2 text-gray-600">{shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</td>
-                    <td className="px-4 py-2 text-gray-600">{shortDate(s.settlementDate)}</td>
+                  <tr key={s.id} className="border-b border-border">
+                    <td className="px-4 py-2 capitalize font-medium text-text">{s.aggregator}</td>
+                    <td className="px-4 py-2 text-text-2">{shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</td>
+                    <td className="px-4 py-2 text-text-2">{shortDate(s.settlementDate)}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{inr2((s.grossSales || 0) - gstOf(s))}</td>
                     <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(commissionExGst(s))}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-rose-600">{s.grossSales - gstOf(s) > 0 ? ((commissionExGst(s) / (s.grossSales - gstOf(s))) * 100).toFixed(1) : '-'}%</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-danger">{s.grossSales - gstOf(s) > 0 ? ((commissionExGst(s) / (s.grossSales - gstOf(s))) * 100).toFixed(1) : '-'}%</td>
                     <td className="px-4 py-2 text-right tabular-nums">{s.adSpend ? inr2(s.adSpend) : '-'}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{inr2(s.netPayout || 0)}</td>
                   </tr>
@@ -226,17 +214,17 @@ export function InterestBreakdownModal({
     <Shell
       title="Loan Interest Breakdown"
       subtitle={`${periodLabel} • Total ${inr(totalAmount)} • ${rows.length} loan${rows.length === 1 ? '' : 's'} accruing interest`}
-      icon={<Landmark className="w-6 h-6 text-white" />}
+      icon={<Landmark className="w-6 h-6 text-text-2" />}
       onClose={onClose}
     >
       {rows.length === 0 ? (
-        <p className="text-sm text-gray-500 p-5 text-center">No interest-bearing loans accrue in this period.</p>
+        <p className="text-sm text-text-3 p-5 text-center">No interest-bearing loans accrue in this period.</p>
       ) : (
-        <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <div className="rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-100 bg-gray-50">
+                <tr className="text-left text-xs uppercase tracking-wide text-text-3 border-b border-border bg-surface-2">
                   <th className="px-4 py-2">Lender</th>
                   <th className="px-4 py-2">Taken on</th>
                   <th className="px-4 py-2 text-right">Principal</th>
@@ -248,13 +236,13 @@ export function InterestBreakdownModal({
               </thead>
               <tbody>
                 {rows.map(({ loan, days, interest }) => (
-                  <tr key={loan.id} className="border-b border-gray-50">
-                    <td className="px-4 py-2 font-medium text-gray-900">{loan.investorName || 'Unknown lender'}</td>
-                    <td className="px-4 py-2 text-gray-600">{shortDate(loan.loanDate)}</td>
+                  <tr key={loan.id} className="border-b border-border">
+                    <td className="px-4 py-2 font-medium text-text">{loan.investorName || 'Unknown lender'}</td>
+                    <td className="px-4 py-2 text-text-2">{shortDate(loan.loanDate)}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{inr(loan.loanAmount)}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{loan.interestRate}%</td>
                     <td className="px-4 py-2 text-right tabular-nums">{days}</td>
-                    <td className="px-4 py-2 capitalize text-gray-600">{loan.status}{loan.status === 'repaid' && loan.repaymentDate ? ` (${shortDate(loan.repaymentDate)})` : ''}</td>
+                    <td className="px-4 py-2 capitalize text-text-2">{loan.status}{loan.status === 'repaid' && loan.repaymentDate ? ` (${shortDate(loan.repaymentDate)})` : ''}</td>
                     <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(interest)}</td>
                   </tr>
                 ))}
@@ -263,7 +251,7 @@ export function InterestBreakdownModal({
           </div>
         </div>
       )}
-      <p className="text-xs text-gray-500">Interest accrues daily at principal × monthly rate × days ÷ 30, from the day the loan was taken until it is repaid (or the end of the period).</p>
+      <p className="text-xs text-text-3">Interest accrues daily at principal × monthly rate × days ÷ 30, from the day the loan was taken until it is repaid (or the end of the period).</p>
     </Shell>
   );
 }

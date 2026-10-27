@@ -47,11 +47,11 @@ function ladderOf(p: PnlBreakdown) {
 
 type Status = 'good' | 'watch' | 'high' | 'low' | 'info';
 const STATUS_STYLE: Record<Status, string> = {
-  good: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  watch: 'bg-amber-50 text-amber-700 border-amber-200',
-  high: 'bg-rose-50 text-rose-700 border-rose-200',
-  low: 'bg-rose-50 text-rose-700 border-rose-200',
-  info: 'bg-slate-50 text-slate-600 border-slate-200',
+  good: 'bg-success-soft text-success border-success-border',
+  watch: 'bg-warning-soft text-warning border-warning-border',
+  high: 'bg-danger-soft text-danger border-danger-border',
+  low: 'bg-danger-soft text-danger border-danger-border',
+  info: 'bg-surface-2 text-text-2 border-border',
 };
 const STATUS_LABEL: Record<Status, string> = { good: 'On target', watch: 'Watch', high: 'Too high', low: 'Too low', info: 'For info' };
 // Lower-is-better ratio against a target and a "watch" ceiling.
@@ -68,7 +68,7 @@ function RowShell({ className, onClick, children }: { className: string; onClick
     <button
       type="button"
       onClick={onClick}
-      className={`${className} block w-full text-left cursor-pointer hover:bg-orange-50/60 active:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400 transition-colors`}
+      className={`${className} block w-full text-left cursor-pointer hover:bg-primary-soft active:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring transition-colors`}
     >
       {children}
     </button>
@@ -77,7 +77,7 @@ function RowShell({ className, onClick, children }: { className: string; onClick
 
 function StatusPill({ status }: { status: Status }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[status]}`}>
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-caption font-semibold ${STATUS_STYLE[status]}`}>
       {STATUS_LABEL[status]}
     </span>
   );
@@ -256,7 +256,7 @@ export function UnitEconomics({
 
   if (rev <= 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-500">
+      <div className="bg-surface rounded-lg border border-border p-8 text-center text-sm text-text-3">
         No sales in this period yet, so there's nothing to break down.
       </div>
     );
@@ -266,21 +266,21 @@ export function UnitEconomics({
     <div className="space-y-5">
       {/* Paid so far vs normalized */}
       {pnlNormalized && (
-        <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div role="group" aria-label="How salaries and rent are counted" className="inline-flex self-start rounded-lg border border-gray-200 bg-gray-50 p-1">
+        <div className="bg-surface rounded-lg border border-border p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div role="group" aria-label="How salaries and rent are counted" className="inline-flex self-start rounded-lg border border-border bg-surface-2 p-1">
             {([['paid', 'Paid so far'], ['normalized', 'Normalized']] as const).map(([key, label]) => (
               <button
                 key={key}
                 type="button"
                 aria-pressed={basis === key}
                 onClick={() => setBasis(key)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${basis === key ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${basis === key ? 'bg-surface text-info' : 'text-text-2 hover:text-text'}`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <p className="text-xs text-gray-600 sm:flex-1">
+          <p className="text-xs text-text-2 sm:flex-1">
             {normalizedOn
               ? `Salaries, rent and electricity counted day by day for the period: ${inr(accruedTotal)}${normalizedEstimate > 0.5 ? `, of which ${inr(normalizedEstimate)} is estimated from last month until this month's figures are entered` : ''}${staffUnpaid + occupancyUnpaid > 0.5 ? `. ${inr(staffUnpaid + occupancyUnpaid)} of it is not paid yet` : ''}.`
               : `Only what has been paid so far.${staffUnpaid + occupancyUnpaid > 0.5 ? ` ${inr(staffUnpaid + occupancyUnpaid)} of salaries, rent and electricity is owed for these days but not paid yet, so profit looks better than it is.` : ''}`}
@@ -291,75 +291,75 @@ export function UnitEconomics({
       {/* Headline margins */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {tiles.map((t) => (
-          <div key={t.term} className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4">
-            <p className="text-sm font-semibold text-gray-900">{t.term}</p>
-            <p className="text-[11px] text-gray-500">{t.sub}</p>
+          <div key={t.term} className="bg-surface rounded-lg border border-border p-3 sm:p-4">
+            <p className="text-sm font-semibold text-text">{t.term}</p>
+            <p className="text-caption text-text-3">{t.sub}</p>
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 mt-2">
-              <p className={`text-2xl font-bold tabular-nums ${t.value < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{pctText(t.value)}</p>
+              <p className={`text-2xl font-bold tabular-nums ${t.value < 0 ? 'text-danger' : 'text-text'}`}>{pctText(t.value)}</p>
               <StatusPill status={t.status} />
             </div>
-            <p className="text-[11px] text-gray-500 mt-0.5">{t.target}</p>
+            <p className="text-caption text-text-3 mt-0.5">{t.target}</p>
           </div>
         ))}
       </div>
 
       {/* The ladder */}
-      <div className="bg-white rounded-xl border border-gray-200">
-        <div className="px-4 sm:px-5 py-4 border-b border-gray-100">
-          <h3 className="text-base sm:text-lg font-bold text-gray-900">From revenue to net profit</h3>
-          <p className="text-xs sm:text-sm text-gray-500">{periodLabel} · each step and how much of every ₹100 of sales is left{onOpenLine ? ' · tap a cost to see what is in it' : ''}</p>
+      <div className="bg-surface rounded-lg border border-border">
+        <div className="px-4 sm:px-5 py-4 border-b border-border">
+          <h3 className="text-base sm:text-lg font-bold text-text">From revenue to net profit</h3>
+          <p className="text-xs sm:text-sm text-text-3">{periodLabel} · each step and how much of every ₹100 of sales is left{onOpenLine ? ' · tap a cost to see what is in it' : ''}</p>
         </div>
-        <div className="divide-y divide-gray-50">
+        <div className="divide-y divide-border">
           {ladderRows.map((r, i) => {
             const isTotal = r.kind !== 'cost';
             const shown = r.kind === 'cost' ? -r.value : r.value;
             const share = pct(Math.abs(r.value), rev);
             const step = waterfall.steps[i];
-            const barColor = r.kind === 'cost' ? 'bg-rose-300'
-              : r.kind === 'start' ? 'bg-sky-400'
-              : r.value < 0 ? 'bg-rose-500' : r.kind === 'final' ? 'bg-emerald-500' : 'bg-indigo-400';
+            const barColor = r.kind === 'cost' ? 'bg-danger-soft'
+              : r.kind === 'start' ? 'bg-info'
+              : r.value < 0 ? 'bg-danger' : r.kind === 'final' ? 'bg-success' : 'bg-info';
             return (
               <RowShell
                 key={r.label}
-                className={`px-4 sm:px-5 py-2 ${isTotal ? 'bg-gray-50/70' : ''}`}
+                className={`px-4 sm:px-5 py-2 ${isTotal ? 'bg-surface-2' : ''}`}
                 onClick={r.line && onOpenLine ? () => onOpenLine(r.line!) : undefined}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="min-w-0">
-                    <p className={`text-sm ${isTotal ? 'font-semibold text-gray-900' : 'text-gray-700 pl-3'}`}>
+                    <p className={`text-sm ${isTotal ? 'font-semibold text-text' : 'text-text-2 pl-3'}`}>
                       {r.label}
-                      {r.term && <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 align-middle">{r.term}</span>}
+                      {r.term && <span className="ml-2 rounded bg-info-soft px-1.5 py-0.5 text-caption font-bold text-info align-middle">{r.term}</span>}
                     </p>
-                    {r.hint && <p className="text-[11px] text-gray-500 mt-0.5">{r.hint}</p>}
+                    {r.hint && <p className="text-caption text-text-3 mt-0.5">{r.hint}</p>}
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className={`text-sm tabular-nums whitespace-nowrap ${isTotal ? 'font-bold' : 'font-medium'} ${shown < 0 && isTotal ? 'text-rose-600' : 'text-gray-900'}`}>{inr(shown)}</p>
-                    <p className="text-[11px] tabular-nums text-gray-500">{r.kind === 'cost' ? '' : r.value < 0 ? '-' : ''}{pctText(share)}</p>
+                    <p className={`text-sm tabular-nums whitespace-nowrap ${isTotal ? 'font-bold' : 'font-medium'} ${shown < 0 && isTotal ? 'text-danger' : 'text-text'}`}>{inr(shown)}</p>
+                    <p className="text-caption tabular-nums text-text-3">{r.kind === 'cost' ? '' : r.value < 0 ? '-' : ''}{pctText(share)}</p>
                   </div>
-                  {r.line && onOpenLine && <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0 self-center" aria-hidden="true" />}
+                  {r.line && onOpenLine && <ChevronRight className="w-4 h-4 text-text-3 flex-shrink-0 self-center" aria-hidden="true" />}
                 </div>
-                <div className="relative h-2 mt-1 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">
-                  {waterfall.zero > 0.5 && <div className="absolute top-0 bottom-0 w-px bg-gray-400" style={{ left: `${waterfall.zero}%` }} />}
+                <div className="relative h-2 mt-1 rounded-full bg-surface-2 overflow-hidden" aria-hidden="true">
+                  {waterfall.zero > 0.5 && <div className="absolute top-0 bottom-0 w-px bg-border-strong" style={{ left: `${waterfall.zero}%` }} />}
                   <div className={`absolute top-0 bottom-0 rounded-full ${barColor}`} style={{ left: `${step.left}%`, width: `${step.width}%` }} />
                 </div>
               </RowShell>
             );
           })}
         </div>
-        <div className="px-4 sm:px-5 py-3 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+        <div className="px-4 sm:px-5 py-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
           {showRealised && (
-            <div className="flex items-center justify-between gap-3 rounded-lg bg-teal-50 px-3 py-2">
-              <span className="text-teal-800">Net realised {carryForwardAmount < 0 ? `(after ${inr(carryForwardAmount)} loss brought forward)` : ''}</span>
-              <span className="font-bold tabular-nums whitespace-nowrap text-teal-900">{inr(netRealisedProfit)}</span>
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-success-soft px-3 py-2">
+              <span className="text-success">Net realised {carryForwardAmount < 0 ? `(after ${inr(carryForwardAmount)} loss brought forward)` : ''}</span>
+              <span className="font-bold tabular-nums whitespace-nowrap text-success">{inr(netRealisedProfit)}</span>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-indigo-50 px-3 py-2">
-            <span className="text-indigo-800">Net normalized (rent & salaries spread daily)</span>
-            <span className="font-bold tabular-nums whitespace-nowrap text-indigo-900">{inr(netNormalizedProfit)}</span>
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-info-soft px-3 py-2">
+            <span className="text-info">Net normalized (rent & salaries spread daily)</span>
+            <span className="font-bold tabular-nums whitespace-nowrap text-info">{inr(netNormalizedProfit)}</span>
           </div>
         </div>
         {pnl.onlineDiscounts > 0.5 && (
-          <p className="px-4 sm:px-5 pb-3 text-[11px] text-gray-500">
+          <p className="px-4 sm:px-5 pb-3 text-caption text-text-3">
             Discounts you funded on Zomato/Swiggy orders this period: {inr(pnl.onlineDiscounts)} - already taken out of revenue above (menu value of those orders was that much higher).
           </p>
         )}
@@ -367,24 +367,24 @@ export function UnitEconomics({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Ratios vs benchmarks */}
-        <div className="bg-white rounded-xl border border-gray-200">
-          <div className="px-4 sm:px-5 py-4 border-b border-gray-100">
-            <h3 className="text-base font-bold text-gray-900">Cost ratios vs a healthy QSR</h3>
-            <p className="text-xs text-gray-500">Share of revenue, compared with what well-run quick-service restaurants aim for</p>
+        <div className="bg-surface rounded-lg border border-border">
+          <div className="px-4 sm:px-5 py-4 border-b border-border">
+            <h3 className="text-base font-bold text-text">Cost ratios vs a healthy QSR</h3>
+            <p className="text-xs text-text-3">Share of revenue, compared with what well-run quick-service restaurants aim for</p>
           </div>
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-border">
             {ratios.map((r) => (
               <div key={r.label} className="px-4 sm:px-5 py-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900">{r.label}</p>
-                  <p className="text-[11px] text-gray-500">{r.note}</p>
+                  <p className="text-sm font-medium text-text">{r.label}</p>
+                  <p className="text-caption text-text-3">{r.note}</p>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <div className="flex items-center justify-end gap-2">
                     <StatusPill status={r.status} />
-                    <p className="text-sm font-bold tabular-nums text-gray-900">{pctText(r.value)}</p>
+                    <p className="text-sm font-bold tabular-nums text-text">{pctText(r.value)}</p>
                   </div>
-                  <p className="text-[11px] text-gray-500 mt-0.5">target {r.target}</p>
+                  <p className="text-caption text-text-3 mt-0.5">target {r.target}</p>
                 </div>
               </div>
             ))}
@@ -392,22 +392,22 @@ export function UnitEconomics({
         </div>
 
         {/* Per order */}
-        <div className="bg-white rounded-xl border border-gray-200">
-          <div className="px-4 sm:px-5 py-4 border-b border-gray-100">
-            <h3 className="text-base font-bold text-gray-900">One order, by channel</h3>
-            <p className="text-xs text-gray-500">What an average order brings in and what's left after food, packaging and the platform's cut</p>
+        <div className="bg-surface rounded-lg border border-border">
+          <div className="px-4 sm:px-5 py-4 border-b border-border">
+            <h3 className="text-base font-bold text-text">One order, by channel</h3>
+            <p className="text-xs text-text-3">What an average order brings in and what's left after food, packaging and the platform's cut</p>
           </div>
           {orders === null ? (
-            <p className="p-5 text-sm text-gray-500">Loading order counts…</p>
+            <p className="p-5 text-sm text-text-3">Loading order counts…</p>
           ) : channels.length === 0 ? (
-            <p className="p-5 text-sm text-gray-500">No POS orders synced for this period.</p>
+            <p className="p-5 text-sm text-text-3">No POS orders synced for this period.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-gray-100">
+                  <tr className="text-left text-caption uppercase tracking-wide text-text-3 border-b border-border">
                     <th className="px-4 py-2 font-medium">Per order</th>
-                    {channels.map((c) => <th key={c.key} className="px-4 py-2 text-right font-semibold text-gray-700">{c.name}</th>)}
+                    {channels.map((c) => <th key={c.key} className="px-4 py-2 text-right font-semibold text-text-2">{c.name}</th>)}
                   </tr>
                 </thead>
                 <tbody className="tabular-nums">
@@ -417,67 +417,67 @@ export function UnitEconomics({
                     { label: '− Food & packaging', cell: (c: typeof channels[number]) => inr(c.cogsPerOrder) },
                     { label: '− Platform cut', cell: (c: typeof channels[number]) => (c.cut ? inr(c.cutPerOrder) : '-') },
                   ].map((row) => (
-                    <tr key={row.label} className="border-b border-gray-50">
-                      <td className="px-4 py-2 text-gray-600">{row.label}</td>
+                    <tr key={row.label} className="border-b border-border">
+                      <td className="px-4 py-2 text-text-2">{row.label}</td>
                       {channels.map((c) => <td key={c.key} className="px-4 py-2 text-right">{row.cell(c)}</td>)}
                     </tr>
                   ))}
-                  <tr className="bg-gray-50/70 font-semibold">
-                    <td className="px-4 py-2 text-gray-900">Left for staff, rent & profit</td>
+                  <tr className="bg-surface-2 font-semibold">
+                    <td className="px-4 py-2 text-text">Left for staff, rent & profit</td>
                     {channels.map((c) => (
-                      <td key={c.key} className="px-4 py-2 text-right text-gray-900">
+                      <td key={c.key} className="px-4 py-2 text-right text-text">
                         {inr(c.left)}
-                        <span className="block text-[11px] font-medium text-gray-500">{pctText(c.keptPct)} of the order</span>
+                        <span className="block text-caption font-medium text-text-3">{pctText(c.keptPct)} of the order</span>
                       </td>
                     ))}
                   </tr>
-                  <tr className="border-t-2 border-indigo-200 bg-indigo-50/60">
+                  <tr className="border-t-2 border-info-border bg-info-soft">
                     <td colSpan={channels.length + 1} className="px-4 py-2">
-                      <span className="text-sm font-semibold text-indigo-900">{byFood ? 'Same food on every channel' : `Same order value on every channel: ${inr(sameValue)}`}</span>
-                      <span className="block text-[11px] text-indigo-700">
+                      <span className="text-sm font-semibold text-info">{byFood ? 'Same food on every channel' : `Same order value on every channel: ${inr(sameValue)}`}</span>
+                      <span className="block text-caption text-info">
                         {byFood
                           ? `The counter's average order (${inr(sameValue)}) sold on each channel at that channel's prices: same plates, same food cost. ${markupNote}.`
                           : "Normalized to the counter's average order, so the channels compare like for like"}
                       </span>
                     </td>
                   </tr>
-                  <tr className="border-b border-gray-50">
-                    <td className="px-4 py-2 text-gray-600">{byFood ? 'Price for the same food' : 'Order value'}</td>
+                  <tr className="border-b border-border">
+                    <td className="px-4 py-2 text-text-2">{byFood ? 'Price for the same food' : 'Order value'}</td>
                     {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(o.price)}</td>)}
                   </tr>
-                  <tr className="border-b border-gray-50">
-                    <td className="px-4 py-2 text-gray-600">− Food &amp; packaging</td>
+                  <tr className="border-b border-border">
+                    <td className="px-4 py-2 text-text-2">− Food &amp; packaging</td>
                     {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(o.food)}</td>)}
                   </tr>
-                  <tr className="border-b border-gray-50">
-                    <td className="px-4 py-2 text-gray-600">− Platform cut</td>
+                  <tr className="border-b border-border">
+                    <td className="px-4 py-2 text-text-2">− Platform cut</td>
                     {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{o.cut ? inr(o.cut) : '-'}</td>)}
                   </tr>
-                  <tr className="border-b border-gray-50 font-semibold">
-                    <td className="px-4 py-2 text-gray-900">Left for staff, rent &amp; profit</td>
+                  <tr className="border-b border-border font-semibold">
+                    <td className="px-4 py-2 text-text">Left for staff, rent &amp; profit</td>
                     {sameOrder.map((o) => (
-                      <td key={o.key} className="px-4 py-2 text-right text-gray-900">
+                      <td key={o.key} className="px-4 py-2 text-right text-text">
                         {inr(o.left)}
-                        <span className="block text-[11px] font-medium text-gray-500">{pctText(o.keptPct)} of the order</span>
+                        <span className="block text-caption font-medium text-text-3">{pctText(o.keptPct)} of the order</span>
                       </td>
                     ))}
                   </tr>
-                  <tr className="border-b border-gray-50">
-                    <td className="px-4 py-2 text-gray-600">− Staff, rent &amp; running costs</td>
+                  <tr className="border-b border-border">
+                    <td className="px-4 py-2 text-text-2">− Staff, rent &amp; running costs</td>
                     {sameOrder.map((o) => <td key={o.key} className="px-4 py-2 text-right">{inr(overheadPerOrder)}</td>)}
                   </tr>
-                  <tr className="bg-gray-50/70 font-semibold">
-                    <td className="px-4 py-2 text-gray-900">Profit per order</td>
+                  <tr className="bg-surface-2 font-semibold">
+                    <td className="px-4 py-2 text-text">Profit per order</td>
                     {sameOrder.map((o) => (
-                      <td key={o.key} className={`px-4 py-2 text-right ${o.profit < 0 ? 'text-rose-600' : 'text-gray-900'}`}>
+                      <td key={o.key} className={`px-4 py-2 text-right ${o.profit < 0 ? 'text-danger' : 'text-text'}`}>
                         {inr(o.profit)}
-                        <span className="block text-[11px] font-medium text-gray-500">{pctText(o.profitPct)} of the order</span>
+                        <span className="block text-caption font-medium text-text-3">{pctText(o.profitPct)} of the order</span>
                       </td>
                     ))}
                   </tr>
                 </tbody>
               </table>
-              <p className="px-4 py-3 text-[11px] text-gray-500">{byFood ? "Food and packaging are shared out by how much food each channel sold, valued at counter prices (each dish's latest counter price in the POS), because online menus charge more for the same plates." : "Food and packaging are shared out by each channel's share of sales."} Staff, rent, electricity, running costs, equipment, interest and marketing are shared equally across all {totalOrders.toLocaleString('en-IN')} orders ({inr(overheadPerOrder)} each), with salaries, rent and electricity counted day by day. Orders come from the POS.</p>
+              <p className="px-4 py-3 text-caption text-text-3">{byFood ? "Food and packaging are shared out by how much food each channel sold, valued at counter prices (each dish's latest counter price in the POS), because online menus charge more for the same plates." : "Food and packaging are shared out by each channel's share of sales."} Staff, rent, electricity, running costs, equipment, interest and marketing are shared equally across all {totalOrders.toLocaleString('en-IN')} orders ({inr(overheadPerOrder)} each), with salaries, rent and electricity counted day by day. Orders come from the POS.</p>
             </div>
           )}
         </div>
@@ -485,42 +485,42 @@ export function UnitEconomics({
 
       {/* Survival numbers */}
       {survival && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5">
+        <div className="bg-surface rounded-lg border border-border p-4 sm:p-5">
           <div className="flex items-center gap-2 mb-3">
-            <Scale className="w-5 h-5 text-indigo-600" />
-            <h3 className="text-base font-bold text-gray-900">Break-even</h3>
-            <span className="text-xs text-gray-500">based on {survival.label}, the last full month</span>
+            <Scale className="w-5 h-5 text-info" />
+            <h3 className="text-base font-bold text-text">Break-even</h3>
+            <span className="text-xs text-text-3">based on {survival.label}, the last full month</span>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            <div className="rounded-lg bg-gray-50 p-3">
-              <p className="text-[11px] text-gray-500">Monthly fixed bill</p>
-              <p className="text-lg font-bold tabular-nums text-gray-900">{inr(survival.fixed)}</p>
-              <p className="text-[11px] text-gray-500">staff, rent, power, running costs, equipment, interest</p>
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-caption text-text-3">Monthly fixed bill</p>
+              <p className="text-lg font-bold tabular-nums text-text">{inr(survival.fixed)}</p>
+              <p className="text-caption text-text-3">staff, rent, power, running costs, equipment, interest</p>
             </div>
-            <div className="rounded-lg bg-gray-50 p-3">
-              <p className="text-[11px] text-gray-500">Kept from each ₹100 after food <span className="font-semibold text-indigo-700">CM1</span></p>
-              <p className="text-lg font-bold tabular-nums text-gray-900">₹{(survival.cm1Ratio * 100).toFixed(1)}</p>
-              <p className="text-[11px] text-gray-500">gross profit: sales minus ingredients</p>
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-caption text-text-3">Kept from each ₹100 after food <span className="font-semibold text-info">CM1</span></p>
+              <p className="text-lg font-bold tabular-nums text-text">₹{(survival.cm1Ratio * 100).toFixed(1)}</p>
+              <p className="text-caption text-text-3">gross profit: sales minus ingredients</p>
             </div>
-            <div className="rounded-lg bg-gray-50 p-3">
-              <p className="text-[11px] text-gray-500">After packaging and platform commission <span className="font-semibold text-indigo-700">CM2</span></p>
-              <p className="text-lg font-bold tabular-nums text-gray-900">₹{(survival.cm2Ratio * 100).toFixed(1)}</p>
-              <p className="text-[11px] text-gray-500">what an order really earns once it leaves the shop</p>
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-caption text-text-3">After packaging and platform commission <span className="font-semibold text-info">CM2</span></p>
+              <p className="text-lg font-bold tabular-nums text-text">₹{(survival.cm2Ratio * 100).toFixed(1)}</p>
+              <p className="text-caption text-text-3">what an order really earns once it leaves the shop</p>
             </div>
-            <div className="rounded-lg bg-gray-50 p-3">
-              <p className="text-[11px] text-gray-500">After ads and marketing too <span className="font-semibold text-indigo-700">CM3</span></p>
-              <p className="text-lg font-bold tabular-nums text-gray-900">₹{(survival.cm3Ratio * 100).toFixed(1)}</p>
-              <p className="text-[11px] text-gray-500">left to pay staff, rent and the rest; break-even uses this</p>
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-caption text-text-3">After ads and marketing too <span className="font-semibold text-info">CM3</span></p>
+              <p className="text-lg font-bold tabular-nums text-text">₹{(survival.cm3Ratio * 100).toFixed(1)}</p>
+              <p className="text-caption text-text-3">left to pay staff, rent and the rest; break-even uses this</p>
             </div>
-            <div className="rounded-lg bg-amber-50 p-3">
-              <p className="text-[11px] text-amber-700">Sales needed to break even</p>
-              <p className="text-lg font-bold tabular-nums text-amber-900">{survival.breakEvenPerDay ? `${inr(survival.breakEvenPerDay)}/day` : '-'}</p>
-              <p className="text-[11px] text-amber-700">{periodLabel}: {inr(salesPerDay)}/day so far</p>
+            <div className="rounded-lg bg-warning-soft p-3">
+              <p className="text-caption text-warning">Sales needed to break even</p>
+              <p className="text-lg font-bold tabular-nums text-warning">{survival.breakEvenPerDay ? `${inr(survival.breakEvenPerDay)}/day` : '-'}</p>
+              <p className="text-caption text-warning">{periodLabel}: {inr(salesPerDay)}/day so far</p>
             </div>
-            <div className="rounded-lg bg-emerald-50 p-3">
-              <p className="text-[11px] text-emerald-700">Sales needed for 20% net</p>
-              <p className="text-lg font-bold tabular-nums text-emerald-900">{survival.target20PerDay ? `${inr(survival.target20PerDay)}/day` : 'Not reachable at this margin'}</p>
-              <p className="text-[11px] text-emerald-700">with the same costs and margins</p>
+            <div className="rounded-lg bg-success-soft p-3">
+              <p className="text-caption text-success">Sales needed for 20% net</p>
+              <p className="text-lg font-bold tabular-nums text-success">{survival.target20PerDay ? `${inr(survival.target20PerDay)}/day` : 'Not reachable at this margin'}</p>
+              <p className="text-caption text-success">with the same costs and margins</p>
             </div>
           </div>
         </div>
@@ -528,29 +528,29 @@ export function UnitEconomics({
 
       {/* Trend */}
       {trendData.length > 1 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5">
-          <h3 className="text-base font-bold text-gray-900">Last {trendData.length} months</h3>
-          <p className="text-xs text-gray-500 mb-3">Revenue (bars) and how much of it is left at each step (lines). The month in progress counts salaries, rent and electricity day by day, so it compares with full months.</p>
+        <div className="bg-surface rounded-lg border border-border p-4 sm:p-5">
+          <h3 className="text-base font-bold text-text">Last {trendData.length} months</h3>
+          <p className="text-xs text-text-3 mb-3">Revenue (bars) and how much of it is left at each step (lines). The month in progress counts salaries, rent and electricity day by day, so it compares with full months.</p>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                <YAxis yAxisId="rev" tick={{ fontSize: 11, fill: '#6b7280' }} tickFormatter={(v) => `₹${Math.round(v / 1000)}k`} width={48} />
-                <YAxis yAxisId="pct" orientation="right" tick={{ fontSize: 11, fill: '#6b7280' }} tickFormatter={(v) => `${v}%`} width={40} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--chart-5)' }} />
+                <YAxis yAxisId="rev" tick={{ fontSize: 12, fill: 'var(--chart-5)' }} tickFormatter={(v) => `₹${Math.round(v / 1000)}k`} width={48} />
+                <YAxis yAxisId="pct" orientation="right" tick={{ fontSize: 12, fill: 'var(--chart-5)' }} tickFormatter={(v) => `${v}%`} width={40} />
                 <Tooltip formatter={(value: number, name: string) => (name === 'Revenue' ? [inr(value), name] : [`${value}%`, name])} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="rev" dataKey="revenue" name="Revenue" fill="#bae6fd" radius={[4, 4, 0, 0]} />
-                <Line yAxisId="pct" type="monotone" dataKey="cm2" name="CM2 %" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
-                <Line yAxisId="pct" type="monotone" dataKey="ebitda" name="EBITDA %" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
-                <Line yAxisId="pct" type="monotone" dataKey="net" name="Net margin %" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                <Bar yAxisId="rev" dataKey="revenue" name="Revenue" fill="var(--chart-4)" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="pct" type="monotone" dataKey="cm2" name="CM2 %" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 3 }} />
+                <Line yAxisId="pct" type="monotone" dataKey="ebitda" name="EBITDA %" stroke="var(--chart-3)" strokeWidth={2} dot={{ r: 3 }} />
+                <Line yAxisId="pct" type="monotone" dataKey="net" name="Net margin %" stroke="var(--chart-2)" strokeWidth={2} dot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
           <div className="overflow-x-auto mt-3">
             <table className="w-full text-xs tabular-nums">
               <thead>
-                <tr className="text-left text-gray-500 border-b border-gray-100">
+                <tr className="text-left text-text-3 border-b border-border">
                   <th className="py-2 pr-3 font-medium">Month</th>
                   <th className="py-2 px-2 text-right font-medium">Revenue</th>
                   <th className="py-2 px-2 text-right font-medium">Gross profit</th>
@@ -561,13 +561,13 @@ export function UnitEconomics({
               </thead>
               <tbody>
                 {trendData.map((t) => (
-                  <tr key={t.label} className="border-b border-gray-50">
-                    <td className="py-1.5 pr-3 text-gray-700">{t.label}</td>
+                  <tr key={t.label} className="border-b border-border">
+                    <td className="py-1.5 pr-3 text-text-2">{t.label}</td>
                     <td className="py-1.5 px-2 text-right">{inr(t.revenue)}</td>
                     <td className="py-1.5 px-2 text-right">{inr(t.cm1Amt)}</td>
                     <td className="py-1.5 px-2 text-right">{inr(t.cm2Amt)}</td>
-                    <td className={`py-1.5 px-2 text-right ${t.ebitdaAmt < 0 ? 'text-rose-600' : ''}`}>{inr(t.ebitdaAmt)}</td>
-                    <td className={`py-1.5 pl-2 text-right font-semibold ${t.netAmt < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{inr(t.netAmt)} <span className="font-normal text-gray-500">({t.net}%)</span></td>
+                    <td className={`py-1.5 px-2 text-right ${t.ebitdaAmt < 0 ? 'text-danger' : ''}`}>{inr(t.ebitdaAmt)}</td>
+                    <td className={`py-1.5 pl-2 text-right font-semibold ${t.netAmt < 0 ? 'text-danger' : 'text-text'}`}>{inr(t.netAmt)} <span className="font-normal text-text-3">({t.net}%)</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -577,9 +577,9 @@ export function UnitEconomics({
       )}
 
       {/* Glossary */}
-      <details className="bg-white rounded-xl border border-gray-200 group">
-        <summary className="cursor-pointer select-none px-4 sm:px-5 py-4 flex items-center gap-2 text-base font-bold text-gray-900">
-          <Info className="w-4 h-4 text-indigo-600" /> What these terms mean
+      <details className="bg-surface rounded-lg border border-border group">
+        <summary className="cursor-pointer select-none px-4 sm:px-5 py-4 flex items-center gap-2 text-base font-bold text-text">
+          <Info className="w-4 h-4 text-info" /> What these terms mean
         </summary>
         <dl className="px-4 sm:px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           {[
@@ -597,8 +597,8 @@ export function UnitEconomics({
             ['CAC, LTV, repeat rate', 'Cost to win a customer, what a customer is worth over time, and how many come back. Not tracked yet - needs a phone number on each counter order.'],
           ].map(([term, meaning]) => (
             <div key={term}>
-              <dt className="font-semibold text-gray-900">{term}</dt>
-              <dd className="text-gray-600">{meaning}</dd>
+              <dt className="font-semibold text-text">{term}</dt>
+              <dd className="text-text-2">{meaning}</dd>
             </div>
           ))}
         </dl>

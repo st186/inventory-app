@@ -155,28 +155,28 @@ export function AuditDashboard({
  ];
 
  return (
- <div className="min-h-screen bg-gray-50">
+ <div className="min-h-screen bg-surface-2">
  {/* Navigation */}
  {!hideNav && (
- <nav className="bg-gradient-to-r from-slate-600 via-slate-700 to-slate-800 shadow-xl sticky top-0 z-50">
+ <nav className="sticky top-0 z-50 bg-surface border border-border">
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
  <div className="flex items-center justify-between h-16">
  {/* Left - Brand */}
  <div className="flex items-center gap-3">
- <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-lg">
- <ShieldCheck className="w-6 h-6 text-white" />
+ <div className="flex items-center justify-center w-10 h-10 bg-surface-2 rounded-lg">
+ <ShieldCheck className="w-6 h-6 text-text-2" />
  </div>
  <div>
- <h1 className="text-white text-lg font-bold">Bhandar-IMS</h1>
- <p className="text-xs text-slate-200">Audit Dashboard</p>
+ <h1 className="text-text-2 text-lg font-bold">Bhandar-IMS</h1>
+ <p className="text-xs text-text-3">Audit Dashboard</p>
  </div>
  </div>
 
  {/* Right - User Info & Logout */}
  <div className="flex items-center gap-4">
  <div className="text-right hidden sm:block">
- <p className="text-sm font-medium text-white">{user.name}</p>
- <p className="text-xs text-slate-200 flex items-center justify-end gap-1">
+ <p className="text-sm font-medium text-text-2">{user.name}</p>
+ <p className="text-xs text-text-3 flex items-center justify-end gap-1">
  <Eye className="w-3 h-3" />
  Read-Only Access
  </p>
@@ -184,7 +184,7 @@ export function AuditDashboard({
  {onChangePassword && (
  <button
  onClick={onChangePassword}
- className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+ className="flex items-center gap-2 px-3 py-2 bg-surface-2 hover:bg-surface-2 text-text-2 rounded-lg transition-all"
  title="Change password"
  >
  <KeyRound className="w-4 h-4" />
@@ -193,7 +193,7 @@ export function AuditDashboard({
  )}
  <button
  onClick={onLogout}
- className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+ className="flex items-center gap-2 px-4 py-2 bg-surface-2 hover:bg-surface-2 text-text-2 rounded-lg transition-all"
  >
  <LogOut className="w-4 h-4" />
  <span className="hidden sm:inline">Logout</span>
@@ -209,8 +209,8 @@ export function AuditDashboard({
  onClick={() => setActiveView(item.id)}
  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
  activeView === item.id
- ? 'bg-white text-slate-800 shadow-lg'
- : 'text-white hover:bg-white/10'
+ ? 'bg-surface text-text'
+ : 'text-text-2 hover:bg-surface-2'
  }`}
  >
  <item.icon className="w-4 h-4" />
@@ -223,8 +223,8 @@ export function AuditDashboard({
  )}
 
  {/* Read-Only Notice */}
- <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
- <div className="max-w-7xl mx-auto flex items-center gap-2 text-amber-800">
+ <div className="bg-warning-soft border-b border-warning-border px-4 py-3">
+ <div className="max-w-7xl mx-auto flex items-center gap-2 text-warning">
  <Eye className="w-5 h-5 flex-shrink-0" />
  <p className="text-sm">
  <strong>Audit Mode:</strong> You have read-only access to all data. You cannot create, edit, or delete any records.
@@ -242,15 +242,15 @@ export function AuditDashboard({
  )}
 
  {activeView === 'inventory' && (
- <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+ <div className="bg-surface rounded-lg border border-border p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
- <h2 className="text-2xl font-bold text-gray-900">Inventory View</h2>
- <p className="text-sm text-gray-600 mt-1">View-only access to inventory data</p>
+ <h2 className="text-2xl font-bold text-text">Inventory View</h2>
+ <p className="text-sm text-text-2 mt-1">View-only access to inventory data</p>
  </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
- <Eye className="w-4 h-4 text-gray-600" />
- <span className="text-sm text-gray-700 font-medium">Read-Only</span>
+ <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
+ <Eye className="w-4 h-4 text-text-2" />
+ <span className="text-sm text-text-2 font-medium">Read-Only</span>
  </div>
  </div>
  <InventoryView
@@ -261,35 +261,35 @@ export function AuditDashboard({
  )}
 
  {activeView === 'sales' && (
- <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+ <div className="bg-surface rounded-lg border border-border p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
- <h2 className="text-2xl font-bold text-gray-900">Sales Data</h2>
- <p className="text-sm text-gray-600 mt-1">View-only access to sales records</p>
+ <h2 className="text-2xl font-bold text-text">Sales Data</h2>
+ <p className="text-sm text-text-2 mt-1">View-only access to sales records</p>
  </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
- <Eye className="w-4 h-4 text-gray-600" />
- <span className="text-sm text-gray-700 font-medium">Read-Only</span>
+ <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
+ <Eye className="w-4 h-4 text-text-2" />
+ <span className="text-sm text-text-2 font-medium">Read-Only</span>
  </div>
  </div>
  {/* Sales table will be rendered here - simplified read-only view */}
  <div className="overflow-x-auto">
  <table className="w-full">
- <thead className="bg-gray-50 border-b border-gray-200">
+ <thead className="bg-surface-2 border-b border-border">
  <tr>
- <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date</th>
- <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Store</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Offline Sales</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Online Sales</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Cash</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Paytm</th>
- <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">Status</th>
+ <th className="text-left py-3 px-4 text-sm font-semibold text-text-2">Date</th>
+ <th className="text-left py-3 px-4 text-sm font-semibold text-text-2">Store</th>
+ <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Offline Sales</th>
+ <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Online Sales</th>
+ <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Cash</th>
+ <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Paytm</th>
+ <th className="text-center py-3 px-4 text-sm font-semibold text-text-2">Status</th>
  </tr>
  </thead>
  <tbody>
  {salesData.length === 0 ? (
  <tr>
- <td colSpan={7} className="text-center py-12 text-gray-500">
+ <td colSpan={7} className="text-center py-12 text-text-3">
  No sales data available
  </td>
  </tr>
@@ -302,33 +302,33 @@ export function AuditDashboard({
  const online = onlineByStoreDay.get(`${sale.storeId}|${sale.date}`) ?? (sale.posOnlineSales || 0);
  const status = salesDayStatus(sale);
  return (
- <tr key={sale.id} className="border-b border-gray-100 hover:bg-gray-50">
- <td className="py-3 px-4 text-sm text-gray-900 whitespace-nowrap">
+ <tr key={sale.id} className="border-b border-border hover:bg-surface-2">
+ <td className="py-3 px-4 text-sm text-text whitespace-nowrap">
  {formatDateIST(sale.date)}
  </td>
- <td className="py-3 px-4 text-sm text-gray-700">
+ <td className="py-3 px-4 text-sm text-text-2">
  {store?.name || 'Unknown Store'}
  </td>
- <td className="py-3 px-4 text-sm text-gray-900 text-right">
+ <td className="py-3 px-4 text-sm text-text text-right">
  ₹{(sale.offlineSales || 0).toLocaleString('en-IN')}
  </td>
- <td className="py-3 px-4 text-sm text-gray-900 text-right">
+ <td className="py-3 px-4 text-sm text-text text-right">
  ₹{online.toLocaleString('en-IN')}
  </td>
- <td className="py-3 px-4 text-sm text-gray-900 text-right">
+ <td className="py-3 px-4 text-sm text-text text-right">
  ₹{(sale.cashAmount || 0).toLocaleString('en-IN')}
  </td>
- <td className="py-3 px-4 text-sm text-gray-900 text-right">
+ <td className="py-3 px-4 text-sm text-text text-right">
  ₹{(sale.paytmAmount || 0).toLocaleString('en-IN')}
  </td>
  <td className="py-3 px-4 text-center">
  <span
  className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
  !hasRealCashCount(sale)
- ? 'bg-gray-100 text-gray-700'
+ ? 'bg-surface-2 text-text-2'
  : sale.approvalStatus === 'approved'
- ? 'bg-green-100 text-green-800'
- : 'bg-yellow-100 text-yellow-800'
+ ? 'bg-success-soft text-success'
+ : 'bg-warning-soft text-warning'
  }`}
  >
  {status}
@@ -342,11 +342,11 @@ export function AuditDashboard({
  </table>
  </div>
  {sortedSales.length > salesRowsShown && (
- <div className="flex items-center justify-between gap-3 mt-4 text-sm text-gray-600">
+ <div className="flex items-center justify-between gap-3 mt-4 text-sm text-text-2">
  <span>Showing {salesRowsShown} of {sortedSales.length} days</span>
  <button
  onClick={() => setSalesRowsShown((n) => n + 50)}
- className="px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800"
+ className="px-4 py-2 rounded-lg border border-border-strong bg-surface hover:bg-surface-2 text-text"
  >
  Show 50 more
  </button>
@@ -356,15 +356,15 @@ export function AuditDashboard({
  )}
 
  {activeView === 'production' && (
- <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+ <div className="bg-surface rounded-lg border border-border p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
- <h2 className="text-2xl font-bold text-gray-900">Production Data</h2>
- <p className="text-sm text-gray-600 mt-1">View-only access to production records</p>
+ <h2 className="text-2xl font-bold text-text">Production Data</h2>
+ <p className="text-sm text-text-2 mt-1">View-only access to production records</p>
  </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
- <Eye className="w-4 h-4 text-gray-600" />
- <span className="text-sm text-gray-700 font-medium">Read-Only</span>
+ <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
+ <Eye className="w-4 h-4 text-text-2" />
+ <span className="text-sm text-text-2 font-medium">Read-Only</span>
  </div>
  </div>
  <ProductionManagement
@@ -375,15 +375,15 @@ export function AuditDashboard({
  )}
 
  {activeView === 'payroll' && (
- <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+ <div className="bg-surface rounded-lg border border-border p-6">
  <div className="flex items-center justify-between mb-6">
  <div>
- <h2 className="text-2xl font-bold text-gray-900">Payroll Data</h2>
- <p className="text-sm text-gray-600 mt-1">View-only access to payroll records</p>
+ <h2 className="text-2xl font-bold text-text">Payroll Data</h2>
+ <p className="text-sm text-text-2 mt-1">View-only access to payroll records</p>
  </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
- <Eye className="w-4 h-4 text-gray-600" />
- <span className="text-sm text-gray-700 font-medium">Read-Only</span>
+ <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
+ <Eye className="w-4 h-4 text-text-2" />
+ <span className="text-sm text-text-2 font-medium">Read-Only</span>
  </div>
  </div>
  <PayrollManagement
