@@ -9,6 +9,7 @@ import { addDays, formatDateIST, formatDateTimeIST, getTodayIST } from '../utils
 import { getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
+import { approvedAfterCount } from '../utils/paytmRules';
 import { paidOutsideStoreTill } from '../utils/cashSource';
 import { PaytmLedger } from './PaytmLedger';
 import { Eye, Lock, Banknote, Smartphone, Wallet, CheckCircle, Clock, PlusCircle, XCircle, IndianRupee, RefreshCw, FileSpreadsheet, HandCoins, AlertTriangle, TrendingUp, Factory } from 'lucide-react';
@@ -1531,12 +1532,11 @@ export function SalesView({ context, selectedStoreId }: Props) {
                           // Both reasons drain the same Paytm balance (see productionTopup
                           // above), so a late-approved top-up of either reason must still be
                           // subtracted from the physically-verified snapshot - not just a
-                          // store-reason one.
-                          const lateTopups = recalTs
-                            ? topupRequests
-                                .filter((t) => t.storeId === effectiveStoreId && t.status === 'approved' && t.date === selectedDate && t.approvedAt && t.approvedAt > recalTs)
-                                .reduce((sum, t) => sum + (t.requestedAmount || 0), 0)
-                            : 0;
+                          // store-reason one. Compared as real moments, not strings: older
+                          // approvals were saved as IST time with a 'Z' (see paytmRules.ts).
+                          const lateTopups = topupRequests
+                            .filter((t) => t.storeId === effectiveStoreId && t.status === 'approved' && t.date === selectedDate && approvedAfterCount(t, todaysRecalibration))
+                            .reduce((sum, t) => sum + (t.requestedAmount || 0), 0);
                           // Confirmed with the business owner: a recalibration is a
                           // point-in-time count, not automatically "today's final answer" -
                           // a count taken early (e.g. 4 AM, before today's own Paytm

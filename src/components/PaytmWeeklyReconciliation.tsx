@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { Smartphone, CalendarCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { OnlineCashRecalibration } from './OnlineCashRecalibration';
-import { getTodayIST } from '../utils/timezone';
+import { addDays, getTodayIST } from '../utils/timezone';
+import { knownPaytmBalance } from '../utils/paytmRules';
 
 type Props = {
   context: InventoryContextType;
@@ -22,11 +23,12 @@ type Props = {
 // deliberate so day-to-day entry stays simple. This is the separate, cluster-head-only
 // weekly check: physically look at the Paytm app balance every Sunday and compare it
 // against what the system thinks the balance should be, surfacing any drift/discrepancy.
+// Pure calendar-date maths: the old version built a local-midnight Date and read it back with
+// toISOString, which in IST is the previous day (18:30 UTC) - so "Sunday" came out as Saturday.
 function mostRecentSunday(fromDate: string): string {
-  const d = new Date(fromDate + 'T00:00:00');
-  const day = d.getDay(); // 0 = Sunday
-  d.setDate(d.getDate() - day);
-  return d.toISOString().slice(0, 10);
+  const [year, month, day] = fromDate.split('-').map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay(); // 0 = Sunday
+  return addDays(fromDate, -weekday);
 }
 
 export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate }: Props) {
@@ -41,12 +43,13 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
   const store = stores.find((s) => s.id === selectedStoreId);
 
   // System-expected Paytm balance as of the chosen date: the most recent sales entry
-  // on/before that date already carries the fully-computed running balance.
+  // on/before that date already carries the fully-computed running balance. A POS-sync
+  // placeholder's blank (or old 0) balance isn't one, so it's skipped.
   const systemBalance = useMemo(() => {
     const entries = (context.salesData || [])
-      .filter((s) => s.storeId === selectedStoreId && s.date <= selectedDate && s.actualPaytmBalance !== undefined && s.actualPaytmBalance !== null)
+      .filter((s) => s.storeId === selectedStoreId && s.date <= selectedDate && knownPaytmBalance(s) !== null)
       .sort((a, b) => b.date.localeCompare(a.date));
-    return entries[0]?.actualPaytmBalance ?? 0;
+    return knownPaytmBalance(entries[0]) ?? 0;
   }, [context.salesData, selectedStoreId, selectedDate]);
 
   const history = useMemo(() => {

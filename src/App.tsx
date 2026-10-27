@@ -153,8 +153,9 @@ export type SalesData = {
  createdBy: string;
  createdByName?: string; // User name who created this entry
  createdByEmail?: string; // User email who created this entry
+ updatedBy?: string; // Stamped by the server whenever a person saves the day from the sales form
  approvalStatus: 'pending' | 'approved';
- actualCashInHand: number;
+ actualCashInHand: number | null; // null = not counted yet (a POS-sync/top-up placeholder row)
  cashOffset: number;
  salesDiscrepancy?: number; // Settled discrepancy at time of sales settlement (locked value)
  approvalRequired: boolean;
@@ -169,7 +170,7 @@ export type SalesData = {
  rejectionReason: string | null;
  previousCashInHand?: number;
  usedOnlineMoney?: number;
- actualPaytmBalance?: number; // Actual Paytm balance reconciliation
+ actualPaytmBalance?: number | null; // Closing Paytm balance (server-recomputed); null = not worked out yet
  paytmOffset?: number; // Paytm discrepancy/offset
  // POS integration placeholder: manually entered until the POS API is connected,
  // at which point these two fields become auto-fetched instead of typed in.
@@ -1452,16 +1453,15 @@ export default function App() {
  const addSalesData = async (item: Omit<SalesData, 'id'>) => {
  if (!user) return;
  try {
- console.log('Frontend - Current user:', user);
- console.log('Frontend - User role:', user.role);
- console.log('Frontend - Access token (first 50 chars):', user.accessToken.substring(0, 50));
  // Auto-add storeId if user has one
  const itemWithStore = {
  ...item,
  storeId: user.storeId || item.storeId
  };
  const newItem = await api.addSalesData(user.accessToken, itemWithStore);
- setSalesData((prev) => [...prev, newItem]);
+ // The server saves onto the day's existing row (e.g. the nightly POS sync's) when there
+ // is one, so this can come back as a row already in the list.
+ setSalesData((prev) => prev.some(sd => sd.id === newItem.id) ? prev.map(sd => sd.id === newItem.id ? newItem : sd) : [...prev, newItem]);
  dataCache.invalidateCache('salesData');
  dataCache.invalidateCache('categorySales');
  } catch (error) {

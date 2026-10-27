@@ -188,8 +188,9 @@ export function CashTopupHistory({ requests, title = 'Top-up History' }: Props) 
                   <p className="text-xs text-gray-400 mt-0.5">
                     {r.status === 'approved' && r.approvedBy ? `Approved by ${r.approvedBy}` : ''}
                     {r.status === 'rejected' && r.rejectedBy ? `Rejected by ${r.rejectedBy}` : ''}
+                    {/* approvedAt is real UTC on approvals flagged approvedAtIsUtc, IST-with-Z before that. */}
                     {(r.status === 'approved' ? r.approvedAt : r.rejectedAt) && (
-                      <span> · {formatDateTimeIST((r.status === 'approved' ? r.approvedAt : r.rejectedAt)!, false)} IST</span>
+                      <span> · {formatDateTimeIST((r.status === 'approved' ? r.approvedAt : r.rejectedAt)!, r.status === 'approved' && !!r.approvedAtIsUtc)} IST</span>
                     )}
                   </p>
                   {r.status === 'rejected' && r.rejectionReason && (
