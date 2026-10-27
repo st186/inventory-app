@@ -28,7 +28,7 @@ export function stockRequestsStoreId(user: ReturnType<typeof useShell>['user'], 
 }
 
 export function StockDestination({ spec, params }: { spec: ScreenSpec; params: Record<string, string> }) {
-  const { context, user, stores, selectedStoreId } = useShell();
+  const { context, user, stores, selectedStoreId, employees } = useShell();
   const callbacks = useScreenCallbacks();
   switch (spec.screen) {
     case 'ProductionRequests':
@@ -59,10 +59,14 @@ export function StockDestination({ spec, params }: { spec: ScreenSpec; params: R
       return (
         <RiderTrips
           mode={spec.mode}
+          variant={spec.variant}
+          initialTab={params.tab === 'payments' || params.tab === 'history' ? params.tab : undefined}
           stockRequests={context.productionRequests}
           canDispatch={spec.canDispatch}
           stores={(stores || []).map((st) => ({ id: st.id, name: st.name }))}
           defaultStoreId={user.storeId || null}
+          // Phone numbers for the call buttons (the owner and managers see them).
+          people={employees || []}
         />
       );
     case 'IncomingDeliveries':

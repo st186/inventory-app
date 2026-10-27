@@ -94,7 +94,7 @@ export type ScreenSpec =
   | { screen: 'ProductionManagement' }
   | { screen: 'AdvancedInventoryManagement' }
   | { screen: 'StockOutLog'; scope: 'own-store' | 'all-stores'; canDelete: boolean }
-  | { screen: 'RiderTrips'; mode: 'rider' | 'staff'; canDispatch: boolean }
+  | { screen: 'RiderTrips'; mode: 'rider' | 'staff'; canDispatch: boolean; variant?: 'home' | 'trips' }
   | { screen: 'IncomingDeliveries' }
   | { screen: 'EmployeeManagement' }
   | { screen: 'AttendancePortal'; mode: 'manager' }
@@ -434,8 +434,11 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'recipes')];
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
+    // Rides: history and payments (WP7); Home keeps the current ride.
+    add('trips', 'rider.trips.title', 'riders', { ...ridersSpec, variant: 'trips' } as ScreenSpec, null);
     tabs = [
       tab('home', 'nav.home', 'home', []),
+      tab('trips', 'rider.trips.title', 'riders', []),
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
