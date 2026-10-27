@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AlertTriangle, BadgeCheck, Check, Link2, Plus, X } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Check, Link2, Plus, Search, X } from 'lucide-react';
 
 import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
@@ -10,7 +10,7 @@ import { Field } from '../ui/field';
 import { IconButton } from '../ui/icon-button';
 import { ListGroup, ListRow } from '../ui/list-row';
 import { PageHeader } from '../ui/page-header';
-import { PickerField } from '../ui/picker-sheet';
+import { Input } from '../ui/input';
 import { ResponsiveModal } from '../ui/responsive-modal';
 import { SkeletonListRows } from '../ui/skeleton';
 import { StatusChip } from '../ui/status-chip';
@@ -22,14 +22,14 @@ import { INGREDIENT_BY_ID, SHEET_BY_ID } from '../../utils/recipeCatalog';
 import { SPREAD_LIMIT, TRIALS, batchFacts, type Batch, type CostLine, type StandardCalc } from '../../utils/recipeRules';
 import { useRecipesApi, type ApiError, type PriceItem, type Review } from '../../utils/recipesApi';
 import { NumInput } from './NumInput';
-import { fmtDay, fmtG, fmtNum, fmtPct, fmtRs, ingName, priceMissText, priceSourceText, sheetCode, sheetName, statusView } from './recipeText';
+import { fmtDay, fmtG, fmtNum, fmtPct, fmtPerKg, fmtRs, ingName, priceMissText, priceSourceText, sheetCode, sheetName, statusView } from './recipeText';
 import { StandardTable } from './SheetDetail';
 
 type Props = { sheetId: string; onBack: () => void; onChanged?: () => void };
 
 function SpreadChip({ value, flag }: { value: number | null; flag: boolean }) {
   const { t } = useT();
-  if (value === null) return <span className="text-label text-text-3">–</span>;
+  if (value === null) return <span className="hidden text-label text-text-3 md:inline">–</span>;
   return flag
     ? <StatusChip tone="warning" icon={AlertTriangle}>{fmtPct(value)}</StatusChip>
     : <span className="num text-label text-text-2" title={t('recipes.review.spread')}>{fmtPct(value)}</span>;
@@ -274,7 +274,7 @@ function CostSection({ cost, calc, data, onOpenPrice }: { cost: NonNullable<Revi
     >
       {cost.lines.map((l) => {
         const source = l.price.ok ? priceSourceText(t, l.price) : priceMissText(t, lang, l.price);
-        const perKg = l.price.ok && l.price.source !== 'free' ? `${fmtRs(l.price.perG * 1000)}/kg` : null;
+        const perKg = l.price.ok && l.price.source !== 'free' ? fmtPerKg(l.price.perG * 1000) : null;
         return (
           <ListRow
             key={l.key}
@@ -315,6 +315,8 @@ function PriceSheet({ line, data, onClose, onSaved }: { line: CostLine; data: Re
   const [keys, setKeys] = React.useState<string[]>(existing?.itemKeys || []);
   const [gpp, setGpp] = React.useState<number | null>(existing?.gramsPerPiece ?? null);
   const [saving, setSaving] = React.useState(false);
+  const [picking, setPicking] = React.useState(false);
+  const [query, setQuery] = React.useState('');
   React.useEffect(() => {
     if (linkable) api.priceItems().then((r) => setItems(r.items), () => setItems([]));
   }, [api, linkable]);
@@ -335,24 +337,43 @@ function PriceSheet({ line, data, onClose, onSaved }: { line: CostLine; data: Re
     }
   }
 
+  // Picking an item swaps the sheet's content (no sheet on a sheet).
+  if (picking) {
+    const q = query.trim().toLowerCase();
+    const list = (items || []).filter((i) => !keys.includes(i.key) && (!q || i.key.includes(q))).slice(0, 40);
+    return (
+      <ResponsiveModal open onOpenChange={(o) => { if (!o) onClose(); }} size="detail" title={t('recipes.price.addItem')} onBack={() => setPicking(false)}>
+        <div className="flex flex-col gap-3">
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('common.search')} aria-label={t('common.search')} leading={<Search />} />
+          <ListGroup empty={<EmptyState compact title={items ? t('common.noResults', { q: query }) : t('common.loading')} />}>
+            {list.map((i) => (
+              <ListRow key={i.key} title={i.name} subtitle={t('recipes.price.itemMeta', { n: i.count, date: fmtDay(t, i.lastDate), units: i.units.join(', ') })}
+                onClick={() => { setKeys([...keys, i.key].slice(0, 10)); setPicking(false); setQuery(''); }} />
+            ))}
+          </ListGroup>
+        </div>
+      </ResponsiveModal>
+    );
+  }
+
   return (
     <ResponsiveModal
       open
       onOpenChange={(o) => { if (!o) onClose(); }}
       size="detail"
       title={ingName(lang, line.key, line.name)}
-      description={p.ok ? (p.source === 'free' ? t('recipes.price.free') : `${fmtRs(p.perG * 1000)}/kg · ${priceSourceText(t, p)}`) : priceMissText(t, lang, p)}
+      description={p.ok ? (p.source === 'free' ? t('recipes.price.free') : `${fmtPerKg(p.perG * 1000)} · ${priceSourceText(t, p)}`) : priceMissText(t, lang, p)}
       footer={linkable ? <Button size="lg" className="flex-1" loading={saving} leadingIcon={<Link2 />} onClick={() => void save()}>{t('recipes.price.saveLink')}</Button> : undefined}
     >
       <div className="flex flex-col gap-4">
         {line.usable != null && <p className="text-body-sm text-text-2">{t('recipes.price.usableNote', { pct: fmtNum(line.usable * 100, 0) })}</p>}
-        {line.prepLossUnmeasured && <Callout tone="warning" title={t('recipes.review.prepLossUnmeasured')}>{t('recipes.price.prepLossBody')}</Callout>}
+        {line.prepLossUnmeasured && <Callout tone="warning" title={t('recipes.price.prepLossTitle')}>{t('recipes.price.prepLossBody')}</Callout>}
         {detail && (
           <ListGroup title={t('recipes.price.billsUsed')} meta={t('recipes.price.window', { n: detail.windowDays })}
             footer={<p className="text-caption text-text-3">{t('recipes.price.how')}{detail.litreAsKg ? ` ${t('recipes.price.litreAsKg')}` : ''}</p>}>
             {detail.used.map((u, i) => (
               <ListRow key={i} density="compact" muted={!u.kept} title={u.itemName} subtitle={`${fmtDay(t, u.date)} · ${fmtNum(u.quantity, 3)} ${u.unit} · ${fmtRs(u.totalCost)}${u.kept ? '' : ` · ${t('recipes.price.ignored')}`}`}
-                trailing={<span className="num text-body-sm font-semibold">{fmtRs(u.perKg)}/kg</span>} />
+                trailing={<span className="num text-body-sm font-semibold">{fmtPerKg(u.perKg)}</span>} />
             ))}
           </ListGroup>
         )}
@@ -376,16 +397,7 @@ function PriceSheet({ line, data, onClose, onSaved }: { line: CostLine; data: Re
                 ))}
               </ul>
             )}
-            <Field label={t('recipes.price.addItem')}>
-              <PickerField
-                title={t('recipes.price.addItem')}
-                items={(items || []).filter((i) => !keys.includes(i.key)).map((i) => ({ value: i.key, label: i.name, description: t('recipes.price.itemMeta', { n: i.count, date: fmtDay(t, i.lastDate), units: i.units.join(', ') }) }))}
-                value={null}
-                placeholder={items ? t('recipes.price.pick') : t('common.loading')}
-                leadingIcon={<Plus />}
-                onValueChange={(v) => setKeys([...keys, v].slice(0, 10))}
-              />
-            </Field>
+            <Button variant="secondary" className="self-start" leadingIcon={<Plus />} disabled={!items} onClick={() => setPicking(true)}>{t('recipes.price.addItem')}</Button>
             <Field label={t('recipes.price.gramsPerPiece')} optional helper={t('recipes.price.gramsPerPieceHelp')}>
               <NumInput value={gpp} onChange={setGpp} unit="g" className="text-right" />
             </Field>

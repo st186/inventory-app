@@ -34,6 +34,9 @@ export const fmtPct = (n: number | null | undefined, dp = 1) => (n === null || n
 export const fmtRs = (n: number | null | undefined, dp?: number) =>
   n === null || n === undefined || !Number.isFinite(n) ? '–' : `₹${formatNumberIN(Math.round(n * 100) / 100, { decimals: dp ?? (Math.abs(n) < 100 ? 2 : 0) })}`;
 
+// "₹56/kg", "₹4.20/kg"
+export const fmtPerKg = (n: number | null | undefined) => (n === null || n === undefined || !Number.isFinite(n) ? '–' : `${fmtRs(n, Math.abs(n) < 10 ? 2 : 0)}/kg`);
+
 // "26 Oct" / "26 Oct, 9:10 am"
 export function fmtDay(t: T, iso: string | null | undefined): string {
   if (!iso) return '–';
