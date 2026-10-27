@@ -40,8 +40,7 @@ import { FixLegacyInventory } from './components/FixLegacyInventory';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
-// polling is needed. The component files are kept in case a client-side fallback
-// is ever needed again.
+// polling is needed. (AttendanceReminderScheduler's file has since been deleted.)
 import { PushNotificationStatus } from './components/PushNotificationStatus';
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, KeyRound } from 'lucide-react';

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Users, UserPlus, Search, Edit2, Trash2, Calendar, DollarSign, FileText, Upload, KeyRound, RefreshCw, UserCog, AlertCircle, Store, Key, Clock, Building2 } from 'lucide-react';
+import { Users, UserPlus, Search, Edit2, Trash2, Calendar, DollarSign, FileText, Upload, RefreshCw, UserCog, Store, Key, Clock, Building2 } from 'lucide-react';
 import * as api from '../utils/api';
-import { EmployeeAccountSetup } from './EmployeeAccountSetup';
 import { ForcePasswordResetButton } from './ForcePasswordResetButton';
 import { HierarchyManagement } from './HierarchyManagement';
 import { EmployeeDetailsModal } from './EmployeeDetailsModal';
@@ -47,7 +46,6 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [showAccountSetup, setShowAccountSetup] = useState(false);
   const [showMigrationStatus, setShowMigrationStatus] = useState(false);
   const [migrationResult, setMigrationResult] = useState<any>(null);
   const [aadharFront, setAadharFront] = useState('');
@@ -58,9 +56,6 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
   const [selectedSupervisorType, setSelectedSupervisorType] = useState<'manager' | 'incharge'>('manager');
   const [managers, setManagers] = useState<Employee[]>([]);
   const [incharges, setIncharges] = useState<Employee[]>([]);
-  const [showEditRole, setShowEditRole] = useState(false);
-  const [editingRoleFor, setEditingRoleFor] = useState<Employee | null>(null);
-  const [selectedNewRole, setSelectedNewRole] = useState<'employee' | 'manager' | 'cluster_head'>('employee');
   const [showChangeStore, setShowChangeStore] = useState(false);
   const [changingStoreFor, setChangingStoreFor] = useState<Employee | null>(null);
   const [selectedNewStore, setSelectedNewStore] = useState('');
@@ -210,29 +205,6 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
     }
   };
 
-  const generateEmployeeId = async () => {
-    try {
-      const allEmployees = await api.getAllEmployees();
-      
-      // Extract numbers from existing IDs (BM001 -> 1, BM002 -> 2)
-      const numbers = allEmployees
-        .map((emp: Employee) => {
-          const match = emp.employeeId.match(/BM(\d+)/);
-          return match ? parseInt(match[1]) : 0;
-        })
-        .filter((num: number) => num > 0);
-      
-      // Get the highest number and add 1
-      const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-      
-      // Format as BM001, BM002, etc.
-      return `BM${nextNumber.toString().padStart(3, '0')}`;
-    } catch (error) {
-      console.error('Error generating employee ID:', error);
-      return `BM${Date.now().toString().slice(-3)}`;
-    }
-  };
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'front' | 'back') => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -263,12 +235,10 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
 
     try {
       setLoading(true);
-      
-      // Generate unique employee ID
-      const employeeId = await generateEmployeeId();
 
+      // No employee id here: the server issues it, counting archived staff too, so a new
+      // hire can never be handed a former employee's id (and their history).
       const employeeData: any = {
-        employeeId,
         name: formData.name,
         email: formData.email,
         password: formData.password,
@@ -282,7 +252,7 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
         createdAt: new Date().toISOString(),
       };
 
-      if (formData.salaryStructure.length > 0) {
+      if ((formData.salaryStructure || []).length > 0) {
         employeeData.salaryStructure = formData.salaryStructure.filter((c) => c.label.trim());
       }
 
@@ -305,10 +275,11 @@ export function EmployeeManagement({ user, selectedStoreId, initialAttendanceTab
       if (aadharFront) employeeData.aadharFront = aadharFront;
       if (aadharBack) employeeData.aadharBack = aadharBack;
 
-      await api.createUnifiedEmployee(employeeData);
-      
+      const created = await api.createUnifiedEmployee(employeeData);
+      const employeeId = created?.employee?.employeeId || '(see the list)';
+
       alert(`✅ Employee created successfully!
-      
+
 Employee ID: ${employeeId}
 Name: ${formData.name}
 Email: ${formData.email}
@@ -344,12 +315,14 @@ The employee can now login with their email and password.`);
   };
 
   const handleDeleteEmployee = async (employeeId: string) => {
-    if (!confirm('Are you sure you want to delete this employee?')) return;
+    if (!confirm('Remove this employee? They move to Past Employees and their login is switched off.')) return;
 
     try {
       setLoading(true);
-      await api.deleteUnifiedEmployee(employeeId);
-      alert('Employee deleted successfully');
+      const result = await api.deleteUnifiedEmployee(employeeId);
+      alert(result?.loginRevoked === false
+        ? 'Employee moved to Past Employees. (Their login could not be banned just now; the app refuses it anyway.)'
+        : 'Employee moved to Past Employees and their login is switched off.');
       await loadEmployees();
     } catch (error) {
       console.error('Error deleting employee:', error);
@@ -359,7 +332,27 @@ The employee can now login with their email and password.`);
     }
   };
 
+  const handleRestoreEmployee = async (emp: any) => {
+    if (!confirm(`Bring ${emp.name} (${emp.employeeId}) back as an active employee? Their login is switched back on.`)) return;
+
+    try {
+      setLoading(true);
+      const result = await api.restoreArchivedEmployee(emp.employeeId);
+      alert(result?.loginRestored === false
+        ? 'Employee restored, but their login could not be switched back on - reset their password to fix it.'
+        : 'Employee restored and their login is switched back on.');
+      await loadEmployees();
+    } catch (error) {
+      alert(`Failed to restore employee: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleEditEmployee = (emp: Employee) => {
+    // A new upload starts empty - nothing left over from another person's form.
+    setAadharFront('');
+    setAadharBack('');
     setEditingEmployee(emp);
     setShowEditForm(true);
   };
@@ -399,11 +392,11 @@ New Password: ${result.credentials.password}
     try {
       setLoading(true);
       
-      // Allow editing role for cluster heads
-      const updateData = {
+      // No role here - roles change only through the owner's "Edit Role & Designation"
+      // control (PUT /employee/:id/role), never as a side effect of a profile edit.
+      const updateData: Record<string, any> = {
         name: editingEmployee.name,
         email: editingEmployee.email,
-        role: editingEmployee.role, // Include role in updates
         employmentType: editingEmployee.employmentType,
         joiningDate: editingEmployee.joiningDate,
         dob: editingEmployee.dob,
@@ -411,15 +404,18 @@ New Password: ${result.credentials.password}
         status: editingEmployee.status,
         salaryStructure: editingEmployee.salaryStructure,
       };
+      // An Aadhaar image picked in this form used to be dropped on save.
+      if (aadharFront) updateData.aadharFront = aadharFront;
+      if (aadharBack) updateData.aadharBack = aadharBack;
 
-      console.log('Updating employee with data:', updateData);
-      
       // Update using API function
       await api.updateUnifiedEmployee(editingEmployee.employeeId, updateData);
 
       alert('Employee updated successfully!');
       setShowEditForm(false);
       setEditingEmployee(null);
+      setAadharFront('');
+      setAadharBack('');
       await loadEmployees();
     } catch (error) {
       console.error('Error updating employee - full error:', error);
@@ -539,31 +535,6 @@ New Password: ${result.credentials.password}
     if (!managerId) return 'No manager assigned';
     const allEmp = employees.find((e: Employee) => e.employeeId === managerId);
     return allEmp ? `${allEmp.name} (${allEmp.employeeId})` : `Manager ${managerId}`;
-  };
-
-  const handleOpenEditRole = (emp: Employee) => {
-    setEditingRoleFor(emp);
-    setSelectedNewRole(emp.role as 'employee' | 'manager' | 'cluster_head');
-    setShowEditRole(true);
-  };
-
-  const handleUpdateRole = async () => {
-    if (!editingRoleFor) return;
-
-    try {
-      setLoading(true);
-      await api.updateEmployeeRole(editingRoleFor.employeeId, selectedNewRole);
-      
-      alert(`Role updated successfully from "${editingRoleFor.role}" to "${selectedNewRole}"!`);
-      setShowEditRole(false);
-      setEditingRoleFor(null);
-      await loadEmployees(); // Reload to show updated data
-    } catch (error) {
-      console.error('Error updating role:', error);
-      alert(`Failed to update role: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleOpenChangeStore = (emp: Employee) => {
@@ -824,13 +795,6 @@ New Password: ${result.credentials.password}
               {isClusterHead && (
                 <>
                   <button
-                    onClick={() => setShowAccountSetup(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-stone-800 text-white rounded-lg hover:shadow-lg transition-all"
-                  >
-                    <KeyRound className="w-5 h-5" />
-                    Create Login Accounts
-                  </button>
-                  <button
                     onClick={handleMigrateStores}
                     disabled={loading}
                     className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-600 to-teal-600 text-white rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
@@ -975,7 +939,7 @@ New Password: ${result.credentials.password}
                         type="button"
                         onClick={() => setFormData({
                           ...formData,
-                          salaryStructure: [...formData.salaryStructure, { label: '', amount: 0 }],
+                          salaryStructure: [...(formData.salaryStructure || []), { label: '', amount: 0 }],
                         })}
                         className="text-xs text-orange-600 hover:text-orange-800"
                       >
@@ -983,7 +947,7 @@ New Password: ${result.credentials.password}
                       </button>
                     </div>
                     <div className="space-y-2">
-                      {formData.salaryStructure.map((comp, idx) => (
+                      {(formData.salaryStructure || []).map((comp, idx) => (
                         <div key={idx} className="flex items-center gap-2">
                           <input
                             type="text"
@@ -1020,9 +984,9 @@ New Password: ${result.credentials.password}
                         </div>
                       ))}
                     </div>
-                    {formData.salaryStructure.length > 0 && (
+                    {(formData.salaryStructure || []).length > 0 && (
                       <p className="text-xs text-gray-500 mt-2">
-                        Fixed total: ₹{formData.salaryStructure.reduce((sum, c) => sum + (c.amount || 0), 0).toLocaleString()}/month
+                        Fixed total: ₹{(formData.salaryStructure || []).reduce((sum, c) => sum + (c.amount || 0), 0).toLocaleString()}/month
                       </p>
                     )}
                     <p className="text-xs text-gray-500 mt-1">
@@ -1123,6 +1087,8 @@ New Password: ${result.credentials.password}
                         dob: '',
                         phone: '',
                         storeId: user.storeId || '' as string, // Auto-set to manager's store
+                        // Leaving this out made the next "Add Employee" crash on .map and blank the app.
+                        salaryStructure: [],
                       });
                       setAadharFront('');
                       setAadharBack('');
@@ -1146,21 +1112,7 @@ New Password: ${result.credentials.password}
               </div>
 
               <div className="p-6 space-y-4">
-                {/* Role Selection (Cluster Head Only) */}
-                {isClusterHead && (
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-2">Role *</label>
-                    <select
-                      value={editingEmployee.role}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, role: e.target.value as 'manager' | 'employee' | 'cluster_head' })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    >
-                      <option value="employee">Employee</option>
-                      <option value="manager">Manager</option>
-                      <option value="cluster_head">Cluster Head</option>
-                    </select>
-                  </div>
-                )}
+                {/* No role picker here: the role changes only through "Edit Role & Designation". */}
 
                 {/* Employment Type */}
                 <div>
@@ -1565,15 +1517,8 @@ New Password: ${result.credentials.password}
                               <UserCog className="w-5 h-5" />
                             </button>
                           )}
-                          {isClusterHead && !['employee', 'manager', 'cluster_head'].includes(emp.role) && (
-                            <button
-                              onClick={() => handleOpenEditRole(emp)}
-                              className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                              title="Fix Role (Invalid Role Detected)"
-                            >
-                              <AlertCircle className="w-5 h-5" />
-                            </button>
-                          )}
+                          {/* An unrecognised role is fixed with "Edit Role & Designation" above -
+                              the one owner-only way to change a role. */}
                         </div>
                       </td>
                     </tr>
@@ -1627,6 +1572,9 @@ New Password: ${result.credentials.password}
                       <th className="px-6 py-3 text-left text-xs text-gray-600 uppercase tracking-wider">
                         Duration
                       </th>
+                      <th className="px-6 py-3 text-left text-xs text-gray-600 uppercase tracking-wider">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -1676,6 +1624,17 @@ New Password: ${result.credentials.password}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-gray-600">
                             {durationStr.trim()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <button
+                              onClick={() => handleRestoreEmployee(emp)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors disabled:opacity-50"
+                              title="Bring back as an active employee (switches their login back on)"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Restore
+                            </button>
                           </td>
                         </tr>
                       );
@@ -1771,27 +1730,37 @@ New Password: ${result.credentials.password}
                   )}
                 </div>
 
-                {/* Aadhar Images */}
-                {selectedEmployee.aadharFront && (
+                {/* Aadhar Images - only the owner and the person themself see the card; the
+                    server leaves the images out for everyone else and just says one is on file. */}
+                {(isClusterHead || selectedEmployee.employeeId === user.employeeId) ? (
+                  <>
+                    {selectedEmployee.aadharFront && (
+                      <div>
+                        <p className="text-sm text-gray-600 mb-2">Aadhar Card (Front)</p>
+                        <img
+                          src={selectedEmployee.aadharFront}
+                          alt="Aadhar Front"
+                          className="w-full rounded-lg border border-gray-300"
+                        />
+                      </div>
+                    )}
+                    {selectedEmployee.aadharBack && (
+                      <div>
+                        <p className="text-sm text-gray-600 mb-2">Aadhar Card (Back)</p>
+                        <img
+                          src={selectedEmployee.aadharBack}
+                          alt="Aadhar Back"
+                          className="w-full rounded-lg border border-gray-300"
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (selectedEmployee.hasAadharImages || selectedEmployee.aadharFront || selectedEmployee.aadharBack) ? (
                   <div>
-                    <p className="text-sm text-gray-600 mb-2">Aadhar Card (Front)</p>
-                    <img 
-                      src={selectedEmployee.aadharFront} 
-                      alt="Aadhar Front" 
-                      className="w-full rounded-lg border border-gray-300"
-                    />
+                    <p className="text-sm text-gray-600">Aadhar Card</p>
+                    <p className="text-gray-900">On file</p>
                   </div>
-                )}
-                {selectedEmployee.aadharBack && (
-                  <div>
-                    <p className="text-sm text-gray-600 mb-2">Aadhar Card (Back)</p>
-                    <img 
-                      src={selectedEmployee.aadharBack} 
-                      alt="Aadhar Back" 
-                      className="w-full rounded-lg border border-gray-300"
-                    />
-                  </div>
-                )}
+                ) : null}
 
                 <button
                   onClick={() => setSelectedEmployee(null)}
@@ -1802,14 +1771,6 @@ New Password: ${result.credentials.password}
               </div>
             </div>
           </div>
-        )}
-
-        {/* Employee Account Setup Modal */}
-        {showAccountSetup && (
-          <EmployeeAccountSetup
-            onClose={() => setShowAccountSetup(false)}
-            employees={employees.filter(emp => emp.status === 'active') as any}
-          />
         )}
 
         {/* Migration Status Modal */}
@@ -2056,76 +2017,6 @@ New Password: ${result.credentials.password}
                       setAssigningManagerTo(null);
                       setSelectedManagerForAssignment('');
                       setSelectedSupervisorType('manager');
-                    }}
-                    className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Role Modal */}
-        {showEditRole && editingRoleFor && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-              <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 rounded-t-xl">
-                <h2 className="text-2xl">Fix Employee Role</h2>
-                <p className="text-sm text-orange-100 mt-1">
-                  {editingRoleFor.name} ({editingRoleFor.employeeId})
-                </p>
-              </div>
-
-              <div className="p-6 space-y-4">
-                {/* Current Role Warning */}
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-orange-600 mt-0.5" />
-                    <div>
-                      <p className="text-sm text-orange-800 mb-1">
-                        <strong>Invalid Role Detected:</strong> "{editingRoleFor.role}"
-                      </p>
-                      <p className="text-xs text-orange-700">
-                        This role is not recognized by the system. Please select a valid role below.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Select New Role */}
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">
-                    Select Correct Role *
-                  </label>
-                  <select
-                    value={selectedNewRole}
-                    onChange={(e) => setSelectedNewRole(e.target.value as 'employee' | 'manager' | 'cluster_head')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value="employee">Employee - Regular staff (can be fulltime or contract)</option>
-                    <option value="manager">Manager - Manages employees and a store</option>
-                    <option value="cluster_head">Cluster Head - Manages multiple stores</option>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-2">
-                    💡 Most workers (kitchen staff, delivery, etc.) should be "Employee"
-                  </p>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-3 pt-4">
-                  <button
-                    onClick={handleUpdateRole}
-                    disabled={loading}
-                    className="flex-1 bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
-                  >
-                    {loading ? 'Updating...' : 'Update Role'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowEditRole(false);
-                      setEditingRoleFor(null);
                     }}
                     className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-all"
                   >

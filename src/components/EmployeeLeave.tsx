@@ -34,6 +34,7 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   const [leaves, setLeaves] = useState<LeaveApplication[]>([]);
   const [leaveBalance, setLeaveBalance] = useState(0);
   const [projectedBalance, setProjectedBalance] = useState(0);
+  const [pendingDays, setPendingDays] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showApplyForm, setShowApplyForm] = useState(false);
   const [deletingLeaveId, setDeletingLeaveId] = useState<string | null>(null);
@@ -65,9 +66,9 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
   }, []);
 
   useEffect(() => {
-    // Calculate projected balance whenever leaves change
+    // Calculate projected balance whenever the balance or pending days change
     calculateProjectedBalance();
-  }, [leaves, leaveBalance]);
+  }, [leaveBalance, pendingDays]);
 
   const loadLeaves = async () => {
     try {
@@ -83,24 +84,21 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
 
   const calculateLeaveBalance = async () => {
     try {
-      const balance = await api.getLeaveBalance(user.employeeId, user.joiningDate || '2024-01-01');
+      // The server reads the joining date from the employee record (none was passed here,
+      // so it used to fall back to 2024-01-01) and counts only this leave year.
+      const { balance, pendingDays } = await api.getLeaveBalance(user.employeeId);
       setLeaveBalance(balance);
+      setPendingDays(pendingDays);
     } catch (error) {
       console.error('Error calculating leave balance:', error);
     }
   };
 
   const calculateProjectedBalance = () => {
-    // Calculate pending leave days (including advance leaves)
-    const pendingLeaves = leaves.filter(l => l.status === 'pending');
-    const pendingLeaveDays = pendingLeaves.reduce((total, leave) => {
-      const leaveType = leave.leaveType || 'full';
-      return total + (leaveType === 'half' ? 0.5 : 1);
-    }, 0);
-
-    // Projected balance = current balance - pending leaves
+    // Projected balance = current balance - this leave year's pending days (from the
+    // server, so a pending day from an earlier leave year isn't counted).
     // Can be negative if advance leaves are pending
-    setProjectedBalance(leaveBalance - pendingLeaveDays);
+    setProjectedBalance(leaveBalance - pendingDays);
   };
 
   const applyLeave = async () => {
@@ -135,9 +133,12 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
     // cluster head instead of the employee's own manager (see approverRole below).
     const approverRole: 'manager' | 'cluster_head' = requestedDays > MAX_ADVANCE_DAYS_BEFORE_ESCALATION ? 'cluster_head' : 'manager';
 
-    if (!isAdvanceLeave && leaveBalance < requestedDays) {
-      // Regular leave - check if balance is sufficient
-      alert(`Insufficient leave balance. You have ${leaveBalance} day(s) remaining. Consider applying via the Advance Leave tab instead.`);
+    if (!isAdvanceLeave && projectedBalance < requestedDays) {
+      // Regular leave - days still waiting for approval count too, or several pending
+      // applications could each pass against the same balance.
+      alert(pendingDays > 0
+        ? `Insufficient leave balance. You have ${leaveBalance} day(s), and ${pendingDays} day(s) are already waiting for approval, so ${projectedBalance} day(s) are left to apply for. Consider applying via the Advance Leave tab instead.`
+        : `Insufficient leave balance. You have ${leaveBalance} day(s) remaining. Consider applying via the Advance Leave tab instead.`);
       return;
     }
 
@@ -172,7 +173,8 @@ export function EmployeeLeave({ user }: EmployeeLeaveProps) {
       alert(`Leave application submitted${datesInRange.length > 1 ? ` for ${datesInRange.length} days` : ''} - sent to ${approverLabel} for approval`);
     } catch (error) {
       console.error('Error applying leave:', error);
-      alert('Error applying leave');
+      // The server re-checks the balance and says why it refused.
+      alert(error instanceof Error && error.message ? error.message : 'Error applying leave');
     } finally {
       setLoading(false);
     }

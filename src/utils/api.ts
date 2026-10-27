@@ -1335,6 +1335,8 @@ export interface Employee {
   phone?: string;
   aadharFront?: string;
   aadharBack?: string;
+  // Set by the server instead of the images for anyone but the owner and the person themself.
+  hasAadharImages?: boolean;
   authUserId?: string;
   createdBy?: string;
   createdAt?: string;
@@ -1445,6 +1447,27 @@ export async function deleteUnifiedEmployee(employeeId: string) {
     throw new Error(error.error || 'Failed to delete employee');
   }
   
+  return await response.json();
+}
+
+// Owner only: brings a past employee back and switches their login back on.
+export async function restoreArchivedEmployee(employeeId: string): Promise<{ success: boolean; loginRestored: boolean | null }> {
+  const session = await getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const response = await fetch(`${API_BASE}/archived-employees/${employeeId}/restore`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to restore employee');
+  }
+
   return await response.json();
 }
 
@@ -1814,6 +1837,11 @@ export interface Payout {
   // from elsewhere and must NOT drain the Paytm figure. Undefined (legacy records) is
   // treated as 'paytm', which was the implicit assumption before this field existed.
   paidFrom?: 'paytm' | 'bank' | 'cash';
+  // Salary-advance instalment(s) recovered from this payout: `amount` above is what was
+  // transferred, after this. advanceRecovery says which instalments, so deleting the
+  // payout can hand them back to the advance.
+  advanceDeduction?: number;
+  advanceRecovery?: { advanceId: string; month: string; amount: number }[];
 }
 
 export async function getPayouts(): Promise<Payout[]> {
@@ -2113,9 +2141,12 @@ export interface SalaryAdvance {
 export interface SalaryAdvanceDeduction {
   month: string; // YYYY-MM format
   amount: number;
-  deducted: boolean;
+  deducted: boolean; // fully recovered
   deductedDate?: string;
   payoutId?: string;
+  // How much of this instalment has been recovered so far - a payout too small to cover it
+  // recovers part (net pay never goes below zero) and the rest stays due.
+  recovered?: number;
 }
 
 export async function getSalaryAdvances(): Promise<SalaryAdvance[]> {
@@ -2592,16 +2623,18 @@ export async function deleteLeave(leaveId: string): Promise<{ success: boolean }
   });
 }
 
-export async function getLeaveBalance(employeeId: string, joiningDate: string): Promise<number> {
+// This leave year's balance (approved leave deducted) and the days still waiting for a
+// decision. The server takes the joining date from the employee's own record.
+export async function getLeaveBalance(employeeId: string): Promise<{ balance: number; pendingDays: number }> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
     throw new Error('Not authenticated');
   }
-  
-  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance?joiningDate=${joiningDate}`, session.access_token);
-  return data.balance || 0;
+
+  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance`, session.access_token);
+  return { balance: data.balance || 0, pendingDays: data.pendingDays || 0 };
 }
 
 // Leave approval and rejection functions
