@@ -14877,6 +14877,18 @@ app.post('/make-server-c2dd9b9d/send-eod-data-alerts', async (c) => {
 // sales, so the whole run is skipped rather than writing a misleading record for the day.
 const STORE_OPENING_HOUR_IST = 15;
 
+// Ciferon is still closing the day between 11:50 PM and 6:10 AM IST and hands back wrong or
+// previous-day figures (the 25 Oct 2026 copy of 24 Oct was saved by a 1:09 AM re-sync), so no
+// sync of any kind - nightly, Sync Now, past-day or bulk re-sync - runs in that window (owner,
+// 27 Oct 2026). The nightly cron fires at 10:30 PM, outside it.
+const POS_QUIET_START_MIN_IST = 23 * 60 + 50;
+const POS_QUIET_END_MIN_IST = 6 * 60 + 10;
+function inPosQuietHours(): boolean {
+  const now = getNowIST();
+  const minutes = parseInt(now.substring(11, 13), 10) * 60 + parseInt(now.substring(14, 16), 10);
+  return minutes >= POS_QUIET_START_MIN_IST || minutes < POS_QUIET_END_MIN_IST;
+}
+
 // targetDate lets a cluster head backfill-correct a past day's already-closed sales record
 // (e.g. one written before the offlineSales staleness fix) by re-pulling that day's real
 // SaleDetails from Ciferon. Only Step A (cash/Paytm/online totals) runs for a backfill -
@@ -14887,6 +14899,11 @@ async function runPosSync(targetDate?: string) {
   const today = targetDate || getTodayIST();
   const todayRfc1123 = new Date(`${today}T00:00:00Z`).toUTCString();
   const results: any[] = [];
+
+  if (inPosQuietHours()) {
+    const message = 'Ciferon shows unreliable figures between 11:50 PM and 6:10 AM, so syncing is paused then. Please try again after 6:10 AM.';
+    return { success: false, skipped: true, status: 423, date: today, error: message, message, results };
+  }
 
   if (!isBackfill && getHourIST() < STORE_OPENING_HOUR_IST) {
     return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
