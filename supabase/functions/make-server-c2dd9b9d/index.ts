@@ -2911,6 +2911,24 @@ async function approveProductionRecord(existing: any, approvedBy: string): Promi
   return creditedItem;
 }
 
+// The production house a production entry, ledger item or wastage note belongs to. The app
+// sends a production incharge's storeId, and Team → Change store once set one to the store
+// their kitchen supplies: two weeks of entries were filed under a house that doesn't exist.
+// A store's id maps to that store's production house; anything else passes through.
+async function canonicalProductionHouseId(id: any): Promise<any> {
+  if (!id || typeof id !== 'string') return id;
+  const store = await kv.get(`store:${id}`);
+  return store?.productionHouseId || id;
+}
+
+// Production entries carry their house in productionHouseId and, for a production incharge's
+// own entries, in storeId too.
+async function withCanonicalHouse(data: any): Promise<any> {
+  const house = await canonicalProductionHouseId(data?.productionHouseId);
+  if (!house || house === data.productionHouseId) return data;
+  return { ...data, productionHouseId: house, ...(data.storeId === data.productionHouseId ? { storeId: house } : {}) };
+}
+
 // Cluster head, or an operations manager (a manager who is not a store or production incharge).
 function isClusterHeadOrOps(user: any): boolean {
   const role = user?.user_metadata?.role;
@@ -2926,7 +2944,7 @@ app.post('/make-server-c2dd9b9d/production', async (c) => {
   }
 
   try {
-    const data = await c.req.json();
+    const data = await withCanonicalHouse(await c.req.json());
     const newItem = {
       ...data,
       id: crypto.randomUUID(),
@@ -2993,7 +3011,7 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
     }
 
     const itemId = c.req.param('id');
-    const data = await c.req.json();
+    const data = await withCanonicalHouse(await c.req.json());
 
     // Update the record where it already lives (under whoever created it): writing under the
     // editor's own id left the original in place and added a second copy. Paginated, as the
@@ -5654,7 +5672,7 @@ app.get('/make-server-c2dd9b9d/production-ledger', async (c) => {
   }
 
   try {
-    const productionHouseId = c.req.query('productionHouseId');
+    const productionHouseId = await canonicalProductionHouseId(c.req.query('productionHouseId'));
     const date = c.req.query('date');
     const from = c.req.query('from');
     const to = c.req.query('to');
@@ -5719,7 +5737,8 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
       return c.json({ error: 'Only production incharges or operations managers can log production' }, 403);
     }
 
-    const { productionHouseId, date, momoKey, globalPoolQty, perTypePoolQty } = await c.req.json();
+    const { productionHouseId: rawHouseId, date, momoKey, globalPoolQty, perTypePoolQty } = await c.req.json();
+    const productionHouseId = await canonicalProductionHouseId(rawHouseId);
     if (!productionHouseId || !date || !momoKey) {
       return c.json({ error: 'productionHouseId, date, and momoKey are required' }, 400);
     }
@@ -5850,7 +5869,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
       return c.json({ error: 'Only production incharges or operations managers can close a production day' }, 403);
     }
 
-    const productionHouseId = c.req.param('houseId');
+    const productionHouseId = await canonicalProductionHouseId(c.req.param('houseId'));
     const date = c.req.param('date');
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
       return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
@@ -5928,7 +5947,7 @@ app.get('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
     return c.json({ error: authResult.error }, authResult.status);
   }
   try {
-    const productionHouseId = c.req.query('productionHouseId');
+    const productionHouseId = await canonicalProductionHouseId(c.req.query('productionHouseId'));
     const date = c.req.query('date');
     if (!productionHouseId || !date) {
       return c.json({ error: 'productionHouseId and date are required' }, 400);
@@ -5954,7 +5973,8 @@ app.post('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
     if (!isProductionIncharge && !isOperationsManager) {
       return c.json({ error: 'Only production incharges or operations managers can log wastage' }, 403);
     }
-    const { productionHouseId, date, description, quantity, unit, reason } = await c.req.json();
+    const { productionHouseId: rawHouseId, date, description, quantity, unit, reason } = await c.req.json();
+    const productionHouseId = await canonicalProductionHouseId(rawHouseId);
     if (!productionHouseId || !date || !description || typeof quantity !== 'number' || !unit) {
       return c.json({ error: 'productionHouseId, date, description, quantity, and unit are required' }, 400);
     }
@@ -8605,10 +8625,13 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/store', async (c) => {
       return c.json({ error: 'Employee not found' }, 404);
     }
 
-    // Verify the store exists
-    const store = await kv.get(`store:${newStoreId}`);
+    // Kitchen staff belong to a production house (their storeId holds its id); everyone else
+    // to a store. Setting a production incharge to a store filed their production entries
+    // under that store.
+    const kitchenStaff = employee.designation === 'production_incharge' || employee.designation === 'production_ops' || employee.department === 'production';
+    const store = await kv.get(kitchenStaff ? `production_house_${newStoreId}` : `store:${newStoreId}`);
     if (!store) {
-      return c.json({ error: 'Store not found' }, 404);
+      return c.json({ error: kitchenStaff ? 'Pick one of the production houses for kitchen staff' : 'Store not found' }, kitchenStaff ? 400 : 404);
     }
 
     const oldStoreId = employee.storeId || 'none';
@@ -8636,6 +8659,10 @@ app.put('/make-server-c2dd9b9d/employee/:employeeId/store', async (c) => {
 
     // Update in KV store
     await kv.set(`unified-employee:${employeeId}`, employee);
+    // The server's checks read storeId from the login, so it moves too (GoTrue merges metadata).
+    if (employee.authUserId) {
+      await supabase.auth.admin.updateUserById(employee.authUserId, { user_metadata: { storeId: newStoreId } });
+    }
 
     console.log(`Successfully reassigned employee ${employeeId} from store ${oldStoreId} to ${newStoreId}`);
 

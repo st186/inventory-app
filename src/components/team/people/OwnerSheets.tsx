@@ -18,7 +18,7 @@ import { toast } from '../../ui/sonner';
 import type * as api from '../../../utils/api';
 import { teamApi } from '../teamApi';
 import { DetailList, errorText } from '../shared';
-import { DESIGNATION_LABELS, type Employee } from './peopleUtils';
+import { DESIGNATION_LABELS, placeName, workplaceOf, type Employee } from './peopleUtils';
 
 type SheetProps = { person: Employee; open: boolean; onOpenChange: (open: boolean) => void; onDone: () => Promise<void> | void };
 
@@ -233,20 +233,25 @@ export function AssignSupervisorSheet({ person, open, onOpenChange, onDone, name
 
 // ---- Change store (owner) ---------------------------------------------------------------------
 
-export function ChangeStoreSheet({ person, open, onOpenChange, onDone, stores }: SheetProps & { stores: api.Store[] }) {
+// Kitchen staff work at a production house, not a shop: offering shops here once set a
+// production incharge's place to the store their kitchen supplies, and their production
+// entries were filed under that store for two weeks.
+export function ChangeStoreSheet({ person, open, onOpenChange, onDone, stores, productionHouses }: SheetProps & { stores: api.Store[]; productionHouses: api.ProductionHouse[] }) {
+  const kitchen = workplaceOf(person, stores, productionHouses) === 'production';
+  const places: { id: string; name: string; location?: string }[] = kitchen ? productionHouses : stores;
   const [storeId, setStoreId] = React.useState(person.storeId || '');
   const [saving, setSaving] = React.useState(false);
   React.useEffect(() => {
     if (open) setStoreId(person.storeId || '');
   }, [open, person]);
 
-  const current = person.storeId ? stores.find((s) => s.id === person.storeId)?.name || person.storeId : 'No store';
+  const current = placeName(person, stores, productionHouses) || person.storeId || (kitchen ? 'No production house' : 'No store');
   const save = async () => {
     if (!storeId) return;
     setSaving(true);
     try {
       await teamApi.updateEmployeeStore(person.employeeId, storeId);
-      toast.success(`${person.name} now works at ${stores.find((s) => s.id === storeId)?.name || storeId}`);
+      toast.success(`${person.name} now works at ${places.find((s) => s.id === storeId)?.name || storeId}`);
       onOpenChange(false);
       await onDone();
     } catch (error) {
@@ -261,20 +266,20 @@ export function ChangeStoreSheet({ person, open, onOpenChange, onDone, stores }:
     <ResponsiveModal
       open={open}
       onOpenChange={onOpenChange}
-      title="Change store"
+      title={kitchen ? 'Change production house' : 'Change store'}
       description={subtitle(person)}
       footer={
         <Button size="lg" className="flex-1" loading={saving} disabled={!storeId} onClick={save}>
-          Change store
+          {kitchen ? 'Change production house' : 'Change store'}
         </Button>
       }
     >
       <div className="flex flex-col gap-4">
         <DetailList rows={[{ label: 'Works at now', value: current }]} />
-        <Field label="New store" helper="Changes straight away.">
+        <Field label={kitchen ? 'New production house' : 'New store'} helper="Changes straight away.">
           <NativeSelect value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-            <option value="">Choose a store</option>
-            {stores.map((s) => (
+            <option value="">{kitchen ? 'Choose a production house' : 'Choose a store'}</option>
+            {places.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
                 {s.location ? ` · ${s.location}` : ''}
@@ -283,7 +288,7 @@ export function ChangeStoreSheet({ person, open, onOpenChange, onDone, stores }:
           </NativeSelect>
         </Field>
         {storeId && storeId !== person.storeId && (
-          <Callout tone="warning" title="They move to another store">Who they report to stays the same.</Callout>
+          <Callout tone="warning" title={kitchen ? 'They move to another production house' : 'They move to another store'}>Who they report to stays the same.</Callout>
         )}
       </div>
     </ResponsiveModal>

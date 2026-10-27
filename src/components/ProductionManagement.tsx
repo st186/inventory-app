@@ -19,6 +19,7 @@ import { StatusChip } from './ui/status-chip';
 import { t as tSaved, useT } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getTodayIST } from '../utils/timezone';
+import { productionInchargeHouseId } from '../utils/entityAccess';
 import { LedgerOpeningBalanceSummary } from './production/LedgerOpeningBalanceSummary';
 import { LogSharedPoolForm } from './production/LogSharedPoolForm';
 import { PrepareLineItemForm } from './production/PrepareLineItemForm';
@@ -97,21 +98,24 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
   // page, see SalesView.tsx).
   const canEditLedger = isProductionIncharge || isOperationsManager;
 
-  // The production house this entry tab's ledger belongs to. A production incharge's own
-  // context.user.storeId IS their production house's real id (a legacy naming quirk
-  // already relied on elsewhere in this file, e.g. handleSubmit's productionHouseId save
-  // below) - for anyone else (operations manager/cluster head), resolve properly through
-  // whichever real store is selected (or their own assigned store as a fallback), via that
-  // store's own productionHouseId link.
+  // The production house this entry tab's ledger belongs to, and the one handleSubmit saves
+  // entries under. A production incharge's comes from their assigned house (not their raw
+  // storeId, which can hold a store's id - see productionInchargeHouseId); for anyone else
+  // (operations manager/cluster head), resolve properly through whichever real store is
+  // selected (or their own assigned store as a fallback), via that store's own
+  // productionHouseId link.
   const resolvedProductionHouseId = useMemo(() => {
-    if (isProductionIncharge && context.user?.storeId) return context.user.storeId;
+    if (isProductionIncharge) {
+      const own = productionInchargeHouseId(context.user, context.stores || []);
+      if (own) return own;
+    }
     const candidateStoreId = selectedStoreId || context.user?.storeId;
     if (candidateStoreId) {
       const store = context.stores?.find(s => s.id === candidateStoreId);
       if (store?.productionHouseId) return store.productionHouseId;
     }
     return null;
-  }, [isProductionIncharge, context.user?.storeId, selectedStoreId, context.stores]);
+  }, [isProductionIncharge, context.user, selectedStoreId, context.stores]);
 
   // Pending entries for the approvals tab. Entries are matched on their production house (older
   // ones carry it only in storeId); operations managers and the cluster head see every house's.
@@ -401,8 +405,8 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
       approvalStatus: 'pending',
       approvedBy: null,
       approvedAt: null,
-      storeId: context.user?.storeId || undefined,
-      productionHouseId: context.user?.storeId || undefined // Production heads' storeId is actually their production house ID
+      storeId: resolvedProductionHouseId || context.user?.storeId || undefined,
+      productionHouseId: resolvedProductionHouseId || context.user?.storeId || undefined
     };
     
     console.log('🏭 Saving Production Data:');

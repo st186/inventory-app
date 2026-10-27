@@ -175,7 +175,7 @@ export function PersonPage({
         <>
           {sheet === 'role' && <EmployeeDetailsModal employee={person} onClose={close} onSave={() => onChanged()} />}
           <AssignSupervisorSheet person={person} open={sheet === 'supervisor'} onOpenChange={(o) => setSheet(o ? 'supervisor' : null)} onDone={onChanged} nameOf={nameOf} />
-          <ChangeStoreSheet person={person} open={sheet === 'store'} onOpenChange={(o) => setSheet(o ? 'store' : null)} onDone={onChanged} stores={stores} />
+          <ChangeStoreSheet person={person} open={sheet === 'store'} onOpenChange={(o) => setSheet(o ? 'store' : null)} onDone={onChanged} stores={stores} productionHouses={productionHouses} />
           <ManageAccessSheet person={person} open={sheet === 'access'} onOpenChange={(o) => setSheet(o ? 'access' : null)} onDone={onChanged} stores={stores} productionHouses={productionHouses} />
           <AssignDesignationSheet person={person} open={sheet === 'designation'} onOpenChange={(o) => setSheet(o ? 'designation' : null)} onDone={onChanged} />
         </>

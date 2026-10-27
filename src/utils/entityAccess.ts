@@ -75,6 +75,22 @@ export function getAssignedProductionHouseIds(user: UserLike, productionHouses: 
 }
 
 /**
+ * The one production house a production incharge's entries, ledger and wastage notes belong
+ * to. assignedProductionHouseIds wins; then storeId - mapped through the store's own
+ * productionHouseId when it holds a store's id. Team → Change store (stores only) once set a
+ * production incharge's storeId to the store their kitchen supplies, and for two weeks their
+ * production was filed under that store, so the production log showed those days as missing.
+ */
+export function productionInchargeHouseId(user: UserLike, stores: StoreLike[]): string | null {
+  if (!user) return null;
+  if (user.assignedProductionHouseIds && user.assignedProductionHouseIds.length > 0) {
+    return user.assignedProductionHouseIds[0];
+  }
+  if (!user.storeId) return null;
+  return stores.find((s) => s.id === user.storeId)?.productionHouseId || user.storeId;
+}
+
+/**
  * The effective store id for the current view: an explicitly selected store wins,
  * otherwise fall back to the user's default assigned store.
  */
