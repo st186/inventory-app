@@ -79,7 +79,7 @@ const NOTIFICATION_VIEW_MAP = {
   cash_topup_rejected: { view: 'sales' },
   paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
-  low_stock_alert: { view: 'stock-requests' },
+  low_stock_alert: { view: 'analytics', tab: 'production-requests' },
   loan_requested: { view: 'sales' },
   loan_approved: { view: 'sales' },
   loan_rejected: { view: 'sales' },
@@ -98,15 +98,15 @@ const NOTIFICATION_VIEW_MAP = {
   leave_approved: { view: 'attendance', tab: 'leave' },
   leave_rejected: { view: 'attendance', tab: 'leave' },
   attendance_reminder: { view: 'attendance', tab: 'timesheet' },
-  stock_request_new: { view: 'stock-requests', tab: 'pending-fulfillment' },
-  stock_request_fulfilled: { view: 'stock-requests' },
-  stock_request_partial: { view: 'stock-requests' },
-  stock_request_cancelled: { view: 'stock-requests' },
-  stock_request_reminder: { view: 'stock-requests' },
+  stock_request_new: { view: 'analytics', tab: 'production-requests' },
+  stock_request_fulfilled: { view: 'analytics', tab: 'production-requests' },
+  stock_request_partial: { view: 'analytics', tab: 'production-requests' },
+  stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
+  stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
   calendar_suggestions: { view: 'analytics', tab: 'trends' }, // weekly AI festival-day draft
-  fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' }, // covers both stock + production requests; lands on the fulfillment screen
+  fulfillment_reminder: { view: 'analytics', tab: 'production-requests' }, // covers both stock + production requests; lands on the fulfillment screen
   data_entry_reminder: { view: 'inventory' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },
@@ -138,7 +138,7 @@ function getNavigationTarget(payload) {
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {
-    return { view: 'stock-requests', tab: 'pending-fulfillment', highlightRequestId: data.relatedId };
+    return { view: 'analytics', tab: 'production-requests', highlightRequestId: data.relatedId };
   }
 
   const mapped = NOTIFICATION_VIEW_MAP[data.type];

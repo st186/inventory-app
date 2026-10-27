@@ -40,7 +40,8 @@ interface AnalyticsProps {
  context: InventoryContextType;
  selectedStoreId?: string | null;
  highlightRequestId?: string | null;
- // A notification can open a tab directly (only 'trends' so far - weekly festival-day check).
+ // A notification can open a tab directly: 'trends' (weekly festival-day check) or
+ // 'production-requests' (stock request notifications, since the old Stock Requests page went).
  initialTab?: string | null;
  onNavigateToManageItems?: () => void;
  // Production Management no longer has its own top-level nav entry - it's opened from
@@ -478,7 +479,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // page redesign).
  type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId ? 'production-requests' : initialTab === 'trends' ? 'trends' : 'overview'
+ highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : 'overview'
  );
  
  // Expense breakdown modal state
@@ -1521,6 +1522,11 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
 
  // Same for a tab opened from a notification while Analytics is already on screen.
  useEffect(() => {
+ if (initialTab === 'production-requests') {
+ setAnalyticsMode('store');
+ setActiveView('production-requests');
+ return;
+ }
  if (initialTab === 'trends') {
  setAnalyticsMode('store');
  setActiveView('trends');

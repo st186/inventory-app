@@ -4,10 +4,9 @@ import * as api from '../utils/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { InventoryDashboard } from './InventoryDashboard';
 import { InventoryAlerts } from './InventoryAlerts';
-import { EnhancedProductionRequests } from './EnhancedProductionRequests';
 import { ProductionHouseStockStatus } from './ProductionHouseStockStatus';
 import { UtilitiesStockStatus } from './UtilitiesStockStatus';
-import { Package, Bell, Send, Activity } from 'lucide-react';
+import { Package, Bell, Activity } from 'lucide-react';
 
 type Props = {
   context: InventoryContextType;
@@ -18,8 +17,10 @@ type Props = {
 export function AdvancedInventoryManagement({ context, stores, onNavigateToManageItems }: Props) {
   // The old "Reports" and "Rankings" tabs were removed: they computed sales and profit their own
   // way and disagreed with Analytics. Analytics and the Export page's reports cover both. The
-  // "Forecast" tab went too (made-up numbers; the real forecast is in Trends & Growth).
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'utilities' | 'alerts' | 'requests'>('dashboard');
+  // "Forecast" tab went too (made-up numbers; the real forecast is in Trends & Growth), and so did
+  // "Requests" (the old stock-request list production never saw; requests live in Analytics >
+  // Stock Requests - owner, 27 Oct 2026).
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'utilities' | 'alerts'>('dashboard');
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -39,7 +40,7 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
-          <TabsList className="grid grid-cols-5 w-full">
+          <TabsList className="grid grid-cols-4 w-full">
             <TabsTrigger value="dashboard" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Dashboard
@@ -55,10 +56,6 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
             <TabsTrigger value="alerts" className="flex items-center gap-2">
               <Bell className="h-4 w-4" />
               Alerts
-            </TabsTrigger>
-            <TabsTrigger value="requests" className="flex items-center gap-2">
-              <Send className="h-4 w-4" />
-              Requests
             </TabsTrigger>
           </TabsList>
 
@@ -84,11 +81,6 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
           {/* Alerts */}
           <TabsContent value="alerts">
             <InventoryAlerts context={context} stores={stores} />
-          </TabsContent>
-
-          {/* Requests */}
-          <TabsContent value="requests">
-            <EnhancedProductionRequests context={context} stores={stores} />
           </TabsContent>
         </Tabs>
       </div>

@@ -19,7 +19,6 @@ const RiderProfile = lazy(() => import('./components/RiderProfile').then(module 
 const StockOutLog = lazy(() => import('./components/StockOutLog').then(module => ({ default: module.StockOutLog })));
 const IncomingDeliveries = lazy(() => import('./components/dispatch/IncomingDeliveries').then(module => ({ default: module.IncomingDeliveries })));
 const RiderTrips = lazy(() => import('./components/RiderTrips').then(module => ({ default: module.RiderTrips })));
-const StockRequestManagement = lazy(() => import('./components/StockRequestManagement').then(module => ({ default: module.StockRequestManagement })));
 const AdvancedInventoryManagement = lazy(() => import('./components/AdvancedInventoryManagement').then(module => ({ default: module.AdvancedInventoryManagement })));
 const InventoryItemsManagement = lazy(() => import('./components/InventoryItemsManagement').then(module => ({ default: module.InventoryItemsManagement })));
 const BackupRestore = lazy(() => import('./components/BackupRestore').then(module => ({ default: module.BackupRestore })));
@@ -388,6 +387,12 @@ export default function App() {
  const [user, setUser] = useState<{ email: string; name: string; role: string; employeeId: string | null; accessToken: string; storeId?: string | null; designation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null; assignedStoreIds?: string[]; assignedProductionHouseIds?: string[] } | null>(null);
  // Bunny chat: which screen is open (so it can explain it) and whose language choice applies.
  useEffect(() => { setScreenPage(activeView); }, [activeView]);
+ // The old Stock Requests page is retired (owner, 27 Oct 2026): old links and notifications that
+ // still ask for it open Analytics > Stock Requests instead.
+ useEffect(() => {
+ if (activeView === 'stock-requests') { setHighlightTab('production-requests'); setActiveView('analytics'); }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [activeView]);
  useEffect(() => { setLanguageOwner(user?.employeeId || user?.email || null); }, [user?.employeeId, user?.email]);
  const [authError, setAuthError] = useState<string | null>(null);
  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -2522,8 +2527,6 @@ export default function App() {
  currentUserId={user.email}
  context={contextValue}
  />
- ) : activeView === 'stock-requests' && isAnyIncharge ? (
- <StockRequestManagement context={contextValue} stores={stores} initialTab={highlightTab} />
  ) : activeView === 'assets' && isAnyIncharge ? (
  <AssetsManagement context={contextValue} stores={stores} employees={employees} onRefreshStores={loadStores} />
  ) : activeView === 'advanced-inventory' && isManager ? (
@@ -3191,8 +3194,6 @@ export default function App() {
  />
  ) : activeView === 'production' && canViewProduction ? (
  <ProductionManagement context={contextValue} selectedStoreId={selectedStoreId} initialTab={highlightTab} onBack={() => setActiveView(preProductionManagementView)} />
- ) : activeView === 'stock-requests' ? (
- <StockRequestManagement context={contextValue} stores={stores} initialTab={highlightTab} />
  ) : activeView === 'advanced-inventory' ? (
  <AdvancedInventoryManagement 
  context={contextValue} 
