@@ -3,6 +3,9 @@
   import App from "./App.tsx";
   import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
   import { Toaster } from "./components/ui/sonner.tsx";
+  // Self-hosted Inter + Noto Sans Bengali/Devanagari (variable). Bengali and Devanagari files
+  // download only when that script is on screen; in the APK they ship inside the bundle.
+  import "./styles/fonts.css";
   import "./index.css";
 
   // Mounted once at the root - toast.success()/toast.error() calls throughout the app

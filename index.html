@@ -4,7 +4,11 @@
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Bhandar-IMS</title>
+      <meta name="theme-color" content="#FFFFFF" />
+      <title>Bunny Momos</title>
+      <!-- Latin Inter is on every screen, so it is fetched with the HTML. Bengali and Devanagari
+           load only when that text appears (unicode-range in src/styles/fonts.css). -->
+      <link rel="preload" as="font" type="font/woff2" crossorigin href="/node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2" />
       <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
       <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
       <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -43,7 +47,7 @@
     <body>
       <div id="root"></div>
       <!-- Must stay directly after #root: the CSS above hides it once #root has content. -->
-      <div id="boot-splash" role="progressbar" aria-label="Loading Bhandar-IMS">
+      <div id="boot-splash" role="progressbar" aria-label="Loading Bunny Momos">
         <img src="/bunny-logo.png" alt="" />
         <div class="bar"></div>
       </div>
