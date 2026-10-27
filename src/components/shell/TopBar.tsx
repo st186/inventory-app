@@ -3,7 +3,7 @@
 //   Tabs:   the tab's title, with its sub-tabs underneath
 //   Pages:  back arrow + the page's title
 // Right side: Ask Bunny (owner and managers), the bell with the unread count (opens the Inbox) and
-// the avatar (opens the Account sheet; in the sidebar on desktop).
+// the avatar (opens the Account sheet; on the rail / in the sidebar from 768 px).
 import type { ReactNode } from 'react';
 import { Bell, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../ui/page-header';
@@ -68,7 +68,7 @@ export function TopBar({
       <IconButton
         label={t('account.yours')}
         onClick={onAccount}
-        className="lg:hidden"
+        className="md:hidden"
         icon={<InitialsAvatar name={userName} size={32} />}
       />
     </>

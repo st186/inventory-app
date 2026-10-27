@@ -3,7 +3,8 @@
 // in components/shell (WP0b); screens load on first use from shell/destinations/screens.ts.
 import type { ProductionBatch } from './utils/batches';
 import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback } from 'react';
-import { AuthPage } from './components/AuthPage';
+// Sign-in is only for signed-out phones; the app reopens signed in, so its code loads on demand.
+const AuthPage = lazy(() => import('./components/AuthPage').then(module => ({ default: module.AuthPage })));
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { usePasswordPolicy, PasswordExpiryBanner } from './components/PasswordSecurity';
 import { setLanguageOwner } from './utils/bunnyLanguage';
@@ -692,8 +693,12 @@ export default function App() {
    }
   }
 
-  // Their home screen's code starts loading now, alongside the data (Analytics for managers and
-  // incharges, the rides screen for riders).
+  // Their Home's code starts loading now, alongside the data, and so does Analytics (the Insights
+  // tab, and the old landing page) for managers and incharges, the rides screen for riders.
+  if (person.role === 'cluster_head') import('./components/home/OwnerHome').catch(() => undefined);
+  else if (person.designation === 'rider') import('./components/home/RiderHome').catch(() => undefined);
+  else if (needsBusinessData(person)) import('./components/home/StaffHome').catch(() => undefined);
+  else import('./components/home/CrewHome').catch(() => undefined);
   if (needsBusinessData(person)) import('./components/Analytics').catch(() => undefined);
   else if (person.designation === 'rider') import('./components/RiderTrips').catch(() => undefined);
 
@@ -1139,6 +1144,8 @@ export default function App() {
  setUser(null);
  resetLoadedData();
  outbox.setOwner(null);
+ // The next person to sign in on this phone starts on their own Home, not this person's page.
+ window.history.replaceState(null, '', window.location.pathname);
  dataCache.invalidateAllCaches(); // Clear all caches on logout
  dataCache.setCacheUser(null);
  };
@@ -1769,11 +1776,13 @@ export default function App() {
  // Show auth page if not logged in
  if (!user || !nav) {
   return (
+   <Suspense fallback={<div className="min-h-dvh bg-bg" />}>
    <AuthPage
     onLogin={handleLogin}
     onSignup={handleSignup}
     error={authError}
    />
+   </Suspense>
   );
  }
 

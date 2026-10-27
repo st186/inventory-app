@@ -146,7 +146,7 @@ function ShellFrame(props: AppShellProps) {
 
   // The owner's Home carries the logo and name (wireframe Main); everyone else's says "Today" (StaffHome, CrewHome).
   const brandHome = isHome && nav.kind === 'owner';
-  const title = brandHome ? '' : isTabRoot && tab ? t(tab.label) : t(dest.label);
+  const title = brandHome ? '' : isHome || !(isTabRoot && tab) ? t(dest.label) : t(tab.label);
   const subTabs = isTabRoot && tab && tab.subs.length > 1 ? tab.subs.map((p) => ({ path: p, label: t(nav.destinations[p].label) })) : undefined;
   const showBack = !isHome && !isTabRoot;
 

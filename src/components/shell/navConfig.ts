@@ -262,7 +262,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   const homeSpec: ScreenSpec = kind === 'rider'
     ? { screen: 'Home', home: 'rider', embeds: ridersSpec }
     : { screen: 'Home', home: kind === 'owner' ? 'owner' : kind === 'crew' ? 'crew' : 'staff' };
-  add('home', kind === 'rider' || kind === 'crew' || p.shell === 'staff' ? 'nav.today' : 'nav.home', 'home', homeSpec,
+  add('home', 'nav.today', 'home', homeSpec,
     kind === 'rider' ? L('riders', ridersSpec) : null, kind === 'rider' ? 'riders' : 'analytics');
   add('inbox', 'nav.inbox', 'inbox', { screen: 'Inbox' }, null);
 
