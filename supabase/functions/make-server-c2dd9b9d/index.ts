@@ -552,6 +552,24 @@ const kvWithRetry = {
   mdel: (keys: string[]) => retryWithBackoff(() => kv.mdel(keys), `kv.mdel`)
 };
 
+// ---- Work after the response (speed work, 28 Oct 2026) ----
+// Notifications and pushes don't change what a save answers, so the slow write routes hand
+// them over here and reply at once (a POST /inventory used to take 3.5 s, mostly this; and the
+// longer a save stays open on a weak signal, the likelier it drops). EdgeRuntime.waitUntil keeps
+// the server copy alive until the work is done; where it doesn't exist the work is awaited as
+// before. Failures are logged, never thrown - the save itself has already succeeded.
+function afterResponse(label: string, work: () => Promise<unknown>): Promise<void> {
+  const task = Promise.resolve()
+    .then(work)
+    .then(() => undefined, (error) => console.log(`${label} failed (after the response):`, error instanceof Error ? error.message : String(error)));
+  const runtime = (globalThis as any).EdgeRuntime;
+  if (runtime && typeof runtime.waitUntil === 'function') {
+    runtime.waitUntil(task);
+    return Promise.resolve();
+  }
+  return task;
+}
+
 // ---- Login check (speed work, 28 Oct 2026) ----
 // Each answer is kept per server copy for up to a minute (never past the token's own expiry),
 // and the login gate, the route and anything else in the same request share one check while it
@@ -1099,39 +1117,34 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     
     await kvWithRetry.set(key, inventoryItem);
     console.log('✅ [INVENTORY POST] Inventory Purchase Record saved successfully!');
-    
-    // Verify it was saved by reading it back
-    const verifyItem = await kvWithRetry.get(key);
-    console.log('🔍 [INVENTORY POST] Verification read:', verifyItem ? 'SUCCESS - Item found' : 'FAILED - Item not found!');
-    if (verifyItem) {
-      console.log('🔍 [INVENTORY POST] Verified item data:', { id: verifyItem.id, date: verifyItem.date, itemName: verifyItem.itemName });
-    }
+    // (A read-back of the row just written, for a log line, used to follow here: removed.)
 
     await cascadeProductionCashForExpense(inventoryItem);
-    if (inventoryItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(inventoryItem, userName || userEmail);
-    }
 
-    // Notify cluster heads about inventory data entry
-    console.log('📢 [INVENTORY POST] Creating notifications for cluster heads...');
-    const clusterHeads = await getAllClusterHeads();
-    console.log('📢 [INVENTORY POST] Found cluster heads:', clusterHeads.length);
+    // Notify the production incharge (bill paid from production cash) and cluster heads about
+    // the inventory data entry - after the response (afterResponse).
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
-        const notificationResult = await notifyUser(
-          clusterHead.authUserId,
-          'inventory_logged',
-          'Inventory Data Logged',
-          `${managerName} logged inventory data for ${item.date}`,
-          itemId,
-          item.date
-        );
-        console.log('📢 [INVENTORY POST] Notification result for', clusterHead.name, ':', notificationResult ? 'success' : 'failed (non-critical)');
+    await afterResponse('Inventory notifications', async () => {
+      if (inventoryItem.paidFromProductionHouseId) {
+        await notifyStoreBillPaidFromProductionCash(inventoryItem, userName || userEmail);
       }
-    }
-    
+      const clusterHeads = await getAllClusterHeads();
+      console.log('📢 [INVENTORY POST] Notifying cluster heads:', clusterHeads.length);
+      for (const clusterHead of clusterHeads) {
+        if (clusterHead.authUserId) {
+          const notificationResult = await notifyUser(
+            clusterHead.authUserId,
+            'inventory_logged',
+            'Inventory Data Logged',
+            `${managerName} logged inventory data for ${item.date}`,
+            itemId,
+            item.date
+          );
+          console.log('📢 [INVENTORY POST] Notification result for', clusterHead.name, ':', notificationResult ? 'success' : 'failed (non-critical)');
+        }
+      }
+    });
+
     console.log('✅ [INVENTORY POST] Complete! Returning success response');
     return c.json({ success: true, item: inventoryItem });
   } catch (error) {
@@ -1192,7 +1205,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, inventoryItem);
     if (inventoryItem.paidFromProductionHouseId && inventoryItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(inventoryItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(inventoryItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: inventoryItem });
@@ -1341,7 +1354,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
 
     await cascadeProductionCashForExpense(overheadItem);
     if (overheadItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: overheadItem });
@@ -1400,7 +1413,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, overheadItem);
     if (overheadItem.paidFromProductionHouseId && overheadItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: overheadItem });
@@ -1534,7 +1547,7 @@ app.post('/make-server-c2dd9b9d/fixed-costs', async (c) => {
 
     await cascadeProductionCashForExpense(fixedCostItem);
     if (fixedCostItem.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: fixedCostItem });
@@ -1585,7 +1598,7 @@ app.put('/make-server-c2dd9b9d/fixed-costs/:id', async (c) => {
 
     await cascadeProductionCashForExpense(existing, fixedCostItem);
     if (fixedCostItem.paidFromProductionHouseId && fixedCostItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
-      await notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email);
+      await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(fixedCostItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
 
     return c.json({ success: true, item: fixedCostItem });
@@ -1760,22 +1773,24 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
     }
 
     // Notify cluster heads and this store's operations manager(s) about the sales entry
-    const clusterHeads = await getAllClusterHeads();
-    const opsManagers = await getOperationsManagers(storeId);
+    // (after the response - see afterResponse).
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-
-    for (const recipient of [...clusterHeads, ...opsManagers]) {
-      if (recipient.authUserId) {
-        await notifyUser(
-          recipient.authUserId,
-          'sales_logged',
-          'Sales Data Logged',
-          `${managerName} logged sales data for ${item.date}`,
-          itemId,
-          item.date
-        );
+    await afterResponse('Sales notifications', async () => {
+      const clusterHeads = await getAllClusterHeads();
+      const opsManagers = await getOperationsManagers(storeId);
+      for (const recipient of [...clusterHeads, ...opsManagers]) {
+        if (recipient.authUserId) {
+          await notifyUser(
+            recipient.authUserId,
+            'sales_logged',
+            'Sales Data Logged',
+            `${managerName} logged sales data for ${item.date}`,
+            itemId,
+            item.date
+          );
+        }
       }
-    }
+    });
 
     // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
     // version, not the one from before it ran.
@@ -1865,9 +1880,10 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
     // Notify this store's operations manager(s) that the store incharge logged/confirmed
     // today's sales - the common path now that pos-sync creates the day's record first and
     // the store incharge edits/confirms it via this route, not the POST route above.
-    try {
+    // After the response (afterResponse), which also logs any failure.
+    const managerName = authResult.user.user_metadata?.name || authResult.user.email;
+    await afterResponse('Notifying operations manager of sales update', async () => {
       const opsManagers = await getOperationsManagers(salesItem.storeId);
-      const managerName = authResult.user.user_metadata?.name || authResult.user.email;
       for (const opsManager of opsManagers) {
         if (opsManager.authUserId) {
           await notifyUser(
@@ -1880,9 +1896,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
           );
         }
       }
-    } catch (notifyError) {
-      console.error('Error notifying operations manager of sales update:', notifyError);
-    }
+    });
 
     // The cascade above has just rewritten this row's actualPaytmBalance - hand back that
     // version, not the one from before it ran (the form would otherwise show a stale balance).
@@ -1984,23 +1998,24 @@ app.post('/make-server-c2dd9b9d/sales/:id/request-approval', async (c) => {
 
     await kv.set(key, updatedItem);
     
-    // Create notifications for all cluster heads
-    const clusterHeads = await getAllClusterHeads();
+    // Create notifications for all cluster heads (after the response - see afterResponse)
     const managerName = authResult.user.user_metadata?.name || authResult.user.email;
-    
-    for (const clusterHead of clusterHeads) {
-      if (clusterHead.authUserId) {
-        await notifyUser(
-          clusterHead.authUserId,
-          'discrepancy_request',
-          'Cash Discrepancy Approval Needed',
-          `${managerName} requests approval for ₹${Math.abs(requestedOffset).toFixed(2)} discrepancy on ${existingSale.date}`,
-          itemId,
-          existingSale.date
-        );
+    await afterResponse('Discrepancy request notifications', async () => {
+      const clusterHeads = await getAllClusterHeads();
+      for (const clusterHead of clusterHeads) {
+        if (clusterHead.authUserId) {
+          await notifyUser(
+            clusterHead.authUserId,
+            'discrepancy_request',
+            'Cash Discrepancy Approval Needed',
+            `${managerName} requests approval for ₹${Math.abs(requestedOffset).toFixed(2)} discrepancy on ${existingSale.date}`,
+            itemId,
+            existingSale.date
+          );
+        }
       }
-    }
-    
+    });
+
     return c.json({ success: true, item: updatedItem });
   } catch (error) {
     console.log('Error requesting approval:', error);
@@ -2055,16 +2070,16 @@ app.post('/make-server-c2dd9b9d/sales/:id/approve-discrepancy', async (c) => {
 
     await kv.set(key, approvedItem);
     
-    // Notify the manager who submitted the sale
+    // Notify the manager who submitted the sale (after the response - see afterResponse)
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await notifyUser(
+    await afterResponse('Discrepancy approved notification', () => notifyUser(
       existingSale.userId,
       'discrepancy_approved',
       'Discrepancy Approved ✓',
       `${clusterHeadName} approved your cash discrepancy of ₹${Math.abs(existingSale.requestedOffset).toFixed(2)} for ${existingSale.date}`,
       itemId,
       existingSale.date
-    );
+    ));
     
     return c.json({ success: true, item: approvedItem });
   } catch (error) {
@@ -2117,16 +2132,16 @@ app.post('/make-server-c2dd9b9d/sales/:id/reject-discrepancy', async (c) => {
 
     await kv.set(key, rejectedItem);
     
-    // Notify the manager who submitted the sale
+    // Notify the manager who submitted the sale (after the response - see afterResponse)
     const clusterHeadName = authResult.user.user_metadata?.name || authResult.user.email;
-    await notifyUser(
+    await afterResponse('Discrepancy rejected notification', () => notifyUser(
       existingSale.userId,
       'discrepancy_rejected',
       'Discrepancy Rejected ✗',
       `${clusterHeadName} rejected your cash discrepancy request for ${existingSale.date}. Reason: ${reason}. You must pay the difference.`,
       itemId,
       existingSale.date
-    );
+    ));
     
     return c.json({ success: true, item: rejectedItem });
   } catch (error) {
@@ -6820,28 +6835,31 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
     // Route the approval notification to the employee's own approver - their incharge or
     // manager (see approversFor). Cluster heads are only a fallback for someone with
     // neither on file - this route used to hardcode cluster heads unconditionally.
+    // Sent after the response (afterResponse).
     if (timesheet.status === 'pending') {
-      // attendance-employee: is an empty/legacy collection - real employee records
-      // (with the actual name and authUserId) live under unified-employee:.
-      const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
-      const employeeName = employee?.name || timesheet.employeeId;
+      await afterResponse('Timesheet notifications', async () => {
+        // attendance-employee: is an empty/legacy collection - real employee records
+        // (with the actual name and authUserId) live under unified-employee:.
+        const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
+        const employeeName = employee?.name || timesheet.employeeId;
 
-      const recipients = await approversFor(employee);
+        const recipients = await approversFor(employee);
 
-      const timeSummary = formatTimesheetSummary(savedTimesheet);
-      for (const recipient of recipients) {
-        if (recipient.authUserId) {
-          await notifyUser(
-            recipient.authUserId,
-            'timesheet_pending',
-            'Timesheet Approval Needed',
-            `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
-            id,
-            timesheet.date,
-            { recordType: 'timesheet', recordId: id }
-          );
+        const timeSummary = formatTimesheetSummary(savedTimesheet);
+        for (const recipient of recipients) {
+          if (recipient.authUserId) {
+            await notifyUser(
+              recipient.authUserId,
+              'timesheet_pending',
+              'Timesheet Approval Needed',
+              `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
+              id,
+              timesheet.date,
+              { recordType: 'timesheet', recordId: id }
+            );
+          }
         }
-      }
+      });
     }
 
     return c.json({ success: true, id });
@@ -6883,30 +6901,33 @@ app.post('/make-server-c2dd9b9d/timesheets/bulk', async (c) => {
         byEmployee.get(t.employeeId)!.push(t);
       }
 
-      for (const [employeeId, entries] of byEmployee) {
-        const employee = await kv.get(`unified-employee:${employeeId}`);
-        const employeeName = employee?.name || employeeId;
+      // Sent after the response (afterResponse).
+      await afterResponse('Bulk timesheet notifications', async () => {
+        for (const [employeeId, entries] of byEmployee) {
+          const employee = await kv.get(`unified-employee:${employeeId}`);
+          const employeeName = employee?.name || employeeId;
 
-        const recipients = await approversFor(employee);
+          const recipients = await approversFor(employee);
 
-        const sortedDates = entries.map((t: any) => t.date).sort();
-        const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
-        const firstId = entries[0].id;
+          const sortedDates = entries.map((t: any) => t.date).sort();
+          const dateRangeLabel = entries.length > 1 ? `${sortedDates[0]} to ${sortedDates[sortedDates.length - 1]} (${entries.length} days)` : sortedDates[0];
+          const firstId = entries[0].id;
 
-        for (const recipient of recipients) {
-          if (recipient.authUserId) {
-            await notifyUser(
-              recipient.authUserId,
-              'timesheet_pending',
-              'Timesheet Approval Needed',
-              `${employeeName} (${employeeId}) submitted timesheet: ${dateRangeLabel}`,
-              firstId,
-              sortedDates[0],
-              { recordType: 'timesheet', recordId: firstId }
-            );
+          for (const recipient of recipients) {
+            if (recipient.authUserId) {
+              await notifyUser(
+                recipient.authUserId,
+                'timesheet_pending',
+                'Timesheet Approval Needed',
+                `${employeeName} (${employeeId}) submitted timesheet: ${dateRangeLabel}`,
+                firstId,
+                sortedDates[0],
+                { recordType: 'timesheet', recordId: firstId }
+              );
+            }
           }
         }
-      }
+      });
     }
 
     return c.json({ success: true, count: timesheets.length });
@@ -7144,25 +7165,28 @@ app.post('/make-server-c2dd9b9d/leaves', async (c) => {
     // escalation threshold) goes to the employee's own approver - incharge or manager
     // (approversFor), matching who can act on it in the Approve Leaves screen. Advance
     // leave past the threshold is escalated straight to the cluster head instead.
+    // Sent after the response (afterResponse).
     if (leave.status === 'pending') {
-      // attendance-employee: is a legacy/unused collection - real employee records
-      // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
-      const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
-      const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
-      const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
+      await afterResponse('Leave notifications', async () => {
+        // attendance-employee: is a legacy/unused collection - real employee records
+        // (name, managerId, authUserId) live under unified-employee:, keyed directly by employeeId.
+        const applicant = await kv.get(`unified-employee:${leave.employeeId}`);
+        const employeeLabel = applicant?.name ? `${applicant.name} (${leave.employeeId})` : leave.employeeId;
+        const escalateToClusterHead = leave.isAdvanceLeave && leave.approverRole === 'cluster_head';
 
-      const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
-      const message = escalateToClusterHead
-        ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
-        : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
+        const title = escalateToClusterHead ? 'Advance Leave Approval Needed' : 'Leave Approval Needed';
+        const message = escalateToClusterHead
+          ? `${employeeLabel} requested ${leave.advanceDaysRequested || ''} day(s) of advance leave starting ${leave.leaveDate} - escalated for cluster head approval`
+          : `${employeeLabel} applied for leave on ${leave.leaveDate}`;
 
-      const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
+        const recipients = escalateToClusterHead ? await getAllClusterHeads() : await approversFor(applicant);
 
-      for (const recipient of recipients) {
-        if (recipient.authUserId) {
-          await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate, { recordType: 'leave', recordId: id });
+        for (const recipient of recipients) {
+          if (recipient.authUserId) {
+            await notifyUser(recipient.authUserId, 'leave_pending', title, message, id, leave.leaveDate, { recordType: 'leave', recordId: id });
+          }
         }
-      }
+      });
     }
 
     return c.json({ success: true, id });
@@ -9785,7 +9809,7 @@ app.post('/make-server-c2dd9b9d/notifications/auto-cleanup', async (c) => {
 // existing call sites can gain push notifications without restructuring.
 async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | null> {
   try {
-    const allUsers = await kv.getByPrefix('unified-employee:');
+    const allUsers = await staffForNotifications();
     const match = allUsers.find((u: any) => u.authUserId === authUserId);
     return match?.employeeId || null;
   } catch (error) {
@@ -9869,16 +9893,30 @@ async function notifyUser(
   return notificationResult;
 }
 
+// Staff records for working out who to notify, read once a minute per server copy: one save
+// used to scan every employee record (Aadhaar photos included) once per recipient. Callers get
+// copies, so nothing can change the shared list.
+const NOTIFY_STAFF_TTL_MS = 60_000;
+let notifyStaff: { at: number; list: Promise<any[]> } | null = null;
+async function staffForNotifications(): Promise<any[]> {
+  if (!notifyStaff || Date.now() - notifyStaff.at > NOTIFY_STAFF_TTL_MS) {
+    const list = kv.getByPrefix('unified-employee:');
+    notifyStaff = { at: Date.now(), list };
+    list.catch(() => { if (notifyStaff?.list === list) notifyStaff = null; });
+  }
+  return (await notifyStaff.list).map((u: any) => ({ ...u }));
+}
+
 // Helper to get all cluster heads
 async function getAllClusterHeads() {
-  const allUsers = await kv.getByPrefix('unified-employee:');
+  const allUsers = await staffForNotifications();
   return allUsers.filter((u: any) => u.role === 'cluster_head');
 }
 
 // Helper to get operations managers (excluding store/production incharges)
 async function getOperationsManagers(storeId?: string) {
-  const allUsers = await kv.getByPrefix('unified-employee:');
-  const managers = allUsers.filter((u: any) => 
+  const allUsers = await staffForNotifications();
+  const managers = allUsers.filter((u: any) =>
     u.role === 'manager' && 
     u.designation !== 'store_incharge' && 
     u.designation !== 'production_incharge'
