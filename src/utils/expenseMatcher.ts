@@ -38,6 +38,9 @@ export interface ExpenseCandidate {
 // Real descriptions seen in this store's own data that don't match their category's
 // display name (a store incharge types "Toto", not "Goods Transportation Cost").
 const OVERHEAD_SYNONYMS: { label: string; category: string; entity: ExpenseEntity }[] = [
+  { label: 'AI Credits', category: 'ai_credits', entity: 'both' },
+  { label: 'Claude Credits', category: 'ai_credits', entity: 'both' },
+  { label: 'Anthropic', category: 'ai_credits', entity: 'both' },
   { label: 'Toto', category: 'transportation', entity: 'both' },
   { label: 'Rapido', category: 'transportation', entity: 'both' },
   { label: 'Petrol', category: 'fuel', entity: 'both' },

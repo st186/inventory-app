@@ -21,6 +21,8 @@ type Kv = {
   set: (key: string, value: any) => Promise<any>;
   del: (key: string) => Promise<any>;
   getByPrefix: <T = any>(prefix: string) => Promise<T[]>;
+  // Paginated prefix read (plain getByPrefix stops at 1000 rows; purchases are past 4,000).
+  getAllByPrefix?: (prefix: string) => Promise<any[]>;
 };
 type Deps = {
   kv: Kv;
@@ -29,6 +31,8 @@ type Deps = {
   // Push + in-app notification to every cluster head; returns how many were sent.
   notifyClusterHeads?: (type: string, title: string, message: string, relatedDate?: string) => Promise<number>;
 };
+
+const allRows = (deps: Deps, prefix: string) => (deps.kv.getAllByPrefix ? deps.kv.getAllByPrefix(prefix) : deps.kv.getByPrefix<any>(prefix));
 
 // Haiku by default (owner, 27 Oct 2026): about 40x cheaper than Opus. Set the AI_MODEL secret
 // to claude-sonnet-5-5 or claude-opus-5-5 for better writing at higher cost.
@@ -55,6 +59,24 @@ const WEB_SEARCH_TOOL = /haiku/.test(AI_MODEL) ? 'web_search_20250305' : 'web_se
 const INVOICE_SCAN_ON = Deno.env.get('AI_INVOICE_SCAN') !== 'off';
 
 const EFFECTS: DayEffect[] = ['normal', 'closed', 'low_nonveg', 'busy', 'quiet'];
+
+// How costs count in profit - mirrors src/utils/inventoryData.ts (SPREAD_MONTHS, SPREAD_DAYS,
+// FINANCING_KEYS, INVENTORY_CATEGORIES). Keep the two in step.
+const SPREAD_MONTHS: Record<string, number> = { asset_kitchen_equipment: 36, asset_furniture: 36, asset_electrical: 36, asset_vehicle: 36, software_subscription: 12 };
+const SPREAD_DAYS: Record<string, number> = { packaging_bulk: 120 };
+const FINANCING_CATEGORIES = new Set(['vehicle_emi']);
+const CATEGORY_ALIASES: Record<string, string> = { equipment_smallwares: 'asset_kitchen_equipment', equipments: 'asset_kitchen_equipment' };
+const FOOD_CATEGORIES = new Set(['fresh_produce', 'staples', 'spices_seasonings', 'bread_buns', 'dairy', 'meat', 'packaging', 'packaging_bulk', 'beverages']);
+
+// The part of a purchase spread evenly over `spanDays` from its date that falls inside [from, to].
+function spreadShare(amount: number, date: string, spanDays: number, from: string, to: string) {
+  const day = 86400000;
+  const start = Date.parse(`${date}T00:00:00Z`);
+  const end = start + spanDays * day;
+  const a = Math.max(start, Date.parse(`${from}T00:00:00Z`));
+  const b = Math.min(end, Date.parse(`${to}T00:00:00Z`) + day);
+  return b > a ? amount * ((b - a) / day) / spanDays : 0;
+}
 const PRODUCTION_KEYS: Record<string, MomoKey> = {
   chickenMomos: 'chicken', chickenCheeseMomos: 'chickenCheese', vegMomos: 'veg', cheeseCornMomos: 'cheeseCorn',
   paneerMomos: 'paneer', vegKurkureMomos: 'vegKurkure', chickenKurkureMomos: 'chickenKurkure',
@@ -100,8 +122,8 @@ const stockOutType = (item: string): MomoKey | null => {
 // Daily revenue (counter + POS online) and momos sold per type, for one store or all stores.
 async function loadDays(kv: Kv, storeId: string | null, from: string, to: string): Promise<DayRecord[]> {
   const [sales, salesData, stockOuts] = await Promise.all([
-    kv.getByPrefix<any>('sales:'),
-    kv.getByPrefix<any>('sales_data_'),
+    kv.getAllByPrefix ? kv.getAllByPrefix('sales:') : kv.getByPrefix<any>('sales:'),
+    kv.getAllByPrefix ? kv.getAllByPrefix('sales_data_') : kv.getByPrefix<any>('sales_data_'),
     kv.getByPrefix<any>(storeId ? `stock-out:${storeId}:` : 'stock-out:'),
   ]);
   const inScope = (r: any) => r?.date && r.date >= from && r.date <= to && (!storeId || r.storeId === storeId);
@@ -309,7 +331,9 @@ const VOICE_PROMPT = `You turn one spoken sentence from staff at Bunny Momos, a 
 
 Numbers: Bengali digits ০১২৩৪৫৬৭৮৯ are 0-9. Number words: এক 1, দুই/দু 2, তিন 3, চার 4, পাঁচ 5, ছয় 6, সাত 7, আট 8, নয় 9, দশ 10, বিশ 20, পঞ্চাশ 50, একশো/শো 100, হাজার 1000 (তিন হাজার চারশো = 3400); দেড় 1.5, আড়াই 2.5, সাড়ে = plus a half (সাড়ে তিন = 3.5, সাড়ে তিনশো = 350); পোয়া = 250 g. টাকা / taka / rupees = rupees. কেজি/kilo = kg, গ্রাম = g, লিটার = L, পিস/টা = pieces, আঁটি/bundle = bundle, প্যাকেট = packet.
 
-Only fill what was actually said; leave everything else null. Never calculate one value from another.`;
+Packs: "5 burger packs each having 4 burgers at 200" means packs 5, perPack 4, unit pcs, quantity 20. A price said after the whole line ("at 200", "200 taka diye") is the TOTAL for the line; it is per pack only when they say each / per / প্রতি / করে / "packet 200 kore".
+
+Only fill what was actually said; leave everything else null. Apart from quantity = packs x perPack, never calculate one value from another.`;
 
 async function callClaude(deps: Deps, opts: {
   purpose: string;
@@ -432,7 +456,7 @@ const ASK_TOOLS = [
   { name: 'get_wastage', description: 'Store momo wastage per day in a date range, with reason codes.', input_schema: dateRange },
   { name: 'get_store_requests', description: 'Stock requests from the store to the production house in a date range: status and pieces sent per type.', input_schema: dateRange },
   { name: 'get_production', description: 'Momos made per type per day at the production house in a date range.', input_schema: dateRange },
-  { name: 'get_expenses', description: 'Expense totals by category (stock purchases, overheads, fixed costs) in a date range. No individual salaries.', input_schema: dateRange },
+  { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries.', input_schema: dateRange },
 ];
 
 async function runTool(deps: Deps, storeId: string | null, name: string, input: any) {
@@ -473,15 +497,50 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
         .filter((p) => p.date >= from && p.date <= to)
         .map((p) => ({ date: p.date, made: Object.fromEntries(Object.entries(PRODUCTION_KEYS).map(([k, t]) => [t, Number(p[k]?.final ?? p[k]) || 0])) }));
     case 'get_expenses': {
-      const [inv, ovh, fix] = await Promise.all([deps.kv.getByPrefix<any>('inventory:'), deps.kv.getByPrefix<any>('overhead:'), deps.kv.getByPrefix<any>('fixedcost:')]);
-      const sum = (rows: any[], amountKey: string) => {
-        const out: Record<string, number> = {};
-        for (const r of rows.filter((x) => x.date >= from && x.date <= to && (!storeId || !x.storeId || x.storeId === storeId || x.entityType === 'production_house'))) {
-          out[r.category || 'other'] = Math.round((out[r.category || 'other'] || 0) + (Number(r[amountKey]) || 0));
+      const [inv, ovh, fix] = await Promise.all([allRows(deps, 'inventory:'), allRows(deps, 'overhead:'), allRows(deps, 'fixedcost:')]);
+      const inScope = (x: any) => !storeId || !x.storeId || x.storeId === storeId || x.entityType === 'production_house';
+      const rows = [
+        ...inv.map((r: any) => ({ kind: 'purchase', category: r.category || 'other', date: r.date, amount: Number(r.totalCost) || 0, storeId: r.storeId, entityType: r.entityType })),
+        ...ovh.filter((o: any) => o.category !== 'personal_expense').map((r: any) => ({ kind: 'overhead', category: r.category || 'other', date: r.date, amount: Number(r.amount) || 0, storeId: r.storeId, entityType: r.entityType })),
+        ...fix.map((r: any) => ({ kind: 'fixed', category: r.category || 'other', date: r.date, amount: Number(r.amount) || 0, storeId: r.storeId, entityType: r.entityType })),
+      ].filter((r) => typeof r.date === 'string' && inScope(r)).map((r) => ({ ...r, category: CATEGORY_ALIASES[r.category] || r.category }));
+      const add = (out: Record<string, number>, k: string, v: number) => { out[k] = Math.round((out[k] || 0) + v); };
+      const cashSpent: Record<string, number> = {};
+      const profitCost: Record<string, number> = {};
+      const oneTimePurchases: { date: string; category: string; amount: number; monthlyCostInProfit: number }[] = [];
+      let loanRepayments = 0;
+      for (const r of rows) {
+        const inRange = r.date >= from && r.date <= to;
+        if (FINANCING_CATEGORIES.has(r.category)) {
+          if (inRange) loanRepayments += r.amount;
+          continue;
         }
-        return out;
+        if (inRange) add(cashSpent, r.category, r.amount);
+        const months = SPREAD_MONTHS[r.category];
+        const days = SPREAD_DAYS[r.category];
+        if (months || days) {
+          const share = spreadShare(r.amount, r.date, days || months! * 30.44, from, to);
+          if (share > 0) add(profitCost, r.category, share);
+          if (inRange && months) oneTimePurchases.push({ date: r.date, category: r.category, amount: Math.round(r.amount), monthlyCostInProfit: Math.round(r.amount / months) });
+        } else if (inRange) {
+          add(profitCost, r.category, r.amount);
+        }
+      }
+      const foodAndPackaging = Object.entries(profitCost).filter(([k]) => FOOD_CATEGORIES.has(k)).reduce((t, [, v]) => t + v, 0);
+      return {
+        from, to,
+        costsCountedInProfit: profitCost,
+        foodAndPackagingCostInProfit: Math.round(foodAndPackaging),
+        cashSpentByCategory: cashSpent,
+        oneTimePurchasesInRange: oneTimePurchases,
+        loanRepaymentsInRange: Math.round(loanRepayments),
+        notes: [
+          'costsCountedInProfit is what Analytics and the profit figures use: equipment, furniture, electricals and the scooter are spread over 36 months, the software subscription over 12 months, bulk packaging over 120 days.',
+          'cashSpentByCategory is money paid out in the range. One-time purchases (equipment, the scooter) are not a cost of the month they were paid - quote their monthlyCostInProfit instead.',
+          'Loan repayments (vehicle EMI) are cash out but not a profit cost.',
+          'Salaries are not included here.',
+        ],
       };
-      return { stockPurchases: sum(inv, 'totalCost'), overheads: sum(ovh.filter((o) => o.category !== 'personal_expense'), 'amount'), fixedCosts: sum(fix, 'amount') };
     }
     default:
       return { error: `Unknown tool ${name}` };
@@ -849,12 +908,15 @@ ${JSON.stringify({
             type: 'array',
             items: {
               type: 'object', additionalProperties: false,
-              required: ['name', 'quantity', 'unit', 'amount'],
+              required: ['name', 'quantity', 'unit', 'packs', 'perPack', 'amount', 'pricePerPack'],
               properties: {
-                name: { type: 'string', description: 'The item in plain English as a shop list would name it: Chicken, Onion, Coriander Leaves, Maida, Coke' },
-                quantity: num,
+                name: { type: 'string', description: 'The item in plain English as a shop list would name it: Chicken, Onion, Coriander Leaves, Maida, Coke, Burger' },
+                quantity: { ...num, description: 'Total quantity in `unit` (for packs: packs x pieces per pack)' },
                 unit: { anyOf: [{ type: 'string', enum: ['kg', 'g', 'L', 'mL', 'pcs', 'bundle', 'packet'] }, { type: 'null' }] },
-                amount: { ...num, description: 'Total rupees paid for this line (not the price per unit)' },
+                packs: { ...num, description: 'Number of packs / packets / boxes / crates / cartons when bought that way ("5 burger packs" -> 5), else null' },
+                perPack: { ...num, description: 'Pieces in each pack ("each having 4 burgers" -> 4), else null' },
+                amount: { ...num, description: 'Total rupees paid for this line. If only a per-pack or per-piece price was said, null' },
+                pricePerPack: { ...num, description: 'Price of ONE pack or piece, only when they said each / per / প্রতি / করে / ta ("200 each"), else null' },
               },
             },
           },

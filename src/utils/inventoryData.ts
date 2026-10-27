@@ -107,6 +107,8 @@ export const OVERHEAD_CATEGORY_META: Record<string, { label: string; group: Over
   hygiene_ppe: { label: '🧤 Hygiene & Safety (Gloves, Caps)', group: 'operating' },
   license: { label: '📜 Licence & Paperwork', group: 'operating' },
   professional_fees: { label: '💼 Professional Fees (CA, GST, Legal)', group: 'operating' },
+  // Claude credits for the app's AI (Bunny chat, voice entry, invoice scan, photo scoring).
+  ai_credits: { label: '🤖 AI Credits (Claude / Anthropic)', group: 'operating' },
   water_jar: { label: '💧 Water Jar', group: 'operating' },
   vehicle_maintenance: { label: '🛞 Vehicle Maintenance (Tyres, Servicing)', group: 'operating' },
   donations_community: { label: '🙏 Donations & Community Contributions', group: 'operating' },
@@ -142,7 +144,7 @@ export const OVERHEAD_CATEGORIES: Record<string, string> = Object.fromEntries(
 
 // Categories only the cluster head may log (UI hides them for everyone else and the server
 // rejects them) - existing entries stay visible and keep counting in analytics.
-export const RESTRICTED_OVERHEAD_CATEGORIES: readonly string[] = ['fuel', 'losses_writeoffs'];
+export const RESTRICTED_OVERHEAD_CATEGORIES: readonly string[] = ['fuel', 'losses_writeoffs', 'ai_credits'];
 
 export const MEAL_CATEGORIES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'evening_snacks'];
 
@@ -156,6 +158,7 @@ export const SELECTABLE_OVERHEAD_CATEGORY_KEYS: readonly string[] = Object.keys(
 // month of store expense logging, not every operating-cost category the business has
 // ever needed applies to a single store's daily running costs.
 export const STORE_OVERHEAD_CATEGORY_KEYS: readonly string[] = [
+  'ai_credits',
   'transportation',
   'travel',
   'fuel',

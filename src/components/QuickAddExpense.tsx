@@ -258,21 +258,37 @@ export function QuickAddExpense({
         toast.error('No item found in that. Try: "3 kg chicken 600 taka"');
         return;
       }
-      if (first.amount !== null) setAmount(String(first.amount));
+      // Packs ("5 burger packs of 4"): filled as a bundle - packs x pieces per pack.
+      const packs = first.packs && first.packs > 0 ? first.packs : null;
+      const perPack = first.perPack && first.perPack > 0 ? first.perPack : null;
+      const total = first.amount ?? (first.pricePerPack != null ? first.pricePerPack * (packs || first.quantity || 1) : null);
+      if (total !== null) setAmount(String(Math.round(total * 100) / 100));
       const top = searchExpenseCandidates(first.name, candidates, 1)[0];
       const best = top && top.score >= 0.85 ? top : null;
       if (best) selectSuggestion(best);
       else resetMatchIfTyping(first.name);
       const unitSaid = first.unit === 'packet' ? 'pcs' : first.unit;
       if (best?.category === 'beverages') {
-        setPackageType('pieces');
-        if (first.quantity !== null) setPieceCount(String(first.quantity));
+        if (packs && perPack) {
+          setPackageType('carton');
+          setCartonCount(String(packs));
+          setPiecesPerCarton(String(perPack));
+        } else {
+          setPackageType('pieces');
+          if (first.quantity !== null) setPieceCount(String(first.quantity));
+        }
+      } else if (packs && perPack) {
+        setUnit('pcs');
+        setIsBundleMode(true);
+        setCartonCount(String(packs));
+        setPiecesPerCarton(String(perPack));
       } else {
         if (unitSaid && UNIT_PILLS.includes(unitSaid)) { setUnit(unitSaid); setIsBundleMode(false); }
         if (first.quantity !== null) setQuantity(String(first.quantity));
       }
       if (f.paidWith === 'online' && ownerPaymentOption) setPaidFrom('online');
-      toast.success(`Filled ${first.quantity ?? ''} ${unitSaid ?? ''} ${first.name}${first.amount !== null ? ` · ₹${first.amount.toLocaleString('en-IN')}` : ''} - check, then save`.replace(/\s+/g, ' '));
+      const what = packs && perPack ? `${packs} packs × ${perPack} ${first.name}` : `${first.quantity ?? ''} ${unitSaid ?? ''} ${first.name}`;
+      toast.success(`Filled ${what}${total !== null ? ` · ₹${total.toLocaleString('en-IN')}` : ''} - check, then save`.replace(/\s+/g, ' '));
     } catch (e: any) {
       toast.error(e?.message || 'Could not read that');
     } finally {

@@ -1108,7 +1108,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     if (item?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission. Use Electric Bike Charging for the e-bike.' }, 403);
     }
-    if (item?.category === 'losses_writeoffs' && role !== 'cluster_head') {
+    if ((item?.category === 'losses_writeoffs' || item?.category === 'ai_credits') && role !== 'cluster_head') {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
@@ -1201,7 +1201,7 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     if (updates?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission.' }, 403);
     }
-    if (updates?.category === 'losses_writeoffs' && role !== 'cluster_head') {
+    if ((updates?.category === 'losses_writeoffs' || updates?.category === 'ai_credits') && role !== 'cluster_head') {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     
@@ -8645,7 +8645,7 @@ const VALID_OVERHEAD_CATEGORIES = new Set([
   'emergency_online', 'staff_emergency_services', 'utensils', 'cleaning_supplies',
   'equipments', 'license', 'water_jar', 'vehicle_maintenance', 'donations_community',
   'staff_welfare', 'breakfast', 'lunch', 'dinner', 'evening_snacks', 'personal_expense',
-  'miscellaneous', 'hygiene_ppe', 'professional_fees', 'losses_writeoffs',
+  'miscellaneous', 'hygiene_ppe', 'professional_fees', 'losses_writeoffs', 'ai_credits',
   'asset_kitchen_equipment', 'asset_furniture', 'asset_electrical', 'asset_vehicle', 'vehicle_emi',
 ]);
 const VALID_FIXEDCOST_CATEGORIES = new Set(['electricity', 'rent', 'internet_phone', 'software_subscription', 'lpg_gas']);
@@ -16685,7 +16685,7 @@ registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
 registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST });
 registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
 registerInsightsRoutes(app, {
-  kv: kvWithRetry,
+  kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,
   getTodayIST,
   notifyClusterHeads: async (type, title, message, relatedDate) => {
