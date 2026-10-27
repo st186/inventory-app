@@ -1,2342 +1,737 @@
-// Insights > Production: the production house's output, efficiency, wastage, ledger, stock and SOP
-// checks for the period picked in the Insights period chip. Restyled to the warm-ledger tokens; the
-// figures are the same calculations as before.
-import { TrendingUp, Package, AlertCircle, Calendar, ClipboardCheck, Factory, Trash2, Edit, Check, X, CheckCircle, Settings, Soup, ArrowUp, ArrowDown, CalendarDays } from 'lucide-react';
-import { LazyChart, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart } from '../../charts/lazyRecharts';
+// Insights > Production: what the production house made in the period picked in the Insights
+// period chip. Template: headline (pieces made, change vs the period before) -> one daily chart
+// -> mix by momo type (share bars, never a pie) -> by-type list; then yield and wastage rate,
+// sauces, weekday pattern, stock at the house, houses compared, the ledger, wastage and the SOP
+// check, each as a chart or a list. The figures come from parts/production/productionCalc.ts,
+// moved there unchanged from the old render body.
+import { useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, Calendar, CheckCircle2, Clock, Package, Pencil, Settings, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import { formatDateIST, addDays } from '../../../utils/timezone';
-import { DatePicker } from '../../DatePicker';
-import { MOMO_TYPES, ALL_POOL_IDS, getPoolLabel } from '../../../constants/momoTypes';
-import { type AnalyticsData, type WastageTimeFilter, type DateRangeType } from '../useAnalyticsData';
-import { WastageTooltip, makeRenderers } from './shared';
+import { formatDateIST } from '../../../utils/timezone';
+import { useT } from '../../../utils/i18n';
+import { Button } from '../../ui/button';
+import { Callout } from '../../ui/callout';
+import { Card } from '../../ui/card';
+import { FilterChips } from '../../ui/chip';
+import { DateStrip } from '../../ui/date-strip';
+import { shortDateLabel, todayIST } from '../../ui/date-utils';
+import { EmptyState } from '../../ui/empty-state';
+import { Field, controlClasses } from '../../ui/field';
+import { ListGroup, ListRow } from '../../ui/list-row';
+import { formatNumberIN } from '../../ui/money';
+import { ResponsiveModal } from '../../ui/responsive-modal';
+import { SkeletonChart } from '../../ui/skeleton';
+import { StatSplit, StatTile } from '../../ui/stat-tile';
+import { StatusChip } from '../../ui/status-chip';
+import { ShareBars } from '../../ui/chart-theme';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/table';
+import { cn } from '../../ui/utils';
+import { type AnalyticsData, type WastageTimeFilter } from '../useAnalyticsData';
+import { HowItWorks, MiniFigures, OverflowMenu, SectionHeading } from '../parts/common';
+import {
+  PRODUCTION_LEDGER_GO_LIVE_DATE,
+  SOP_NAMES,
+  buildLeaderboard,
+  buildLedger,
+  buildOutput,
+  buildPeriodSummary,
+  buildSauces,
+  buildSopCompliance,
+  buildStock,
+  buildWastageBreakdown,
+  buildWastageStatus,
+  buildWastageTrend,
+  buildWeekday,
+  makeHouseMatcher,
+  makeWastageMatcher,
+} from '../parts/production/productionCalc';
+import { CHART_COLORS, CHART_SERIES, ChartCard, ChartEmpty, TrendChart, deltaOf, legendFor, periodText, shortPrevLabel, type SeriesSpec } from './shared';
+
+const fmt = (n: number) => formatNumberIN(n);
+const kg = (n: number) => `${(Math.round(n * 100) / 100).toLocaleString('en-IN')} kg`;
+
+function ChangeChip({ change }: { change: number | null }) {
+  if (change === null) return null;
+  const up = change >= 0;
+  return (
+    <StatusChip tone={up ? 'success' : 'danger'} icon={up ? ArrowUp : ArrowDown}>
+      <span className="num">{Math.abs(change).toFixed(1)}%</span>
+    </StatusChip>
+  );
+}
+
+const STOCK_LEVEL: Record<'over' | 'critical' | 'low' | 'medium', { tone: 'danger' | 'warning'; label: string }> = {
+  over: { tone: 'danger', label: 'Over-sent' },
+  critical: { tone: 'danger', label: 'Critical' },
+  low: { tone: 'danger', label: 'Low' },
+  medium: { tone: 'warning', label: 'Medium' },
+};
 
 export function ProductionTab({ d }: { d: AnalyticsData }) {
- const { context, onNavigateToManageItems, isClusterHead, isProductionIncharge, isOperationsManager, analyticsMode, effectiveStoreId, wastageTimeFilter, setWastageTimeFilter, dateRange, setShowRecalibration, stores, latestRecalibration, previousMonthStock, sopThresholds, setSopThresholds, editingSop, setEditingSop, tempSopThresholds, setTempSopThresholds, sopDiversionPercent, setSopDiversionPercent, tempDiversionPercent, setTempDiversionPercent, stockAlertThresholds, setShowStockAlertModal, setTempStockAlertThresholds, momosPerPlate, setShowPlateSettingsModal, setTempMomosPerPlate, selectedProductionHouseId, setSelectedProductionHouseId, productionData, productionLedgerRange, productionLedgerRangeLoading, selectedLedgerPoolId, setSelectedLedgerPoolId, selectedProductionDate, setSelectedProductionDate, sopComplianceDate, setSopComplianceDate, productionDateRange, setProductionDateRange, customStartDate, setCustomStartDate, customEndDate, setCustomEndDate, getDateRangeBounds, getPreviousPeriodDateRange, zipPrev, pctChange } = d;
- const { renderPrevAwareLegend } = makeRenderers(d);
- return (
- <>
- {(
- <div>
- {/* The production period is the chip at the top of Insights (Analytics.tsx). */}
- {/* Production Summary Cards */}
- <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
- {(() => {
- // Use consistent production house filtering logic
- const filterById = selectedProductionHouseId; // Always use production house selector in production analytics
- 
- // Find the selected production house by its id
- const selectedProductionHouse = filterById 
- ? context.productionHouses?.find(ph => ph.id === filterById)
- : null;
- 
- // Get date range bounds for filtering
- const { startDate, endDate } = getDateRangeBounds();
- 
- const filteredProduction = productionData.filter(p => {
- // Filter by date range first
- if (p.date < startDate || p.date > endDate) {
- return false;
- }
- 
- if (!filterById) return true; // No filter selected, show all
- 
- // For production incharges, the filterById is their storeId
- // Production data has BOTH storeId (where production happened) and productionHouseId (UUID)
- // We should match EITHER:
- // 1. Production data's storeId === filterById (for production houses that are also stores)
- // 2. Production data's productionHouseId === filterById (for when filterById is the UUID)
- 
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- 
- // Get the production house ID from the record
- let recordProductionHouseId = p.productionHouseId;
- 
- // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- // Use local stores state (loaded in useEffect) or fallback to context.stores
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const store = allStores.find(s => s.id === p.storeId);
- recordProductionHouseId = store?.productionHouseId || undefined;
- }
- 
- const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
- 
- // Match if ANY of these are true
- const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
- 
- return matches;
- });
- 
- // Calculate production by type for current period
- const chickenMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenMomos?.final || 0), 0);
- const chickenCheeseMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenCheeseMomos?.final || 0), 0);
- const vegMomos = filteredProduction.reduce((sum, p) => sum + (p.vegMomos?.final || 0), 0);
- const cheeseCornMomos = filteredProduction.reduce((sum, p) => sum + (p.cheeseCornMomos?.final || 0), 0);
- const paneerMomos = filteredProduction.reduce((sum, p) => sum + (p.paneerMomos?.final || 0), 0);
- const vegKurkureMomos = filteredProduction.reduce((sum, p) => sum + (p.vegKurkureMomos?.final || 0), 0);
- const chickenKurkureMomos = filteredProduction.reduce((sum, p) => sum + (p.chickenKurkureMomos?.final || 0), 0);
-
- const totalWastage = filteredProduction.reduce((sum, p) => {
- return sum + 
- (p.wastage?.dough || 0) + 
- (p.wastage?.stuffing || 0) + 
- (p.wastage?.batter || 0) + 
- (p.wastage?.coating || 0);
- }, 0);
-
- const approvedCount = filteredProduction.filter(p => p.approvalStatus === 'approved').length;
- const pendingCount = filteredProduction.filter(p => p.approvalStatus === 'pending').length;
- 
- // Calculate production for previous period for comparison
- const previousRange = getPreviousPeriodDateRange();
- const previousProduction = productionData.filter(p => {
- // Filter by date range first
- if (p.date < previousRange.startDate || p.date > previousRange.endDate) {
- return false;
- }
- 
- if (!filterById) return true;
- 
- // Same filtering logic as current period
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- 
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const store = allStores.find(s => s.id === p.storeId);
- recordProductionHouseId = store?.productionHouseId || undefined;
- }
- 
- const phId = recordProductionHouseId || p.storeId;
- const matches = matchesStoreId || matchesProductionHouseId || phId === filterById;
- 
- return matches;
- });
- 
- const prevChickenMomos = previousProduction.reduce((sum, p) => sum + (p.chickenMomos?.final || 0), 0);
- const prevChickenCheeseMomos = previousProduction.reduce((sum, p) => sum + (p.chickenCheeseMomos?.final || 0), 0);
- const prevVegMomos = previousProduction.reduce((sum, p) => sum + (p.vegMomos?.final || 0), 0);
- const prevCheeseCornMomos = previousProduction.reduce((sum, p) => sum + (p.cheeseCornMomos?.final || 0), 0);
- const prevPaneerMomos = previousProduction.reduce((sum, p) => sum + (p.paneerMomos?.final || 0), 0);
- const prevVegKurkureMomos = previousProduction.reduce((sum, p) => sum + (p.vegKurkureMomos?.final || 0), 0);
- const prevChickenKurkureMomos = previousProduction.reduce((sum, p) => sum + (p.chickenKurkureMomos?.final || 0), 0);
- 
- // Helper function to calculate percentage change
- const calcPercentChange = (current: number, previous: number): number => {
- if (previous === 0) return current > 0 ? 100 : 0;
- return ((current - previous) / previous) * 100;
- };
-
- return (
- <>
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-danger" />
- <p className="text-xs text-text-2">Chicken Momos</p>
- </div>
- <p className="text-2xl text-text">{chickenMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevChickenMomos > 0 && (() => {
- const change = calcPercentChange(chickenMomos, prevChickenMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-warning" />
- <p className="text-xs text-text-2">Chicken Cheese</p>
- </div>
- <p className="text-2xl text-text">{chickenCheeseMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevChickenCheeseMomos > 0 && (() => {
- const change = calcPercentChange(chickenCheeseMomos, prevChickenCheeseMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-success" />
- <p className="text-xs text-text-2">Veg Momos</p>
- </div>
- <p className="text-2xl text-text">{vegMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevVegMomos > 0 && (() => {
- const change = calcPercentChange(vegMomos, prevVegMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-warning" />
- <p className="text-xs text-text-2">Cheese Corn</p>
- </div>
- <p className="text-2xl text-text">{cheeseCornMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevCheeseCornMomos > 0 && (() => {
- const change = calcPercentChange(cheeseCornMomos, prevCheeseCornMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-info" />
- <p className="text-xs text-text-2">Paneer Momos</p>
- </div>
- <p className="text-2xl text-text">{paneerMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevPaneerMomos > 0 && (() => {
- const change = calcPercentChange(paneerMomos, prevPaneerMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-success" />
- <p className="text-xs text-text-2">Veg Kurkure</p>
- </div>
- <p className="text-2xl text-text">{vegKurkureMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevVegKurkureMomos > 0 && (() => {
- const change = calcPercentChange(vegKurkureMomos, prevVegKurkureMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Soup className="w-5 h-5 text-primary" />
- <p className="text-xs text-text-2">Chicken Kurkure</p>
- </div>
- <p className="text-2xl text-text">{chickenKurkureMomos.toLocaleString()}</p>
- <div className="flex items-center justify-between mt-1">
- <p className="text-xs text-text-3">pieces</p>
- {prevChickenKurkureMomos > 0 && (() => {
- const change = calcPercentChange(chickenKurkureMomos, prevChickenKurkureMomos);
- return (
- <div className={`flex items-center gap-1 ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
- <span className="text-xs font-semibold">{Math.abs(change).toFixed(1)}%</span>
- </div>
- );
- })()}
- </div>
- </div>
-
- <div className="rounded-lg p-4 bg-surface border border-border">
- <div className="flex items-center gap-2 mb-2">
- <Trash2 className="w-5 h-5 text-danger" />
- <p className="text-xs text-text-2">Total Wastage</p>
- </div>
- <p className="text-2xl text-text">{totalWastage.toFixed(2)}</p>
- <p className="text-xs text-text-3 mt-1">kg</p>
- </div>
- </>
- );
- })()}
- </div>
-
- {/* Approval status for this period's production log entries - kept as a small text
- line rather than tiles in the momo-count grid above, since "records approved" isn't
- the same kind of number as "pieces produced" and was confusing sitting next to it. */}
- {(() => {
- const { startDate, endDate } = getDateRangeBounds();
- const inRange = productionData.filter(p => {
- if (p.date < startDate || p.date > endDate) return false;
- if (!selectedProductionHouseId) return true;
- const matchesStoreId = p.storeId === selectedProductionHouseId;
- const matchesProductionHouseId = p.productionHouseId === selectedProductionHouseId;
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
- }
- const phId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === selectedProductionHouseId;
- });
- const approved = inRange.filter(p => p.approvalStatus === 'approved').length;
- const pending = inRange.filter(p => p.approvalStatus === 'pending').length;
- return (
- <div className="flex items-center gap-4 text-sm text-text-2 mb-6 -mt-3">
- <span className="flex items-center gap-1.5">
- <ClipboardCheck className="w-4 h-4 text-success" />
- {approved} approved record{approved === 1 ? '' : 's'}
- </span>
- <span className="flex items-center gap-1.5">
- <AlertCircle className="w-4 h-4 text-warning" />
- {pending} pending record{pending === 1 ? '' : 's'}
- </span>
- </div>
- );
- })()}
-
- {/* Production Output & Efficiency - day-by-day trends for the selected production
- date range, mirroring the dotted-previous-period pattern used in Store Analytics so a
- production incharge/cluster head can see whether output, yield and wastage are
- trending better or worse than the equivalent prior period. */}
- {(() => {
- const filterById = selectedProductionHouseId;
- const matchesProdFilter = (p: any) => {
- if (!filterById) return true;
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
- }
- const phId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === filterById;
- };
-
- const enumerateDates = (start: string, end: string): string[] => {
- const dates: string[] = [];
- let d = start;
- let guard = 0;
- while (d <= end && guard < 400) {
- dates.push(d);
- d = addDays(d, 1);
- guard++;
- }
- return dates;
- };
-
- const buildDailySeries = (dates: string[]) => dates.map(date => {
- const dayRecords = productionData.filter(p => matchesProdFilter(p) && p.date === date);
- const row: any = { date, label: formatDateIST(date) };
- let regularFinal = 0, regularInput = 0, kurkureFinal = 0, kurkureInput = 0;
- let wastageKg = 0, totalInputKg = 0;
- MOMO_TYPES.forEach(t => {
- const final = dayRecords.reduce((sum, p) => sum + (p[t.key]?.final || 0), 0);
- row[t.key] = final;
- if (t.group === 'regular') {
- const input = dayRecords.reduce((sum, p) => sum + (p[t.key]?.dough || 0) + (p[t.key]?.stuffing || 0), 0);
- regularFinal += final; regularInput += input; totalInputKg += input;
- } else {
- const input = dayRecords.reduce((sum, p) => sum + (p[t.key]?.batter || 0) + (p[t.key]?.coating || 0), 0);
- kurkureFinal += final; kurkureInput += input; totalInputKg += input;
- }
- });
- wastageKg = dayRecords.reduce((sum, p) => sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
- row.totalFinal = regularFinal + kurkureFinal;
- row.momoYield = regularInput > 0 ? Math.round((regularFinal / regularInput) * 10) / 10 : null;
- row.kurkureYield = kurkureInput > 0 ? Math.round((kurkureFinal / kurkureInput) * 10) / 10 : null;
- row.wastagePct = (totalInputKg + wastageKg) > 0 ? Math.round((wastageKg / (totalInputKg + wastageKg)) * 1000) / 10 : 0;
- return row;
- });
-
- const { startDate, endDate } = getDateRangeBounds();
- const previousRangeForOutput = getPreviousPeriodDateRange();
- const currentDates = enumerateDates(startDate, endDate);
- const previousDates = enumerateDates(previousRangeForOutput.startDate, previousRangeForOutput.endDate);
- const outputSeries = buildDailySeries(currentDates);
- const previousOutputSeries = buildDailySeries(previousDates);
- const outputChartData = zipPrev(outputSeries, previousOutputSeries, ['totalFinal', 'momoYield', 'kurkureYield', 'wastagePct']);
-
- const periodMix = MOMO_TYPES.map(t => ({
- name: t.label,
- value: outputSeries.reduce((sum, r) => sum + (r[t.key] || 0), 0),
- color: t.color,
- }));
- const hasAnyOutput = periodMix.some(m => m.value > 0);
-
- if (currentDates.length === 0) return null;
-
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-6">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Factory className="w-6 h-6 text-primary" />
- Production Output & Efficiency
- </h2>
- <p className="text-sm text-text-2">Pieces produced, raw-material yield and wastage rate for the selected date range · dotted lines are the matching previous period</p>
- </div>
-
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
- {/* Daily output mix, stacked by momo type */}
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Daily Output by Momo Type</h3>
- <LazyChart height={280}>{() => (
- <ResponsiveContainer width="100%" height={280}>
- <ComposedChart data={outputChartData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- {MOMO_TYPES.map(t => (
- <Bar key={t.key} dataKey={t.key} stackId="momo" name={t.label} fill={t.color} />
- ))}
- <Line type="monotone" dataKey="prev_totalFinal" name="Total (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
- </ComposedChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
-
- {/* Period share by momo type */}
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Production Mix (This Period)</h3>
- {hasAnyOutput ? (
- <LazyChart height={280}>{() => (
- <ResponsiveContainer width="100%" height={280}>
- <PieChart>
- <Pie data={periodMix.filter(m => m.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={95} label={(entry: any) => `${entry.name}: ${entry.value}`}>
- {periodMix.filter(m => m.value > 0).map((m, idx) => (
- <Cell key={idx} fill={m.color} />
- ))}
- </Pie>
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- </PieChart>
- </ResponsiveContainer>
- )}</LazyChart>
- ) : (
- <div className="h-[280px] flex items-center justify-center text-sm text-text-3">No production logged for this period</div>
- )}
- </div>
-
- {/* Raw material yield efficiency */}
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1">Raw Material Yield</h3>
- <p className="text-xs text-text-3 mb-3">Pieces produced per kg of raw material used (dough+stuffing for momos, batter+coating for kurkure) · higher is more efficient</p>
- <LazyChart height={260}>{() => (
- <ResponsiveContainer width="100%" height={260}>
- <LineChart data={outputChartData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="momoYield" name="Momo yield (pcs/kg)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey="kurkureYield" name="Kurkure yield (pcs/kg)" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey="prev_momoYield" name="Momo yield (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
- <Line type="monotone" dataKey="prev_kurkureYield" name="Kurkure yield (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls legendType="none" />
- </LineChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
-
- {/* Wastage rate as a % of total raw material, so it's comparable across days
- regardless of production volume - complements the raw-kg trend charts below. */}
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1">Wastage Rate</h3>
- <p className="text-xs text-text-3 mb-3">Wasted raw material as a % of total raw material used that day · lower is better</p>
- <LazyChart height={260}>{() => (
- <ResponsiveContainer width="100%" height={260}>
- <LineChart data={outputChartData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} unit="%" />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="wastagePct" name="Wastage %" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} />
- <Line type="monotone" dataKey="prev_wastagePct" name="Wastage % (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
- </LineChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
- </div>
- </div>
- );
- })()}
-
- {/* Sauces & Chutneys Usage - ProductionData.sauces is captured on every day's
- production log but was never surfaced anywhere in Analytics until now. Same
- current-vs-previous-period convention as every other trended chart on this page
- (zipPrev + renderPrevAwareLegend), so it reads consistently with Output & Efficiency
- above rather than being a one-off. */}
- {(() => {
- const filterById = selectedProductionHouseId;
- const matchesProdFilter = (p: any) => {
- if (!filterById) return true;
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
- }
- const phId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === filterById;
- };
-
- const SAUCE_TYPES = [
- { key: 'panfriedSauce', label: 'Panfried Sauce', color: 'var(--chart-1)' },
- { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', color: 'var(--chart-1)' },
- { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', color: 'var(--chart-1)' },
- { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', color: 'var(--chart-4)' },
- { key: 'tandooriSauce', label: 'Tandoori Sauce', color: 'var(--chart-4)' },
- { key: 'soupPremix', label: 'Soup Premix', color: 'var(--chart-4)' },
- { key: 'greenMayoChutney', label: 'Green Mayo Chutney', color: 'var(--chart-2)' },
- { key: 'spicyRedChutney', label: 'Spicy Red Chutney', color: 'var(--chart-3)' },
- ] as const;
-
- const enumerateDates = (start: string, end: string): string[] => {
- const dates: string[] = [];
- let d = start;
- let guard = 0;
- while (d <= end && guard < 400) {
- dates.push(d);
- d = addDays(d, 1);
- guard++;
- }
- return dates;
- };
-
- const buildSauceSeries = (dates: string[]) => dates.map(date => {
- const dayRecords = productionData.filter(p => matchesProdFilter(p) && p.date === date);
- const row: any = { date, label: formatDateIST(date) };
- let total = 0;
- SAUCE_TYPES.forEach(s => {
- const litres = dayRecords.reduce((sum, p) => sum + (p.sauces?.[s.key] || 0), 0);
- row[s.key] = Math.round(litres * 100) / 100;
- total += litres;
- });
- row.totalSauce = Math.round(total * 100) / 100;
- return row;
- });
-
- const { startDate, endDate } = getDateRangeBounds();
- const previousRangeForSauces = getPreviousPeriodDateRange();
- const currentDates = enumerateDates(startDate, endDate);
- const previousDates = enumerateDates(previousRangeForSauces.startDate, previousRangeForSauces.endDate);
- const sauceSeries = buildSauceSeries(currentDates);
- const previousSauceSeries = buildSauceSeries(previousDates);
- const sauceChartData = zipPrev(sauceSeries, previousSauceSeries, ['totalSauce']);
-
- const periodTotals = SAUCE_TYPES.map(s => ({
- name: s.label,
- value: Math.round(sauceSeries.reduce((sum, r) => sum + (r[s.key] || 0), 0) * 100) / 100,
- color: s.color,
- }));
- const previousPeriodTotals = SAUCE_TYPES.map(s => ({
- key: s.key,
- value: previousSauceSeries.reduce((sum, r) => sum + (r[s.key] || 0), 0),
- }));
- const hasAnySauce = periodTotals.some(t => t.value > 0);
-
- if (currentDates.length === 0 || !hasAnySauce) return null;
-
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-6">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Soup className="w-6 h-6 text-danger" />
- Sauces & Chutneys Usage
- </h2>
- <p className="text-sm text-text-2">Litres prepared per day for the selected date range · dotted line is the matching previous period</p>
- </div>
-
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">Daily Usage by Type</h3>
- <LazyChart height={280}>{() => (
- <ResponsiveContainer width="100%" height={280}>
- <ComposedChart data={sauceChartData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} unit="L" />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- {SAUCE_TYPES.map(s => (
- <Bar key={s.key} dataKey={s.key} stackId="sauce" name={s.label} fill={s.color} />
- ))}
- <Line type="monotone" dataKey="prev_totalSauce" name="Total (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
- </ComposedChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
-
- <div className="bg-surface-2 rounded-lg p-4">
- <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-4">This Period vs Previous, by Type</h3>
- <div className="space-y-2.5">
- {periodTotals.filter(t => t.value > 0 || (previousPeriodTotals.find(p => p.key === SAUCE_TYPES.find(s => s.label === t.name)?.key)?.value || 0) > 0).map(t => {
- const sauceKey = SAUCE_TYPES.find(s => s.label === t.name)?.key;
- const prevValue = previousPeriodTotals.find(p => p.key === sauceKey)?.value || 0;
- const change = pctChange(t.value, prevValue);
- return (
- <div key={t.name} className="flex items-center gap-3">
- <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
- <span className="text-sm text-text-2 flex-1 truncate">{t.name}</span>
- <span className="text-sm font-semibold text-text tabular-nums">{t.value.toLocaleString()} L</span>
- {change !== null && (
- <span className={`text-xs font-medium tabular-nums w-14 text-right ${change >= 0 ? 'text-success' : 'text-danger'}`}>
- {change >= 0 ? '+' : ''}{change.toFixed(0)}%
- </span>
- )}
- </div>
- );
- })}
- </div>
- </div>
- </div>
- </div>
- );
- })()}
-
- {/* Day-of-Week Production Pattern - mirrors Store Analytics' "Orders by Hour" idea,
- but production only has a date (no reliable intra-day timestamp to bucket by hour),
- so this buckets by weekday instead: which days this production house tends to run
- hottest/coldest, and whether wastage skews toward particular days (e.g. Mondays after
- a weekend). Same zipPrev/current-vs-previous convention as the rest of this page. */}
- {(() => {
- const filterById = selectedProductionHouseId;
- const matchesProdFilter = (p: any) => {
- if (!filterById) return true;
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
- }
- const phId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === filterById;
- };
-
- // Mon..Sun display order, mapped from JS's Sun=0..Sat=6
- const WEEKDAYS = [
- { jsDay: 1, label: 'Mon' }, { jsDay: 2, label: 'Tue' }, { jsDay: 3, label: 'Wed' },
- { jsDay: 4, label: 'Thu' }, { jsDay: 5, label: 'Fri' }, { jsDay: 6, label: 'Sat' },
- { jsDay: 0, label: 'Sun' },
- ];
-
- const buildWeekdaySeries = (fromDate: string, toDate: string) => {
- const records = productionData.filter(p => matchesProdFilter(p) && p.date >= fromDate && p.date <= toDate);
- return WEEKDAYS.map(w => {
- const dayRecords = records.filter(p => new Date(`${p.date}T00:00:00`).getDay() === w.jsDay);
- let totalFinal = 0, totalRawKg = 0, wastageKg = 0;
- MOMO_TYPES.forEach(({ key }) => {
- totalFinal += dayRecords.reduce((sum, p) => sum + (p[key]?.final || 0), 0);
- });
- dayRecords.forEach(p => {
- wastageKg += (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0);
- });
- return { label: w.label, totalFinal, wastageKg: Math.round(wastageKg * 100) / 100 };
- });
- };
-
- const { startDate, endDate } = getDateRangeBounds();
- const previousRangeForWeekday = getPreviousPeriodDateRange();
- const weekdaySeries = buildWeekdaySeries(startDate, endDate);
- const previousWeekdaySeries = buildWeekdaySeries(previousRangeForWeekday.startDate, previousRangeForWeekday.endDate);
- const weekdayChartData = zipPrev(weekdaySeries, previousWeekdaySeries, ['totalFinal']);
- const hasAnyOutput = weekdaySeries.some(r => r.totalFinal > 0);
-
- if (!hasAnyOutput) return null;
-
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-6">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <CalendarDays className="w-6 h-6 text-success" />
- Day-of-Week Production Pattern
- </h2>
- <p className="text-sm text-text-2">Total pieces produced by day of week, summed across the selected date range · dotted line is the matching previous period</p>
- </div>
- <LazyChart height={280}>{() => (
- <ResponsiveContainer width="100%" height={280}>
- <ComposedChart data={weekdayChartData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- <Bar dataKey="totalFinal" name="Pieces produced" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
- <Line type="monotone" dataKey="prev_totalFinal" name="Pieces produced (previous period)" stroke="var(--chart-4)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
- </ComposedChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
- );
- })()}
-
- {/* Production House Stock Status */}
- <div className="bg-surface rounded-lg p-6 mb-6 border-2 border-border">
- <div className="mb-4">
- <div className="flex items-center justify-between gap-4 flex-wrap">
- <div>
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-primary" />
- Production House Stock Status
- </h2>
- <p className="text-sm text-text-2">
- Opening balance + This month produced - Sent to stores (delivered requests)
- </p>
- </div>
-
- {/* Alert Settings and Plate Settings - Operations Manager / Cluster Head only, not
- the Production Incharge submitting the data being thresholded. */}
- {analyticsMode === 'production' && (isOperationsManager || isClusterHead) && (
- <div className="flex flex-wrap gap-2 items-start">
- {/* Stock Alert Settings Button */}
- <button
- onClick={() => {
- setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds)));
- setShowStockAlertModal(true);
- }}
- className="min-h-11 px-4 py-2 text-text rounded-md transition-colors flex items-center gap-2 bg-surface border border-border-strong hover:bg-surface-2"
- title="Configure Stock Alert Thresholds"
- >
- <Settings className="w-5 h-5" />
- Alert Settings
- </button>
- 
- {/* Plate Conversion Settings Button */}
- <button
- onClick={() => {
- setTempMomosPerPlate(momosPerPlate);
- setShowPlateSettingsModal(true);
- }}
- className="min-h-11 px-4 py-2 text-text rounded-md transition-colors flex items-center gap-2 bg-surface border border-border-strong hover:bg-surface-2"
- title="Configure Momos Per Plate"
- >
- <Settings className="w-5 h-5" />
- Plate Settings
- </button>
- 
- {/* Recalibrate Stock Button - ONLY for Production Incharge */}
- {isProductionIncharge && (
- <div className="flex flex-col gap-2">
- <button
- onClick={() => setShowRecalibration(true)}
- className="flex items-center gap-2 px-5 py-3 text-text rounded-lg transition-all font-semibold bg-surface border border-border"
- title="Recalibrate production house stock (available on 1st of each month)"
- >
- <Calendar className="w-5 h-5" />
- Recalibrate Stock
- </button>
- {latestRecalibration && latestRecalibration.date && (
- <p className="text-xs text-text-3 text-center">
- Last recalibrated: {formatDateIST(latestRecalibration.date)} IST
- </p>
- )}
- {previousMonthStock && !latestRecalibration && (
- <p className="text-xs text-info text-center">
- Using auto carry-forward from previous month
- </p>
- )}
- </div>
- )}
- {(isOperationsManager || isClusterHead) && onNavigateToManageItems && (
- <button
- onClick={() => {
- onNavigateToManageItems();
- }}
- className="flex items-center gap-2 px-5 py-3 text-text rounded-lg transition-all font-semibold bg-surface border border-border"
- title="Manage inventory items"
- >
- <Package className="w-5 h-5" />
- Manage Items
- </button>
- )}
- </div>
- )}
- 
- {/* Production House Selector for Cluster Heads - Only in Store Analytics Mode */}
- {analyticsMode === 'store' && context.user?.role === 'cluster_head' && context.productionHouses && context.productionHouses.length > 0 && (
- <div className="flex items-center gap-2">
- <label className="text-sm text-text-2">Production House:</label>
- <select
- value={selectedProductionHouseId || 'all'}
- onChange={(e) => {
- const newValue = e.target.value === 'all' ? null : e.target.value;
- setSelectedProductionHouseId(newValue);
- }}
- className="min-h-11 px-3 py-2 border border-border-strong rounded-md bg-surface text-body-sm focus:ring-2 focus:ring-ring focus:border-transparent"
- >
- <option value="all">All Production Houses</option>
- {context.productionHouses.map(ph => (
- <option key={ph.id} value={ph.id}>
- {ph.name} (ID: {ph.id})
- </option>
- ))}
- </select>
- </div>
- )}
- </div>
- </div>
-
- {(() => {
- // Calculate Production House Stock = Total Production - Total Fulfilled Stock Requests
- // In production analytics mode, always use selectedProductionHouseId
- const effectiveProductionHouseId = selectedProductionHouseId;
- 
- // Find the selected production house by its id
- const selectedProductionHouseForStock = effectiveProductionHouseId 
- ? context.productionHouses?.find(ph => ph.id === effectiveProductionHouseId)
- : null;
- 
- // Get all production data for the production house
- const filteredProduction = productionData.filter(p => {
- if (!effectiveProductionHouseId) return true; // No filter selected, show all
- 
- // Match on storeId OR productionHouseId
- const matchesStoreId = p.storeId === effectiveProductionHouseId;
- const matchesProductionHouseId = p.productionHouseId === effectiveProductionHouseId;
- 
- // Get the production house ID from the record
- let recordProductionHouseId = p.productionHouseId;
- 
- // If record doesn't have productionHouseId OR it's a store ID (starts with 'STORE-'), look it up via storeId
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- // Use local stores state (loaded in useEffect) or fallback to context.stores
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const store = allStores.find(s => s.id === p.storeId);
- recordProductionHouseId = store?.productionHouseId || undefined;
- }
- 
- const phId = recordProductionHouseId || p.storeId; // Final fallback to storeId
- 
- // Match if ANY of these are true
- return matchesStoreId || matchesProductionHouseId || phId === effectiveProductionHouseId;
- });
-
- // Fixed current-month activity for this stock view. Stock Available itself remains
- // current stock, so a separate date filter would make the card misleading.
- const nowForMonth = new Date();
- const currentMonth = `${nowForMonth.getFullYear()}-${String(nowForMonth.getMonth() + 1).padStart(2, '0')}`;
- const monthlyFilteredProduction = filteredProduction.filter(p => p.date.startsWith(currentMonth));
-
- // Get all finished product inventory items FIRST (we need this for dynamic calculations)
- const finishedProductsForCalc = context.inventoryItems?.filter(item => 
- item.category === 'finished_product' && 
- item.isActive &&
- (item.linkedEntityType === 'global' || 
- (item.linkedEntityType === 'production_house' && item.linkedEntityId === effectiveProductionHouseId))
- ) || [];
- 
- // Helper function to convert snake_case to camelCase
- const snakeToCamelForCalc = (str: string) => {
- return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
- };
- 
- // Helper to get the base name for stock lookup (remove _momo/_momos suffix)
- const getStockKey = (itemName: string) => {
- // For items like "chicken_momo", "veg_momo", etc., we want "chicken", "veg"
- const baseName = itemName.replace(/_momo(s)?$/i, '');
- return snakeToCamelForCalc(baseName);
- };
-
- // Calculate approved production by momo type for the current month.
- const totalProduced: Record<string, number> = {};
- 
- // Initialize all finished products to 0
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- totalProduced[stockKey] = 0;
- });
-
- const getProductionFieldValue = (p: any, itemName: string, stockKey: string) => {
- const data = p?.data || {};
- const baseItemName = itemName.replace(/_momo(s)?$/i, '');
- const camelItemName = snakeToCamelForCalc(itemName);
- const camelBaseItemName = snakeToCamelForCalc(baseItemName);
- const aliases = [
- itemName,
- `${itemName}s`,
- baseItemName,
- stockKey,
- camelItemName,
- `${camelItemName}s`,
- camelBaseItemName,
- `${camelBaseItemName}Momos`,
- `${stockKey}Momos`
- ];
-
- const normalizeValue = (value: any) => {
- if (value === undefined || value === null) return 0;
- if (typeof value === 'object') return Number(value.final ?? value.quantity ?? value.pieces ?? 0) || 0;
- return Number(value) || 0;
- };
-
- for (const alias of aliases) {
- if (data[alias] !== undefined && data[alias] !== null) {
- return normalizeValue(data[alias]);
- }
- }
-
- for (const alias of aliases) {
- if (p[alias] !== undefined && p[alias] !== null) {
- return normalizeValue(p[alias]);
- }
- }
-
- return 0;
- };
-
- const addProductionRecordToTotals = (p: any, target: Record<string, number>) => {
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- const fieldValue = getProductionFieldValue(p, item.name, stockKey);
- target[stockKey] = (target[stockKey] || 0) + fieldValue;
- });
- };
- 
- const approvedMonthlyProduction = monthlyFilteredProduction
- .filter(p => p.approvalStatus === 'approved'); // CRITICAL: Only count approved production
-
- approvedMonthlyProduction.forEach(p => addProductionRecordToTotals(p, totalProduced));
-
- // Calculate total fulfilled stock requests (sent to stores)
- // Use ProductionRequests (which have 'delivered' status), not StockRequests
- 
- // First, resolve the production house UUID
- // For production incharges, effectiveProductionHouseId is their storeId
- // We need to find the corresponding production house UUID
- let productionHouseUUID = effectiveProductionHouseId;
- 
- // Check if effectiveProductionHouseId is a storeId (starts with 'STORE-')
- if (effectiveProductionHouseId && effectiveProductionHouseId.startsWith('STORE-')) {
- // Find the store
- const userStore = context.stores?.find(s => s.id === effectiveProductionHouseId);
- if (userStore?.productionHouseId) {
- productionHouseUUID = userStore.productionHouseId;
- }
- }
- 
- const fulfilledRequests = context.productionRequests?.filter(req => {
- // Count anything sent out of the production house. A request can be shipped or
- // partially-shipped before the store marks it delivered, but it has still left stock.
- const sentStatuses = ['shipped', 'partially-shipped', 'delivered', 'partially-delivered'];
- if (!sentStatuses.includes(req.status)) return false;
- 
- // Filter by current month only (monthly reset)
- // Check what date field exists on production requests
- const requestDate = req.shippedAt || req.deliveredAt || req.requestDate || req.createdAt;
- 
- if (!requestDate || !requestDate.startsWith(currentMonth)) {
- return false;
- }
- 
- // Find the store that made this request
- // Use local stores state (loaded in useEffect) or fallback to context.stores
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const requestingStore = allStores.find(s => s.id === req.storeId);
- 
- // Filter by production house if one is selected
- if (productionHouseUUID) {
- const matches = requestingStore?.productionHouseId === productionHouseUUID;
- return matches;
- }
- 
- // If no production house selected, show all
- return true;
- }) || [];
-
- // Calculate total fulfilled stock requests (sent to stores) - DYNAMIC
- const totalSentToStores: Record<string, number> = {};
- 
- // Initialize all finished products to 0
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- totalSentToStores[stockKey] = 0;
- });
-
- const getDeliveredRequestQuantity = (req: any, itemName: string, stockKey: string) => {
- const baseItemName = itemName.replace(/_momo(s)?$/i, '');
- const camelItemName = snakeToCamelForCalc(itemName);
- const camelBaseItemName = snakeToCamelForCalc(baseItemName);
- const aliases = [
- stockKey,
- `${stockKey}Momos`,
- `${stockKey}Momo`,
- itemName,
- `${itemName}s`,
- baseItemName,
- camelItemName,
- `${camelItemName}s`,
- camelBaseItemName,
- `${camelBaseItemName}Momos`,
- `${camelBaseItemName}Momo`
- ];
- const shippedQuantities = req.shippedQuantities || {};
-
- for (const alias of aliases) {
- const shippedValue = shippedQuantities[alias];
- if (shippedValue !== undefined && shippedValue !== null) return Number(shippedValue) || 0;
- }
-
- for (const alias of aliases) {
- const value = req[alias];
- if (value !== undefined && value !== null) return Number(value) || 0;
- }
-
- return 0;
- };
-
- const addDeliveredRequestToTotals = (req: any, target: Record<string, number>) => {
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- const deliveredQty = getDeliveredRequestQuantity(req, item.name, stockKey);
- target[stockKey] = (target[stockKey] || 0) + deliveredQty;
- });
- };
- 
- fulfilledRequests.forEach(req => addDeliveredRequestToTotals(req, totalSentToStores));
-
- // Calculate remaining stock with carry-forward from previous month - DYNAMIC
- // Stock = Opening Balance + Current Month Production - Current Month Deliveries
- const openingBalance: Record<string, number> = {};
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name); // e.g., "chicken" from "chicken_momo"
- // Try multiple key formats: stockKey ("chicken"), item.name ("chicken_momo"), and item.id (UUID)
- openingBalance[stockKey] = (previousMonthStock as any)?.[stockKey] || 
- (previousMonthStock as any)?.[item.name] || 
- (previousMonthStock as any)?.[item.id] || 
- 0;
- });
- 
- // Stock = Opening Balance + This Month Produced - Sent to Stores.
- // Base momos also lose stock when converted into Kurkure momos.
- const productionHouseStock: Record<string, number> = {};
- finishedProductsForCalc.forEach(item => {
- const stockKey = getStockKey(item.name);
- const convertedToKurkure =
- stockKey === 'chicken' ? (totalProduced.chickenKurkure || 0) :
- stockKey === 'veg' ? (totalProduced.vegKurkure || 0) :
- 0;
- productionHouseStock[stockKey] =
- (openingBalance[stockKey] || 0) +
- (totalProduced[stockKey] || 0) -
- (totalSentToStores[stockKey] || 0) -
- convertedToKurkure;
- });
-
- // Store calculated stock globally for the recalibration modal
- (window as any).__currentProductionHouseStock = productionHouseStock;
-
- // Get all finished product inventory items for this production house or global
- const finishedProducts = context.inventoryItems?.filter(item => 
- item.category === 'finished_product' && 
- item.isActive &&
- (item.linkedEntityType === 'global' || 
- (item.linkedEntityType === 'production_house' && item.linkedEntityId === effectiveProductionHouseId))
- ) || [];
- 
- // Helper function to convert snake_case to camelCase for stock lookup
- const snakeToCamel = (str: string) => {
- return str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
- };
-
- // Color mapping for the 7 core momos (for backwards compatibility)
- const colorMap: Record<string, string> = {
- 'chicken': 'violet',
- 'chickenCheese': 'rose',
- 'chicken_cheese': 'rose',
- 'veg': 'green',
- 'cheeseCorn': 'yellow',
- 'cheese_corn': 'yellow',
- 'paneer': 'blue',
- 'vegKurkure': 'teal',
- 'veg_kurkure': 'teal',
- 'chickenKurkure': 'red',
- 'chicken_kurkure': 'red',
- };
-
- // Map inventory items to display format
- const momoTypes = finishedProducts.map(item => {
- // Get the base stock key (e.g., "chicken" from "chicken_momo")
- const baseName = item.name.replace(/_momo(s)?$/i, '');
- const stockKey = snakeToCamel(baseName);
- 
- return {
- key: item.name,
- camelKey: stockKey, // Base key for stock lookup (e.g., "chicken")
- label: item.displayName, // Keep full display name including "Momo"
- color: colorMap[baseName] || colorMap[stockKey] || 'sky',
- unit: item.unit
- };
- });
-
- // Check if we have any stock to display (from opening balance or production)
- const hasOpeningBalance = Object.values(openingBalance).some((v: any) => v > 0);
-
- // Show info if no production data AND no opening balance
- if (filteredProduction.length === 0 && !hasOpeningBalance) {
- return (
- <div className="bg-info-soft border border-info-border rounded-lg p-6 text-center">
- <Package className="w-12 h-12 text-info mx-auto mb-3" />
- <h3 className="text-lg text-text mb-2">No Production Data</h3>
- <p className="text-sm text-text-2">
- {effectiveProductionHouseId 
- ? 'No production records found for the selected production house.' 
- : 'No production records found. Start logging production to see stock status.'}
- </p>
- </div>
- );
- }
-
- return (
- <>
- {/* Stock Calculation Info */}
- {(openingBalance && Object.values(openingBalance).some((v: any) => v > 0)) && (
- <div className="bg-info-soft border-l-4 border-info-border p-4 mb-4 rounded">
- <div className="flex items-start gap-2">
- <CheckCircle className="w-5 h-5 text-info mt-0.5 flex-shrink-0" />
- <div>
- <h4 className="text-sm font-semibold text-info">Automatic Stock Carry-Forward Active</h4>
- <p className="text-xs text-info mt-1">
- Stock calculation: <span className="font-mono">Opening Balance + This Month Produced - Sent to Stores</span>
- <span className="block mt-1">Chicken/Veg base stock also subtracts Kurkure prepared.</span>
- </p>
- <p className="text-xs text-info mt-1">
- {latestRecalibration && latestRecalibration.date
- ? `Opening balance from recalibration on ${formatDateIST(latestRecalibration.date)} (IST)`
- : 'Opening balance auto-calculated from previous month\'s closing stock'
- }
- </p>
- </div>
- </div>
- </div>
- )}
- 
- <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
- {momoTypes.map(({ key, camelKey, label, color, unit }) => {
- // Use camelCase key for stock lookup (handles both snake_case and camelCase)
- const opening = (openingBalance as any)[camelKey] || (openingBalance as any)[key] || 0;
- const produced = (totalProduced as any)[camelKey] || (totalProduced as any)[key] || 0;
- const sent = (totalSentToStores as any)[camelKey] || (totalSentToStores as any)[key] || 0;
- const stock = (productionHouseStock as any)[camelKey] || (productionHouseStock as any)[key] || 0;
- 
- // Check if this item has any production data
- const hasData = opening > 0 || produced > 0 || sent > 0 || stock !== undefined;
- 
- // Get the three-level alert thresholds for this item
- const thresholds = stockAlertThresholds[camelKey] ?? stockAlertThresholds[key] ?? { high: 600, medium: 300, low: 150 };
- 
- // Determine stock level based on three-level thresholds
- const isCriticalStock = stock < thresholds.low; // Red - Below low threshold
- const isLowStock = stock >= thresholds.low && stock < thresholds.medium; // Orange - Between low and medium
- const isMediumStock = stock >= thresholds.medium && stock < thresholds.high; // Yellow - Between medium and high
- const isHighStock = stock >= thresholds.high; // Green - Above high threshold
- 
- // Determine status label and color
- let stockStatus = '';
- let stockStatusColor = '';
- let stockValueColor = '';
- 
- if (stock < 0) {
- stockStatus = 'Over-distributed';
- stockStatusColor = 'bg-danger-soft border-danger-border text-danger';
- stockValueColor = 'text-danger';
- } else if (hasData && isCriticalStock) {
- stockStatus = 'Critical: below low level';
- stockStatusColor = 'bg-danger-soft border-danger-border text-danger';
- stockValueColor = 'text-danger';
- } else if (hasData && isLowStock) {
- stockStatus = 'Low: between low and medium';
- stockStatusColor = 'bg-primary-soft border-border text-primary';
- stockValueColor = 'text-primary';
- } else if (hasData && isMediumStock) {
- stockStatus = 'Medium: between medium and high';
- stockStatusColor = 'bg-warning-soft border-warning-border text-warning';
- stockValueColor = 'text-warning';
- } else if (hasData && isHighStock) {
- stockStatus = 'Healthy: above high level';
- stockStatusColor = 'bg-success-soft border-success-border text-success';
- stockValueColor = 'text-success';
- }
- 
- const stockPercentage = produced > 0 ? ((stock / produced) * 100).toFixed(0) : '0';
- 
- const alertLabel = stock < 0 ? 'OVER' : isCriticalStock ? 'CRITICAL' : isLowStock ? 'LOW' : isMediumStock ? 'MEDIUM' : '';
- const alertClasses = stock < 0 || isCriticalStock || isLowStock
- ? 'bg-danger-soft border-danger-border text-danger'
- : isMediumStock
- ? 'bg-primary-soft border-border text-primary'
- : '';
- const compactValueColor = stock < 0 || isCriticalStock || isLowStock ? 'text-danger' : `text-${color}-800`;
- 
- return (
- <div key={key} className={`from- bg-surface border border-border${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-2.5 relative`}>
- {alertLabel && (
- <div className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded border ${alertClasses}`}>
- <AlertCircle className="w-3 h-3" />
- <span className="text-caption font-semibold uppercase">{alertLabel}</span>
- </div>
- )}
- <h3 className="text-xs font-semibold text-text mb-1.5 pr-14 truncate">{label}</h3>
- {opening > 0 && (
- <div className="text-caption text-info mb-1">
- Opening: <span className="font-semibold">{opening}</span>
- </div>
- )}
- <div className="flex justify-between items-center text-caption text-text-2">
- <span>Produced: <span className={`font-semibold text-${color}-700`}>{produced}</span></span>
- <span>Sent: <span className={`font-semibold text-${color}-700`}>{sent}</span></span>
- </div>
- <div className="border-t border-border-strong mt-1.5 pt-1.5 flex items-center justify-between">
- <span className="text-caption font-medium text-text-3">Available</span>
- <div className={`text-sm font-bold ${compactValueColor}`}>
- {stock} pcs / {Math.round(stock / momosPerPlate)} pl
- </div>
- </div>
- {!hasData && (
- <p className="text-caption text-warning font-semibold mt-1">Track in production logging</p>
- )}
- </div>
- );
- 
- return (
- <div key={key} className={`from- bg-surface border border-border${color}-50 to-${color}-100 border-2 border-${color}-200 rounded-lg p-4 transition-all duration-300`}>
- <h3 className="text-sm font-semibold text-text mb-3">{label}</h3>
- 
- <div className="space-y-2">
- {!hasData ? (
- // Show placeholder for items without production data
- <div className="bg-surface rounded-lg p-3">
- <p className="text-xs text-text-2 mb-1">Current Stock</p>
- <div className="flex items-baseline gap-2">
- <span className="text-2xl font-bold text-text-3">0</span>
- <span className="text-xs text-text-3">{unit || 'pieces'}</span>
- </div>
- <div className="bg-warning-soft border border-warning-border rounded-lg px-2 py-1 mt-2">
- <p className="text-xs text-warning">
- Track in production logging to see stock
- </p>
- </div>
- </div>
- ) : (
- <>
- {opening > 0 && (
- <div className="flex justify-between items-center bg-info-soft px-3 py-2 rounded-lg">
- <span className="text-sm text-info font-semibold">Opening Balance:</span>
- <span className="text-xl font-bold text-info">{opening}</span>
- </div>
- )}
- 
- <div className="flex justify-between items-center">
- <span className="text-xs text-text-2">This Month Produced:</span>
- <span className={`text-lg font-bold text-${color}-600`}>{produced}</span>
- </div>
- 
- <div className="flex justify-between items-center">
- <span className="text-xs text-text-2">Sent to Stores:</span>
- <span className={`text-lg font-bold text-${color}-700`}>{sent}</span>
- </div>
- 
- <div className="border-t-2 border-border-strong pt-2 mt-2">
- <div className="flex justify-between items-center">
- <span className="text-xs font-semibold text-text-2">Stock Available:</span>
- <div className="text-right">
- <div className={`text-2xl font-bold ${stockValueColor || `text-${color}-800`}`}>
- {stock} pcs / {Math.round(stock / momosPerPlate)} plates
- </div>
- </div>
- </div>
- {produced > 0 && (
- <div className="mt-2">
- <div className="flex justify-between text-xs text-text-2 mb-1">
- <span>{stockPercentage}% remaining</span>
- </div>
- <div className="w-full bg-surface-3 rounded-full h-2">
- <div 
- className={`h-2 rounded-full ${
- isCriticalStock || stock < 0 ? 'bg-danger' : 
- isLowStock ? 'bg-primary' :
- isMediumStock ? 'bg-warning' :
- isHighStock ? 'bg-success' :
- `bg-${color}-500`
- }`}
- style={{ width: `${Math.min(100, Math.max(0, Number(stockPercentage)))}%` }}
- ></div>
- </div>
- </div>
- )}
- </div>
- 
- {stockStatus && (
- <div className={`border rounded-lg px-2 py-1 mt-2 ${stockStatusColor}`}>
- <p className="text-xs font-semibold">
- {stockStatus}
- </p>
- </div>
- )}
- 
- {/* Show Alert Thresholds */}
- <div className="bg-surface-2 border border-border rounded-lg px-2 py-1 mt-2">
- <div className="grid grid-cols-3 gap-1 text-xs">
- <div>
- <div className="text-text-2">Low</div>
- <div className="font-semibold text-danger">{thresholds.low}</div>
- </div>
- <div>
- <div className="text-text-2">Med</div>
- <div className="font-semibold text-warning">{thresholds.medium}</div>
- </div>
- <div>
- <div className="text-text-2">High</div>
- <div className="font-semibold text-success">{thresholds.high}</div>
- </div>
- </div>
- </div>
- </>
- )}
- </div>
- </div>
- );
- })}
- </div>
- </>
- );
- })()}
- </div>
-
-
- {/* Production House Leaderboard - ranks every house by output/wastage%/yield for
- the selected period. Only meaningful with more than one house to compare, so it's
- hidden entirely when a single production house is already the active filter. */}
- {!selectedProductionHouseId && context.productionHouses && context.productionHouses.length > 1 && (() => {
- const { startDate, endDate } = getDateRangeBounds();
- const periodProduction = productionData.filter(p => p.date >= startDate && p.date <= endDate);
-
- const rows = context.productionHouses.map(ph => {
- const matchesHouse = (p: any) => {
- const matchesStoreId = p.storeId === ph.id;
- const matchesProductionHouseId = p.productionHouseId === ph.id;
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- recordProductionHouseId = allStores.find(s => s.id === p.storeId)?.productionHouseId || undefined;
- }
- const phId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || phId === ph.id;
- };
- const houseRecords = periodProduction.filter(matchesHouse);
- let totalFinal = 0, totalRawKg = 0, totalWastageKg = 0;
- MOMO_TYPES.forEach(t => {
- totalFinal += houseRecords.reduce((sum, p) => sum + (p[t.key]?.final || 0), 0);
- totalRawKg += t.group === 'regular'
- ? houseRecords.reduce((sum, p) => sum + (p[t.key]?.dough || 0) + (p[t.key]?.stuffing || 0), 0)
- : houseRecords.reduce((sum, p) => sum + (p[t.key]?.batter || 0) + (p[t.key]?.coating || 0), 0);
- });
- totalWastageKg = houseRecords.reduce((sum, p) => sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
- const yieldPcsPerKg = totalRawKg > 0 ? Math.round((totalFinal / totalRawKg) * 10) / 10 : null;
- const wastagePct = (totalRawKg + totalWastageKg) > 0 ? Math.round((totalWastageKg / (totalRawKg + totalWastageKg)) * 1000) / 10 : 0;
- return { id: ph.id, name: ph.name, totalFinal, yieldPcsPerKg, wastagePct };
- }).filter(r => r.totalFinal > 0).sort((a, b) => b.totalFinal - a.totalFinal);
-
- if (rows.length === 0) return null;
- const maxFinal = Math.max(...rows.map(r => r.totalFinal));
-
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-4">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Factory className="w-6 h-6 text-info" />
- Production House Leaderboard
- </h2>
- <p className="text-sm text-text-2">Output, yield and wastage rate by house for the selected date range</p>
- </div>
- <div className="space-y-3">
- {rows.map((r, idx) => (
- <div key={r.id} className="flex items-center gap-3">
- <span className="w-5 text-sm font-bold text-text-3 flex-shrink-0 text-right">{idx + 1}</span>
- <div className="flex-1 min-w-0">
- <div className="flex items-center justify-between gap-2 mb-1">
- <span className="text-sm font-semibold text-text truncate">{r.name}</span>
- <span className="text-xs text-text-3 flex-shrink-0 tabular-nums">
- {r.totalFinal.toLocaleString()} pcs
- {r.yieldPcsPerKg !== null && ` · ${r.yieldPcsPerKg} pcs/kg`}
- {' · '}
- <span className={r.wastagePct > 5 ? 'text-danger font-medium' : 'text-text-3'}>{r.wastagePct}% waste</span>
- </span>
- </div>
- <div className="w-full bg-surface-2 rounded-full h-2">
- <div className="h-2 rounded-full bg-info" style={{ width: `${maxFinal > 0 ? Math.max(4, (r.totalFinal / maxFinal) * 100) : 0}%` }} />
- </div>
- </div>
- </div>
- ))}
- </div>
- </div>
- );
- })()}
-
- {/* Production Ledger - dough/stuffing/batter/coating pools, carried forward day to
- day via ProductionManagement.tsx's entry workflow. Only meaningful for a single
- concrete production house (an "all houses" combined pool trend isn't meaningful as
- raw kg without house-specific context) and will look sparse until real data
- accumulates from go-live (2026-08-23) onward - same expectation as every other
- go-live gate this session. */}
- {selectedProductionHouseId && (() => {
- const PRODUCTION_LEDGER_GO_LIVE_DATE = '2026-08-23';
- const sortedEntries = [...productionLedgerRange].sort((a, b) => a.date.localeCompare(b.date));
-
- if (productionLedgerRangeLoading) {
- return (
- <div className="bg-surface rounded-lg p-6 mb-6 text-center text-sm text-text-3">
- Loading production ledger…
- </div>
- );
- }
- if (sortedEntries.length === 0) {
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-success" />
- Production Ledger
- </h2>
- <p className="text-sm text-text-2">
- Dough/stuffing/batter/coating carry-forward tracking starts {PRODUCTION_LEDGER_GO_LIVE_DATE} - no closed days yet for this house in the selected range.
- </p>
- </div>
- );
- }
-
- // Totals per pool across the whole range, for utilization % and days-of-cover.
- const totals: Record<string, { prepared: number; wastage: number }> = {};
- ALL_POOL_IDS.forEach((id) => { totals[id] = { prepared: 0, wastage: 0 }; });
- sortedEntries.forEach((entry) => {
- ALL_POOL_IDS.forEach((id) => {
- const pool = (entry.pools as any)?.[id];
- if (!pool) return;
- totals[id].prepared += pool.prepared || 0;
- if (typeof pool.wastage === 'number') totals[id].wastage += pool.wastage;
- });
- });
- const latestEntry = sortedEntries[sortedEntries.length - 1];
- const daysInRange = sortedEntries.length;
-
- // Leftover-aging: consecutive days back from the latest entry where a pool's
- // closingActual stayed above a small threshold - a rough "sitting idle" signal,
- // not a precise spoilage model (there's no per-type shelf-life data anywhere).
- const agingDays: Record<string, number> = {};
- ALL_POOL_IDS.forEach((id) => {
- let count = 0;
- for (let i = sortedEntries.length - 1; i >= 0; i--) {
- const pool = (sortedEntries[i].pools as any)?.[id];
- if (pool && typeof pool.closingActual === 'number' && pool.closingActual > 0.01) count++;
- else break;
- }
- agingDays[id] = count;
- });
-
- const utilizationRows = ALL_POOL_IDS
- .map((id) => ({
- id,
- label: getPoolLabel(id),
- prepared: totals[id].prepared,
- utilizationPct: totals[id].prepared > 0 ? Math.round((totals[id].wastage / totals[id].prepared) * 1000) / 10 : null,
- closingActual: (latestEntry.pools as any)?.[id]?.closingActual ?? null,
- avgDailyConsumption: daysInRange > 0 ? totals[id].wastage / daysInRange : 0,
- }))
- .filter((r) => r.prepared > 0 || (r.closingActual !== null && r.closingActual > 0));
-
- if (utilizationRows.length === 0) return null;
-
- const trendData = sortedEntries.map((entry) => {
- const row: any = { label: formatDateIST(entry.date) };
- ALL_POOL_IDS.forEach((id) => {
- const pool = (entry.pools as any)?.[id];
- row[`${id}_opening`] = pool?.opening ?? null;
- row[`${id}_prepared`] = pool?.prepared ?? null;
- row[`${id}_closing`] = pool?.closingActual ?? null;
- });
- return row;
- });
-
- const activePoolId = selectedLedgerPoolId && utilizationRows.some((r) => r.id === selectedLedgerPoolId)
- ? selectedLedgerPoolId
- : utilizationRows[0].id;
-
- // Actually-consumed material yield, per momo type with its own pool - pieces made
- // (from production: records for this house/range) divided by kg actually drawn
- // down from that type's own pool (the ledger's `wastage` field - see
- // EndOfDayCloseForm, this doubles as "net consumption" since there's no separate
- // expected-yield formula to split real usage from true spoilage). This is the
- // "actually consumed" counterpart to the prepared-based Raw Material Yield chart
- // above - shown separately rather than replacing it, since it only covers dates
- // this ledger has data for.
- const houseProductionInRange = productionData.filter((p: any) => {
- const matchesHouse = p.productionHouseId === selectedProductionHouseId || p.storeId === selectedProductionHouseId;
- return matchesHouse && p.date >= sortedEntries[0].date && p.date <= latestEntry.date;
- });
- const actualYieldRows = MOMO_TYPES
- .map((t) => {
- const poolId = `${t.perTypePoolField}:${t.inventoryKey}`;
- const consumedKg = totals[poolId]?.wastage || 0;
- const piecesMade = houseProductionInRange.reduce((sum: number, p: any) => sum + (p[t.key]?.final || 0), 0);
- return {
- key: t.key,
- label: t.label,
- piecesMade,
- consumedKg,
- yieldPcsPerKg: consumedKg > 0.01 ? Math.round((piecesMade / consumedKg) * 10) / 10 : null,
- };
- })
- .filter((r) => r.piecesMade > 0 || r.consumedKg > 0);
-
- return (
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-4">
- <h2 className="text-xl text-text mb-1 flex items-center gap-2">
- <Package className="w-6 h-6 text-success" />
- Production Ledger
- </h2>
- <p className="text-sm text-text-2">Dough/stuffing/batter/coating pools, carried forward day to day - tracking since {PRODUCTION_LEDGER_GO_LIVE_DATE}</p>
- </div>
-
- <div className="overflow-x-auto mb-6">
- <table className="w-full text-sm">
- <thead>
- <tr className="text-left text-text-3 border-b border-border">
- <th className="py-2 pr-2 font-medium">Pool</th>
- <th className="py-2 px-2 font-medium">Prepared (period)</th>
- <th className="py-2 px-2 font-medium">Utilization</th>
- <th className="py-2 px-2 font-medium">Current Leftover</th>
- <th className="py-2 pl-2 font-medium">Days of Stock Cover</th>
- </tr>
- </thead>
- <tbody>
- {utilizationRows.map((r) => {
- const daysCover = r.avgDailyConsumption > 0.001 && r.closingActual !== null
- ? Math.round((r.closingActual / r.avgDailyConsumption) * 10) / 10
- : null;
- return (
- <tr key={r.id} className="border-b border-border last:border-0">
- <td className="py-2 pr-2 text-text-2">{r.label}</td>
- <td className="py-2 px-2 tabular-nums text-text">{r.prepared.toFixed(2)} kg</td>
- <td className="py-2 px-2 tabular-nums">
- {r.utilizationPct === null ? <span className="text-text-3">—</span> : `${r.utilizationPct}%`}
- </td>
- <td className="py-2 px-2 tabular-nums text-text">
- {r.closingActual === null ? <span className="text-text-3">—</span> : `${r.closingActual.toFixed(2)} kg`}
- </td>
- <td className="py-2 pl-2 tabular-nums">
- {daysCover === null ? <span className="text-text-3">—</span> : (
- <span className={daysCover > 7 ? 'text-warning font-medium' : 'text-text-2'}>{daysCover} days</span>
- )}
- </td>
- </tr>
- );
- })}
- </tbody>
- </table>
- </div>
-
- {(() => {
- const risky = ALL_POOL_IDS
- .map((id) => ({ id, label: getPoolLabel(id), days: agingDays[id] }))
- .filter((r) => r.days >= 3);
- if (risky.length === 0) return null;
- return (
- <div className="mb-6 bg-warning-soft border border-warning-border rounded-lg p-4">
- <div className="flex items-center gap-2 mb-2">
- <AlertCircle className="w-4 h-4 text-warning" />
- <span className="text-sm font-semibold text-warning">Leftover sitting unused for several days</span>
- </div>
- <ul className="text-xs text-warning space-y-1">
- {risky.map((r) => (
- <li key={r.id}>{r.label} - untouched for {r.days} day{r.days === 1 ? '' : 's'} in a row</li>
- ))}
- </ul>
- </div>
- );
- })()}
-
- <div className="mb-6">
- <div className="flex items-center gap-2 mb-3">
- <label className="text-xs text-text-3">Pool:</label>
- <select
- value={activePoolId}
- onChange={(e) => setSelectedLedgerPoolId(e.target.value)}
- className="min-h-11 text-body-sm border border-border-strong rounded-md bg-surface px-2 py-1"
- >
- {utilizationRows.map((r) => (
- <option key={r.id} value={r.id}>{r.label}</option>
- ))}
- </select>
- </div>
- <LazyChart height={260}>{() => (
- <ResponsiveContainer width="100%" height={260}>
- <LineChart data={trendData}>
- <CartesianGrid strokeDasharray="3 3" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} />
- <Tooltip />
- <Legend />
- <Line type="monotone" dataKey={`${activePoolId}_opening`} name="Opening" stroke="var(--chart-4)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey={`${activePoolId}_prepared`} name="Prepared" stroke="var(--chart-2)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- <Line type="monotone" dataKey={`${activePoolId}_closing`} name="Closing (counted)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} connectNulls />
- </LineChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
-
- {actualYieldRows.length > 0 && (
- <div>
- <h3 className="text-base font-bold text-text tracking-tight mb-1">Actual Material Yield (Ledger)</h3>
- <p className="text-xs text-text-3 mb-3">Pieces made per kg actually drawn from that type's own pool - the actually-consumed counterpart to the prepared-based Raw Material Yield chart above, covering only ledger-tracked dates</p>
- <div className="overflow-x-auto">
- <table className="w-full text-sm">
- <thead>
- <tr className="text-left text-text-3 border-b border-border">
- <th className="py-2 pr-2 font-medium">Momo Type</th>
- <th className="py-2 px-2 font-medium">Pieces Made</th>
- <th className="py-2 px-2 font-medium">Kg Consumed</th>
- <th className="py-2 pl-2 font-medium">Yield (pcs/kg)</th>
- </tr>
- </thead>
- <tbody>
- {actualYieldRows.map((r) => (
- <tr key={r.key} className="border-b border-border last:border-0">
- <td className="py-2 pr-2 text-text-2">{r.label}</td>
- <td className="py-2 px-2 tabular-nums text-text">{r.piecesMade.toLocaleString()}</td>
- <td className="py-2 px-2 tabular-nums text-text">{r.consumedKg.toFixed(2)} kg</td>
- <td className="py-2 pl-2 tabular-nums text-text">{r.yieldPcsPerKg === null ? <span className="text-text-3">—</span> : r.yieldPcsPerKg}</td>
- </tr>
- ))}
- </tbody>
- </table>
- </div>
- </div>
- )}
- </div>
- );
- })()}
-
- {/* Wastage Analysis Charts - trend charts below now follow the shared
- productionDateRange selector at the top of this tab, same as every other trended
- section on this page, instead of their own separate "as of" date. */}
- <div className="bg-surface rounded-lg p-6 mb-6">
- <div className="mb-6">
- <h2 className="text-xl text-text mb-1">Wastage Analysis</h2>
- <p className="text-sm text-text-2">Track and minimize production wastage</p>
- </div>
-
- {/* Helper function for filtering production data by production house */}
- {(() => {
- const filterById = analyticsMode === 'production'
- ? selectedProductionHouseId
- : (context.user?.designation === 'production_incharge'
- ? effectiveStoreId
- : selectedProductionHouseId);
- 
- // Get stores mapped to this production house
- const mappedStoreIds = filterById 
- ? stores.filter(s => s.productionHouseId === filterById).map(s => s.id)
- : [];
- 
- // Helper function to check if a production record matches the filter
- const matchesProductionHouse = (p: any) => {
- if (!filterById) return true;
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- const phId = p.productionHouseId || p.storeId;
- const matchesMappedStore = mappedStoreIds.includes(p.storeId) || mappedStoreIds.includes(p.productionHouseId);
- return matchesStoreId || matchesProductionHouseId || phId === filterById || matchesMappedStore;
- };
- 
- // Expose helper to parent scope for charts to use
- (window as any).wastageFilterHelper = { matchesProductionHouse, mappedStoreIds, filterById };
- 
- const filteredProduction = productionData.filter(matchesProductionHouse);
-
- const totalWastageAllTime = filteredProduction.reduce((sum, p) => {
- return sum + 
- (p.wastage?.dough || 0) + 
- (p.wastage?.stuffing || 0) + 
- (p.wastage?.batter || 0) + 
- (p.wastage?.coating || 0);
- }, 0);
-
- const recordsWithWastage = filteredProduction.filter(p => 
- (p.wastage?.dough || 0) > 0 || 
- (p.wastage?.stuffing || 0) > 0 || 
- (p.wastage?.batter || 0) > 0 || 
- (p.wastage?.coating || 0) > 0
- );
-
- if (filteredProduction.length === 0) {
- return (
- <div className="bg-warning-soft border border-warning-border rounded-lg p-4 mb-6">
- <p className="text-warning font-medium">No production data found</p>
- <p className="text-sm text-warning mt-1">
- Please select a production house or ensure production data has been logged.
- </p>
- </div>
- );
- }
-
- if (recordsWithWastage.length === 0 && filteredProduction.length > 0) {
- return (
- <div className="bg-info-soft border border-info-border rounded-lg p-4 mb-6">
- <p className="text-info font-medium">No wastage data recorded</p>
- <p className="text-sm text-info mt-1">
- Found {filteredProduction.length} production record(s), but no wastage has been logged yet.
- Wastage values can be entered in the Production Management section.
- </p>
- </div>
- );
- }
-
- return null;
- })()}
-
- {/* Daily Wastage Trend - rebuilt on the same current-vs-previous-period convention
- (zipPrev + renderPrevAwareLegend, driven by the shared productionDateRange selector)
- as every other trended chart on this page. Previously this was three separate
- "last 5 days/weeks/months as of {wastageTrendEndDate}" own-history mini-charts with
- their own date anchor, the only trended section on this page with no previous-period
- comparison line - replaced with one chart so it reads consistently with Output &
- Efficiency and Sauces Usage above. */}
- {(() => {
- const helper = (window as any).wastageFilterHelper;
- const enumerateDates = (start: string, end: string): string[] => {
- const dates: string[] = [];
- let d = start;
- let guard = 0;
- while (d <= end && guard < 400) {
- dates.push(d);
- d = addDays(d, 1);
- guard++;
- }
- return dates;
- };
- const buildWastageSeries = (dates: string[]) => dates.map(date => {
- const dayProduction = productionData.filter(p => helper.matchesProductionHouse(p) && p.date === date);
- const wastage = dayProduction.reduce((sum, p) =>
- sum + (p.wastage?.dough || 0) + (p.wastage?.stuffing || 0) + (p.wastage?.batter || 0) + (p.wastage?.coating || 0), 0);
- return { date, label: formatDateIST(date), wastage: Math.round(wastage * 100) / 100 };
- });
-
- const { startDate, endDate } = getDateRangeBounds();
- const previousRangeForWastage = getPreviousPeriodDateRange();
- const currentDates = enumerateDates(startDate, endDate);
- const previousDates = enumerateDates(previousRangeForWastage.startDate, previousRangeForWastage.endDate);
- const wastageSeries = buildWastageSeries(currentDates);
- const previousWastageSeries = buildWastageSeries(previousDates);
- const wastageChartData = zipPrev(wastageSeries, previousWastageSeries, ['wastage']);
-
- if (currentDates.length === 0) return null;
-
- return (
- <div className="rounded-lg p-4 mb-6 bg-surface border border-border">
- <h3 className="text-text font-bold mb-1">Daily Wastage Trend</h3>
- <p className="text-xs text-text-2 mb-3">Total kg wasted per day for the selected date range · dotted line is the matching previous period</p>
- <LazyChart height={260}>{() => (
- <ResponsiveContainer width="100%" height={260}>
- <LineChart data={wastageChartData}>
- <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-1)" />
- <XAxis dataKey="label" tick={{ fontSize: 12 }} />
- <YAxis tick={{ fontSize: 12 }} unit="kg" />
- <Tooltip />
- <Legend content={renderPrevAwareLegend} />
- <Line type="monotone" dataKey="wastage" name="Wastage (kg)" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 2 }} />
- <Line type="monotone" dataKey="prev_wastage" name="Wastage (previous period)" stroke="var(--chart-1)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} legendType="none" />
- </LineChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
- );
- })()}
-
- {/* Wastage Breakdown by Type with Time Filter */}
- <div className="bg-surface rounded-lg border-2 border-border p-6">
- <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
- <h3 className="text-xl text-text">Wastage Breakdown by Type</h3>
-
- {/* Time Filter for Wastage */}
- <div className="flex flex-wrap gap-2">
- {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map((filter) => (
- <button
- key={filter}
- onClick={() => setWastageTimeFilter(filter as WastageTimeFilter)}
- className={`min-h-11 px-3 py-1.5 rounded-md text-sm transition-colors ${
- wastageTimeFilter === filter
- ? 'bg-primary-soft text-primary border-primary'
- : 'bg-surface-2 text-text-2 hover:bg-surface-3'
- }`}
- >
- {filter.charAt(0).toUpperCase() + filter.slice(1)}
- </button>
- ))}
- </div>
- </div>
-
- <LazyChart height={400}>{() => (
- <ResponsiveContainer width="100%" height={400}>
- <BarChart data={(() => {
- // Use consistent production house filtering logic
- const helper = (window as any).wastageFilterHelper;
- 
- const filteredProduction = productionData.filter(p => {
- if (!helper.matchesProductionHouse(p)) return false;
- if (wastageTimeFilter === 'custom') {
- return p.date >= dateRange.from && p.date <= dateRange.to;
- }
- 
- const today = new Date();
- const pDate = new Date(p.date);
- 
- if (wastageTimeFilter === 'daily') {
- // Last 5 days
- const fiveDaysAgo = new Date(today);
- fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
- return pDate >= fiveDaysAgo;
- } else if (wastageTimeFilter === 'weekly') {
- // Last 5 weeks
- const fiveWeeksAgo = new Date(today);
- fiveWeeksAgo.setDate(fiveWeeksAgo.getDate() - 35);
- return pDate >= fiveWeeksAgo;
- } else if (wastageTimeFilter === 'monthly') {
- // Last 5 months
- const fiveMonthsAgo = new Date(today);
- fiveMonthsAgo.setMonth(fiveMonthsAgo.getMonth() - 5);
- return pDate >= fiveMonthsAgo;
- } else if (wastageTimeFilter === 'yearly') {
- // Last 5 years
- const fiveYearsAgo = new Date(today);
- fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
- return pDate >= fiveYearsAgo;
- }
- 
- return true;
- });
-
- // Group by time period (similar to production chart)
- const grouped = new Map();
- filteredProduction.forEach(p => {
- let key = p.date;
- let displayLabel = p.date;
- 
- if (wastageTimeFilter === 'weekly') {
- // Monday-Sunday weeks, as on the rest of the page (date-string arithmetic, no UTC drift)
- const [py, pm, pd] = p.date.split('-').map(Number);
- const weekStartStr = addDays(p.date, -((new Date(Date.UTC(py, pm - 1, pd)).getUTCDay() + 6) % 7));
- const weekStart = new Date(`${weekStartStr}T00:00:00`);
- const weekEnd = new Date(`${addDays(weekStartStr, 6)}T00:00:00`);
- key = weekStartStr;
- // Format as "Dec 22 - Dec 28"
- displayLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
- } else if (wastageTimeFilter === 'monthly') {
- key = p.date.substring(0, 7); // YYYY-MM
- displayLabel = key;
- } else if (wastageTimeFilter === 'yearly') {
- key = p.date.substring(0, 4); // YYYY
- displayLabel = key;
- }
-
- if (!grouped.has(key)) {
- grouped.set(key, {
- period: displayLabel,
- dough: 0,
- stuffing: 0,
- batter: 0,
- coating: 0
- });
- }
-
- const data = grouped.get(key)!;
- data.dough += p.wastage?.dough || 0;
- data.stuffing += p.wastage?.stuffing || 0;
- data.batter += p.wastage?.batter || 0;
- data.coating += p.wastage?.coating || 0;
- });
-
- return Array.from(grouped.values()).sort((a, b) => 
- a.period.localeCompare(b.period)
- ).map((item, index) => ({ ...item, uniqueKey: `wastage-breakdown-${index}` }));
- })()}>
- <CartesianGrid key="wastage-breakdown-grid" strokeDasharray="3 3" stroke="var(--chart-grid)" />
- <XAxis 
- key="wastage-breakdown-xaxis"
- dataKey="period" 
- tick={{ fontSize: 12 }} 
- angle={wastageTimeFilter === 'weekly' ? -15 : 0}
- textAnchor={wastageTimeFilter === 'weekly' ? 'end' : 'middle'}
- height={wastageTimeFilter === 'weekly' ? 60 : 30}
- />
- <YAxis key="wastage-breakdown-yaxis" tick={{ fontSize: 12 }} label={{ value: 'kg', angle: -90, position: 'insideLeft' }} />
- <Tooltip key="wastage-breakdown-tooltip" content={<WastageTooltip />} />
- <Legend key="wastage-breakdown-legend" />
- <Bar key="dough-bar" dataKey="dough" name="Dough" fill="var(--chart-1)" />
- <Bar key="stuffing-bar" dataKey="stuffing" name="Stuffing" fill="var(--chart-1)" />
- <Bar key="batter-bar" dataKey="batter" name="Batter" fill="var(--chart-3)" />
- <Bar key="coating-bar" dataKey="coating" name="Coating" fill="var(--chart-2)" />
- </BarChart>
- </ResponsiveContainer>
- )}</LazyChart>
- </div>
-
- {/* SOP Maintenance Section - Cluster Head Only */}
- {isClusterHead && (
- <div className="rounded-lg border-2 border-border p-6 mt-6 bg-surface">
- <div className="flex justify-between items-center mb-6">
- <div>
- <h3 className="text-xl text-text flex items-center gap-2">
- <ClipboardCheck className="w-6 h-6 text-info" />
- SOP Maintenance - Threshold Limits
- </h3>
- <p className="text-sm text-text-2 mt-1">Set standard ingredient usage per piece (in grams)</p>
- </div>
- {!editingSop ? (
- <button
- onClick={() => {
- setTempSopThresholds(JSON.parse(JSON.stringify(sopThresholds)));
- setTempDiversionPercent(sopDiversionPercent);
- setEditingSop(true);
- }}
- className="min-h-11 px-4 py-2 border border-border-strong bg-surface text-text hover:bg-surface-2 rounded-md transition-colors flex items-center gap-2"
- >
- <Edit className="w-4 h-4" />
- Edit SOP
- </button>
- ) : (
- <div className="flex gap-2">
- <button
- onClick={() => {
- setSopThresholds(tempSopThresholds);
- setSopDiversionPercent(tempDiversionPercent);
- setEditingSop(false);
- // TODO: Save to backend
- toast.success('SOP thresholds and diversion limit updated successfully');
- }}
- className="min-h-11 px-4 py-2 bg-primary text-on-primary rounded-md hover:bg-primary-hover transition-colors flex items-center gap-2"
- >
- <Check className="w-4 h-4" />
- Save
- </button>
- <button
- onClick={() => {
- setEditingSop(false);
- setTempSopThresholds(null);
- }}
- className="px-4 py-2 bg-border-strong text-text-2 rounded-lg hover:bg-border-strong transition-colors flex items-center gap-2"
- >
- <X className="w-4 h-4" />
- Cancel
- </button>
- </div>
- )}
- </div>
-
- {/* SOP Diversion Percentage Setting */}
- <div className="bg-warning-soft border border-warning-border rounded-lg p-4 mb-6">
- <div className="flex items-center justify-between">
- <div>
- <h4 className="text-text font-semibold flex items-center gap-2">
- <AlertCircle className="w-5 h-5 text-warning" />
- Maximum Allowed Diversion from SOP
- </h4>
- <p className="text-sm text-text-2 mt-1">Set the acceptable deviation range (±%) from SOP standards. Using too little OR too much is non-compliant.</p>
- </div>
- <div className="flex items-center gap-3">
- <label className="text-sm text-text-2">Max Diversion:</label>
- <input
- type="number"
- min="0"
- max="20"
- step="1"
- value={editingSop ? tempDiversionPercent : sopDiversionPercent}
- onChange={(e) => {
- if (editingSop) {
- setTempDiversionPercent(Number(e.target.value));
- }
- }}
- disabled={!editingSop}
- className="w-20 px-3 py-2 border border-border-strong rounded-md focus:ring-2 focus:ring-ring disabled:bg-surface-2"
- />
- <span className="text-text-2">%</span>
- </div>
- </div>
- </div>
-
- <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
- {Object.entries(editingSop ? tempSopThresholds : sopThresholds).map(([key, values]: [string, any]) => {
- const momoNames: any = {
- chickenMomos: 'Chicken Momos',
- chickenCheeseMomos: 'Chicken Cheese Momos',
- vegMomos: 'Veg Momos',
- cheeseCornMomos: 'Cheese Corn Momos',
- paneerMomos: 'Paneer Momos',
- vegKurkure: 'Veg Kurkure',
- chickenKurkure: 'Chicken Kurkure'
- };
-
- return (
- <div key={key} className="bg-surface rounded-lg p-4 border border-border">
- <h4 className="text-text mb-3">{momoNames[key]}</h4>
- <div className="space-y-2">
- <div>
- <label className="text-xs text-text-2">Dough (g/pc)</label>
- <input
- type="number"
- value={values.dough}
- disabled={!editingSop}
- onChange={(e) => {
- if (editingSop) {
- setTempSopThresholds({
- ...tempSopThresholds,
- [key]: { ...tempSopThresholds[key], dough: Number(e.target.value) }
- });
- }
- }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
- />
- </div>
- <div>
- <label className="text-xs text-text-2">Stuffing (g/pc)</label>
- <input
- type="number"
- value={values.stuffing}
- disabled={!editingSop}
- onChange={(e) => {
- if (editingSop) {
- setTempSopThresholds({
- ...tempSopThresholds,
- [key]: { ...tempSopThresholds[key], stuffing: Number(e.target.value) }
- });
- }
- }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
- />
- </div>
- {values.batter !== undefined && (
- <div>
- <label className="text-xs text-text-2">Batter (g/pc)</label>
- <input
- type="number"
- value={values.batter}
- disabled={!editingSop}
- onChange={(e) => {
- if (editingSop) {
- setTempSopThresholds({
- ...tempSopThresholds,
- [key]: { ...tempSopThresholds[key], batter: Number(e.target.value) }
- });
- }
- }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
- />
- </div>
- )}
- {values.coating !== undefined && (
- <div>
- <label className="text-xs text-text-2">Coating (g/pc)</label>
- <input
- type="number"
- value={values.coating}
- disabled={!editingSop}
- onChange={(e) => {
- if (editingSop) {
- setTempSopThresholds({
- ...tempSopThresholds,
- [key]: { ...tempSopThresholds[key], coating: Number(e.target.value) }
- });
- }
- }}
- className={`w-full px-2 py-1 border rounded text-sm ${editingSop ? 'bg-surface' : 'bg-surface-2'}`}
- />
- </div>
- )}
- </div>
- </div>
- );
- })}
- </div>
- </div>
- )}
-
- {/* Daily Usage vs SOP Compliance */}
- <div className="bg-surface rounded-lg border-2 border-border p-6 mt-6">
- <div className="mb-6">
- <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
- <h3 className="text-xl text-text flex items-center gap-2">
- <TrendingUp className="w-6 h-6 text-info" />
- Daily Ingredient Usage & SOP Compliance
- </h3>
-
- {/* Date Selector for SOP Compliance */}
- <DatePicker
- label="Date:"
- value={sopComplianceDate}
- onChange={setSopComplianceDate}
- />
- </div>
- <p className="text-sm text-text-2">Regular momos only - Actual usage per piece vs SOP limits with diversion %</p>
- </div>
-
- <div className="space-y-6">
- {(() => {
- // Debug logging for SOP Compliance filtering
- const filterById = analyticsMode === 'production'
- ? selectedProductionHouseId
- : (context.user?.designation === 'production_incharge'
- ? effectiveStoreId
- : selectedProductionHouseId);
- 
- // Use the SOP compliance date selector
- const datesToShow = [sopComplianceDate];
- 
- const last5Days = [];
- for (const dateStr of datesToShow) {
- const dayProduction = productionData.filter(p => {
- // Use consistent production house filtering logic
- const filterById = analyticsMode === 'production'
- ? selectedProductionHouseId // In production mode, use production house selector
- : (context.user?.designation === 'production_incharge'
- ? effectiveStoreId // Production incharge in store mode uses their store ID
- : selectedProductionHouseId); // Cluster head in store mode uses production house selector
- 
- // Get mapped store IDs once outside the if block for logging
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const mappedStoreIds = allStores
- .filter(s => s.productionHouseId === filterById)
- .map(s => s.id);
- 
- // Direct matches
- const matchesStoreId = p.storeId === filterById;
- const matchesProductionHouseId = p.productionHouseId === filterById;
- const phId = p.productionHouseId || p.storeId;
- const matchesFallback = phId === filterById;
- const matchesMappedStore = p.storeId && mappedStoreIds.includes(p.storeId);
- const matchesDate = p.date === dateStr;
- const isApproved = p.approvalStatus === 'approved';
- 
- const passesFilter = (matchesStoreId || matchesProductionHouseId || matchesFallback || matchesMappedStore);
- const finalResult = passesFilter && matchesDate && isApproved;
- 
- if (filterById && !passesFilter) {
- return false;
- }
- return matchesDate && isApproved;
- });
- 
- if (dayProduction.length === 0) continue;
-
- // Map production data fields to SOP threshold keys
- const fieldMapping: any = {
- chickenMomos: 'chickenMomos',
- chickenCheeseMomos: 'chickenCheeseMomos',
- vegMomos: 'vegMomos',
- cheeseCornMomos: 'cheeseCornMomos',
- paneerMomos: 'paneerMomos',
- vegKurkureMomos: 'vegKurkure',
- chickenKurkureMomos: 'chickenKurkure'
- };
-
- const usageByType: any = {};
- 
- dayProduction.forEach(p => {
- // Process regular momos (with dough and stuffing)
- ['chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos'].forEach(field => {
- const momoData = (p as any)[field];
- if (momoData && momoData.final > 0) {
- const sopKey = fieldMapping[field];
- if (!usageByType[sopKey]) {
- usageByType[sopKey] = {
- quantity: 0,
- totalDough: 0,
- totalStuffing: 0,
- totalBatter: 0,
- totalCoating: 0
- };
- }
- usageByType[sopKey].quantity += momoData.final;
- usageByType[sopKey].totalDough += momoData.dough || 0;
- usageByType[sopKey].totalStuffing += momoData.stuffing || 0;
- }
- });
-
- // Process kurkure momos (with batter and coating)
- ['vegKurkureMomos', 'chickenKurkureMomos'].forEach(field => {
- const momoData = (p as any)[field];
- if (momoData && momoData.final > 0) {
- const sopKey = fieldMapping[field];
- if (!usageByType[sopKey]) {
- usageByType[sopKey] = {
- quantity: 0,
- totalDough: 0,
- totalStuffing: 0,
- totalBatter: 0,
- totalCoating: 0
- };
- }
- usageByType[sopKey].quantity += momoData.final;
- usageByType[sopKey].totalBatter += momoData.batter || 0;
- usageByType[sopKey].totalCoating += momoData.coating || 0;
- }
- });
- });
-
- last5Days.push({ date: dateStr, usage: usageByType });
- }
-
- if (last5Days.length === 0) {
- return (
- <div className="text-center py-12 text-text-3">
- <AlertCircle className="w-12 h-12 mx-auto mb-3 text-text-3" />
- <p>No approved production data found for {formatDateIST(sopComplianceDate)}</p>
- <p className="text-sm mt-1">Production entries must be approved to appear here</p>
- </div>
- );
- }
-
- return last5Days.map(({ date, usage }) => (
- <div key={date} className="border border-border rounded-lg p-4">
- <h4 className="text-text mb-4">{formatDateIST(date)}</h4>
- 
- <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
- {Object.entries(usage).map(([momoType, data]: [string, any]) => {
- if (data.quantity === 0) return null;
- 
- // Skip Kurkure momos - SOP compliance not required
- if (momoType === 'vegKurkure' || momoType === 'chickenKurkure') {
- return null;
- }
-
- const momoNames: any = {
- chickenMomos: 'Chicken Momos',
- chickenCheeseMomos: 'Chicken Cheese',
- vegMomos: 'Veg Momos',
- cheeseCornMomos: 'Cheese Corn',
- paneerMomos: 'Paneer Momos',
- vegKurkure: 'Veg Kurkure',
- chickenKurkure: 'Chicken Kurkure'
- };
-
- // Convert kg to g by multiplying by 1000
- const avgDough = data.quantity > 0 ? (data.totalDough * 1000) / data.quantity : 0;
- const avgStuffing = data.quantity > 0 ? (data.totalStuffing * 1000) / data.quantity : 0;
- const avgBatter = data.quantity > 0 ? (data.totalBatter * 1000) / data.quantity : 0;
- const avgCoating = data.quantity > 0 ? (data.totalCoating * 1000) / data.quantity : 0;
-
- // Calculate diversion percentages
- const doughDiversion = sopThresholds[momoType].dough > 0 ? ((avgDough - sopThresholds[momoType].dough) / sopThresholds[momoType].dough) * 100 : 0;
- const stuffingDiversion = sopThresholds[momoType].stuffing > 0 ? ((avgStuffing - sopThresholds[momoType].stuffing) / sopThresholds[momoType].stuffing) * 100 : 0;
- const batterDiversion = sopThresholds[momoType].batter > 0 ? ((avgBatter - sopThresholds[momoType].batter) / sopThresholds[momoType].batter) * 100 : 0;
- const coatingDiversion = sopThresholds[momoType].coating > 0 ? ((avgCoating - sopThresholds[momoType].coating) / sopThresholds[momoType].coating) * 100 : 0;
-
- // Use dynamic diversion percentage - check BOTH upper and lower bounds
- const minDiversion = 1 - (sopDiversionPercent / 100);
- const maxDiversion = 1 + (sopDiversionPercent / 100);
- const doughCompliance = avgDough >= sopThresholds[momoType].dough * minDiversion && avgDough <= sopThresholds[momoType].dough * maxDiversion;
- const stuffingCompliance = avgStuffing >= sopThresholds[momoType].stuffing * minDiversion && avgStuffing <= sopThresholds[momoType].stuffing * maxDiversion;
- const batterCompliance = !sopThresholds[momoType].batter || (avgBatter >= sopThresholds[momoType].batter * minDiversion && avgBatter <= sopThresholds[momoType].batter * maxDiversion);
- const coatingCompliance = !sopThresholds[momoType].coating || (avgCoating >= sopThresholds[momoType].coating * minDiversion && avgCoating <= sopThresholds[momoType].coating * maxDiversion);
-
- const overallCompliance = doughCompliance && stuffingCompliance && batterCompliance && coatingCompliance;
-
- return (
- <div 
- key={momoType} 
- className={`p-3 rounded-lg border-2 ${overallCompliance ? 'bg-success-soft border-success-border' : 'bg-danger-soft border-danger-border'}`}
- >
- <div className="flex items-center justify-between mb-2">
- <p className="text-sm text-text">{momoNames[momoType]}</p>
- {overallCompliance ? (
- <Check className="w-5 h-5 text-success" />
- ) : (
- <AlertCircle className="w-5 h-5 text-danger" />
- )}
- </div>
- <p className="text-xs text-text-2 mb-2">Qty: {data.quantity} pcs</p>
- 
- <div className="space-y-1 text-xs">
- <div className={`flex justify-between items-center ${!doughCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
- <span>Dough:</span>
- <div className="text-right">
- <div>{avgDough.toFixed(1)}g / {sopThresholds[momoType].dough}g</div>
- <div className={`text-caption ${Math.abs(doughDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
- {doughDiversion > 0 ? '+' : ''}{doughDiversion.toFixed(1)}%
- </div>
- </div>
- </div>
- <div className={`flex justify-between items-center ${!stuffingCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
- <span>Stuffing:</span>
- <div className="text-right">
- <div>{avgStuffing.toFixed(1)}g / {sopThresholds[momoType].stuffing}g</div>
- <div className={`text-caption ${Math.abs(stuffingDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
- {stuffingDiversion > 0 ? '+' : ''}{stuffingDiversion.toFixed(1)}%
- </div>
- </div>
- </div>
- {sopThresholds[momoType].batter && (
- <div className={`flex justify-between items-center ${!batterCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
- <span>Batter:</span>
- <div className="text-right">
- <div>{avgBatter.toFixed(1)}g / {sopThresholds[momoType].batter}g</div>
- <div className={`text-caption ${Math.abs(batterDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
- {batterDiversion > 0 ? '+' : ''}{batterDiversion.toFixed(1)}%
- </div>
- </div>
- </div>
- )}
- {sopThresholds[momoType].coating && (
- <div className={`flex justify-between items-center ${!coatingCompliance ? 'text-danger font-semibold' : 'text-text-2'}`}>
- <span>Coating:</span>
- <div className="text-right">
- <div>{avgCoating.toFixed(1)}g / {sopThresholds[momoType].coating}g</div>
- <div className={`text-caption ${Math.abs(coatingDiversion) > sopDiversionPercent ? 'text-danger' : 'text-success'}`}>
- {coatingDiversion > 0 ? '+' : ''}{coatingDiversion.toFixed(1)}%
- </div>
- </div>
- </div>
- )}
- </div>
- </div>
- );
- })}
- </div>
- </div>
- ));
- })()}
- </div>
- </div>
- </div>
- </div>
- )}
- </>
- );
+  const { t, lang } = useT();
+  const {
+    context, onNavigateToManageItems, isClusterHead, isProductionIncharge, isOperationsManager, analyticsMode, effectiveStoreId, wastageTimeFilter, setWastageTimeFilter,
+    dateRange, setShowRecalibration, stores, latestRecalibration, previousMonthStock, sopThresholds, setSopThresholds, editingSop, setEditingSop, tempSopThresholds,
+    setTempSopThresholds, sopDiversionPercent, setSopDiversionPercent, tempDiversionPercent, setTempDiversionPercent, stockAlertThresholds, setShowStockAlertModal,
+    setTempStockAlertThresholds, momosPerPlate, setShowPlateSettingsModal, setTempMomosPerPlate, selectedProductionHouseId, setSelectedProductionHouseId, productionData,
+    productionLedgerRange, productionLedgerRangeLoading, selectedLedgerPoolId, setSelectedLedgerPoolId, sopComplianceDate, setSopComplianceDate, getDateRangeBounds,
+    getPreviousPeriodDateRange, zipPrev, pctChange,
+  } = d;
+  const prevLabel = shortPrevLabel(d, lang);
+  const period = periodText(d, lang);
+
+  const bounds = getDateRangeBounds();
+  const previousBounds = getPreviousPeriodDateRange();
+  const matches = makeHouseMatcher(selectedProductionHouseId, stores, context.stores);
+  const summary = buildPeriodSummary(productionData, matches, bounds, previousBounds);
+  const output = buildOutput(productionData, matches, bounds, previousBounds, zipPrev);
+  const sauces = buildSauces(productionData, matches, bounds, previousBounds, zipPrev, pctChange);
+  const weekday = buildWeekday(productionData, matches, bounds, previousBounds, zipPrev);
+  const stock = buildStock({ productionData, selectedProductionHouseId, stores, context, previousMonthStock, stockAlertThresholds });
+  // The recalibration sheet (Analytics.tsx) reads the stock worked out here, as before.
+  (window as any).__currentProductionHouseStock = stock.productionHouseStock;
+  const leaderboard = !selectedProductionHouseId && context.productionHouses && context.productionHouses.length > 1
+    ? buildLeaderboard(productionData, context.productionHouses, stores, context.stores, bounds)
+    : [];
+  const ledger = selectedProductionHouseId && !productionLedgerRangeLoading
+    ? buildLedger(productionLedgerRange, productionData, selectedProductionHouseId, selectedLedgerPoolId)
+    : null;
+  const wastageFilterId = analyticsMode === 'production'
+    ? selectedProductionHouseId
+    : (context.user?.designation === 'production_incharge' ? effectiveStoreId : selectedProductionHouseId);
+  const wastageHelper = makeWastageMatcher(wastageFilterId, stores);
+  const wastageStatus = buildWastageStatus(productionData, wastageHelper.matchesProductionHouse);
+  const wastageTrend = buildWastageTrend(productionData, wastageHelper.matchesProductionHouse, bounds, previousBounds, zipPrev);
+  const wastageBreakdown = buildWastageBreakdown(productionData, wastageHelper.matchesProductionHouse, wastageTimeFilter as WastageTimeFilter, dateRange);
+  const sopRows = buildSopCompliance({
+    productionData, stores, contextStores: context.stores, filterById: wastageFilterId, dateStr: sopComplianceDate, sopThresholds, sopDiversionPercent,
+  });
+
+  // Short x-axis dates on phones ("27 Oct") instead of the long IST format.
+  const withShort = (rows: any[]) => rows.map((r) => ({ ...r, short: r.date ? shortDateLabel(r.date, lang) : r.label }));
+  const outputData = withShort(output.outputChartData);
+  const managesSettings = analyticsMode === 'production' && (isOperationsManager || isClusterHead);
+  const [sopOpen, setSopOpen] = useState(false);
+
+  const mainSeries: SeriesSpec[] = [
+    { key: 'regularFinal', name: 'Momos', color: CHART_SERIES[0], kind: 'bar', stack: 'made' },
+    { key: 'kurkureFinal', name: 'Kurkure', color: CHART_SERIES[1], kind: 'bar', stack: 'made' },
+    { key: 'prev_totalFinal', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true },
+  ];
+  const mixItems = output.periodMix.filter((m) => m.value > 0).sort((a, b) => b.value - a.value);
+
+  const openSopEditor = () => {
+    setTempSopThresholds(JSON.parse(JSON.stringify(sopThresholds)));
+    setTempDiversionPercent(sopDiversionPercent);
+    setEditingSop(true);
+    setSopOpen(true);
+  };
+  const cancelSop = () => {
+    setEditingSop(false);
+    setTempSopThresholds(null);
+    setSopOpen(false);
+  };
+  const saveSop = () => {
+    setSopThresholds(tempSopThresholds);
+    setSopDiversionPercent(tempDiversionPercent);
+    setEditingSop(false);
+    // TODO: Save to backend
+    toast.success('SOP thresholds and diversion limit updated successfully');
+    setSopOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-6" lang={lang}>
+      {/* 1. Headline: pieces made this period */}
+      <StatTile
+        hero
+        label={`${t('wp8.prod.made')} · ${period}`}
+        value={fmt(summary.total)}
+        delta={deltaOf(summary.total, summary.previousTotal, prevLabel)}
+        chip={
+          <>
+            <StatusChip tone="success" icon={CheckCircle2}>{t('wp8.prod.approved', { n: summary.approvedCount })}</StatusChip>
+            {summary.pendingCount > 0 && <StatusChip tone="warning" icon={Clock}>{t('wp8.prod.pending', { n: summary.pendingCount })}</StatusChip>}
+          </>
+        }
+      >
+        <StatSplit
+          items={[
+            { label: 'Momos', value: fmt(summary.types.filter((x) => !x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
+            { label: 'Kurkure', value: fmt(summary.types.filter((x) => x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
+            { label: t('wp8.prod.wastage'), value: `${summary.totalWastage.toFixed(2)} kg` },
+          ]}
+        />
+      </StatTile>
+
+      {/* 2. The one main chart: pieces made a day, last period dashed */}
+      {output.currentDates.length > 0 && (
+        <ChartCard title={t('wp8.prod.daily')} caption={period} legend={legendFor(mainSeries, t('insights.lastPeriod'))}>
+          {output.hasAnyOutput ? (
+            <TrendChart
+              data={outputData}
+              series={mainSeries}
+              xKey="short"
+              format="number"
+              height={240}
+              ariaLabel={`Pieces made a day, ${period}: ${fmt(summary.total)} in all`}
+            />
+          ) : (
+            <ChartEmpty title={t('wp8.prod.empty')} />
+          )}
+        </ChartCard>
+      )}
+
+      {/* 3. Mix by momo type (share bars, not a pie) and the by-type list */}
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+        <ChartCard title={t('wp8.prod.mix')} caption={period}>
+          {mixItems.length > 0 ? (
+            <ShareBars items={mixItems.map((m) => ({ label: m.name, value: m.value, color: CHART_COLORS.primary, valueText: `${fmt(m.value)} pcs` }))} />
+          ) : (
+            <ChartEmpty title={t('wp8.prod.empty')} />
+          )}
+        </ChartCard>
+        <ListGroup title={t('wp8.prod.byType')} meta={prevLabel}>
+          {summary.types.map((x) => (
+            <ListRow
+              key={x.key}
+              title={x.label}
+              subtitle={x.previous > 0 ? `${fmt(x.previous)} pcs the period before` : 'Nothing the period before'}
+              trailing={
+                <span className="flex flex-col items-end gap-1">
+                  <span className="num text-body-md font-semibold text-text">{fmt(x.current)}</span>
+                  <ChangeChip change={x.change} />
+                </span>
+              }
+            />
+          ))}
+        </ListGroup>
+      </div>
+
+      {/* 4. Yield and wastage rate */}
+      {output.currentDates.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+          <ChartCard
+            title={t('wp8.prod.yield')}
+            caption="Pieces made per kg of raw material · higher is better"
+            legend={legendFor([
+              { key: 'momoYield', name: 'Momos (pcs a kg)', color: CHART_SERIES[0] },
+              { key: 'kurkureYield', name: 'Kurkure (pcs a kg)', color: CHART_SERIES[1] },
+              { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
+            ], t('insights.lastPeriod'))}
+          >
+            <TrendChart
+              data={outputData}
+              xKey="short"
+              format="number"
+              height={220}
+              series={[
+                { key: 'momoYield', name: 'Momos (pcs a kg)', color: CHART_SERIES[0] },
+                { key: 'kurkureYield', name: 'Kurkure (pcs a kg)', color: CHART_SERIES[1] },
+                { key: 'prev_momoYield', name: 'Momos, last period', color: CHART_COLORS.previous, dashed: true },
+                { key: 'prev_kurkureYield', name: 'Kurkure, last period', color: CHART_COLORS.previous, dashed: true },
+              ]}
+              ariaLabel="Pieces made per kg of dough and stuffing (momos) or batter and coating (kurkure), a day"
+            />
+            <HowItWorks title={t('wp8.prod.yield')}>
+              <p>Pieces produced for each kg of raw material used that day: dough plus stuffing for momos, batter plus coating for kurkure. Higher is more efficient.</p>
+              <p>The dashed lines are the matching days of the period before.</p>
+            </HowItWorks>
+          </ChartCard>
+          <ChartCard
+            title={t('wp8.prod.wastageRate')}
+            caption="Wasted raw material as a % of all raw material used · lower is better"
+            legend={legendFor([
+              { key: 'wastagePct', name: 'Wastage %', color: CHART_SERIES[0] },
+              { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
+            ], t('insights.lastPeriod'))}
+          >
+            <TrendChart
+              data={outputData}
+              xKey="short"
+              format="percent"
+              height={220}
+              series={[
+                { key: 'wastagePct', name: 'Wastage %', color: CHART_SERIES[0] },
+                { key: 'prev_wastagePct', name: 'Wastage %, last period', color: CHART_COLORS.previous, dashed: true },
+              ]}
+              ariaLabel="Wastage as a percentage of raw material used, a day"
+            />
+          </ChartCard>
+        </div>
+      )}
+
+      {/* 5. Sauces and chutneys */}
+      {sauces.currentDates.length > 0 && sauces.hasAnySauce && (
+        <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+          <ChartCard
+            title={t('wp8.prod.sauces')}
+            caption={`${(Math.round(sauces.totalLitres * 100) / 100).toLocaleString()} L prepared · ${period}`}
+            legend={legendFor([
+              { key: 'totalSauce', name: 'Litres prepared', color: CHART_SERIES[1], kind: 'bar' },
+              { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
+            ], t('insights.lastPeriod'))}
+          >
+            <TrendChart
+              data={withShort(sauces.sauceChartData)}
+              xKey="short"
+              format={(v: number) => `${v} L`}
+              height={200}
+              series={[
+                { key: 'totalSauce', name: 'Litres prepared', color: CHART_SERIES[1], kind: 'bar' },
+                { key: 'prev_totalSauce', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true },
+              ]}
+              ariaLabel="Litres of sauces and chutneys prepared a day"
+            />
+          </ChartCard>
+          <ListGroup title="By sauce" meta={prevLabel}>
+            {sauces.rows.map((s) => (
+              <ListRow
+                key={s.key}
+                density="compact"
+                title={s.name}
+                trailing={
+                  <span className="flex items-center gap-2">
+                    <span className="num text-body-md font-semibold text-text">{s.value.toLocaleString()} L</span>
+                    {s.change !== null && (
+                      <StatusChip tone={s.change >= 0 ? 'success' : 'danger'}>
+                        <span className="num">{s.change >= 0 ? '+' : ''}{s.change.toFixed(0)}%</span>
+                      </StatusChip>
+                    )}
+                  </span>
+                }
+              />
+            ))}
+          </ListGroup>
+        </div>
+      )}
+
+      {/* 6. Day of the week */}
+      {weekday.hasAnyOutput && (
+        <ChartCard
+          title={t('wp8.prod.weekday')}
+          caption={`Pieces made on each weekday, added up over ${period.toLowerCase()}`}
+          legend={legendFor([
+            { key: 'totalFinal', name: t('wp8.prod.made'), color: CHART_SERIES[0], kind: 'bar' },
+            { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
+          ], t('insights.lastPeriod'))}
+        >
+          <TrendChart
+            data={weekday.weekdayChartData}
+            xKey="label"
+            format="number"
+            height={220}
+            series={[
+              { key: 'totalFinal', name: t('wp8.prod.made'), color: CHART_SERIES[0], kind: 'bar' },
+              { key: 'prev_totalFinal', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true },
+            ]}
+            ariaLabel="Pieces made by day of the week"
+          />
+        </ChartCard>
+      )}
+
+      {/* 7. Stock at the production house */}
+      <section className="flex flex-col gap-3" aria-labelledby="prod-stock-title">
+        <SectionHeading
+          id="prod-stock-title"
+          title={t('wp8.prod.stock')}
+          caption="Opening balance + made this month − sent to stores"
+          actions={managesSettings ? (
+            <OverflowMenu
+              items={[
+                {
+                  label: t('wp8.prod.alertSettings'),
+                  icon: <SlidersHorizontal className="size-4" aria-hidden="true" />,
+                  onSelect: () => { setTempStockAlertThresholds(JSON.parse(JSON.stringify(stockAlertThresholds))); setShowStockAlertModal(true); },
+                },
+                {
+                  label: t('wp8.prod.plateSettings'),
+                  icon: <Settings className="size-4" aria-hidden="true" />,
+                  onSelect: () => { setTempMomosPerPlate(momosPerPlate); setShowPlateSettingsModal(true); },
+                },
+                (isOperationsManager || isClusterHead) && onNavigateToManageItems && {
+                  label: t('wp8.prod.manageItems'),
+                  icon: <Package className="size-4" aria-hidden="true" />,
+                  onSelect: () => onNavigateToManageItems(),
+                },
+              ]}
+            />
+          ) : undefined}
+        />
+        {analyticsMode === 'store' && context.user?.role === 'cluster_head' && context.productionHouses && context.productionHouses.length > 0 && (
+          <Field label="Production house">
+            <select
+              value={selectedProductionHouseId || 'all'}
+              onChange={(e) => setSelectedProductionHouseId(e.target.value === 'all' ? null : e.target.value)}
+              className={controlClasses}
+            >
+              <option value="all">All production houses</option>
+              {context.productionHouses.map((ph) => (
+                <option key={ph.id} value={ph.id}>{ph.name} (ID: {ph.id})</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {managesSettings && isProductionIncharge && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" leadingIcon={<Calendar />} onClick={() => setShowRecalibration(true)}>{t('wp8.prod.recalibrate')}</Button>
+            {latestRecalibration && latestRecalibration.date ? (
+              <span className="text-label text-text-3">Last recalibrated {formatDateIST(latestRecalibration.date)} IST</span>
+            ) : previousMonthStock && !latestRecalibration ? (
+              <span className="text-label text-text-3">Using auto carry-forward from last month</span>
+            ) : null}
+          </div>
+        )}
+        {stock.noData ? (
+          <Card>
+            <EmptyState
+              compact
+              icon={Package}
+              title="No production data"
+              body={stock.effectiveProductionHouseId ? 'No production records found for the selected production house.' : 'No production records found. Start logging production to see stock status.'}
+            />
+          </Card>
+        ) : (
+          <>
+            {stock.hasOpeningBalance && (
+              <HowItWorks title="How stock is worked out" label="Stock carries forward automatically">
+                <p>Stock = opening balance + made this month (approved entries) − sent to stores (shipped or delivered requests).</p>
+                <p>Chicken and veg base stock also goes down by the kurkure made from it.</p>
+                <p>
+                  {latestRecalibration && latestRecalibration.date
+                    ? `The opening balance comes from the recalibration on ${formatDateIST(latestRecalibration.date)} (IST).`
+                    : "The opening balance is last month's closing stock, worked out automatically."}
+                </p>
+              </HowItWorks>
+            )}
+            <ListGroup>
+              {stock.rows.map((r) => (
+                <ListRow
+                  key={r.key}
+                  title={r.label}
+                  subtitle={`${r.opening > 0 ? `Opening ${fmt(r.opening)} · ` : ''}Made ${fmt(r.produced)} · Sent ${fmt(r.sent)} · ${Math.round(r.stock / momosPerPlate)} plates left`}
+                  trailing={
+                    <span className="flex flex-col items-end gap-1">
+                      <span className={cn('num text-body-md font-semibold', r.level && r.level !== 'medium' ? 'text-danger' : 'text-text')}>{fmt(r.stock)} pcs</span>
+                      {r.level && <StatusChip tone={STOCK_LEVEL[r.level].tone} icon={AlertTriangle}>{STOCK_LEVEL[r.level].label}</StatusChip>}
+                    </span>
+                  }
+                />
+              ))}
+            </ListGroup>
+          </>
+        )}
+      </section>
+
+      {/* 8. Production houses compared (only with more than one house) */}
+      {leaderboard.length > 0 && (
+        <ListGroup title={t('wp8.prod.compare')} meta={period}>
+          {leaderboard.map((r, idx) => (
+            <ListRow
+              key={r.id}
+              leading={<span className="num flex size-9 items-center justify-center rounded-md bg-surface-2 text-body-sm font-semibold text-text-2">{idx + 1}</span>}
+              title={r.name}
+              subtitle={`${r.yieldPcsPerKg !== null ? `${r.yieldPcsPerKg} pcs a kg · ` : ''}${r.wastagePct}% waste`}
+              chip={r.wastagePct > 5 ? <StatusChip tone="danger">High waste</StatusChip> : undefined}
+              trailing={<span className="num text-body-md font-semibold text-text">{fmt(r.totalFinal)} pcs</span>}
+            />
+          ))}
+        </ListGroup>
+      )}
+
+      {/* 9. Production ledger (one house only) */}
+      {selectedProductionHouseId && !(ledger && ledger.empty) && (
+        <section className="flex flex-col gap-3" aria-labelledby="prod-ledger-title">
+          <SectionHeading
+            id="prod-ledger-title"
+            title={t('wp8.prod.ledger')}
+            caption={`Dough, stuffing, batter and coating, carried forward day to day · since ${shortDateLabel(PRODUCTION_LEDGER_GO_LIVE_DATE, lang)}`}
+          />
+          {productionLedgerRangeLoading ? (
+            <SkeletonChart height={200} />
+          ) : !ledger ? (
+            <Card>
+              <EmptyState compact icon={Package} title="No closed days yet" body={`Ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE} - no closed days yet for this house in the selected range.`} />
+            </Card>
+          ) : ledger.empty ? null : (
+            <>
+              {ledger.risky.length > 0 && (
+                <Callout tone="warning" title="Leftover sitting unused for several days">
+                  {ledger.risky.map((r) => `${r.label}: untouched ${r.days} day${r.days === 1 ? '' : 's'} in a row`).join(' · ')}
+                </Callout>
+              )}
+              <div className="lg:hidden">
+                <ListGroup>
+                  {ledger.utilizationRows.map((r) => (
+                    <ListRow
+                      key={r.id}
+                      title={r.label}
+                      subtitle={`Prepared ${r.prepared.toFixed(2)} kg · used ${r.utilizationPct === null ? '—' : `${r.utilizationPct}%`}`}
+                      chip={r.daysCover !== null && r.daysCover > 7 ? <StatusChip tone="warning">{r.daysCover} days cover</StatusChip> : undefined}
+                      trailing={
+                        <span className="flex flex-col items-end">
+                          <span className="num text-body-md font-semibold text-text">{r.closingActual === null ? '—' : `${r.closingActual.toFixed(2)} kg`}</span>
+                          <span className="num text-caption text-text-3">{r.daysCover === null ? 'left' : `left · ${r.daysCover} days`}</span>
+                        </span>
+                      }
+                    />
+                  ))}
+                </ListGroup>
+              </div>
+              <div className="hidden lg:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pool</TableHead>
+                      <TableHead numeric>Prepared (period)</TableHead>
+                      <TableHead numeric>Utilisation</TableHead>
+                      <TableHead numeric>Left now</TableHead>
+                      <TableHead numeric>Days of stock cover</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ledger.utilizationRows.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell>{r.label}</TableCell>
+                        <TableCell numeric>{r.prepared.toFixed(2)} kg</TableCell>
+                        <TableCell numeric>{r.utilizationPct === null ? '—' : `${r.utilizationPct}%`}</TableCell>
+                        <TableCell numeric>{r.closingActual === null ? '—' : `${r.closingActual.toFixed(2)} kg`}</TableCell>
+                        <TableCell numeric className={r.daysCover !== null && r.daysCover > 7 ? 'font-semibold text-warning' : 'text-text-2'}>{r.daysCover === null ? '—' : `${r.daysCover} days`}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <ChartCard
+                title="Pool, day by day"
+                legend={[
+                  { label: 'Opening', color: CHART_SERIES[3] },
+                  { label: 'Prepared', color: CHART_SERIES[1] },
+                  { label: 'Closing (counted)', color: CHART_SERIES[0] },
+                ]}
+              >
+                <FilterChips
+                  aria-label="Pool"
+                  value={ledger.activePoolId}
+                  onValueChange={setSelectedLedgerPoolId}
+                  options={ledger.utilizationRows.map((r) => ({ value: r.id, label: r.label }))}
+                />
+                <TrendChart
+                  data={ledger.trendData}
+                  xKey="label"
+                  format={(v: number) => `${v} kg`}
+                  height={220}
+                  series={[
+                    { key: `${ledger.activePoolId}_opening`, name: 'Opening', color: CHART_SERIES[3] },
+                    { key: `${ledger.activePoolId}_prepared`, name: 'Prepared', color: CHART_SERIES[1] },
+                    { key: `${ledger.activePoolId}_closing`, name: 'Closing (counted)', color: CHART_SERIES[0] },
+                  ]}
+                  ariaLabel="Opening, prepared and counted closing kg of the chosen pool, a day"
+                />
+              </ChartCard>
+              {ledger.actualYieldRows.length > 0 && (
+                <ListGroup
+                  title="Yield from what was actually used"
+                  footer="Pieces made per kg actually drawn from that type's own pool - only dates the ledger covers."
+                >
+                  {ledger.actualYieldRows.map((r) => (
+                    <ListRow
+                      key={r.key}
+                      density="compact"
+                      title={r.label}
+                      subtitle={`${fmt(r.piecesMade)} pcs · ${r.consumedKg.toFixed(2)} kg used`}
+                      trailing={<span className="num text-body-md font-semibold text-text">{r.yieldPcsPerKg === null ? '—' : `${r.yieldPcsPerKg} pcs a kg`}</span>}
+                    />
+                  ))}
+                </ListGroup>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {/* 10. Wastage */}
+      <section className="flex flex-col gap-3" aria-labelledby="prod-wastage-title">
+        <SectionHeading id="prod-wastage-title" title={t('wp8.prod.wastage')} caption="Track and cut production wastage" />
+        {wastageStatus.recordCount === 0 ? (
+          <Callout tone="warning" title="No production data found">Pick a production house, or check production has been logged.</Callout>
+        ) : wastageStatus.withWastage === 0 ? (
+          <Callout tone="info" title="No wastage recorded">
+            {wastageStatus.recordCount} production record{wastageStatus.recordCount === 1 ? '' : 's'}, but no wastage logged yet. Wastage is entered in Production.
+          </Callout>
+        ) : null}
+        {wastageTrend.currentDates.length > 0 && (
+          <ChartCard
+            title={t('wp8.prod.wastageTrend')}
+            caption={`Kg wasted a day · ${period}`}
+            legend={legendFor([
+              { key: 'wastage', name: 'Wastage (kg)', color: CHART_SERIES[0] },
+              { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
+            ], t('insights.lastPeriod'))}
+          >
+            <TrendChart
+              data={withShort(wastageTrend.wastageChartData)}
+              xKey="short"
+              format={(v: number) => kg(v)}
+              axisFormat={(v: number) => `${v}`}
+              height={220}
+              series={[
+                { key: 'wastage', name: 'Wastage (kg)', color: CHART_SERIES[0] },
+                { key: 'prev_wastage', name: 'Wastage, last period', color: CHART_COLORS.previous, dashed: true },
+              ]}
+              ariaLabel="Kg of raw material wasted a day"
+            />
+          </ChartCard>
+        )}
+        <ChartCard
+          title={t('wp8.prod.wastageByType')}
+          legend={[
+            { label: 'Dough', color: CHART_SERIES[0], shape: 'square' },
+            { label: 'Stuffing', color: CHART_SERIES[1], shape: 'square' },
+            { label: 'Batter', color: CHART_SERIES[2], shape: 'square' },
+            { label: 'Coating', color: CHART_SERIES[3], shape: 'square' },
+          ]}
+        >
+          <FilterChips
+            aria-label="Wastage period"
+            value={wastageTimeFilter}
+            onValueChange={(v) => setWastageTimeFilter(v as WastageTimeFilter)}
+            options={[
+              { value: 'daily', label: 'Last 5 days' },
+              { value: 'weekly', label: 'Last 5 weeks' },
+              { value: 'monthly', label: 'Last 5 months' },
+              { value: 'yearly', label: 'Last 5 years' },
+              { value: 'custom', label: 'Insights period' },
+            ]}
+          />
+          {wastageBreakdown.length === 0 ? (
+            <ChartEmpty title="No wastage in this window" />
+          ) : (
+            <TrendChart
+              data={wastageBreakdown}
+              xKey="period"
+              format={(v: number) => `${v.toFixed(2)} kg`}
+              axisFormat={(v: number) => `${v}`}
+              height={240}
+              series={[
+                { key: 'dough', name: 'Dough', color: CHART_SERIES[0], kind: 'bar' },
+                { key: 'stuffing', name: 'Stuffing', color: CHART_SERIES[1], kind: 'bar' },
+                { key: 'batter', name: 'Batter', color: CHART_SERIES[2], kind: 'bar' },
+                { key: 'coating', name: 'Coating', color: CHART_SERIES[3], kind: 'bar' },
+              ]}
+              ariaLabel="Kg wasted by material: dough, stuffing, batter and coating"
+            />
+          )}
+        </ChartCard>
+      </section>
+
+      {/* 11. SOP limits (cluster head) - the editor opens in a sheet */}
+      {isClusterHead && (
+        <ListGroup
+          title={t('wp8.prod.sop')}
+          meta={`± ${sopDiversionPercent}% allowed`}
+          action={<Button variant="secondary" size="sm" leadingIcon={<Pencil />} onClick={openSopEditor}>{t('common.edit')}</Button>}
+          footer="Standard ingredient use per piece, in grams. Using too little or too much is outside SOP."
+        >
+          {Object.entries(sopThresholds).map(([key, values]: [string, any]) => (
+            <ListRow
+              key={key}
+              density="compact"
+              title={SOP_NAMES[key]}
+              subtitle={[
+                `Dough ${values.dough} g`,
+                `Stuffing ${values.stuffing} g`,
+                values.batter !== undefined ? `Batter ${values.batter} g` : null,
+                values.coating !== undefined ? `Coating ${values.coating} g` : null,
+              ].filter(Boolean).join(' · ')}
+            />
+          ))}
+        </ListGroup>
+      )}
+
+      {/* 12. Ingredient use vs SOP for one day */}
+      <section className="flex flex-col gap-3" aria-labelledby="prod-sop-check-title">
+        <SectionHeading id="prod-sop-check-title" title={t('wp8.prod.sopCheck')} caption="Regular momos only: real use per piece against the SOP limit" />
+        <DateStrip value={sopComplianceDate} onChange={setSopComplianceDate} max={todayIST()} />
+        {!sopRows ? (
+          <Card>
+            <EmptyState compact icon={AlertTriangle} title={`No approved production for ${formatDateIST(sopComplianceDate)}`} body="Production entries must be approved to appear here." />
+          </Card>
+        ) : (
+          <ListGroup>
+            {sopRows.map((r) => (
+              <div key={r.momoType} className="flex flex-col gap-2 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 flex-col">
+                    <span className="text-body-md font-medium text-text">{r.name}</span>
+                    <span className="num text-label text-text-3">{fmt(r.quantity)} pcs</span>
+                  </div>
+                  <StatusChip tone={r.overallCompliance ? 'success' : 'danger'} icon={r.overallCompliance ? CheckCircle2 : AlertTriangle}>
+                    {r.overallCompliance ? 'Within SOP' : 'Outside SOP'}
+                  </StatusChip>
+                </div>
+                <MiniFigures
+                  items={r.parts.map((p) => ({
+                    label: `${p.name} (SOP ${p.sop} g)`,
+                    value: `${p.avg.toFixed(1)} g`,
+                    sub: `${p.diversion > 0 ? '+' : ''}${p.diversion.toFixed(1)}%`,
+                    tone: p.ok ? 'default' : 'danger',
+                  }))}
+                />
+              </div>
+            ))}
+          </ListGroup>
+        )}
+      </section>
+
+      {/* The SOP editor */}
+      <ResponsiveModal
+        open={sopOpen && editingSop && !!tempSopThresholds}
+        onOpenChange={(open) => { if (!open) cancelSop(); }}
+        title={t('wp8.prod.editSop')}
+        description="Standard ingredient use per piece, in grams"
+        size="detail"
+        footer={
+          <>
+            <Button size="lg" variant="secondary" onClick={cancelSop}>{t('common.cancel')}</Button>
+            <Button size="lg" className="flex-1" onClick={saveSop}>{t('common.save')}</Button>
+          </>
+        }
+      >
+        {tempSopThresholds && (
+          <div className="flex flex-col gap-5">
+            <Field label="Maximum allowed diversion from SOP (±%)" helper="Using too little or too much is non-compliant.">
+              <input
+                type="number"
+                min="0"
+                max="20"
+                step="1"
+                value={tempDiversionPercent}
+                onChange={(e) => setTempDiversionPercent(Number(e.target.value))}
+                className={cn(controlClasses, 'num w-32')}
+              />
+            </Field>
+            {Object.entries(tempSopThresholds).map(([key, values]: [string, any]) => (
+              <fieldset key={key} className="flex flex-col gap-2">
+                <legend className="mb-2 text-subtitle font-semibold text-text">{SOP_NAMES[key]}</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['dough', 'stuffing', 'batter', 'coating'] as const).filter((f) => f === 'dough' || f === 'stuffing' || values[f] !== undefined).map((f) => (
+                    <label key={f} className="flex min-w-0 flex-col gap-1 text-label text-text-2">
+                      {f[0].toUpperCase() + f.slice(1)} (g a piece)
+                      <input
+                        type="number"
+                        value={values[f]}
+                        onChange={(e) => setTempSopThresholds({ ...tempSopThresholds, [key]: { ...tempSopThresholds[key], [f]: Number(e.target.value) } })}
+                        className={cn(controlClasses, 'num')}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ))}
+          </div>
+        )}
+      </ResponsiveModal>
+    </div>
+  );
 }

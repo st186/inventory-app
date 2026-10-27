@@ -4,6 +4,7 @@
 //
 //   /polish-preview.html?screen=salesdata            Insights > Items > daily sales data
 //   /polish-preview.html?screen=sync                 the status line under the top bar, every state
+//   /polish-preview.html?screen=production           Insights > Production alone (&period=lastMonth, &house=PH-1)
 //     &role=owner|store-incharge   &lang=en|bn|hi   &empty=1 (no sales records)
 //
 // Requests to the app's server are answered here from src/gallery/insightsMock.ts; nothing leaves
@@ -64,6 +65,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     case '/menu-item-prices': return json({ items: MENU_PRICES });
     case '/order-item-detail': return json({ records: mock.orderItemDetail(q.get('startDate') || today, q.get('endDate') || today, q.get('storeId') || undefined) });
     case '/stores': return json({ stores: mock.stores });
+    case '/payouts': return json({ payouts: mock.payouts });
+    case '/employees': return json({ employees: mock.employees });
+    case '/archived-employees': return json({ employees: [] });
+    case '/online-loans': return json({ loans: mock.loans });
+    case '/production-ledger': return json({ entries: mock.productionLedger(q.get('from') || today, q.get('to') || today) });
     default: return json({});
   }
 };
@@ -77,6 +83,7 @@ const SalesData = lazy<ComponentType<any>>(() =>
     : import('../components/SalesData').then((m) => ({ default: m.SalesData })),
 );
 const SyncStatusDemo = lazy(() => import('./polishSyncDemo').then((m) => ({ default: m.SyncStatusDemo })));
+const ProductionDemo = lazy(() => import('./polishProductionDemo').then((m) => ({ default: m.ProductionDemo })));
 
 const owner = mock.context.user!;
 const USERS: Record<string, InventoryContextType['user']> = {
@@ -97,7 +104,7 @@ function Preview() {
         <PageHeader title={screen === 'sync' ? 'Status line' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
         <main className="mx-auto w-full max-w-6xl px-4 py-4 lg:px-8">
           <Suspense fallback={null}>
-            {screen === 'sync' ? <SyncStatusDemo /> : <SalesData context={context} selectedStoreId={storeId} />}
+            {screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
           </Suspense>
         </main>
       </div>
