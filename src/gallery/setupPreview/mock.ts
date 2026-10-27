@@ -160,6 +160,23 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const path = url.pathname.replace(/^\/functions\/v1\/make-server-c2dd9b9d/, '');
   if (url.pathname.startsWith('/auth/v1/')) return answer({});
+  // Backup dry run: the plan and the file check are answered here (made-up counts); the restore
+  // itself is never sent anywhere.
+  if (method === 'POST' && path === '/admin/restore/plan') {
+    return answer({
+      manifest: { createdAt: `${daysAgo(3)}T21:00:00Z`, finishedAt: `${daysAgo(3)}T21:02:00Z`, appVersion: '1.15.22', kind: 'drive', totalRows: 48000, authUsers: 9, prefixes: {}, skippedRows: 0, payloadSha256: '', calls: 4, sections: [{ i: 0, type: 1, rows: 48000, raw: 1000 }] },
+      prefixes: {
+        'leave:': { inBackup: 120, missing: 3, changed: 0, same: 117, newSinceBackup: 2 },
+        'inventory:': { inBackup: 9000, missing: 0, changed: 4, same: 8996, newSinceBackup: 41 },
+        'sales:': { inBackup: 700, missing: 0, changed: 0, same: 700, newSinceBackup: 3 },
+      },
+      sections: [{ i: 0, prefixes: ['leave:', 'inventory:'] }],
+    });
+  }
+  if (method === 'POST' && path === '/admin/restore/apply') {
+    console.info('[preview] restore NOT sent (preview)');
+    return answer({ error: 'Preview: restore is never run here' }, 400);
+  }
   if (method !== 'GET') {
     console.info('[preview] write answered and dropped:', method, path);
     return answer({ success: true });

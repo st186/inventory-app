@@ -333,7 +333,7 @@ export function BackupRestore({ context }: Props) {
           ) : (
             <div className="flex flex-col gap-4">
               <ListGroup
-                overline="What a restore would change"
+                title="What a restore would change"
                 action={
                   <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(rows.filter((r) => r.missing > 0).map((r) => r.prefix)))}>Tick all missing</Button>
@@ -364,7 +364,7 @@ export function BackupRestore({ context }: Props) {
                   value={mode}
                   onValueChange={setMode}
                   disabled={working}
-                  options={[{ value: 'missing-only', label: 'Missing only' }, { value: 'overwrite', label: 'Missing and changed' }]}
+                  options={[{ value: 'missing-only', label: 'Missing only' }, { value: 'overwrite', label: 'Also changed' }]}
                 />
                 <p className="text-caption text-text-3">
                   {mode === 'missing-only'
