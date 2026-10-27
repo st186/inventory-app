@@ -12,6 +12,11 @@ import type { MyEvent } from '../../utils/eventsApi';
 import { EventStatusChip, dateRange, dayNumber, localNum, useEventsToday } from './eventsShared';
 import { useActiveEventsForUser } from './useActiveEventsForUser';
 
+const HINTS_KEY = 'bunny:event-home-hints';
+function readSeen(): { close?: boolean; receive?: boolean } {
+  try { return JSON.parse(window.localStorage.getItem(HINTS_KEY) || '{}') || {}; } catch { return {}; }
+}
+
 export function EventHomeCard({ onOpen, events: given }: {
   onOpen: (eventId: string, tab?: 'sales' | 'stock' | 'money') => void;
   events?: MyEvent[]; // the shell may pass what it already loaded
@@ -20,6 +25,13 @@ export function EventHomeCard({ onOpen, events: given }: {
   const loaded = useActiveEventsForUser({ enabled: !given });
   const today = useEventsToday();
   const events = given || loaded.events;
+  // One-line hints under the buttons until each has been used once (on this phone).
+  const [seen, setSeen] = React.useState(readSeen);
+  const markSeen = (k: 'close' | 'receive') => {
+    const next = { ...seen, [k]: true };
+    setSeen(next);
+    try { window.localStorage.setItem(HINTS_KEY, JSON.stringify(next)); } catch { /* private mode: hints just stay */ }
+  };
   if (!events.length) return null;
 
   return (
@@ -47,9 +59,17 @@ export function EventHomeCard({ onOpen, events: given }: {
                 : <StatusChip tone="warning" icon={Clock}>{t('event.dayCloseDue')}</StatusChip>}
               {ev.incoming > 0 && <StatusChip tone="info" icon={Truck}>{t('event.incoming', { n: ev.incoming })}</StatusChip>}
             </div>
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => onOpen(ev.id, 'sales')}>{ev.myRole === 'incharge' && !ev.today.submitted ? t('event.sendDayClose') : t('event.open')}</Button>
-              {ev.incoming > 0 && <Button variant="secondary" onClick={() => onOpen(ev.id, 'stock')}>{t('event.countDelivery')}</Button>}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <Button className="w-full" onClick={() => { markSeen('close'); onOpen(ev.id, 'sales'); }}>{ev.myRole === 'incharge' && !ev.today.submitted ? t('event.sendDayClose') : t('event.open')}</Button>
+                {ev.myRole === 'incharge' && !ev.today.submitted && !seen.close && <span className="text-caption text-text-3">{t('event.hintCloseToday')}</span>}
+              </div>
+              {ev.incoming > 0 && (
+                <div className="flex flex-col gap-1">
+                  <Button variant="secondary" className="w-full" onClick={() => { markSeen('receive'); onOpen(ev.id, 'stock'); }}>{t('event.countDelivery')}</Button>
+                  {!seen.receive && <span className="text-caption text-text-3">{t('event.hintReceive')}</span>}
+                </div>
+              )}
             </div>
           </Card>
         );

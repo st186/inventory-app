@@ -115,14 +115,15 @@ export function EventDayCloseSheet({ open, onOpenChange, bundle, row, onSaved }:
     <ResponsiveModal
       open={open}
       onOpenChange={onOpenChange}
-      title={`${t('event.dayClose')} · ${shortDate(row.date, lang)}`}
+      // Today's: "Close today's sales: count cash and send" (the owner's wording, as on the store).
+      title={row.date === bundle.today ? t('event.closeTodayTitle') : `${t('event.dayClose')} · ${shortDate(row.date, lang)}`}
       description={ev.name}
       footer={(
         <div className="flex w-full flex-col gap-2">
           {!canSend && <span className="text-caption text-text-3">{t('event.onlyIncharge')}</span>}
           <div className="flex w-full gap-2">
             <Button variant="secondary" size="lg" className={canSend ? '' : 'flex-1'} loading={busy === 'save'} disabled={!!busy} onClick={() => save(false)}>{t('event.saveDraft')}</Button>
-            {canSend && <Button size="lg" className="flex-1" loading={busy === 'send'} disabled={!!busy} onClick={() => save(true)}>{t('event.sendDayClose')}</Button>}
+            {canSend && <Button size="lg" className="flex-1" loading={busy === 'send'} disabled={!!busy} onClick={() => save(true)}>{t('common.send')}</Button>}
           </div>
         </div>
       )}

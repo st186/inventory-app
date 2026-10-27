@@ -113,7 +113,7 @@ export function EventsPage({ onBack, initialEventId, initialTab, onOpenEvent }: 
 
 // Momo production cost per piece (what each momo sent to an event costs in its P&L) and the online
 // commission %. One setting for every event; an event can override it.
-function EventCostSettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+export function EventCostSettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { lang } = useT();
   const api = useEventsApi();
   const data = useLoad(async () => (open ? api.settings() : null), [open]);
@@ -143,7 +143,8 @@ function EventCostSettingsSheet({ open, onOpenChange }: { open: boolean; onOpenC
     <ResponsiveModal open={open} onOpenChange={onOpenChange} title="Event costs" description="Used in every event's P&L" footer={<Button size="lg" className="w-full" loading={busy} onClick={save}>Save</Button>}>
       <div className="flex flex-col gap-4">
         {error && <Callout tone="danger" title={error} live />}
-        <Callout tone="info" title="Production cost of one momo">Momos sent to an event are charged to it at this cost per piece.</Callout>
+        <Callout tone="info" title="Production cost of one momo">Momos sent to an event are charged to it at this cost per piece; leftovers sent back come off it, and wasted pieces count as wastage at it.</Callout>
+        <Callout tone="warning" title="Provisional costs">Provisional costs from the SOP costing (ingredients only, purchases 1 Sep–20 Oct 2026); replace with the SOP trial-batch figures.</Callout>
         {MOMO_KEYS.map((k) => (
           <Field key={k} label={momoLabel(k, lang)}>
             <MoneyInput value={cost[k] ?? null} decimals={2} onValueChange={(n) => setCost((c) => ({ ...c, [k]: n }))} />
