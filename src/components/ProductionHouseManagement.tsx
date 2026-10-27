@@ -1,7 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { ArrowLeftRight, Check, Factory, Plus, Store, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { Factory, MapPin, User, Plus, Package, Hash, Trash2 } from 'lucide-react';
+import { Button } from './ui/button';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { NumberStepper } from './ui/number-stepper';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
+import { EmptyState } from './ui/empty-state';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { confirm } from './ui/confirm';
 
 type Props = {
   context: InventoryContextType;
@@ -10,10 +22,47 @@ type Props = {
   onRefreshStores: () => void;
 };
 
+type Flavour = keyof api.ProductionHouse['inventory'];
+const FLAVOURS: { key: Flavour; label: string }[] = [
+  { key: 'chicken', label: 'Chicken' },
+  { key: 'chickenCheese', label: 'Chicken cheese' },
+  { key: 'veg', label: 'Veg' },
+  { key: 'cheeseCorn', label: 'Cheese corn' },
+  { key: 'paneer', label: 'Paneer' },
+  { key: 'vegKurkure', label: 'Veg kurkure' },
+  { key: 'chickenKurkure', label: 'Chicken kurkure' },
+];
+const ZERO: api.ProductionHouse['inventory'] = { chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0, paneer: 0, vegKurkure: 0, chickenKurkure: 0 };
+
+/** Pieces in a production house's stock (all seven momo types). */
+export const totalPieces = (inventory: api.ProductionHouse['inventory']) => Object.values(inventory).reduce((sum, val) => sum + val, 0);
+
+function StockGrid({ inventory }: { inventory: api.ProductionHouse['inventory'] }) {
+  return (
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {FLAVOURS.map((f) => (
+        <div key={f.key} className="flex flex-col rounded-md bg-surface-2 px-3 py-2">
+          <dt className="text-label text-text-2">{f.label}</dt>
+          <dd className="num text-body-md font-semibold text-text">{inventory[f.key]}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// Production houses (owner, Setup > Stores and production houses): the list with each house's
+// stock, a sheet per house (stock, production head, the stores it serves, delete), adding a
+// house, moving stock between houses, and linking stores that have no production house yet.
 export function ProductionHouseManagement({ context, stores, employees, onRefreshStores }: Props) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
-  const [productionHouseStocks, setProductionHouseStocks] = useState<Record<string, any>>({});
+  const [houseId, setHouseId] = useState<string | null>(null);
+  const [houseOpen, setHouseOpen] = useState(false);
+  const [headChoice, setHeadChoice] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [linkStore, setLinkStore] = useState<api.Store | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkChoice, setLinkChoice] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     location: '',
@@ -22,258 +71,133 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
   const [transferData, setTransferData] = useState({
     fromHouseId: '',
     toHouseId: '',
-    quantities: {
-      chicken: 0,
-      chickenCheese: 0,
-      veg: 0,
-      cheeseCorn: 0,
-      paneer: 0,
-      vegKurkure: 0,
-      chickenKurkure: 0,
-    },
+    quantities: { ...ZERO },
   });
 
   const productionHeads = employees.filter(e => e.designation === 'production_incharge');
+  const house = context.productionHouses.find((h) => h.id === houseId) || null;
+  const unmappedStores = stores.filter(s => !s.productionHouseId);
+  const transferTotal = Object.values(transferData.quantities).reduce((sum, val) => sum + val, 0);
 
-  // Calculate real-time stock for all production houses
-  useEffect(() => {
-    calculateAllProductionHouseStocks();
-  }, [context.productionData, context.productionRequests, context.productionHouses]);
-
-  const calculateAllProductionHouseStocks = async () => {
-    if (!context.user?.accessToken || !context.productionHouses) return;
-
-    const stocks: Record<string, any> = {};
-    const currentMonth = new Date().toISOString().substring(0, 7); // "2026-02"
-
-    for (const house of context.productionHouses) {
-      try {
-        // Get recalibration data for this production house
-        const recalResponse = await api.getRecalibrationByLocation(
-          context.user.accessToken,
-          house.id,
-          'production_house'
-        );
-
-        // Calculate opening balance
-        let openingBalance: any = {};
-        if (recalResponse?.record && recalResponse.record.date.substring(0, 7) === currentMonth) {
-          // Use recalibration from current month as opening balance
-          recalResponse.record.items.forEach((item: any) => {
-            const inventoryItem = context.inventoryItems?.find(invItem => 
-              invItem.id === item.itemId || invItem.name === item.itemId
-            );
-            if (inventoryItem) {
-              const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-              const stockKey = camelName.replace(/Momo(s)?$/i, '');
-              openingBalance[stockKey] = item.actualQuantity;
-            }
-          });
-        } else {
-          // No recalibration - start from 0
-          openingBalance = {
-            chicken: 0,
-            chickenCheese: 0,
-            veg: 0,
-            cheeseCorn: 0,
-            paneer: 0,
-            vegKurkure: 0,
-            chickenKurkure: 0,
-          };
-        }
-
-        // Filter production data for this house and current month
-        const houseProduction = (context.productionData || []).filter(
-          (p: any) => 
-            p.productionHouseId === house.id && 
-            p.date.substring(0, 7) === currentMonth &&
-            p.approvalStatus === 'approved'
-        );
-
-        // Sum up production
-        const totalProduced: any = {
-          chicken: 0,
-          chickenCheese: 0,
-          veg: 0,
-          cheeseCorn: 0,
-          paneer: 0,
-          vegKurkure: 0,
-          chickenKurkure: 0,
-        };
-
-        houseProduction.forEach((prod: any) => {
-          const inventoryItem = context.inventoryItems?.find(item => item.id === prod.itemId);
-          if (inventoryItem) {
-            const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-            const stockKey = camelName.replace(/Momo(s)?$/i, '');
-            totalProduced[stockKey] = (totalProduced[stockKey] || 0) + prod.quantityProduced;
-          }
-        });
-
-        // Filter fulfilled requests for this house and current month
-        const houseRequests = (context.productionRequests || []).filter(
-          (req: any) =>
-            req.productionHouseId === house.id &&
-            req.status === 'fulfilled' &&
-            req.fulfilledDate &&
-            req.fulfilledDate.substring(0, 7) === currentMonth
-        );
-
-        // Sum up deliveries
-        const totalDelivered: any = {
-          chicken: 0,
-          chickenCheese: 0,
-          veg: 0,
-          cheeseCorn: 0,
-          paneer: 0,
-          vegKurkure: 0,
-          chickenKurkure: 0,
-        };
-
-        houseRequests.forEach((req: any) => {
-          // Support both formats
-          totalDelivered.chicken += (req.chickenMomos || req.chicken || 0);
-          totalDelivered.chickenCheese += (req.chickenCheeseMomos || req.chickenCheese || 0);
-          totalDelivered.veg += (req.vegMomos || req.veg || 0);
-          totalDelivered.cheeseCorn += (req.cheeseCornMomos || req.cheeseCorn || 0);
-          totalDelivered.paneer += (req.paneerMomos || req.paneer || 0);
-          totalDelivered.vegKurkure += (req.vegKurkureMomos || req.vegKurkure || 0);
-          totalDelivered.chickenKurkure += (req.chickenKurkureMomos || req.chickenKurkure || 0);
-        });
-
-        // Calculate final stock: Opening + Production - Delivered
-        const currentStock: any = {};
-        Object.keys(openingBalance).forEach(key => {
-          currentStock[key] = (openingBalance[key] || 0) + (totalProduced[key] || 0) - (totalDelivered[key] || 0);
-        });
-
-        stocks[house.id] = currentStock;
-      } catch (error) {
-        console.error(`Error calculating stock for ${house.name}:`, error);
-        // Default to zeros on error
-        stocks[house.id] = {
-          chicken: 0,
-          chickenCheese: 0,
-          veg: 0,
-          cheeseCorn: 0,
-          paneer: 0,
-          vegKurkure: 0,
-          chickenKurkure: 0,
-        };
-      }
+  const handleCreate = async () => {
+    if (!formData.name.trim() || !formData.location.trim()) {
+      toast.error('Enter the name and the location');
+      return;
     }
-
-    setProductionHouseStocks(stocks);
-  };
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+    setBusy('create');
     try {
       await context.addProductionHouse({
         name: formData.name,
         location: formData.location,
         productionHeadId: formData.productionHeadId || null,
-        inventory: {
-          chicken: 0,
-          chickenCheese: 0,
-          veg: 0,
-          cheeseCorn: 0,
-          paneer: 0,
-          vegKurkure: 0,
-          chickenKurkure: 0,
-        },
+        inventory: { ...ZERO },
         createdBy: context.user?.employeeId || context.user?.email || 'unknown',
       });
 
-      alert('Production house created successfully!');
+      toast.success('Production house created');
       setShowCreateForm(false);
-      setFormData({ name: '', location: '', productionHeadId: '' });
     } catch (error) {
       console.error('Error creating production house:', error);
-      alert('Failed to create production house. Please try again.');
+      toast.error('Failed to create production house. Please try again.');
+    } finally {
+      setBusy(null);
     }
   };
 
-  const handleAssignProductionHead = async (houseId: string, headId: string) => {
+  const handleAssignProductionHead = async (houseIdToSet: string, headId: string) => {
     try {
       if (!context.user?.accessToken) return;
-      
-      await api.assignProductionHeadToHouse(context.user.accessToken, houseId, headId);
-      
+      setBusy('head');
+
+      await api.assignProductionHeadToHouse(context.user.accessToken, houseIdToSet, headId);
+
       // Update locally
-      await context.updateProductionHouse(houseId, { productionHeadId: headId });
-      
-      // Reload employees to get updated storeId for the production head
-      alert('Production head assigned successfully! Please refresh the page for changes to take effect.');
+      await context.updateProductionHouse(houseIdToSet, { productionHeadId: headId });
+
+      toast.success('Production head assigned', { description: 'Refresh the app for the change to reach their login.' });
+      setHouseOpen(false);
     } catch (error) {
       console.error('Error assigning production head:', error);
-      alert('Failed to assign production head. Please try again.');
+      toast.error('Failed to assign production head. Please try again.');
+    } finally {
+      setBusy(null);
     }
   };
 
-  const handleAssignStoreToHouse = async (storeId: string, houseId: string) => {
+  const handleAssignStoreToHouse = async (storeId: string, toHouseId: string) => {
     try {
       if (!context.user?.accessToken) return;
-      
-      await api.assignStoreToProductionHouse(context.user.accessToken, storeId, houseId);
-      
-      alert('Store assigned to production house successfully!');
+      setBusy('link');
+
+      await api.assignStoreToProductionHouse(context.user.accessToken, storeId, toHouseId);
+
+      toast.success('Store linked to the production house');
+      setLinkOpen(false);
       onRefreshStores(); // Refresh stores to show updated mapping
     } catch (error) {
       console.error('Error assigning store:', error);
-      alert('Failed to assign store. Please try again.');
+      toast.error('Failed to assign store. Please try again.');
+    } finally {
+      setBusy(null);
     }
   };
 
-  const handleDeleteProductionHouse = async (houseId: string, houseName: string) => {
-    // Confirm deletion
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete "${houseName}"?\n\nThis action cannot be undone.`
-    );
-    
-    if (!confirmDelete) return;
-    
+  const handleDeleteProductionHouse = async (deleteId: string, houseName: string) => {
+    const ok = await confirm({
+      title: `Delete ${houseName}?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete production house',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
     try {
-      await context.deleteProductionHouse(houseId);
-      alert('Production house deleted successfully!');
+      setBusy('delete');
+      await context.deleteProductionHouse(deleteId);
+      toast.success('Production house deleted');
+      setHouseOpen(false);
     } catch (error) {
       console.error('Error deleting production house:', error);
-      alert('Failed to delete production house. Please try again.');
+      toast.error('Failed to delete production house. Please try again.');
+    } finally {
+      setBusy(null);
     }
   };
 
   const handleTransferInventory = async () => {
     if (!transferData.fromHouseId || !transferData.toHouseId) {
-      alert('Please select both source and destination production houses');
+      toast.error('Pick both production houses');
       return;
     }
 
     if (transferData.fromHouseId === transferData.toHouseId) {
-      alert('Source and destination cannot be the same');
+      toast.error('Pick two different production houses');
       return;
     }
 
     const totalTransfer = Object.values(transferData.quantities).reduce((sum, val) => sum + val, 0);
     if (totalTransfer === 0) {
-      alert('Please enter quantities to transfer');
+      toast.error('Enter how many to move');
       return;
     }
 
     const fromHouse = context.productionHouses.find(h => h.id === transferData.fromHouseId);
     const toHouse = context.productionHouses.find(h => h.id === transferData.toHouseId);
 
-    const confirmTransfer = window.confirm(
-      `Transfer ${totalTransfer} pieces from "${fromHouse?.name}" to "${toHouse?.name}"?\n\nThis action cannot be undone.`
-    );
-
-    if (!confirmTransfer) return;
+    const ok = await confirm({
+      title: `Move ${totalTransfer} pieces?`,
+      body: `From ${fromHouse?.name} to ${toHouse?.name}. This cannot be undone.`,
+      confirmLabel: 'Move stock',
+      tone: 'primary',
+    });
+    if (!ok) return;
 
     try {
       if (!context.user?.accessToken) {
-        alert('Not authenticated');
+        toast.error('Not signed in');
         return;
       }
+      setBusy('transfer');
 
       await api.transferInventoryBetweenHouses(
         context.user.accessToken,
@@ -281,39 +205,28 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
         transferData.toHouseId,
         transferData.quantities
       );
-      
+
       // Refresh production houses
       const houses = await api.getProductionHouses();
       context.setProductionHouses(houses);
 
-      alert('Inventory transferred successfully!');
+      toast.success('Stock moved');
       setShowTransferDialog(false);
-      setTransferData({
-        fromHouseId: '',
-        toHouseId: '',
-        quantities: {
-          chicken: 0,
-          chickenCheese: 0,
-          veg: 0,
-          cheeseCorn: 0,
-          paneer: 0,
-          vegKurkure: 0,
-          chickenKurkure: 0,
-        },
-      });
     } catch (error: any) {
       console.error('Error transferring inventory:', error);
-      alert(`Failed to transfer inventory: ${error.message || 'Unknown error'}`);
+      toast.error(`Failed to move the stock: ${error.message || 'Unknown error'}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   const handleTransferAll = () => {
     const sourceHouse = context.productionHouses.find(h => h.id === transferData.fromHouseId);
     if (!sourceHouse) {
-      alert('Please select a source production house first');
+      toast.error('Pick the production house to move from first');
       return;
     }
-    
+
     setTransferData({
       ...transferData,
       quantities: {
@@ -328,536 +241,224 @@ export function ProductionHouseManagement({ context, stores, employees, onRefres
     });
   };
 
+  const openHouse = (h: api.ProductionHouse) => {
+    setHouseId(h.id);
+    setHeadChoice(h.productionHeadId || '');
+    setHouseOpen(true);
+  };
+
+  const sourceHouse = context.productionHouses.find(h => h.id === transferData.fromHouseId);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-4 sm:mb-8 flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
-            <Factory className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Production House Management</h1>
-            <p className="text-sm sm:text-base text-gray-500">Manage production houses, inventory, and store mappings</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowTransferDialog(true)}
-            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-2"
-          >
-            <Package className="w-5 h-5" />
-            Transfer Inventory
-          </button>
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            New Production House
-          </button>
-        </div>
-      </div>
-
-      {/* Create Form Modal */}
-      {showCreateForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-4">Create New Production House</h2>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  placeholder="e.g., Main Production House"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Location *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.location}
-                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  placeholder="e.g., Sector 21, Dwarka"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-700 mb-1">Production Head (Optional)</label>
-                <select
-                  value={formData.productionHeadId}
-                  onChange={(e) => setFormData({ ...formData, productionHeadId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                >
-                  <option value="">Select Production Head</option>
-                  {productionHeads.map(head => (
-                    <option key={head.employeeId} value={head.employeeId}>
-                      {head.name} ({head.employeeId})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateForm(false);
-                    setFormData({ name: '', location: '', productionHeadId: '' });
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
-                >
-                  Create
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Transfer Inventory Dialog */}
-      {showTransferDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-6 flex items-center gap-2">
-              <Package className="w-6 h-6 text-blue-600" />
-              Transfer Inventory Between Production Houses
-            </h2>
-            
-            <div className="space-y-6">
-              {/* Source and Destination Selection */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Source Production House *</label>
-                  <select
-                    value={transferData.fromHouseId}
-                    onChange={(e) => setTransferData({ ...transferData, fromHouseId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">Select source...</option>
-                    {context.productionHouses.map(house => (
-                      <option key={house.id} value={house.id}>
-                        {house.name} - {house.location}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Destination Production House *</label>
-                  <select
-                    value={transferData.toHouseId}
-                    onChange={(e) => setTransferData({ ...transferData, toHouseId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">Select destination...</option>
-                    {context.productionHouses
-                      .filter(h => h.id !== transferData.fromHouseId)
-                      .map(house => (
-                        <option key={house.id} value={house.id}>
-                          {house.name} - {house.location}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Current Stock Display */}
-              {transferData.fromHouseId && (() => {
-                const sourceHouse = context.productionHouses.find(h => h.id === transferData.fromHouseId);
-                if (!sourceHouse) return null;
-                
-                return (
-                  <div className="bg-blue-50 rounded-lg p-4 border-2 border-blue-200">
-                    <h3 className="text-sm text-gray-900 mb-3">Available Stock at {sourceHouse.name}</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Chicken</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.chicken}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Chicken Cheese</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.chickenCheese}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Veg</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.veg}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Cheese Corn</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.cheeseCorn}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Paneer</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.paneer}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Veg Kurkure</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.vegKurkure}</div>
-                      </div>
-                      <div className="bg-white rounded p-2">
-                        <div className="text-xs text-gray-600">Chicken Kurkure</div>
-                        <div className="text-sm text-gray-900">{sourceHouse.inventory.chickenKurkure}</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Transfer Quantities */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm text-gray-900">Transfer Quantities</h3>
-                  <button
-                    type="button"
-                    onClick={handleTransferAll}
-                    className="px-3 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 transition-colors"
-                  >
-                    Transfer All
-                  </button>
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Chicken</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.chicken}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, chicken: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Chicken Cheese</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.chickenCheese}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, chickenCheese: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Veg</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.veg}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, veg: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Cheese Corn</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.cheeseCorn}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, cheeseCorn: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Paneer</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.paneer}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, paneer: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Veg Kurkure</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.vegKurkure}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, vegKurkure: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs text-gray-700 mb-1">Chicken Kurkure</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={transferData.quantities.chickenKurkure}
-                      onChange={(e) => setTransferData({
-                        ...transferData,
-                        quantities: { ...transferData.quantities, chickenKurkure: parseInt(e.target.value) || 0 }
-                      })}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Total Transfer Summary */}
-              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-emerald-100">Total Pieces to Transfer:</span>
-                  <span className="text-2xl font-semibold">
-                    {Object.values(transferData.quantities).reduce((sum, val) => sum + val, 0)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowTransferDialog(false);
-                    setTransferData({
-                      fromHouseId: '',
-                      toHouseId: '',
-                      quantities: {
-                        chicken: 0,
-                        chickenCheese: 0,
-                        veg: 0,
-                        cheeseCorn: 0,
-                        paneer: 0,
-                        vegKurkure: 0,
-                        chickenKurkure: 0,
-                      },
-                    });
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleTransferInventory}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Transfer Inventory
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Production Houses List */}
-      <div className="space-y-6">
-        {context.productionHouses.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
-            <Factory className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 tracking-tight mb-2">No Production Houses Yet</h3>
-            <p className="text-gray-600 mb-6">Create your first production house to get started</p>
-            <button
-              onClick={() => setShowCreateForm(true)}
-              className="px-6 py-3 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all inline-flex items-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              Create Production House
-            </button>
-          </div>
-        ) : (
-          context.productionHouses.map(house => {
-            const head = productionHeads.find(h => h.employeeId === house.productionHeadId);
-            const mappedStores = stores.filter(s => s.productionHouseId === house.id);
-            const totalInventory = Object.values(house.inventory).reduce((sum, val) => sum + val, 0);
-
-            return (
-              <div key={house.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-start justify-between mb-6">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">{house.name}</h3>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <Hash className="w-4 h-4" />
-                        <span className="text-sm font-mono bg-orange-100 text-orange-800 px-2 py-1 rounded">ID: {house.id}</span>
-                      </div>
-                      <div className="flex items-center gap-4 text-gray-600">
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-4 h-4" />
-                          <span>{house.location}</span>
-                        </div>
-                        {head && (
-                          <div className="flex items-center gap-2">
-                            <User className="w-4 h-4" />
-                            <span>{head.name} ({head.employeeId})</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm text-gray-600">Total Inventory</div>
-                    <div className="text-2xl font-bold text-orange-600">{totalInventory} pcs</div>
-                  </div>
-                </div>
-
-                {/* Current Inventory */}
-                <div className="mb-6">
-                  <h4 className="text-base font-bold text-gray-900 tracking-tight mb-3 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-orange-600" />
-                    Current Stock Levels
-                  </h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-                    <div className="bg-red-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Chicken</div>
-                      <div className="text-lg text-gray-900">{house.inventory.chicken}</div>
-                    </div>
-                    <div className="bg-orange-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Chicken Cheese</div>
-                      <div className="text-lg text-gray-900">{house.inventory.chickenCheese}</div>
-                    </div>
-                    <div className="bg-green-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Veg</div>
-                      <div className="text-lg text-gray-900">{house.inventory.veg}</div>
-                    </div>
-                    <div className="bg-yellow-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Cheese Corn</div>
-                      <div className="text-lg text-gray-900">{house.inventory.cheeseCorn}</div>
-                    </div>
-                    <div className="bg-blue-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Paneer</div>
-                      <div className="text-lg text-gray-900">{house.inventory.paneer}</div>
-                    </div>
-                    <div className="bg-orange-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Veg Kurkure</div>
-                      <div className="text-lg text-gray-900">{house.inventory.vegKurkure}</div>
-                    </div>
-                    <div className="bg-rose-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Chicken Kurkure</div>
-                      <div className="text-lg text-gray-900">{house.inventory.chickenKurkure}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Assign Production Head */}
-                <div className="mb-6">
-                  <label className="block text-sm text-gray-700 mb-2">Assign Production Head</label>
-                  <select
-                    value={house.productionHeadId || ''}
-                    onChange={(e) => handleAssignProductionHead(house.id, e.target.value)}
-                    className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value="">No Production Head Assigned</option>
-                    {productionHeads.map(head => (
-                      <option key={head.employeeId} value={head.employeeId}>
-                        {head.name} ({head.employeeId})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Mapped Stores */}
-                <div>
-                  <h4 className="text-base font-bold text-gray-900 tracking-tight mb-3">Mapped Stores ({mappedStores.length})</h4>
-                  {mappedStores.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {mappedStores.map(store => (
-                        <div key={store.id} className="bg-gray-50 rounded-lg p-3 flex items-center justify-between">
-                          <div>
-                            <div className="text-gray-900">{store.name}</div>
-                            <div className="text-sm text-gray-600">{store.location}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-gray-500 text-sm">No stores mapped to this production house yet</p>
-                  )}
-                </div>
-
-                {/* Delete Production House */}
-                <div className="mt-4">
-                  <button
-                    onClick={() => handleDeleteProductionHouse(house.id, house.name)}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                    Delete Production House
-                  </button>
-                </div>
-              </div>
-            );
-          })
+    <>
+      <ListGroup
+        title="Production houses"
+        meta={context.productionHouses.length ? String(context.productionHouses.length) : undefined}
+        action={<Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={() => { setFormData({ name: '', location: '', productionHeadId: '' }); setShowCreateForm(true); }}>Add</Button>}
+        empty={<EmptyState compact icon={Factory} title="No production houses yet" body="Add the kitchen that makes the momos." />}
+      >
+        {context.productionHouses.map(h => {
+          const head = productionHeads.find(p => p.employeeId === h.productionHeadId);
+          const mapped = stores.filter(s => s.productionHouseId === h.id).length;
+          return (
+            <ListRow
+              key={h.id}
+              icon={Factory}
+              title={h.name}
+              subtitle={[h.location, head ? `Head ${head.name}` : 'No production head', `${mapped} store${mapped === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+              trailing={<span className="num text-body-md font-semibold text-text">{totalPieces(h.inventory)} pcs</span>}
+              onClick={() => openHouse(h)}
+            />
+          );
+        })}
+        {context.productionHouses.length > 1 && (
+          <ListRow
+            icon={ArrowLeftRight}
+            title="Move stock between houses"
+            onClick={() => { setTransferData({ fromHouseId: '', toHouseId: '', quantities: { ...ZERO } }); setShowTransferDialog(true); }}
+          />
         )}
-      </div>
+      </ListGroup>
 
-      {/* Unmapped Stores Section */}
+      {/* Stores with no production house */}
       {context.productionHouses.length > 0 && (
-        <div className="mt-8 bg-yellow-50 rounded-2xl p-6 border-2 border-yellow-200">
-          <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-4">⚠️ Unmapped Stores</h3>
-          {stores.filter(s => !s.productionHouseId).length === 0 ? (
-            <p className="text-gray-600">All stores are mapped to production houses ✓</p>
-          ) : (
-            <div className="space-y-3">
-              {stores.filter(s => !s.productionHouseId).map(store => (
-                <div key={store.id} className="bg-white rounded-lg p-4 flex items-center justify-between">
-                  <div>
-                    <div className="text-gray-900">{store.name}</div>
-                    <div className="text-sm text-gray-600">{store.location}</div>
-                  </div>
-                  <select
-                    onChange={(e) => e.target.value && handleAssignStoreToHouse(store.id, e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    defaultValue=""
-                  >
-                    <option value="">Assign to Production House</option>
-                    {context.productionHouses.map(house => (
-                      <option key={house.id} value={house.id}>
-                        {house.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+        unmappedStores.length === 0 ? (
+          <p className="-mt-2 flex items-center gap-1.5 px-1 text-label text-text-3">
+            <Check className="size-4 text-success" aria-hidden="true" /> Every store is linked to a production house
+          </p>
+        ) : (
+          <ListGroup overline="Stores without a production house">
+            {unmappedStores.map(store => (
+              <ListRow
+                key={store.id}
+                icon={Store}
+                iconTone="warning"
+                title={store.name}
+                subtitle={store.location}
+                trailing={<StatusChip tone="warning">Link</StatusChip>}
+                onClick={() => { setLinkStore(store); setLinkChoice(''); setLinkOpen(true); }}
+              />
+            ))}
+          </ListGroup>
+        )
+      )}
+
+      {/* One production house */}
+      <ResponsiveModal
+        open={houseOpen}
+        onOpenChange={setHouseOpen}
+        onClosed={() => setHouseId(null)}
+        title={house?.name || 'Production house'}
+        description={house ? `${house.location} · ID ${house.id}` : undefined}
+        size="detail"
+        dirty={!!house && headChoice !== (house.productionHeadId || '') && busy !== 'head'}
+        footer={house ? (
+          <>
+            <IconButton variant="danger-ghost" label="Delete production house" icon={<Trash2 />} loading={busy === 'delete'} disabled={!!busy} onClick={() => handleDeleteProductionHouse(house.id, house.name)} />
+            <Button size="lg" className="flex-1" loading={busy === 'head'} disabled={!!busy || headChoice === (house.productionHeadId || '')} onClick={() => handleAssignProductionHead(house.id, headChoice)}>
+              Save production head
+            </Button>
+          </>
+        ) : undefined}
+      >
+        {house && (
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-subtitle font-semibold text-text">Stock now</span>
+                <span className="num text-body-md font-semibold text-text">{totalPieces(house.inventory)} pcs</span>
+              </div>
+              <StockGrid inventory={house.inventory} />
+            </div>
+            <Field label="Production head">
+              <NativeSelect value={headChoice} onChange={(e) => setHeadChoice(e.target.value)}>
+                <option value="">No production head assigned</option>
+                {productionHeads.map(head => (
+                  <option key={head.employeeId} value={head.employeeId}>
+                    {head.name} ({head.employeeId})
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <ListGroup
+              overline={`Stores it serves (${stores.filter(s => s.productionHouseId === house.id).length})`}
+              empty={<p className="px-4 py-3 text-body-sm text-text-2">No stores linked to this production house yet.</p>}
+            >
+              {stores.filter(s => s.productionHouseId === house.id).map(store => (
+                <ListRow key={store.id} density="compact" icon={Store} title={store.name} subtitle={store.location} />
               ))}
+            </ListGroup>
+          </div>
+        )}
+      </ResponsiveModal>
+
+      {/* Add a production house */}
+      <ResponsiveModal
+        open={showCreateForm}
+        onOpenChange={setShowCreateForm}
+        title="Add production house"
+        dirty={!!(formData.name || formData.location || formData.productionHeadId) && busy !== 'create'}
+        footer={<Button size="lg" className="flex-1" loading={busy === 'create'} onClick={handleCreate}>Add production house</Button>}
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Name" required>
+            <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Main kitchen" />
+          </Field>
+          <Field label="Location" required>
+            <Input value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} placeholder="Street, area" />
+          </Field>
+          <Field label="Production head" optional>
+            <NativeSelect value={formData.productionHeadId} onChange={(e) => setFormData({ ...formData, productionHeadId: e.target.value })}>
+              <option value="">Choose later</option>
+              {productionHeads.map(head => (
+                <option key={head.employeeId} value={head.employeeId}>
+                  {head.name} ({head.employeeId})
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        </div>
+      </ResponsiveModal>
+
+      {/* Move stock between houses */}
+      <ResponsiveModal
+        open={showTransferDialog}
+        onOpenChange={setShowTransferDialog}
+        title="Move stock between houses"
+        size="detail"
+        dirty={transferTotal > 0 && busy !== 'transfer'}
+        footer={<Button size="lg" className="flex-1" loading={busy === 'transfer'} disabled={transferTotal === 0} onClick={handleTransferInventory}>Move {transferTotal} pieces</Button>}
+      >
+        <div className="flex flex-col gap-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="From">
+              <NativeSelect value={transferData.fromHouseId} onChange={(e) => setTransferData({ ...transferData, fromHouseId: e.target.value })}>
+                <option value="">Choose</option>
+                {context.productionHouses.map(h => (
+                  <option key={h.id} value={h.id}>{h.name} - {h.location}</option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field label="To">
+              <NativeSelect value={transferData.toHouseId} onChange={(e) => setTransferData({ ...transferData, toHouseId: e.target.value })}>
+                <option value="">Choose</option>
+                {context.productionHouses.filter(h => h.id !== transferData.fromHouseId).map(h => (
+                  <option key={h.id} value={h.id}>{h.name} - {h.location}</option>
+                ))}
+              </NativeSelect>
+            </Field>
+          </div>
+
+          {sourceHouse && (
+            <div className="flex flex-col gap-2">
+              <span className="text-body-sm font-medium text-text">In stock at {sourceHouse.name}</span>
+              <StockGrid inventory={sourceHouse.inventory} />
             </div>
           )}
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-subtitle font-semibold text-text">How many to move</span>
+              <Button variant="secondary" size="sm" onClick={handleTransferAll}>Move all</Button>
+            </div>
+            {FLAVOURS.map((f) => (
+              <div key={f.key} className="flex items-center justify-between gap-3">
+                <span className="text-body-md text-text">{f.label}</span>
+                <NumberStepper
+                  label={f.label}
+                  value={transferData.quantities[f.key]}
+                  min={0}
+                  editable
+                  onChange={(n) => setTransferData((d) => ({ ...d, quantities: { ...d.quantities, [f.key]: n } }))}
+                />
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="text-body-md font-semibold text-text">Total</span>
+              <span className="num text-title font-semibold text-text">{transferTotal} pcs</span>
+            </div>
+          </div>
         </div>
-      )}
-    </div>
+      </ResponsiveModal>
+
+      {/* Link a store */}
+      <ResponsiveModal
+        open={linkOpen}
+        onOpenChange={setLinkOpen}
+        onClosed={() => setLinkStore(null)}
+        title={linkStore ? `Link ${linkStore.name}` : 'Link store'}
+        description="Which production house sends stock to this store?"
+        footer={<Button size="lg" className="flex-1" loading={busy === 'link'} disabled={!linkChoice || !linkStore} onClick={() => linkStore && handleAssignStoreToHouse(linkStore.id, linkChoice)}>Link store</Button>}
+      >
+        <Field label="Production house">
+          <NativeSelect value={linkChoice} onChange={(e) => setLinkChoice(e.target.value)}>
+            <option value="">Choose</option>
+            {context.productionHouses.map(h => (
+              <option key={h.id} value={h.id}>{h.name}</option>
+            ))}
+          </NativeSelect>
+        </Field>
+      </ResponsiveModal>
+    </>
   );
 }

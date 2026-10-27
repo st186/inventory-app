@@ -1,9 +1,19 @@
-import { useEffect, useState } from 'react';
-import { X, AlertTriangle, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
-import { INVENTORY_CATEGORIES, SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, expenseCategoryLabel } from '../utils/inventoryData';
+import { SELECTABLE_INVENTORY_CATEGORIES, CATEGORY_ITEMS, expenseCategoryLabel } from '../utils/inventoryData';
 import { ITEM_SUGGESTIONS } from '../utils/itemEnrichmentSuggestions';
 import { normalizeItemName } from '../utils/stringSimilarity';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { EmptyState } from './ui/empty-state';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { cn } from './ui/utils';
+import { LoadingList } from './setup/SetupPage';
+import { stripEmoji } from './setup/setupIcons';
 
 type Props = {
   onClose: () => void;
@@ -15,21 +25,22 @@ type RowState = {
   name: string;
   category: string;
   bengali: string;
+  // Kept as it was (or as suggested) and saved unchanged; the screen no longer shows emoji.
   emoji: string;
   note?: string;
   needsReview?: boolean;
 };
 
-export function ItemCatalogCleanup({ onClose }: Props) {
+export type CatalogCleanup = ReturnType<typeof useCatalogCleanup>;
+
+// The review of custom items (duplicates, misspellings, Bengali names): loads when `enabled`
+// turns true, and applies only the rows the owner left as Update or Delete.
+export function useCatalogCleanup(enabled = true) {
   const [rows, setRows] = useState<RowState[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadItems();
-  }, []);
-
-  const loadItems = async () => {
+  const loadItems = useCallback(async () => {
     setLoading(true);
     try {
       const items = await api.getCustomItems();
@@ -88,7 +99,11 @@ export function ItemCatalogCleanup({ onClose }: Props) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (enabled) loadItems();
+  }, [enabled, loadItems]);
 
   const updateRow = (id: string, patch: Partial<RowState>) => {
     setRows((prev) => prev.map((r) => (r.item.id === id ? { ...r, ...patch } : r)));
@@ -118,119 +133,92 @@ export function ItemCatalogCleanup({ onClose }: Props) {
       }
     }
     setSaving(false);
-    alert(`Applied ${succeeded} change(s).${failed > 0 ? ` ${failed} failed — check console.` : ''}`);
+    if (failed > 0) toast.warning(`Applied ${succeeded} change(s). ${failed} failed.`);
+    else toast.success(`Applied ${succeeded} change(s)`);
     await loadItems();
   };
 
   const pendingCount = rows.filter((r) => r.action !== 'skip').length;
+  return { rows, loading, saving, pendingCount, updateRow, applyAll };
+}
 
+/** The rows of the clean-up (inside the categories sheet, or the standalone sheet below). */
+export function CatalogCleanupList({ cleanup }: { cleanup: CatalogCleanup }) {
+  const { rows, loading, updateRow } = cleanup;
+  if (loading) return <LoadingList rows={4} leading="none" />;
+  if (rows.length === 0) return <EmptyState compact title="No custom items" body="Only items added on top of the built-in list show here." />;
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="bg-stone-800 p-6 text-white rounded-t-2xl flex items-center justify-between sticky top-0">
-          <div>
-            <h3 className="text-xl font-bold">Item Catalog Cleanup</h3>
-            <p className="text-sm text-gray-300 mt-1">Review proposed fixes, edit anything, then apply.</p>
+    <div className="flex flex-col gap-3">
+      <p className="text-body-sm text-text-2">Review the proposed fixes, change anything, then apply. Nothing changes until you do.</p>
+      {rows.map((row) => (
+        <div
+          key={row.item.id}
+          className={cn(
+            'flex flex-col gap-3 rounded-lg border p-3',
+            row.needsReview ? 'border-warning-border bg-warning-soft' : row.action !== 'skip' ? 'border-border-strong bg-surface' : 'border-border bg-surface',
+          )}
+        >
+          <div className="flex flex-col gap-1">
+            <span className="text-body-md font-medium text-text">{row.item.itemName}</span>
+            <span className="text-label text-text-3">{stripEmoji(expenseCategoryLabel(row.item.category))}</span>
+            {row.note && (
+              <span className="flex items-start gap-1.5 text-label text-warning">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" /> {row.note}
+              </span>
+            )}
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6">
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {rows.map((row) => (
-                <div
-                  key={row.item.id}
-                  className={`border rounded-lg p-4 ${
-                    row.needsReview ? 'border-amber-300 bg-amber-50' : row.action !== 'skip' ? 'border-orange-200 bg-orange-50' : 'border-gray-200'
-                  }`}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-500">
-                        Current: <span className="font-medium text-gray-900">{row.item.itemName}</span> ·{' '}
-                        {expenseCategoryLabel(row.item.category)}
-                      </p>
-                      {row.note && (
-                        <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> {row.note}
-                        </p>
-                      )}
-                    </div>
-                    <select
-                      value={row.action}
-                      onChange={(e) => updateRow(row.item.id, { action: e.target.value as RowState['action'] })}
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    >
-                      <option value="skip">Skip (no change)</option>
-                      <option value="update">Update</option>
-                      <option value="delete">Delete (merged/removed)</option>
-                    </select>
-                  </div>
-
-                  {row.action === 'update' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 mt-2">
-                      <input
-                        type="text"
-                        value={row.emoji}
-                        onChange={(e) => updateRow(row.item.id, { emoji: e.target.value })}
-                        placeholder="Emoji"
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm sm:col-span-1"
-                      />
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) => updateRow(row.item.id, { name: e.target.value })}
-                        placeholder="English name"
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm sm:col-span-1"
-                      />
-                      <input
-                        type="text"
-                        value={row.bengali}
-                        onChange={(e) => updateRow(row.item.id, { bengali: e.target.value })}
-                        placeholder="Bengali name"
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm sm:col-span-1"
-                      />
-                      <select
-                        value={row.category}
-                        onChange={(e) => updateRow(row.item.id, { category: e.target.value })}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm sm:col-span-1"
-                      >
-                        {Object.entries(SELECTABLE_INVENTORY_CATEGORIES).map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              ))}
+          <Field label="What to do">
+            <NativeSelect value={row.action} onChange={(e) => updateRow(row.item.id, { action: e.target.value as RowState['action'] })}>
+              <option value="skip">Skip (no change)</option>
+              <option value="update">Update</option>
+              <option value="delete">Delete (merged or removed)</option>
+            </NativeSelect>
+          </Field>
+          {row.action === 'update' && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="English name">
+                <Input value={row.name} onChange={(e) => updateRow(row.item.id, { name: e.target.value })} />
+              </Field>
+              <Field label="Bengali name">
+                <Input value={row.bengali} onChange={(e) => updateRow(row.item.id, { bengali: e.target.value })} lang="bn" />
+              </Field>
+              <Field label="Category" className="sm:col-span-2">
+                <NativeSelect value={row.category} onChange={(e) => updateRow(row.item.id, { category: e.target.value })}>
+                  {Object.entries(SELECTABLE_INVENTORY_CATEGORIES).map(([value, label]) => (
+                    <option key={value} value={value}>{stripEmoji(label)}</option>
+                  ))}
+                </NativeSelect>
+              </Field>
             </div>
           )}
         </div>
-
-        <div className="p-6 border-t border-gray-200 flex items-center justify-between sticky bottom-0 bg-white">
-          <p className="text-sm text-gray-600">{pendingCount} change(s) staged</p>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
-              Close
-            </button>
-            <button
-              onClick={applyAll}
-              disabled={saving || pendingCount === 0}
-              className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-            >
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {saving ? 'Applying...' : `Apply ${pendingCount} Change(s)`}
-            </button>
-          </div>
-        </div>
-      </div>
+      ))}
     </div>
+  );
+}
+
+export function cleanupApplyLabel(cleanup: CatalogCleanup) {
+  return cleanup.saving ? 'Applying' : `Apply ${cleanup.pendingCount} change${cleanup.pendingCount === 1 ? '' : 's'}`;
+}
+
+// Standalone sheet (the categories sheet shows the same list in place instead).
+export function ItemCatalogCleanup({ onClose }: Props) {
+  const [open, setOpen] = useState(true);
+  const cleanup = useCatalogCleanup();
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={setOpen}
+      onClosed={onClose}
+      title="Item catalogue clean-up"
+      size="detail"
+      footer={
+        <Button size="lg" className="flex-1" loading={cleanup.saving} disabled={cleanup.pendingCount === 0} onClick={cleanup.applyAll}>
+          {cleanupApplyLabel(cleanup)}
+        </Button>
+      }
+    >
+      <CatalogCleanupList cleanup={cleanup} />
+    </ResponsiveModal>
   );
 }

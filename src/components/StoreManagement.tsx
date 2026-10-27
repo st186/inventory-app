@@ -1,40 +1,48 @@
 import { useState, useEffect } from 'react';
-import { Store, Plus, MapPin, User, Edit2, Check, X, UserCog, Download, Factory } from 'lucide-react';
+import { DatabaseZap, Plus, Store } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { confirm } from './ui/confirm';
+import { Delayed, SkeletonListRows } from './ui/skeleton';
 
 type StoreManagementProps = {
   onStoreCreated?: () => void;
   userRole?: string;
 };
 
+// Stores (owner, Setup > Stores and production houses): the list, a sheet to add one, and a sheet
+// per store for its name, location, POS id, manager and production house.
 export function StoreManagement({ onStoreCreated, userRole }: StoreManagementProps) {
   const [stores, setStores] = useState<api.Store[]>([]);
   const [managers, setManagers] = useState<any[]>([]);
   const [productionHouses, setProductionHouses] = useState<api.ProductionHouse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingStore, setEditingStore] = useState<string | null>(null);
-  const [assigningManager, setAssigningManager] = useState<string | null>(null);
-  const [changingProductionHouse, setChangingProductionHouse] = useState<string | null>(null);
-  
+  const [editing, setEditing] = useState<api.Store | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+
   // Create form
   const [newStoreName, setNewStoreName] = useState('');
   const [newStoreLocation, setNewStoreLocation] = useState('');
   const [creating, setCreating] = useState(false);
-  
-  // Edit form
+
+  // Edit form (details, manager and production house in one sheet)
   const [editName, setEditName] = useState('');
   const [editLocation, setEditLocation] = useState('');
   const [editCiferonStoreId, setEditCiferonStoreId] = useState('');
-  const [updating, setUpdating] = useState(false);
-  
-  // Manager assignment
   const [selectedManagerId, setSelectedManagerId] = useState<string>('');
-  const [assigning, setAssigning] = useState(false);
-
-  // Production house assignment
   const [selectedProductionHouseId, setSelectedProductionHouseId] = useState<string>('');
-  const [assigningProductionHouse, setAssigningProductionHouse] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadStores();
@@ -46,13 +54,15 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     try {
       const data = await api.getStores();
       setStores(data);
+      setLoadError(null);
     } catch (error) {
       // Silently handle authentication errors (user not logged in yet)
-      if (error instanceof Error && 
+      if (error instanceof Error &&
           (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
         return;
       }
       console.error('Error loading stores:', error);
+      setLoadError(error instanceof Error ? error.message : 'Could not load the stores');
     } finally {
       setLoading(false);
     }
@@ -78,478 +88,217 @@ export function StoreManagement({ onStoreCreated, userRole }: StoreManagementPro
     }
   };
 
-  const handleCreateStore = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleCreateStore = async () => {
     if (!newStoreName.trim()) {
-      alert('Please enter a store name');
+      toast.error('Enter a store name');
       return;
     }
 
     setCreating(true);
     try {
       await api.createStore(newStoreName, newStoreLocation);
-      setNewStoreName('');
-      setNewStoreLocation('');
+      toast.success(`${newStoreName.trim()} added`);
       setShowCreateForm(false);
       await loadStores();
       if (onStoreCreated) onStoreCreated();
     } catch (error: any) {
       console.error('Error creating store:', error);
-      alert(error.message || 'Failed to create store');
+      toast.error(error.message || 'Failed to create store');
     } finally {
       setCreating(false);
     }
   };
 
-  const handleStartEdit = (store: api.Store) => {
-    setEditingStore(store.id);
+  const openStore = (store: api.Store) => {
+    setEditing(store);
     setEditName(store.name);
     setEditLocation(store.location);
     setEditCiferonStoreId(store.ciferonStoreId || '');
-  };
-
-  const handleSaveEdit = async (storeId: string) => {
-    if (!editName.trim()) {
-      alert('Please enter a store name');
-      return;
-    }
-
-    setUpdating(true);
-    try {
-      await api.updateStore(storeId, editName, editLocation, editCiferonStoreId.trim() || null);
-      setEditingStore(null);
-      await loadStores();
-    } catch (error: any) {
-      console.error('Error updating store:', error);
-      alert(error.message || 'Failed to update store');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingStore(null);
-    setEditName('');
-    setEditLocation('');
-    setEditCiferonStoreId('');
-  };
-
-  const handleStartAssignManager = (store: api.Store) => {
-    setAssigningManager(store.id);
     setSelectedManagerId(store.managerId || '');
+    setSelectedProductionHouseId(store.productionHouseId || '');
+    setEditOpen(true);
   };
 
-  const handleAssignManager = async (storeId: string) => {
-    if (!selectedManagerId) {
-      alert('Please select a manager');
+  const detailsChanged = !!editing && (editName !== editing.name || editLocation !== editing.location || editCiferonStoreId !== (editing.ciferonStoreId || ''));
+  const managerChanged = !!editing && !!selectedManagerId && selectedManagerId !== (editing.managerId || '');
+  const houseChanged = !!editing && !!selectedProductionHouseId && selectedProductionHouseId !== (editing.productionHouseId || '');
+  const dirty = detailsChanged || managerChanged || houseChanged;
+
+  // The same three saves the old card had (edit, assign manager, assign production house), each
+  // only when its part changed.
+  const handleSave = async () => {
+    if (!editing) return;
+    if (!editName.trim()) {
+      toast.error('Enter a store name');
       return;
     }
-
-    setAssigning(true);
+    setSaving(true);
     try {
-      await api.assignManagerToStore(storeId, selectedManagerId);
-      setAssigningManager(null);
-      setSelectedManagerId('');
+      if (detailsChanged) {
+        await api.updateStore(editing.id, editName, editLocation, editCiferonStoreId.trim() || null);
+      }
+      if (managerChanged) {
+        await api.assignManagerToStore(editing.id, selectedManagerId);
+      }
+      if (houseChanged) {
+        await api.assignProductionHouseToStore(editing.id, selectedProductionHouseId);
+      }
       await loadStores();
-      await loadManagers();
-      alert('Manager assigned successfully!');
+      if (managerChanged) await loadManagers();
+      if (houseChanged) {
+        await loadProductionHouses();
+        // Notify parent to refresh stores
+        if (onStoreCreated) onStoreCreated();
+      }
+      toast.success(`${editName.trim()} saved`);
+      setEditOpen(false);
     } catch (error: any) {
-      console.error('Error assigning manager:', error);
-      alert(error.message || 'Failed to assign manager');
+      console.error('Error saving store:', error);
+      toast.error(error.message || 'Failed to save the store');
     } finally {
-      setAssigning(false);
+      setSaving(false);
     }
-  };
-
-  const handleCancelAssign = () => {
-    setAssigningManager(null);
-    setSelectedManagerId('');
   };
 
   const handleMigrateData = async (store: api.Store) => {
-    if (!confirm(`Migrate all existing data (inventory, sales, payroll, employees) to ${store.name}? This will assign all data without a store to this store.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Move old records to ${store.name}?`,
+      body: 'Inventory, sales, payroll and employees that have no store yet are all assigned to this store.',
+      confirmLabel: 'Move records',
+      tone: 'danger',
+    });
+    if (!ok) return;
 
     try {
       const result = await api.migrateDataToStore(store.id);
-      alert(`✅ Migration successful!\n\n` +
-        `Inventory: ${result.migratedCount.inventory}\n` +
-        `Overheads: ${result.migratedCount.overheads}\n` +
-        `Sales: ${result.migratedCount.sales}\n` +
-        `Employees: ${result.migratedCount.employees}\n` +
-        `Timesheets: ${result.migratedCount.timesheets}\n` +
-        `Leaves: ${result.migratedCount.leaves}\n` +
-        `Payouts: ${result.migratedCount.payouts}`
-      );
+      const c = result.migratedCount;
+      toast.success(`Records moved to ${store.name}`, {
+        description: `Inventory ${c.inventory} · Overheads ${c.overheads} · Sales ${c.sales} · Employees ${c.employees} · Timesheets ${c.timesheets} · Leaves ${c.leaves} · Payouts ${c.payouts}`,
+        duration: 8000,
+      });
     } catch (error: any) {
       console.error('Error migrating data:', error);
-      alert(error.message || 'Failed to migrate data');
+      toast.error(error.message || 'Failed to migrate data');
     }
   };
 
-  const handleStartChangeProductionHouse = (store: api.Store) => {
-    setChangingProductionHouse(store.id);
-    setSelectedProductionHouseId(store.productionHouseId || '');
-  };
-
-  const handleChangeProductionHouse = async (storeId: string) => {
-    if (!selectedProductionHouseId) {
-      alert('Please select a production house');
-      return;
-    }
-
-    setAssigningProductionHouse(true);
-    try {
-      await api.assignProductionHouseToStore(storeId, selectedProductionHouseId);
-      setChangingProductionHouse(null);
-      setSelectedProductionHouseId('');
-      await loadStores();
-      await loadProductionHouses();
-      // Notify parent to refresh stores
-      if (onStoreCreated) onStoreCreated();
-      alert('Production house assigned successfully!');
-    } catch (error: any) {
-      console.error('Error assigning production house:', error);
-      alert(error.message || 'Failed to assign production house');
-    } finally {
-      setAssigningProductionHouse(false);
-    }
-  };
-
-  const handleCancelChangeProductionHouse = () => {
-    setChangingProductionHouse(null);
-    setSelectedProductionHouseId('');
-  };
-
-  const getManagerName = (managerId?: string) => {
+  const getManagerName = (managerId?: string | null) => {
     if (!managerId) return null;
     const manager = managers.find(m => m.employeeId === managerId);
-    return manager ? `${manager.name} (${manager.employeeId})` : 'Unknown Manager';
+    return manager ? `${manager.name} (${manager.employeeId})` : 'Unknown manager';
   };
 
-  const getProductionHouseName = (productionHouseId?: string) => {
+  const getProductionHouseName = (productionHouseId?: string | null) => {
     if (!productionHouseId) return null;
     const productionHouse = productionHouses.find(ph => ph.id === productionHouseId);
-    return productionHouse ? `${productionHouse.name} (${productionHouse.id})` : 'Unknown Production House';
+    return productionHouse ? productionHouse.name : 'Unknown production house';
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading stores...</div>
-      </div>
+      <Delayed>
+        <SkeletonListRows count={2} />
+      </Delayed>
     );
   }
+  if (loadError && stores.length === 0) return <ErrorState title="Couldn't load the stores" body={loadError} onRetry={() => { setLoading(true); loadStores(); }} />;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-lg shadow-teal-500/30 flex-shrink-0">
-            <Store className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Store Management</h1>
-            <p className="text-sm sm:text-base text-gray-500">Manage your stores and assign managers</p>
-          </div>
-        </div>
-        <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg hover:shadow-lg transition-all"
-        >
-          <Plus className="w-5 h-5" />
-          Create Store
-        </button>
-      </div>
-
-      {/* Create Form */}
-      {showCreateForm && (
-        <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-6">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Create New Store</h3>
-          <form onSubmit={handleCreateStore} className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">
-                Store Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={newStoreName}
-                onChange={(e) => setNewStoreName(e.target.value)}
-                placeholder="e.g., Downtown Branch, Main Street Store"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">
-                Location (Optional)
-              </label>
-              <input
-                type="text"
-                value={newStoreLocation}
-                onChange={(e) => setNewStoreLocation(e.target.value)}
-                placeholder="e.g., 123 Main St, City"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={creating}
-                className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50"
-              >
-                {creating ? 'Creating...' : 'Create Store'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCreateForm(false);
-                  setNewStoreName('');
-                  setNewStoreLocation('');
-                }}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Stores List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {stores.length === 0 ? (
-          <div className="col-span-full bg-white rounded-2xl border border-gray-200 p-8 text-center">
-            <Store className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-            <p className="text-gray-500 mb-2">No stores yet</p>
-            <p className="text-sm text-gray-400">Create your first store to get started</p>
-          </div>
-        ) : (
-          stores.map((store) => (
-            <div
+    <>
+      <ListGroup
+        title="Stores"
+        meta={stores.length ? String(stores.length) : undefined}
+        action={<Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={() => { setNewStoreName(''); setNewStoreLocation(''); setShowCreateForm(true); }}>Add store</Button>}
+        empty={<EmptyState compact icon={Store} title="No stores yet" body="Add your first store to get started." />}
+      >
+        {stores.map((store) => {
+          const house = getProductionHouseName(store.productionHouseId);
+          const manager = getManagerName(store.managerId);
+          return (
+            <ListRow
               key={store.id}
-              className="bg-white rounded-2xl border border-gray-200 p-6 hover:shadow-md transition-shadow"
-            >
-              {editingStore === store.id ? (
-                // Edit Mode
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Store Name</label>
-                    <input
-                      type="text"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Location</label>
-                    <input
-                      type="text"
-                      value={editLocation}
-                      onChange={(e) => setEditLocation(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Ciferon POS Store ID</label>
-                    <input
-                      type="text"
-                      value={editCiferonStoreId}
-                      onChange={(e) => setEditCiferonStoreId(e.target.value)}
-                      placeholder="e.g. 5909"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Enables the nightly POS auto-sync for this store. Leave blank to skip.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleSaveEdit(store.id)}
-                      disabled={updating}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      Save
-                    </button>
-                    <button
-                      onClick={handleCancelEdit}
-                      disabled={updating}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : assigningManager === store.id ? (
-                // Manager Assignment Mode
-                <div className="space-y-4">
-                  <h4 className="text-gray-900">Assign Manager to {store.name}</h4>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Select Manager</label>
-                    <select
-                      value={selectedManagerId}
-                      onChange={(e) => setSelectedManagerId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    >
-                      <option value="">Choose a manager...</option>
-                      {managers.filter(m => !m.storeId || m.storeId === store.id).map((manager) => (
-                        <option key={manager.employeeId} value={manager.employeeId}>
-                          {manager.name} ({manager.employeeId})
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Only unassigned managers or current manager shown
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleAssignManager(store.id)}
-                      disabled={assigning || !selectedManagerId}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      {assigning ? 'Assigning...' : 'Assign'}
-                    </button>
-                    <button
-                      onClick={handleCancelAssign}
-                      disabled={assigning}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : changingProductionHouse === store.id ? (
-                // Production House Assignment Mode
-                <div className="space-y-4">
-                  <h4 className="text-gray-900">Assign Production House to {store.name}</h4>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-1">Select Production House</label>
-                    <select
-                      value={selectedProductionHouseId}
-                      onChange={(e) => setSelectedProductionHouseId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    >
-                      <option value="">Choose a production house...</option>
-                      {productionHouses.map((productionHouse) => (
-                        <option key={productionHouse.id} value={productionHouse.id}>
-                          {productionHouse.name}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Select which production house will serve this store
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleChangeProductionHouse(store.id)}
-                      disabled={assigningProductionHouse || !selectedProductionHouseId}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      {assigningProductionHouse ? 'Assigning...' : 'Assign'}
-                    </button>
-                    <button
-                      onClick={handleCancelChangeProductionHouse}
-                      disabled={assigningProductionHouse}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                // View Mode
-                <>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Store className="w-5 h-5 text-teal-600" />
-                      <h3 className="font-bold text-gray-900">{store.name}</h3>
-                    </div>
-                    <button
-                      onClick={() => handleStartEdit(store)}
-                      className="p-1 text-gray-400 hover:text-gray-600 rounded"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                  
-                  {store.location && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600 mb-3">
-                      <MapPin className="w-4 h-4" />
-                      <span>{store.location}</span>
-                    </div>
-                  )}
-                  
-                  <div className="pt-3 border-t border-gray-200 space-y-3">
-                    <div className="flex items-center gap-2 text-sm">
-                      <User className="w-4 h-4 text-gray-400" />
-                      <span className="text-gray-600">
-                        {store.managerId ? (
-                          <span className="text-green-600">{getManagerName(store.managerId)}</span>
-                        ) : (
-                          <span className="text-orange-600">No Manager Assigned</span>
-                        )}
-                      </span>
-                    </div>
+              icon={Store}
+              title={store.name}
+              subtitle={[store.location, house || 'No production house', manager ? `Manager ${manager}` : 'No manager'].filter(Boolean).join(' · ')}
+              trailing={!store.productionHouseId ? <StatusChip tone="warning">Not linked</StatusChip> : undefined}
+              onClick={() => openStore(store)}
+            />
+          );
+        })}
+      </ListGroup>
 
-                    <div className="flex items-center gap-2 text-sm">
-                      <Factory className="w-4 h-4 text-gray-400" />
-                      <span className="text-gray-600">
-                        {store.productionHouseId ? (
-                          <span className="text-green-600">{getProductionHouseName(store.productionHouseId)}</span>
-                        ) : (
-                          <span className="text-orange-600">No Production House Mapped</span>
-                        )}
-                      </span>
-                    </div>
-                    
-                    <button
-                      onClick={() => handleStartAssignManager(store)}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
-                    >
-                      <UserCog className="w-4 h-4" />
-                      {store.managerId ? 'Change Manager' : 'Assign Manager'}
-                    </button>
+      {/* Add a store */}
+      <ResponsiveModal
+        open={showCreateForm}
+        onOpenChange={setShowCreateForm}
+        title="Add store"
+        dirty={!!(newStoreName || newStoreLocation) && !creating}
+        footer={<Button size="lg" className="flex-1" loading={creating} onClick={handleCreateStore}>Add store</Button>}
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Store name" required>
+            <Input value={newStoreName} onChange={(e) => setNewStoreName(e.target.value)} placeholder="e.g. Main road store" />
+          </Field>
+          <Field label="Location" optional>
+            <Input value={newStoreLocation} onChange={(e) => setNewStoreLocation(e.target.value)} placeholder="Street, area" />
+          </Field>
+        </div>
+      </ResponsiveModal>
 
-                    <button
-                      onClick={() => handleStartChangeProductionHouse(store)}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
-                    >
-                      <Factory className="w-4 h-4" />
-                      {store.productionHouseId ? 'Change Production House' : 'Assign Production House'}
-                    </button>
-                    
-                    {userRole === 'cluster_head' && (
-                      <button
-                        onClick={() => handleMigrateData(store)}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
-                      >
-                        <Download className="w-4 h-4" />
-                        Migrate Data
-                      </button>
-                    )}
-                    
-                    <p className="text-xs text-gray-500 mt-2">
-                      ID: {store.id}
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          ))
+      {/* One store */}
+      <ResponsiveModal
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onClosed={() => setEditing(null)}
+        title={editing?.name || 'Store'}
+        description={editing ? `ID ${editing.id}` : undefined}
+        dirty={dirty && !saving}
+        footer={<Button size="lg" className="flex-1" loading={saving} disabled={!dirty} onClick={handleSave}>Save store</Button>}
+      >
+        {editing && (
+          <div className="flex flex-col gap-4">
+            <Field label="Store name" required>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </Field>
+            <Field label="Location" optional>
+              <Input value={editLocation} onChange={(e) => setEditLocation(e.target.value)} />
+            </Field>
+            <Field label="Ciferon POS store ID" optional helper="Turns on the nightly POS sync for this store. Leave blank to skip.">
+              <Input value={editCiferonStoreId} onChange={(e) => setEditCiferonStoreId(e.target.value)} placeholder="e.g. 5909" inputMode="numeric" />
+            </Field>
+            <Field label="Manager" helper="Only managers without a store, or this store's manager, are listed.">
+              <NativeSelect value={selectedManagerId} onChange={(e) => setSelectedManagerId(e.target.value)}>
+                <option value="">{editing.managerId ? 'Choose a manager' : 'No manager yet'}</option>
+                {managers.filter(m => !m.storeId || m.storeId === editing.id).map((manager) => (
+                  <option key={manager.employeeId} value={manager.employeeId}>
+                    {manager.name} ({manager.employeeId})
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field label="Production house" helper="The production house that sends stock to this store.">
+              <NativeSelect value={selectedProductionHouseId} onChange={(e) => setSelectedProductionHouseId(e.target.value)}>
+                <option value="">{editing.productionHouseId ? 'Choose a production house' : 'Not linked yet'}</option>
+                {productionHouses.map((productionHouse) => (
+                  <option key={productionHouse.id} value={productionHouse.id}>
+                    {productionHouse.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+
+            {userRole === 'cluster_head' && (
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <span className="text-body-sm font-medium text-text">Old records without a store</span>
+                <p className="text-body-sm text-text-2">Assigns every inventory, sales, payroll and employee record that has no store to this one.</p>
+                <Button variant="danger-ghost" leadingIcon={<DatabaseZap />} className="self-start" onClick={() => handleMigrateData(editing)}>
+                  Move old records here
+                </Button>
+              </div>
+            )}
+          </div>
         )}
-      </div>
-    </div>
+      </ResponsiveModal>
+    </>
   );
 }
