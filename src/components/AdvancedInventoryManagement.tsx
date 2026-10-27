@@ -5,12 +5,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { InventoryDashboard } from './InventoryDashboard';
 import { InventoryAlerts } from './InventoryAlerts';
 import { EnhancedProductionRequests } from './EnhancedProductionRequests';
-import { ReportsVisualization } from './ReportsVisualization';
 import { PredictiveAnalytics } from './PredictiveAnalytics';
-import { StorePerformanceComparison } from './StorePerformanceComparison';
 import { ProductionHouseStockStatus } from './ProductionHouseStockStatus';
 import { UtilitiesStockStatus } from './UtilitiesStockStatus';
-import { Package, Bell, FileText, Send, Activity, BarChart3, Target, Trophy, Factory } from 'lucide-react';
+import { Package, Bell, Send, Activity, Target } from 'lucide-react';
 
 type Props = {
   context: InventoryContextType;
@@ -19,7 +17,9 @@ type Props = {
 };
 
 export function AdvancedInventoryManagement({ context, stores, onNavigateToManageItems }: Props) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'utilities' | 'alerts' | 'requests' | 'reports' | 'predictive' | 'performance'>('dashboard');
+  // The old "Reports" and "Rankings" tabs were removed: they computed sales and profit their own
+  // way and disagreed with Analytics. Analytics and the Export page's reports cover both.
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock-status' | 'utilities' | 'alerts' | 'requests' | 'predictive'>('dashboard');
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -39,7 +39,7 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
-          <TabsList className="grid grid-cols-8 w-full">
+          <TabsList className="grid grid-cols-6 w-full">
             <TabsTrigger value="dashboard" className="flex items-center gap-2">
               <Activity className="h-4 w-4" />
               Dashboard
@@ -60,17 +60,9 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
               <Send className="h-4 w-4" />
               Requests
             </TabsTrigger>
-            <TabsTrigger value="reports" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Reports
-            </TabsTrigger>
             <TabsTrigger value="predictive" className="flex items-center gap-2">
               <Target className="h-4 w-4" />
               Forecast
-            </TabsTrigger>
-            <TabsTrigger value="performance" className="flex items-center gap-2">
-              <Trophy className="h-4 w-4" />
-              Rankings
             </TabsTrigger>
           </TabsList>
 
@@ -103,19 +95,9 @@ export function AdvancedInventoryManagement({ context, stores, onNavigateToManag
             <EnhancedProductionRequests context={context} stores={stores} />
           </TabsContent>
 
-          {/* Reports */}
-          <TabsContent value="reports">
-            <ReportsVisualization context={context} stores={stores} />
-          </TabsContent>
-
           {/* Predictive Analytics */}
           <TabsContent value="predictive">
             <PredictiveAnalytics context={context} stores={stores} />
-          </TabsContent>
-
-          {/* Store Performance */}
-          <TabsContent value="performance">
-            <StorePerformanceComparison context={context} stores={stores} />
           </TabsContent>
         </Tabs>
       </div>
