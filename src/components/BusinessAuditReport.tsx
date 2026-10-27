@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, TrendingUp, TrendingDown, Wallet, Receipt, ShieldAlert, Clock, IndianRupee, Minus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Info, Receipt, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as api from '../utils/api';
 import { InventoryContextType, SalesData } from '../App';
@@ -12,6 +12,15 @@ import { monthAdd } from '../utils/salaryBreakdown';
 import { hasRealCashCount } from '../utils/cashCount';
 import { buildOnlineCostIndex } from '../utils/onlineCosts';
 import { settlementOrderDates } from '../utils/reports/ledgers';
+import { ListGroup, ListRow, IconWell } from './ui/list-row';
+import { StatTile, StatGrid } from './ui/stat-tile';
+import { StatusChip, type StatusTone } from './ui/status-chip';
+import { SegmentedControl } from './ui/segmented-control';
+import { EmptyState } from './ui/empty-state';
+import { Money } from './ui/money';
+import { Delayed, SkeletonChart, SkeletonStatTile, SkeletonStatTiles } from './ui/skeleton';
+import { CHART_COLORS, ChartLegendChips, ChartTooltipCard, chartAreaFillOpacity, chartAxisProps, chartCursor, chartGridProps } from './ui/chart-theme';
+import { cn } from './ui/utils';
 
 interface Props {
   context: InventoryContextType;
@@ -30,10 +39,11 @@ function daysAgo(dateStr: string): number {
   return Math.round((now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function healthTone(pct: number): { text: string; bg: string; bar: string } {
-  if (pct >= 90) return { text: 'text-emerald-600', bg: 'bg-emerald-50', bar: 'bg-emerald-500' };
-  if (pct >= 70) return { text: 'text-amber-600', bg: 'bg-amber-50', bar: 'bg-amber-500' };
-  return { text: 'text-red-600', bg: 'bg-red-50', bar: 'bg-red-500' };
+// Completion and coverage: 90 % and up is fine, 70 % and up needs a look, below is bad.
+function healthTone(pct: number): { tone: StatusTone; bar: string; word: string } {
+  if (pct >= 90) return { tone: 'success', bar: 'bg-success', word: 'On track' };
+  if (pct >= 70) return { tone: 'warning', bar: 'bg-warning', word: 'Needs a look' };
+  return { tone: 'danger', bar: 'bg-danger', word: 'Behind' };
 }
 
 function formatMoney(n: number): string {
@@ -41,12 +51,27 @@ function formatMoney(n: number): string {
   return `${sign}₹${Math.abs(Math.round(n)).toLocaleString('en-IN')}`;
 }
 
-function scoreTone(score: number): { text: string; ring: string; label: string } {
-  if (score >= 90) return { text: 'text-emerald-400', ring: '#34d399', label: 'Excellent' };
-  if (score >= 75) return { text: 'text-lime-400', ring: '#a3e635', label: 'Good' };
-  if (score >= 55) return { text: 'text-amber-400', ring: '#fbbf24', label: 'Needs Attention' };
-  return { text: 'text-red-400', ring: '#f87171', label: 'Critical' };
+function scoreTone(score: number): { tone: StatusTone; bar: string; label: string } {
+  if (score >= 90) return { tone: 'success', bar: 'bg-success', label: 'Excellent' };
+  if (score >= 75) return { tone: 'success', bar: 'bg-success', label: 'Good' };
+  if (score >= 55) return { tone: 'warning', bar: 'bg-warning', label: 'Needs attention' };
+  return { tone: 'danger', bar: 'bg-danger', label: 'Critical' };
 }
+
+/** A thin completion bar under a percentage (the word next to it carries the meaning). */
+function Bar({ pct, className }: { pct: number; className: string }) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
+      <div className={cn('h-full rounded-full', className)} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+    </div>
+  );
+}
+
+const FINDING = {
+  bad: { tone: 'danger' as const, icon: AlertTriangle },
+  warn: { tone: 'warning' as const, icon: AlertTriangle },
+  good: { tone: 'success' as const, icon: CheckCircle2 },
+};
 
 const CASH_OVER_SHORT_REASON_LABELS: Record<string, string> = {
   missed_kot: 'Missed KOT',
@@ -363,329 +388,236 @@ export function BusinessAuditReport({ context, selectedStoreId }: Props) {
   }, [financials, storeCashHealth, productionCashHealth, revenueCompleteness, cashOverShortSummary]);
 
   const tone = scoreTone(auditScore);
-  const ringCircumference = 2 * Math.PI * 34;
+  const hasSales = dailyRevenueSeries.some((d) => d.Offline > 0 || d.Online > 0);
 
   return (
-    <div className="space-y-6">
-      {/* Hero: verdict first (composite score + one-line narrative), not a title bar */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-6 sm:p-7 shadow-xl">
-        <div className="absolute inset-0 bg-white/5" />
-        <div className="relative flex flex-col sm:flex-row sm:items-center gap-6">
-          <div className="flex items-center gap-4 flex-1 min-w-0">
-            <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center border-2 border-white/20 flex-shrink-0">
-              <ShieldAlert className="w-7 h-7 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Business Audit Report</h1>
-              <p className="text-sm sm:text-base text-white/60 mt-1">Cash control health, revenue completeness &amp; P&amp;L for {rangeStart} to {rangeEnd}</p>
-            </div>
-          </div>
+    <div className="flex flex-col gap-5">
+      {/* Verdict first: the composite score, then the period */}
+      <StatTile
+        hero
+        label="Audit score"
+        value={loading ? '–' : auditScore}
+        headerChip={loading ? undefined : <StatusChip tone={tone.tone}>{tone.label}</StatusChip>}
+        caption={<span className="num">Cash control, settlements and profit · {rangeStart} to {rangeEnd}</span>}
+        loading={loading}
+      >
+        {!loading && <Bar pct={auditScore} className={tone.bar} />}
+      </StatTile>
 
-          {/* Composite Audit Score - an SVG ring so the verdict reads as a single glance,
-              not another number in a row of numbers. */}
-          <div className="flex items-center gap-3 flex-shrink-0 self-center sm:self-auto">
-            <div className="relative w-20 h-20">
-              <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="7" />
-                <circle
-                  cx="40" cy="40" r="34" fill="none" stroke={tone.ring} strokeWidth="7" strokeLinecap="round"
-                  strokeDasharray={ringCircumference}
-                  strokeDashoffset={ringCircumference * (1 - auditScore / 100)}
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center flex-col">
-                <span className="text-xl font-extrabold text-white tabular-nums leading-none">{auditScore}</span>
-              </div>
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-white/50">Audit Score</p>
-              <p className={`text-sm font-bold ${tone.text}`}>{tone.label}</p>
-            </div>
+      <div className="flex flex-col gap-3">
+        <SegmentedControl
+          aria-label="Period"
+          value={period}
+          onValueChange={setPeriod}
+          options={[{ value: 'thisMonth', label: 'This month' }, { value: 'lastMonth', label: 'Last month' }, { value: 'custom', label: 'Custom' }]}
+        />
+        {period === 'custom' && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <DatePicker label="From" className="w-full" value={customRange.from} onChange={(d) => setCustomRange({ ...customRange, from: d })} />
+            <DatePicker label="To" className="w-full" value={customRange.to} onChange={(d) => setCustomRange({ ...customRange, to: d })} />
           </div>
-        </div>
+        )}
       </div>
-
-      {/* Period filter */}
-      <div className="flex flex-wrap items-center gap-2">
-        {(['thisMonth', 'lastMonth', 'custom'] as Period[]).map((p) => (
-          <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              period === p ? 'bg-slate-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : 'Custom'}
-          </button>
-        ))}
-        <span className="text-xs text-gray-400 ml-1">{rangeStart} to {rangeEnd}</span>
-      </div>
-      {period === 'custom' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <DatePicker label="From" value={customRange.from} onChange={(d) => setCustomRange({ ...customRange, from: d })} />
-          <DatePicker label="To" value={customRange.to} onChange={(d) => setCustomRange({ ...customRange, to: d })} />
-        </div>
-      )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-500">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-700 mx-auto mb-3" />
-          Loading audit data...
-        </div>
+        <Delayed>
+          <div className="flex flex-col gap-5">
+            <SkeletonStatTiles count={4} />
+            <SkeletonChart />
+            <SkeletonStatTile />
+          </div>
+        </Delayed>
       ) : (
         <>
-          {/* This Period at a Glance - real ₹ magnitude behind everything else on this
-              page, with a trend arrow vs. an equal-length previous period. */}
-          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-            <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-              <IndianRupee className="w-4 h-4 text-slate-700" />
-              <h3 className="text-sm font-semibold text-gray-900">This Period at a Glance</h3>
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-gray-100">
+          {/* This period at a glance - the money behind every process metric below, with the
+              change against an equal-length previous period. */}
+          <section className="flex flex-col gap-3" aria-label="This period at a glance">
+            <h2 className="text-subtitle font-semibold text-text">This period at a glance</h2>
+            <StatGrid columns={4}>
               {[
                 { label: 'Revenue', value: financials.revenue, changePct: financials.revenueChangePct, invertGood: false },
                 { label: 'Costs', value: financials.costs, changePct: financials.costsChangePct, invertGood: true },
-                { label: 'Net Profit', value: financials.profit, changePct: financials.profitChangePct, invertGood: false },
-              ].map((kpi) => {
-                const improving = kpi.invertGood ? kpi.changePct <= 0 : kpi.changePct >= 0;
-                return (
-                  <div key={kpi.label} className="p-4">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{kpi.label}</p>
-                    <p className={`text-2xl font-extrabold tabular-nums mt-1 ${kpi.label === 'Net Profit' ? (kpi.value >= 0 ? 'text-emerald-700' : 'text-red-700') : 'text-gray-900'}`}>
-                      {formatMoney(kpi.value)}
-                    </p>
-                    <p className={`text-xs font-medium mt-1 flex items-center gap-1 ${
-                      Math.abs(kpi.changePct) < 0.5 ? 'text-gray-400' : improving ? 'text-emerald-600' : 'text-red-600'
-                    }`}>
-                      {Math.abs(kpi.changePct) < 0.5 ? <Minus className="w-3 h-3" /> : kpi.changePct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                      {Math.abs(kpi.changePct).toFixed(1)}% vs previous period
-                    </p>
+                { label: 'Net profit', value: financials.profit, changePct: financials.profitChangePct, invertGood: false },
+              ].map((kpi) => (
+                <StatTile
+                  key={kpi.label}
+                  label={kpi.label}
+                  value={formatMoney(kpi.value)}
+                  tone={kpi.label === 'Net profit' && kpi.value < 0 ? 'danger' : 'default'}
+                  delta={{ value: Math.abs(kpi.changePct) < 0.5 ? 0 : kpi.changePct, label: 'vs previous', goodWhen: kpi.invertGood ? 'down' : 'up' }}
+                />
+              ))}
+              <StatTile
+                label="Profit margin"
+                value={`${financials.margin.toFixed(1)}%`}
+                tone={financials.margin < 0 ? 'danger' : 'default'}
+                caption={<span className="num">Counter {formatMoney(financials.offlineRevenue)} · Online {formatMoney(financials.onlineRevenue)}</span>}
+              />
+            </StatGrid>
+
+            {/* Daily revenue - the shape behind the totals (a steady climb reads very
+                differently from one huge day propping up a flat month). */}
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+              <span className="text-subtitle font-semibold text-text">Daily revenue</span>
+              {hasSales ? (
+                <>
+                  <ChartLegendChips items={[{ label: 'Counter', color: CHART_COLORS.primary, shape: 'square' }, { label: 'Online', color: CHART_COLORS.secondary, shape: 'square' }]} />
+                  <div role="img" aria-label={`Daily revenue from ${rangeStart} to ${rangeEnd}: ${formatMoney(financials.revenue)} in total`}>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <AreaChart data={dailyRevenueSeries} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                        <CartesianGrid {...chartGridProps} />
+                        <XAxis dataKey="label" {...chartAxisProps} interval="preserveStartEnd" minTickGap={24} />
+                        <YAxis {...chartAxisProps} width={52} tickFormatter={(v) => `₹${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`} />
+                        <Tooltip content={<ChartTooltipCard money />} cursor={chartCursor} />
+                        <Area type="monotone" dataKey="Offline" name="Counter" stackId="1" stroke={CHART_COLORS.primary} fill={CHART_COLORS.primary} fillOpacity={chartAreaFillOpacity} strokeWidth={2} />
+                        <Area type="monotone" dataKey="Online" stackId="1" stroke={CHART_COLORS.secondary} fill={CHART_COLORS.secondary} fillOpacity={chartAreaFillOpacity} strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
-                );
-              })}
-              <div className="p-4">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Profit Margin</p>
-                <p className={`text-2xl font-extrabold tabular-nums mt-1 ${financials.margin >= 0 ? 'text-gray-900' : 'text-red-700'}`}>{financials.margin.toFixed(1)}%</p>
-                <p className="text-xs text-gray-400 mt-1">Offline {formatMoney(financials.offlineRevenue)} · Online {formatMoney(financials.onlineRevenue)}</p>
-              </div>
+                </>
+              ) : (
+                <EmptyState compact title="No sales in this period" body="The chart fills in once sales are entered." />
+              )}
             </div>
+          </section>
 
-            {/* Daily revenue trend */}
-            {dailyRevenueSeries.some((d) => d.Offline > 0 || d.Online > 0) && (
-              <div className="px-4 pb-4 pt-1 border-t border-gray-100">
-                <p className="text-xs font-semibold text-gray-600 mb-2">Daily Revenue Trend</p>
-                <ResponsiveContainer width="100%" height={180}>
-                  <AreaChart data={dailyRevenueSeries} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="offlineFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#f97316" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#f97316" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="onlineFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} width={48} tickFormatter={(v) => `₹${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`} />
-                    <Tooltip formatter={(v: number) => `₹${v.toLocaleString('en-IN')}`} />
-                    <Area type="monotone" dataKey="Offline" stackId="1" stroke="#f97316" fill="url(#offlineFill)" strokeWidth={2} />
-                    <Area type="monotone" dataKey="Online" stackId="1" stroke="#0ea5e9" fill="url(#onlineFill)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-
-          {/* Key Findings - the headline callouts, worst first, so the story reads without
-              scrolling every card below. */}
+          {/* Key findings - the headline points, worst first */}
           {keyFindings.length > 0 && (
-            <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-              <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-                <AlertTriangle className="w-4 h-4 text-slate-700" />
-                <h3 className="text-sm font-semibold text-gray-900">Key Findings</h3>
-              </div>
-              <ul className="p-4 space-y-2">
-                {keyFindings.map((f, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-sm text-gray-700">
-                    <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      f.tone === 'bad' ? 'bg-red-500' : f.tone === 'warn' ? 'bg-amber-500' : 'bg-emerald-500'
-                    }`} />
-                    <span>{f.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <ListGroup title="Key findings">
+              {keyFindings.map((f, i) => (
+                <ListRow key={i} leading={<IconWell icon={FINDING[f.tone].icon} tone={FINDING[f.tone].tone} />} title={<span className="font-normal">{f.text}</span>} />
+              ))}
+            </ListGroup>
           )}
 
-          {/* Cash Control Health */}
-          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-            <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-              <Wallet className="w-4 h-4 text-slate-700" />
-              <h3 className="text-sm font-semibold text-gray-900">Cash Control Health</h3>
-            </div>
-            <div className="p-4 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  { label: 'Store Cash', health: storeCashHealth },
-                  { label: 'Production Cash', health: productionCashHealth },
-                ].map(({ label, health }) => {
-                  const t = healthTone(health.completionPct);
-                  return (
-                    <div key={label} className="border border-gray-200 rounded-lg p-3.5">
-                      <p className="text-xs font-semibold text-gray-700 mb-2">{label} Reconciled</p>
-                      <div className="flex items-end justify-between">
-                        <span className={`text-2xl font-bold tabular-nums ${t.text}`}>{health.completionPct}%</span>
-                        <span className="text-xs text-gray-500 tabular-nums">{health.reconciledDays}/{health.totalDays} days</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-gray-100 mt-2 overflow-hidden">
-                        <div className={`h-full rounded-full ${t.bar}`} style={{ width: `${health.completionPct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
+          {/* Cash control health */}
+          <section className="flex flex-col gap-3" aria-label="Cash control">
+            <h2 className="flex items-center gap-2 text-subtitle font-semibold text-text"><Wallet className="size-5 text-text-2" aria-hidden="true" />Cash control</h2>
+            <StatGrid>
               {[
-                { label: 'Store Cash', discrepancies: storeCashHealth.pendingDiscrepancies },
-                { label: 'Production Cash', discrepancies: productionCashHealth.pendingDiscrepancies },
-              ].map(({ label, discrepancies }) => discrepancies.length > 0 && (
-                <div key={label} className="border border-red-200 rounded-lg overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border-b border-red-200">
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                    <p className="text-xs font-semibold text-red-900">{label}: {discrepancies.length} unresolved discrepanc{discrepancies.length === 1 ? 'y' : 'ies'}</p>
-                  </div>
-                  <div className="divide-y divide-red-100">
-                    {discrepancies.map((d, i) => (
-                      <div key={i} className="flex items-center justify-between px-3 py-2 text-xs">
-                        <span className="text-gray-700">{d.date}</span>
-                        <span className="font-semibold text-red-700 tabular-nums">{formatMoney(Math.abs(d.amount))}</span>
-                        <span className="flex items-center gap-1 text-gray-500"><Clock className="w-3 h-3" />{d.ageDays}d open</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                { label: 'Store cash counted', health: storeCashHealth },
+                { label: 'Production cash counted', health: productionCashHealth },
+              ].map(({ label, health }) => {
+                const h = healthTone(health.completionPct);
+                return (
+                  <StatTile
+                    key={label}
+                    label={label}
+                    value={`${health.completionPct}%`}
+                    chip={<StatusChip tone={h.tone}>{h.word}</StatusChip>}
+                    caption={<span className="num">{health.reconciledDays}/{health.totalDays} days</span>}
+                  >
+                    <Bar pct={health.completionPct} className={h.bar} />
+                  </StatTile>
+                );
+              })}
+            </StatGrid>
 
-              {storeCashHealth.pendingDiscrepancies.length === 0 && productionCashHealth.pendingDiscrepancies.length === 0 && (
-                <div className="flex items-center gap-2 text-sm text-emerald-600">
-                  <CheckCircle className="w-4 h-4" />
-                  No unresolved cash discrepancies in this period.
-                </div>
-              )}
+            {[
+              { label: 'Store cash', discrepancies: storeCashHealth.pendingDiscrepancies },
+              { label: 'Production cash', discrepancies: productionCashHealth.pendingDiscrepancies },
+            ].map(({ label, discrepancies }) => discrepancies.length > 0 && (
+              <ListGroup key={label} overline={`${label}: ${discrepancies.length} waiting for approval`}>
+                {discrepancies.map((d, i) => (
+                  <ListRow
+                    key={i}
+                    density="compact"
+                    leading={<IconWell icon={Clock} tone="danger" />}
+                    title={<span className="num">{d.date}</span>}
+                    subtitle={`Open ${d.ageDays} day${d.ageDays === 1 ? '' : 's'}`}
+                    trailing={<Money value={Math.abs(d.amount)} className="text-body-md font-semibold text-danger" />}
+                  />
+                ))}
+              </ListGroup>
+            ))}
 
-              {/* Cash Over/Short - till gaps (Cash+Paytm vs Net Offline Sales) the store
-                  incharge explained with a reason at save time. Never folded into Sales. */}
-              {cashOverShortSummary.entries.length > 0 && (
-                <div className="border border-amber-200 rounded-lg overflow-hidden">
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                      <p className="text-xs font-semibold text-amber-900">Cash Over/Short: {cashOverShortSummary.entries.length} day{cashOverShortSummary.entries.length === 1 ? '' : 's'} this period</p>
-                    </div>
-                    <span className={`text-xs font-bold tabular-nums ${cashOverShortSummary.netAmount > 0 ? 'text-red-700' : cashOverShortSummary.netAmount < 0 ? 'text-blue-700' : 'text-gray-600'}`}>
-                      Net {cashOverShortSummary.netAmount === 0 ? '₹0' : `${cashOverShortSummary.netAmount > 0 ? 'short' : 'over'} ${formatMoney(Math.abs(cashOverShortSummary.netAmount))}`}
-                    </span>
-                  </div>
-
-                  {/* By-reason breakdown - surfaces a recurring pattern (e.g. "wrong change"
-                      happening every week) at a glance. */}
-                  <div className="flex flex-wrap gap-1.5 px-3 py-2 bg-white border-b border-amber-100">
-                    {Array.from(cashOverShortSummary.byReason.entries()).map(([key, b]) => (
-                      <span key={key} className={`text-[11px] font-medium px-2 py-1 rounded-full ${key === 'unexplained' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
-                        {key === 'unexplained' ? 'No reason given' : CASH_OVER_SHORT_REASON_LABELS[key] || key} · {b.count}× · {formatMoney(Math.abs(b.total))}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="divide-y divide-amber-100 max-h-64 overflow-y-auto">
-                    {cashOverShortSummary.entries.map((e, i) => (
-                      <div key={i} className="px-3 py-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-700">{e.date}</span>
-                          <span className={`font-semibold tabular-nums ${e.amount > 0 ? 'text-red-700' : 'text-blue-700'}`}>
-                            {e.amount > 0 ? 'short' : 'over'} {formatMoney(Math.abs(e.amount))}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-gray-500">
-                          {e.reason ? (
-                            <>
-                              <span className="font-medium text-amber-700">{CASH_OVER_SHORT_REASON_LABELS[e.reason] || e.reason}</span>
-                              {e.note ? <span className="italic"> — "{e.note}"</span> : null}
-                            </>
-                          ) : (
-                            <span className="text-red-600 italic">No reason given</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Revenue Completeness */}
-          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-            <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-              <Receipt className="w-4 h-4 text-slate-700" />
-              <h3 className="text-sm font-semibold text-gray-900">Revenue Completeness</h3>
-            </div>
-            <div className="p-4 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {revenueCompleteness.map((row) => {
-                  const t = healthTone(row.coveragePct);
-                  return (
-                    <div key={row.aggregator} className="border border-gray-200 rounded-lg p-3.5">
-                      <p className="text-xs font-semibold text-gray-700 mb-2 capitalize">{row.aggregator} Settlement Coverage</p>
-                      <div className="flex items-end justify-between">
-                        <span className={`text-2xl font-bold tabular-nums ${t.text}`}>{row.coveragePct}%</span>
-                        <span className="text-xs text-gray-500 tabular-nums">{row.totalDaysWithSales - row.pendingDays.length}/{row.totalDaysWithSales} days settled</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-gray-100 mt-2 overflow-hidden">
-                        <div className={`h-full rounded-full ${t.bar}`} style={{ width: `${row.coveragePct}%` }} />
-                      </div>
-                      {row.pendingValue > 0 && (
-                        <p className="text-[11px] text-amber-700 font-medium mt-2">{formatMoney(row.pendingValue)} in sales past their payout date with no settlement</p>
-                      )}
-                      {row.notDueValue > 0 && (
-                        <p className="text-[11px] text-gray-500 mt-1">{formatMoney(row.notDueValue)} from the last {row.notDueDays.length} day{row.notDueDays.length === 1 ? '' : 's'} not paid out yet</p>
-                      )}
-                      {row.effectiveCommissionPct !== null && (
-                        <p className="text-[11px] text-gray-500 mt-1">Effective commission: {row.effectiveCommissionPct.toFixed(1)}% across {row.settlementCount} settlement{row.settlementCount === 1 ? '' : 's'}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {revenueCompleteness.map((row) => row.pendingDays.length > 0 && (
-                <div key={row.aggregator} className="border border-amber-200 rounded-lg overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                    <p className="text-xs font-semibold text-amber-900 capitalize">{row.aggregator}: {row.pendingDays.length} day{row.pendingDays.length === 1 ? '' : 's'} past the payout date with no settlement on file</p>
-                  </div>
-                  <div className="px-3 py-2 flex flex-wrap gap-1.5">
-                    {row.pendingDays.map((d) => (
-                      <span key={d} className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-medium tabular-nums">{d}</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              {revenueCompleteness.every((row) => row.pendingDays.length === 0) && (
-                <div className="flex items-center gap-2 text-sm text-emerald-600">
-                  <CheckCircle className="w-4 h-4" />
-                  Every day with online sales that should have been paid by now has a settlement on file.
-                </div>
-              )}
-
-              <p className="text-[11px] text-gray-400">
-                These figures reflect settlements uploaded up to now - a late settlement for a day in this period will still correct that day once uploaded, and this report will reflect it on next view. Nothing here is locked.
+            {storeCashHealth.pendingDiscrepancies.length === 0 && productionCashHealth.pendingDiscrepancies.length === 0 && (
+              <p className="flex items-center gap-1.5 px-1 text-body-sm text-success">
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" /> No cash differences waiting for approval in this period.
               </p>
-            </div>
-          </div>
+            )}
+
+            {/* Cash over/short - till gaps the store incharge explained with a reason when
+                saving. Never folded into sales. */}
+            {cashOverShortSummary.entries.length > 0 && (
+              <ListGroup
+                title="Cash over and short"
+                meta={`${cashOverShortSummary.entries.length} day${cashOverShortSummary.entries.length === 1 ? '' : 's'} · net ${cashOverShortSummary.netAmount === 0 ? '₹0' : `${cashOverShortSummary.netAmount > 0 ? 'short' : 'over'} ${formatMoney(Math.abs(cashOverShortSummary.netAmount))}`}`}
+              >
+                {/* By reason - shows a pattern (e.g. "wrong change" every week) at a glance. */}
+                <div className="flex flex-wrap gap-1.5 px-4 py-3">
+                  {Array.from(cashOverShortSummary.byReason.entries()).map(([key, b]) => (
+                    <StatusChip key={key} tone={key === 'unexplained' ? 'danger' : 'warning'}>
+                      <span className="num">{key === 'unexplained' ? 'No reason given' : CASH_OVER_SHORT_REASON_LABELS[key] || key} · {b.count}× · {formatMoney(Math.abs(b.total))}</span>
+                    </StatusChip>
+                  ))}
+                </div>
+                {cashOverShortSummary.entries.map((e, i) => (
+                  <ListRow
+                    key={i}
+                    density="compact"
+                    title={<span className="num">{e.date}</span>}
+                    subtitle={e.reason ? `${CASH_OVER_SHORT_REASON_LABELS[e.reason] || e.reason}${e.note ? ` - "${e.note}"` : ''}` : 'No reason given'}
+                    trailing={
+                      <span className={cn('num text-body-md font-semibold', e.amount > 0 ? 'text-danger' : 'text-info')}>
+                        {e.amount > 0 ? 'short' : 'over'} {formatMoney(Math.abs(e.amount))}
+                      </span>
+                    }
+                  />
+                ))}
+              </ListGroup>
+            )}
+          </section>
+
+          {/* Revenue completeness */}
+          <section className="flex flex-col gap-3" aria-label="Online settlements">
+            <h2 className="flex items-center gap-2 text-subtitle font-semibold text-text"><Receipt className="size-5 text-text-2" aria-hidden="true" />Online settlements</h2>
+            <StatGrid>
+              {revenueCompleteness.map((row) => {
+                const h = healthTone(row.coveragePct);
+                const name = row.aggregator === 'zomato' ? 'Zomato' : 'Swiggy';
+                return (
+                  <StatTile
+                    key={row.aggregator}
+                    label={`${name} settled`}
+                    value={`${row.coveragePct}%`}
+                    chip={<StatusChip tone={h.tone}>{h.word}</StatusChip>}
+                    caption={
+                      <span className="flex flex-col gap-0.5">
+                        <span className="num">{row.totalDaysWithSales - row.pendingDays.length}/{row.totalDaysWithSales} days settled</span>
+                        {row.pendingValue > 0 && <span className="num text-warning">{formatMoney(row.pendingValue)} past the payout date, no settlement</span>}
+                        {row.notDueValue > 0 && <span className="num">{formatMoney(row.notDueValue)} from the last {row.notDueDays.length} day{row.notDueDays.length === 1 ? '' : 's'} not paid out yet</span>}
+                        {row.effectiveCommissionPct !== null && <span className="num">Commission {row.effectiveCommissionPct.toFixed(1)}% over {row.settlementCount} settlement{row.settlementCount === 1 ? '' : 's'}</span>}
+                      </span>
+                    }
+                  >
+                    <Bar pct={row.coveragePct} className={h.bar} />
+                  </StatTile>
+                );
+              })}
+            </StatGrid>
+
+            {revenueCompleteness.map((row) => row.pendingDays.length > 0 && (
+              <ListGroup key={row.aggregator} overline={`${row.aggregator === 'zomato' ? 'Zomato' : 'Swiggy'}: ${row.pendingDays.length} day${row.pendingDays.length === 1 ? '' : 's'} with no settlement on file`}>
+                <div className="flex flex-wrap gap-1.5 px-4 py-3">
+                  {row.pendingDays.map((d) => (
+                    <StatusChip key={d} tone="warning"><span className="num">{d}</span></StatusChip>
+                  ))}
+                </div>
+              </ListGroup>
+            ))}
+
+            {revenueCompleteness.every((row) => row.pendingDays.length === 0) && (
+              <p className="flex items-center gap-1.5 px-1 text-body-sm text-success">
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" /> Every day with online sales that should be paid by now has a settlement on file.
+              </p>
+            )}
+
+            <p className="flex items-start gap-1.5 px-1 text-caption text-text-3">
+              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              These figures use the settlements uploaded so far. A late settlement for a day in this period corrects that day once it is uploaded; nothing here is locked.
+            </p>
+          </section>
         </>
       )}
     </div>
