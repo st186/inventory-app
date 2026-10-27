@@ -6,6 +6,7 @@ import { PaymentHistoryModal } from './PaymentHistoryModal';
 import { generatePayslip, computeMonthlyPay, defaultSalaryMonth, monthlySalaryOf, payoutMonth, personalExpensesForMonth, salaryMonthOf, SALARY_PAID_BY_DAY } from '../utils/payslip';
 import { employeeBelongsToStore } from '../utils/entityAccess';
 import { useApprovedVariablePay } from './kpi/useApprovedVariablePay';
+import { advanceUpdatesFor as recoveryUpdates, currentMonthBounds, lastMonthBounds, payoutsInPeriod, personalExpensesInPeriod, planAdvanceRecovery as planRecovery, recoveredSoFar } from './team/payrollMath';
 
 interface SalaryComponent {
   label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
@@ -105,53 +106,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   
-  // Calculate current month start and end dates
-  const getCurrentMonthDates = () => {
-    // Use UTC to avoid timezone issues
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    
-    // Create dates at midnight in local timezone
-    const start = new Date(year, month, 1);
-    const end = new Date(year, month + 1, 0);
-    
-    // Format as YYYY-MM-DD
-    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-    const endDay = end.getDate();
-    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
-    
-    return {
-      start: startStr,
-      end: endStr,
-      monthName: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    };
-  };
-  
-  // Calculate last month start and end dates
-  const getLastMonthDates = () => {
-    const now = new Date();
-    const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-    const month = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-    
-    // Create dates at midnight in local timezone
-    const start = new Date(year, month, 1);
-    const end = new Date(year, month + 1, 0);
-    
-    // Format as YYYY-MM-DD
-    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-    const endDay = end.getDate();
-    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
-    
-    return {
-      start: startStr,
-      end: endStr,
-      monthName: start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    };
-  };
-  
-  const currentMonth = getCurrentMonthDates();
-  const lastMonth = getLastMonthDates();
+  // Current / last month bounds (team/payrollMath.ts).
+  const currentMonth = currentMonthBounds();
+  const lastMonth = lastMonthBounds();
 
   // Edit employee modal state
   const [showEditEmployee, setShowEditEmployee] = useState(false);
@@ -240,31 +197,11 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   // A payout's forMonth (when set) is which month it's actually FOR, not when it was
   // paid - a backlogged salary paid in June for May (forMonth "2026-05") should count
   // toward May's period, not June's, or it never shows up under the month it belongs to.
-  const matchesPeriodByForMonthOrDate = (p: Payout, start: string, end: string) => {
-    if (p.forMonth) {
-      const [y, m] = p.forMonth.split('-').map(Number);
-      const forMonthStart = `${p.forMonth}-01`;
-      const forMonthEnd = new Date(y, m, 0).toISOString().split('T')[0]; // last day of that month
-      return forMonthStart <= end && forMonthEnd >= start; // range overlap
-    }
-    return p.date >= start && p.date <= end;
-  };
-
-  const filteredPayouts = useMemo(() => {
-    let dateFiltered;
-    if (viewMode === 'current') {
-      // Show only current month payouts
-      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, currentMonth.start, currentMonth.end));
-    } else if (viewMode === 'last') {
-      // Show only last month payouts
-      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, lastMonth.start, lastMonth.end));
-    } else {
-      // Show custom date range
-      if (!customStartDate || !customEndDate) return [];
-      dateFiltered = filteredPayoutsByStore.filter(p => matchesPeriodByForMonthOrDate(p, customStartDate, customEndDate));
-    }
-    return dateFiltered;
-  }, [filteredPayoutsByStore, viewMode, currentMonth, lastMonth, customStartDate, customEndDate]);
+  const filteredPayouts = useMemo(
+    () => payoutsInPeriod(filteredPayoutsByStore, { viewMode, current: currentMonth, last: lastMonth, customStart: customStartDate, customEnd: customEndDate }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredPayoutsByStore, viewMode, currentMonth.start, lastMonth.start, customStartDate, customEndDate]
+  );
 
   useEffect(() => {
     loadData();
@@ -438,60 +375,12 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
   // month is last month's (see SALARY_PAID_BY_DAY); contract pay is the payment month's.
   const defaultForMonth = (date: string) => (activeTab === 'permanent' ? defaultSalaryMonth(date) : date.slice(0, 7));
 
-  // How much of an instalment is already recovered. Instalments recovered before partial
-  // recovery existed only carry `deducted`.
-  const recoveredSoFar = (d: any): number =>
-    typeof d.recovered === 'number' ? d.recovered : (d.deducted ? d.amount : 0);
-
-  // The salary-advance instalments a payout recovers. Matched to the month the salary is FOR
-  // (salaryMonthOf: its "Salary For Month"), not the payment date - salaries go out
-  // early the next month, so matching the payment date meant the first instalment never
-  // matched and the advance never closed. Every instalment due up to that month and not yet
-  // recovered is taken (catching up a missed month), but never more than the payout itself,
-  // so net pay can't go below zero - the rest stays due for the next payout.
-  const planAdvanceRecovery = (employeeId: string, salaryMonth: string, grossAmount: number) => {
-    const items: { advanceId: string; month: string; amount: number }[] = [];
-    let budget = Math.max(0, grossAmount);
-    for (const advance of salaryAdvances) {
-      if (advance.employeeId !== employeeId || advance.status !== 'approved' || advance.remainingAmount <= 0) continue;
-      const due = [...(advance.deductions || [])]
-        .filter((d: any) => d.month <= salaryMonth && d.amount - recoveredSoFar(d) > 0.005)
-        .sort((a: any, b: any) => a.month.localeCompare(b.month));
-      for (const d of due) {
-        const take = Math.min(d.amount - recoveredSoFar(d), budget, advance.remainingAmount - items.filter(i => i.advanceId === advance.id).reduce((s, i) => s + i.amount, 0));
-        if (take <= 0.005) continue;
-        items.push({ advanceId: advance.id, month: d.month, amount: Math.round(take * 100) / 100 });
-        budget -= take;
-      }
-    }
-    return { items, total: items.reduce((s, i) => s + i.amount, 0) };
-  };
-
-  // Apply (sign = 1) or undo (sign = -1) a payout's recovery on the advance records.
-  const advanceUpdatesFor = (recovery: { advanceId: string; month: string; amount: number }[], payoutId: string, sign: 1 | -1) => {
-    const updates: { advanceId: string; deductions: any[]; remainingAmount: number }[] = [];
-    for (const advanceId of [...new Set(recovery.map(r => r.advanceId))]) {
-      const advance = salaryAdvances.find(a => a.id === advanceId);
-      if (!advance) continue;
-      let changed = 0;
-      const deductions = (advance.deductions || []).map((d: any) => {
-        const amount = recovery.filter(r => r.advanceId === advanceId && r.month === d.month).reduce((s, r) => s + r.amount, 0);
-        if (!amount) return d;
-        changed += amount;
-        const recovered = Math.max(0, Math.round((recoveredSoFar(d) + sign * amount) * 100) / 100);
-        const deducted = recovered >= d.amount - 0.005;
-        return {
-          ...d,
-          recovered,
-          deducted,
-          deductedDate: deducted ? (d.deductedDate || new Date().toISOString()) : undefined,
-          payoutId: sign === 1 ? payoutId : (d.payoutId === payoutId ? undefined : d.payoutId),
-        };
-      });
-      updates.push({ advanceId, deductions, remainingAmount: Math.max(0, Math.round((advance.remainingAmount - sign * changed) * 100) / 100) });
-    }
-    return updates;
-  };
+  // Salary-advance recovery (team/payrollMath.ts): instalments due up to the salary month,
+  // never more than the payout itself.
+  const planAdvanceRecovery = (employeeId: string, salaryMonth: string, grossAmount: number) =>
+    planRecovery(salaryAdvances, employeeId, salaryMonth, grossAmount);
+  const advanceUpdatesFor = (recovery: { advanceId: string; month: string; amount: number }[], payoutId: string, sign: 1 | -1) =>
+    recoveryUpdates(salaryAdvances, recovery, payoutId, sign);
 
   const handleAddPayout = async () => {
     const payingByDays = activeTab === 'contract' && payoutData.periodType === 'days';
@@ -688,49 +577,9 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     }
   };
 
-  // Calculate personal expense deductions for an employee in the current date range
-  const calculatePersonalExpenses = (employeeInternalId: string): number => {
-    // For personal expenses with month mapping, use expenseMonth instead of date
-    let monthFiltered;
-    
-    if (viewMode === 'current') {
-      // Get current month in YYYY-MM format
-      const currentMonthStr = currentMonth.start.substring(0, 7); // "2026-02"
-      monthFiltered = overheads.filter(o => {
-        // If expenseMonth exists (month-mapped), use it; otherwise fall back to date filtering
-        if (o.expenseMonth) {
-          return o.expenseMonth === currentMonthStr;
-        }
-        return o.date >= currentMonth.start && o.date <= currentMonth.end;
-      });
-    } else if (viewMode === 'last') {
-      // Get last month in YYYY-MM format
-      const lastMonthStr = lastMonth.start.substring(0, 7);
-      monthFiltered = overheads.filter(o => {
-        if (o.expenseMonth) {
-          return o.expenseMonth === lastMonthStr;
-        }
-        return o.date >= lastMonth.start && o.date <= lastMonth.end;
-      });
-    } else {
-      if (!customStartDate || !customEndDate) return 0;
-      // For custom date range, we need to check if expenseMonth falls within range
-      const startMonthStr = customStartDate.substring(0, 7);
-      const endMonthStr = customEndDate.substring(0, 7);
-      monthFiltered = overheads.filter(o => {
-        if (o.expenseMonth) {
-          return o.expenseMonth >= startMonthStr && o.expenseMonth <= endMonthStr;
-        }
-        return o.date >= customStartDate && o.date <= customEndDate;
-      });
-    }
-
-    const personalExpenses = monthFiltered.filter(
-      o => o.category === 'personal_expense' && o.employeeId === employeeInternalId
-    );
-
-    return personalExpenses.reduce((sum, o) => sum + o.amount, 0);
-  };
+  // Personal expenses booked against this person in the chosen period (team/payrollMath.ts).
+  const calculatePersonalExpenses = (employeeInternalId: string): number =>
+    personalExpensesInPeriod(overheads, employeeInternalId, { viewMode, current: currentMonth, last: lastMonth, customStart: customStartDate, customEnd: customEndDate });
 
   const calculateContractStats = () => {
     const contractEmployees = filteredEmployees.filter(e => e.type === 'contract');
