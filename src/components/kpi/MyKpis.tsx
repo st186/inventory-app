@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Target } from 'lucide-react';
+import { Target, Trophy } from 'lucide-react';
+import { Callout } from '../ui/callout';
+import { EmptyState } from '../ui/empty-state';
+import { ErrorState } from '../ui/error-state';
+import { SkeletonText, SkeletonStatTile } from '../ui/skeleton';
+import { useT } from '../../utils/i18n';
+import { formatDay, TeamPage } from '../team/shared';
+import { teamKpiApi } from '../team/teamApi';
 import * as kpi from './kpiApi';
 import { FlagList, KpiBars, MonthPicker, TotalBadge } from './KpiParts';
 import { ShiftClockCard } from './ShiftClockCard';
@@ -8,76 +15,106 @@ import { ShiftClockCard } from './ShiftClockCard';
 // would improve it. Money only when the owner has switched that on. The check-in card sits on top
 // so the "check in?" notification lands somewhere useful.
 export function MyKpis() {
+  const { t, lang } = useT();
   const [month, setMonth] = useState(kpi.istMonth());
   const [data, setData] = useState<kpi.MyKpisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    kpi.getMyKpis(month)
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((e) => { if (!cancelled) setError(e?.message || 'Could not load your KPIs'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [month]);
+    teamKpiApi
+      .getMyKpis(month)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e?.message || t('team.kpi.loadFailed'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, attempt]);
 
   const k = data?.kpis;
-  const weakest = k ? [...k.kpis].filter((x) => x.score !== null && x.weight > 0).sort((a, b) => (a.score! - b.score!) || b.weight - a.weight).slice(0, 2) : [];
+  const weakest = k ? [...k.kpis].filter((x) => x.score !== null && x.weight > 0).sort((a, b) => a.score! - b.score! || b.weight - a.weight).slice(0, 2) : [];
+  const weeklyOff = data?.settings.weeklyOff.length ? data.settings.weeklyOff.map((d) => t(`date.wd.${d}` as never)).join(', ') : t('team.kpi.notSet');
 
   return (
     <div data-ai-private>
       <ShiftClockCard />
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Target className="w-6 h-6 text-orange-600" /> My KPIs</h1>
+      <TeamPage>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-subtitle font-semibold text-text">{t('more.myKpis')}</h2>
           <MonthPicker month={month} onChange={setMonth} />
         </div>
         {loading ? (
-          <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-orange-600" /></div>
+          <>
+            <SkeletonStatTile hero />
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <SkeletonText lines={6} />
+            </div>
+          </>
         ) : error ? (
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl p-4">{error}</p>
+          <ErrorState body={error} onRetry={() => setAttempt((a) => a + 1)} />
         ) : !data?.required || !k ? (
-          <p className="text-sm text-gray-500">KPIs are for staff logins.</p>
+          <div className="rounded-lg border border-border bg-surface">
+            <EmptyState icon={Target} title={t('team.kpi.staffOnly')} />
+          </div>
         ) : (
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-5">
+          <>
+            <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm text-gray-500">{data.roleLabel} · shift {kpi.hhmm12(data.settings.shiftStart)} - {kpi.hhmm12(data.settings.shiftEnd)} ({data.settings.graceMin} min grace)</p>
-                  <p className="text-sm text-gray-500">Weekly off: {data.settings.weeklyOff.length ? data.settings.weeklyOff.map((d) => kpi.WEEKDAYS[d]).join(', ') : 'not set'}</p>
-                  <p className="text-xs text-gray-400 mt-1">{k.from ? `Counted ${k.from} to ${k.to}` : 'No days counted yet this month.'}</p>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <p className="text-body-md font-semibold text-text">{data.roleLabel}</p>
+                  <p className="num text-body-sm text-text-2">
+                    {t('team.kpi.shift', { from: kpi.hhmm12(data.settings.shiftStart), to: kpi.hhmm12(data.settings.shiftEnd), grace: data.settings.graceMin })}
+                  </p>
+                  <p className="text-body-sm text-text-2">{t('team.kpi.weeklyOff', { days: weeklyOff })}</p>
+                  <p className="text-label text-text-3">{k.from ? t('team.kpi.counted', { from: formatDay(k.from, lang, { short: true }), to: formatDay(k.to, lang, { short: true }) }) : t('team.kpi.noDays')}</p>
                 </div>
                 <TotalBadge total={k.total} />
               </div>
-              {k.notes.length > 0 && <ul className="mt-2 text-xs text-gray-500 list-disc pl-4">{k.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
-              {data.money && (
-                <div className="mt-3 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-900">
-                  {data.money.approved !== null
-                    ? `Variable pay approved: ${kpi.rupees(data.money.approved)} of ${kpi.rupees(data.money.max)}`
-                    : `At this score the formula gives ${kpi.rupees(data.money.estimate)} of ${kpi.rupees(data.money.max)} (the owner decides the final amount).`}
-                </div>
+              {k.notes.length > 0 && (
+                <ul className="flex list-disc flex-col gap-0.5 pl-4 text-label text-text-3">
+                  {k.notes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
               )}
-              {data.reviewed && !data.money && <p className="mt-3 text-xs text-emerald-700">The owner has reviewed this month.</p>}
-            </div>
+              {data.money && (
+                <Callout tone="success" title={data.money.approved !== null ? t('team.kpi.payApproved', { amount: kpi.rupees(data.money.approved), max: kpi.rupees(data.money.max) }) : t('team.kpi.payEstimate', { amount: kpi.rupees(data.money.estimate), max: kpi.rupees(data.money.max) })}>
+                  {data.money.approved === null ? t('team.kpi.ownerDecides') : undefined}
+                </Callout>
+              )}
+              {data.reviewed && !data.money && <p className="text-label font-medium text-success">{t('team.kpi.reviewed')}</p>}
+            </section>
 
             {weakest.length > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
-                <p className="text-sm font-semibold text-orange-900">Biggest wins for next time</p>
-                <ul className="mt-1 text-sm text-orange-900 list-disc pl-5 space-y-1">{weakest.map((w) => <li key={w.id}><b>{w.label}:</b> {w.tip}</li>)}</ul>
-              </div>
+              <Callout tone="neutral" icon={Trophy} title={t('team.kpi.biggestWins')}>
+                {weakest.map((w) => (
+                  <span key={w.id} className="block">
+                    <b className="font-semibold text-text">{w.label}:</b> {w.tip}
+                  </span>
+                ))}
+              </Callout>
             )}
 
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-5">
+            <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4">
               <KpiBars kpis={k.kpis} showTips />
-              <div className="mt-4"><FlagList flags={k.flags} /></div>
-              <p className="text-[11px] text-gray-400 mt-3">The total is the weighted average of the scores that have data. Scores update every day up to yesterday.</p>
-            </div>
-          </div>
+              <FlagList flags={k.flags} />
+              <p className="text-caption text-text-3">{t('team.kpi.howTotal')}</p>
+            </section>
+          </>
         )}
-      </div>
+      </TeamPage>
     </div>
   );
 }

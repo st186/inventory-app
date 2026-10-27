@@ -1,6 +1,18 @@
-import { useState, useEffect } from 'react';
-import { X, Save, User, Mail, Briefcase, Building2, Users as UsersIcon } from 'lucide-react';
+// Owner's "Role and designation" editor for one person (Team → People → a person → Role and
+// designation; also opened from Setup → Org structure). Role is the permission level
+// (staff / manager / owner); designation is the job title. Same saves as before: the role goes
+// through its own owner-only route, the rest through the profile update.
+import { useEffect, useState } from 'react';
 import * as api from '../utils/api';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { NativeSelect } from './ui/select';
+import { toast } from './ui/sonner';
+import { teamApi } from './team/teamApi';
+import { DetailList } from './team/shared';
 
 type Employee = api.Employee;
 
@@ -8,10 +20,11 @@ interface EmployeeDetailsModalProps {
   employee: Employee;
   onClose: () => void;
   onSave: () => void;
-  clusterHeadId?: string; // Optional cluster head ID for auto-assignment
+  clusterHeadId?: string; // kept for callers that pass it; not used
 }
 
-export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId }: EmployeeDetailsModalProps) {
+export function EmployeeDetailsModal({ employee, onClose, onSave }: EmployeeDetailsModalProps) {
+  const [open, setOpen] = useState(true);
   const [formData, setFormData] = useState({
     role: employee.role,
     designation: employee.designation || null,
@@ -20,238 +33,123 @@ export function EmployeeDetailsModal({ employee, onClose, onSave, clusterHeadId 
     storeId: employee.storeId || '',
   });
   const [saving, setSaving] = useState(false);
-  const [stores, setStores] = useState<any[]>([]);
+  const [stores, setStores] = useState<api.Store[]>([]);
 
   useEffect(() => {
-    loadStores();
+    teamApi
+      .getStores()
+      .then(setStores)
+      .catch((error: unknown) => console.error('Error loading stores:', error));
   }, []);
 
-  const loadStores = async () => {
-    try {
-      const storesData = await api.getStores();
-      setStores(storesData);
-    } catch (error) {
-      console.error('Error loading stores:', error);
-    }
-  };
+  const dirty =
+    formData.role !== employee.role ||
+    formData.designation !== (employee.designation || null) ||
+    formData.department !== (employee.department || null) ||
+    formData.clusterHeadId !== (employee.clusterHeadId || '') ||
+    formData.storeId !== (employee.storeId || '');
+
+  const close = () => setOpen(false);
 
   const handleSave = async () => {
     try {
       setSaving(true);
-
-      // The role goes through its own owner-only route, which writes only the role to the
-      // login (the general profile update is open to managers too).
       if (formData.role !== employee.role) {
-        await api.updateEmployeeRole(employee.employeeId, formData.role);
+        await teamApi.updateEmployeeRole(employee.employeeId, formData.role);
       }
-
-      const updates: any = {
+      const updates: Record<string, unknown> = {
         designation: formData.designation,
         department: formData.department,
         storeId: formData.storeId || null,
       };
-
-      // For managers, clusterHeadId is optional (they can report to another manager via managerId instead)
-      if (formData.role === 'manager') {
-        // Explicitly set clusterHeadId (could be empty string to clear it)
-        updates.clusterHeadId = formData.clusterHeadId || null;
-      }
-
-      await api.updateUnifiedEmployee(employee.employeeId, updates);
-      
-      alert('Employee details updated successfully!');
+      // Managers may report to another manager instead, so clusterHeadId can be cleared.
+      if (formData.role === 'manager') updates.clusterHeadId = formData.clusterHeadId || null;
+      await teamApi.updateUnifiedEmployee(employee.employeeId, updates);
+      toast.success('Role and designation saved');
       onSave();
-      onClose();
-      
+      close();
     } catch (error) {
       console.error('Error updating employee:', error);
-      alert('Failed to update employee details');
+      toast.error("Couldn't save the role and designation");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white px-6 py-4 flex items-center justify-between rounded-t-2xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
-              <User className="w-6 h-6" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold">Edit Employee Details</h2>
-              <p className="text-sm text-orange-100">{employee.name} ({employee.employeeId})</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(next) => (next ? setOpen(true) : close())}
+      onClosed={onClose}
+      dirty={dirty}
+      title="Role and designation"
+      description={`${employee.name} · ${employee.employeeId}`}
+      footer={
+        <Button size="lg" className="flex-1" loading={saving} onClick={handleSave}>
+          Save changes
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <DetailList rows={[{ label: 'Name', value: employee.name }, { label: 'Email', value: employee.email }]} />
+
+        <Field label="Role" helper="What they can do in the app: who manages whom.">
+          <NativeSelect value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as Employee['role'] })}>
+            <option value="employee">Staff</option>
+            <option value="manager">Manager</option>
+            <option value="cluster_head">Owner</option>
+          </NativeSelect>
+        </Field>
+
+        {formData.role === 'manager' && (
+          <Field label="Owner's employee ID" optional helper="Only for top-level managers. Leave empty if they report to another manager (set in Org structure).">
+            <Input value={formData.clusterHeadId} placeholder="e.g. BM005" onChange={(e) => setFormData({ ...formData, clusterHeadId: e.target.value })} />
+          </Field>
+        )}
+
+        <Field label="Designation" helper="Their job title, as shown in the org chart.">
+          <NativeSelect
+            value={formData.designation || ''}
+            onChange={(e) => setFormData({ ...formData, designation: (e.target.value || null) as NonNullable<Employee['designation']> | null })}
           >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+            <option value="">No designation</option>
+            <option value="operations_incharge">Operations incharge</option>
+            <option value="store_incharge">Store incharge</option>
+            <option value="production_incharge">Production incharge</option>
+            <option value="store_ops">Store operations</option>
+            <option value="production_ops">Production operations</option>
+            <option value="rider">Rider (logistics)</option>
+          </NativeSelect>
+        </Field>
 
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Basic Info (Read-only) */}
-          <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-            <div className="flex items-center gap-2 text-gray-700">
-              <User className="w-4 h-4" />
-              <span className="font-medium">Name:</span>
-              <span>{employee.name}</span>
-            </div>
-            <div className="flex items-center gap-2 text-gray-700">
-              <Mail className="w-4 h-4" />
-              <span className="font-medium">Email:</span>
-              <span>{employee.email}</span>
-            </div>
-          </div>
+        {(formData.designation === 'store_incharge' || formData.designation === 'store_ops') && (
+          <Field label="Store" helper="The store they work at.">
+            <NativeSelect value={formData.storeId || ''} onChange={(e) => setFormData({ ...formData, storeId: e.target.value })}>
+              <option value="">No store</option>
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
 
-          {/* Role Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Briefcase className="w-4 h-4 inline mr-2" />
-              Role (System Permission Level)
-            </label>
-            <select
-              value={formData.role}
-              onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-            >
-              <option value="employee">Employee</option>
-              <option value="manager">Manager</option>
-              <option value="cluster_head">Cluster Head</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Role determines system permissions (who can manage whom)
-            </p>
-          </div>
-
-          {/* Cluster Head ID (only for managers) */}
-          {formData.role === 'manager' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <UsersIcon className="w-4 h-4 inline mr-2" />
-                Cluster Head ID (Optional)
-              </label>
-              <input
-                type="text"
-                value={formData.clusterHeadId}
-                onChange={(e) => setFormData({ ...formData, clusterHeadId: e.target.value })}
-                placeholder="e.g., BM005 (leave empty if reporting to another manager)"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Only for top-level managers. Leave empty if this manager reports to another manager (set via Hierarchy tab instead).
-              </p>
-            </div>
-          )}
-
-          {/* Designation Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Briefcase className="w-4 h-4 inline mr-2" />
-              Designation (Job Title)
-            </label>
-            <select
-              value={formData.designation || ''}
-              onChange={(e) => setFormData({ 
-                ...formData, 
-                designation: e.target.value as any || null 
-              })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-            >
-              <option value="">No Designation</option>
-              <option value="operations_incharge">Operations Incharge</option>
-              <option value="store_incharge">Store Incharge</option>
-              <option value="production_incharge">Production Incharge</option>
-              <option value="store_ops">Store Operations</option>
-              <option value="production_ops">Production Operations</option>
-              <option value="rider">Rider (logistics)</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Designation is the job title (appears in organization chart)
-            </p>
-          </div>
-
-          {/* Store ID (only for store incharge and store ops) */}
-          {(formData.designation === 'store_incharge' || formData.designation === 'store_ops') && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Building2 className="w-4 h-4 inline mr-2" />
-                Store Assignment
-              </label>
-              <select
-                value={formData.storeId || ''}
-                onChange={(e) => setFormData({ ...formData, storeId: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              >
-                <option value="">No Store</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Assign to a specific store location
-              </p>
-            </div>
-          )}
-
-          {/* Department Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Building2 className="w-4 h-4 inline mr-2" />
-              Department
-            </label>
-            <select
-              value={formData.department || ''}
-              onChange={(e) => setFormData({ 
-                ...formData, 
-                department: e.target.value as any || null 
-              })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-            >
-              <option value="">No Department</option>
-              <option value="store_operations">Store Operations</option>
-              <option value="production">Production</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Department determines which operations they can manage
-            </p>
-          </div>
-
-          {/* Info Box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-semibold text-blue-900 mb-2">Understanding Role vs Designation:</h4>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• <strong>Role</strong> = System permission level (employee/manager/cluster_head)</li>
-              <li>• <strong>Designation</strong> = Job title (Store Incharge, Operations Manager, etc.)</li>
-              <li>• Example: BM008 can have role="manager" + designation="store_incharge"</li>
-              <li>• This allows them to manage employees while having "Store Incharge" as their title</li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex items-center justify-end gap-3 rounded-b-2xl border-t">
-          <button
-            onClick={onClose}
-            className="px-6 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+        <Field label="Department" helper="Which operations they can manage.">
+          <NativeSelect
+            value={formData.department || ''}
+            onChange={(e) => setFormData({ ...formData, department: (e.target.value || null) as NonNullable<Employee['department']> | null })}
           >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-6 py-2 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:from-orange-700 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
-        </div>
+            <option value="">No department</option>
+            <option value="store_operations">Store operations</option>
+            <option value="production">Production</option>
+          </NativeSelect>
+        </Field>
+
+        <Callout tone="neutral" title="Role or designation?">
+          Role is what they can do in the app (staff, manager, owner). Designation is their job title. A manager can carry the title Store incharge, so they manage staff and keep that title.
+        </Callout>
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }
