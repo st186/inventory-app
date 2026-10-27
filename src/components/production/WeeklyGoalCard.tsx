@@ -1,9 +1,20 @@
-// The weekly production goal card and its edit pop-up (moved out of ProductionManagement.tsx unchanged).
+// The weekly production goal (a piece target per momo type for a Monday-start week, set by the
+// cluster head or an operations manager) with progress from real production, and its edit sheet.
 import { useState, useMemo, useEffect } from 'react';
 import type { InventoryContextType } from '../../App';
-import { Target, Pencil, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Target, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '../ui/button';
+import { EmptyState } from '../ui/empty-state';
+import { Field } from '../ui/field';
+import { IconButton } from '../ui/icon-button';
+import { Input } from '../ui/input';
+import { Progress } from '../ui/progress';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { SkeletonText } from '../ui/skeleton';
+import { useT } from '../../utils/i18n';
+import { CollapsibleCard, dayLabel, formatCount, momoName } from '../stock/stockShared';
 import * as api from '../../utils/api';
-import { toast } from 'sonner@2.0.3';
+import { toast } from '../ui/sonner';
 import { getTodayIST } from '../../utils/timezone';
 import { MOMO_TYPES } from '../../constants/momoTypes';
 
@@ -15,6 +26,7 @@ type Props = {
 };
 
 export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHead, isOperationsManager }: Props) {
+  const { t, lang } = useT();
   // ---- Weekly Production Goal - a per-momo-type piece target for any Monday-start week,
   // navigable independently of the Production Entry date selector above (a goal is usually
   // set ahead of time, for a week that hasn't started yet, or reviewed after it's over -
@@ -109,169 +121,71 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
       toast.success('Weekly goal saved');
     } catch (error) {
       console.error('Error saving weekly production goal:', error);
-      toast.error('Failed to save weekly goal');
+      toast.error("Couldn't save the weekly goal");
     } finally {
       setGoalSaving(false);
     }
   };
 
-  return (
-    <>
-      {/* Weekly Production Goal - navigable Monday-start week, independent of the
-          Production Entry date selector above. Progress is computed live from real
-          production: records, not a separately tracked counter, so it can never drift
-          out of sync with what was actually made. */}
-      {resolvedProductionHouseId && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 mb-6 shadow-sm">
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center flex-shrink-0">
-                <Target className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
-                  {isGoalWeekCurrent ? "This Week's Production Goal" : isGoalWeekFuture ? 'Upcoming Week\'s Goal' : "Past Week's Goal"}
-                </h2>
-                <p className="text-xs text-gray-500">
-                  {new Date(goalWeekStart + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                  {' – '}
-                  {new Date(goalWeekEnd + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                  {isGoalWeekFuture ? ' · hasn\'t started yet' : isGoalWeekCurrent ? ` · progress through ${new Date(getTodayIST() + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ' · week complete'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setGoalWeekStart((w) => addDaysToDateStr(w, -7))}
-                  className="p-1.5 text-gray-600 hover:bg-gray-50 transition-colors"
-                  aria-label="Previous week"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                {!isGoalWeekCurrent && (
-                  <button
-                    onClick={() => setGoalWeekStart(todayMonday)}
-                    className="px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 border-x border-gray-300 transition-colors"
-                  >
-                    This week
-                  </button>
-                )}
-                <button
-                  onClick={() => setGoalWeekStart((w) => addDaysToDateStr(w, 7))}
-                  className="p-1.5 text-gray-600 hover:bg-gray-50 transition-colors"
-                  aria-label="Next week"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-              {canSetWeeklyGoal && (
-                <button
-                  onClick={openEditGoal}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  {weeklyGoal ? 'Edit Goal' : 'Set Goal'}
-                </button>
-              )}
-            </div>
-          </div>
+  if (!resolvedProductionHouseId) return null;
+  const range = `${dayLabel(lang, goalWeekStart)} – ${dayLabel(lang, goalWeekEnd)}`;
+  const title = isGoalWeekCurrent ? t('stock.prod.goal') : isGoalWeekFuture ? 'Next week’s goal' : 'Past week’s goal';
+  const goalTypes = MOMO_TYPES.filter((m) => (weeklyGoal?.goals?.[m.key] || 0) > 0);
 
-          {weeklyGoalLoading ? (
-            <div className="text-center py-6 text-gray-500 text-sm">Loading this week's goal…</div>
-          ) : !weeklyGoal || Object.keys(weeklyGoal.goals || {}).length === 0 ? (
-            <div className="text-center py-6 text-gray-500 text-sm">
-              No goal set for this week yet.
-              {!canSetWeeklyGoal && ' Ask your cluster head or operations manager to set one.'}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {MOMO_TYPES.filter((t) => (weeklyGoal.goals?.[t.key] || 0) > 0).map((t) => {
-                const goal = weeklyGoal.goals?.[t.key] || 0;
-                const achieved = weekProgress[t.key] || 0;
-                const pct = goal > 0 ? Math.round((achieved / goal) * 100) : 0;
-                const barPct = Math.min(pct, 100);
-                const met = pct >= 100;
-                return (
-                  <div key={t.key}>
-                    <div className="flex items-center justify-between text-sm mb-1">
-                      <span className="font-medium text-gray-800 flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
-                        {t.label}
-                      </span>
-                      <span className="tabular-nums text-gray-600">
-                        {achieved.toLocaleString()} / {goal.toLocaleString()}
-                        <span className={`ml-1.5 font-semibold ${met ? 'text-emerald-600' : pct >= 60 ? 'text-amber-600' : 'text-gray-500'}`}>
-                          {pct}%
-                        </span>
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${met ? 'bg-emerald-500' : 'bg-orange-500'}`}
-                        style={{ width: `${barPct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+  return (
+    <CollapsibleCard
+      icon={<span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-2 [&_svg]:size-5" aria-hidden="true"><Target /></span>}
+      title={title}
+      subtitle={range}
+    >
+      <div className="flex flex-col gap-3 p-4" lang={lang}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center">
+            <IconButton label="Previous week" icon={<ChevronLeft />} onClick={() => setGoalWeekStart((w) => addDaysToDateStr(w, -7))} />
+            {!isGoalWeekCurrent && <Button variant="ghost" size="sm" onClick={() => setGoalWeekStart(todayMonday)}>{t('date.thisWeek')}</Button>}
+            <IconButton label="Next week" icon={<ChevronRight />} onClick={() => setGoalWeekStart((w) => addDaysToDateStr(w, 7))} />
+          </div>
+          {canSetWeeklyGoal && (
+            <Button variant="secondary" size="sm" leadingIcon={<Pencil />} onClick={openEditGoal}>{weeklyGoal ? 'Edit goal' : 'Set goal'}</Button>
           )}
         </div>
-      )}
-
-      {/* Edit Weekly Goal Modal */}
-      {showEditGoal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-8">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900">
-                Weekly Goal &middot; {new Date(goalWeekStart + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                {' – '}
-                {new Date(goalWeekEnd + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-              </h3>
-              <button onClick={() => setShowEditGoal(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-5 space-y-3">
-              {MOMO_TYPES.map((t) => (
-                <div key={t.key} className="flex items-center justify-between gap-3">
-                  <label htmlFor={`goal-${t.key}`} className="text-sm text-gray-700 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
-                    {t.label}
-                  </label>
-                  <input
-                    id={`goal-${t.key}`}
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    placeholder="0"
-                    value={goalDraft[t.key] || ''}
-                    onChange={(e) => setGoalDraft((prev) => ({ ...prev, [t.key]: e.target.value }))}
-                    className="w-28 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-right"
-                  />
+        {weeklyGoalLoading ? (
+          <SkeletonText lines={3} />
+        ) : goalTypes.length === 0 ? (
+          <EmptyState compact icon={Target} title="No goal for this week" body={canSetWeeklyGoal ? undefined : 'The cluster head or an operations manager sets it.'} />
+        ) : (
+          goalTypes.map((m) => {
+            const goal = weeklyGoal?.goals?.[m.key] || 0;
+            const achieved = weekProgress[m.key] || 0;
+            const pct = goal > 0 ? Math.round((achieved / goal) * 100) : 0;
+            return (
+              <div key={m.key} className="flex flex-col gap-1">
+                <div className="flex items-baseline justify-between gap-3 text-body-sm">
+                  <span className="font-medium text-text">{momoName(lang, m.inventoryKey, m.label)}</span>
+                  <span className="num text-text-2">{formatCount(achieved)} / {formatCount(goal)} · <span className={pct >= 100 ? 'font-semibold text-success' : 'font-semibold text-text'}>{pct}%</span></span>
                 </div>
-              ))}
-            </div>
-            <div className="flex gap-3 p-5 pt-0">
-              <button
-                onClick={() => setShowEditGoal(false)}
-                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveGoal}
-                disabled={goalSaving}
-                className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-all text-sm font-semibold disabled:opacity-50"
-              >
-                {goalSaving ? 'Saving…' : 'Save Goal'}
-              </button>
-            </div>
-          </div>
+                <Progress value={Math.min(pct, 100)} tone={pct >= 100 ? 'success' : 'primary'} aria-label={`${momoName(lang, m.inventoryKey, m.label)} ${pct}%`} />
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <ResponsiveModal
+        open={showEditGoal}
+        onOpenChange={setShowEditGoal}
+        title="Weekly goal"
+        description={range}
+        footer={<Button size="lg" className="flex-1" loading={goalSaving} onClick={handleSaveGoal}>Save goal</Button>}
+      >
+        <div className="flex flex-col gap-3">
+          {MOMO_TYPES.map((m) => (
+            <Field key={m.key} label={momoName(lang, m.inventoryKey, m.label)}>
+              <Input type="text" inputMode="numeric" className="num" placeholder="0" value={goalDraft[m.key] || ''} onChange={(e) => setGoalDraft((prev) => ({ ...prev, [m.key]: e.target.value.replace(/[^\d]/g, '') }))} />
+            </Field>
+          ))}
         </div>
-      )}
-    </>
+      </ResponsiveModal>
+    </CollapsibleCard>
   );
 }

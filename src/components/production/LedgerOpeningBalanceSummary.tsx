@@ -1,5 +1,7 @@
 import { GLOBAL_POOLS, MOMO_TYPES, getPerTypePoolId } from '../../constants/momoTypes';
 import type { ProductionLedgerPoolState } from '../../utils/api';
+import { useT } from '../../utils/i18n';
+import { momoName } from '../stock/stockShared';
 
 type Props = {
   pools: Record<string, ProductionLedgerPoolState>;
@@ -7,37 +9,28 @@ type Props = {
 
 // Read-only summary of today's opening balance per pool - always the prior day's
 // directly-reported closing count (or that day's own opening+prepared if it was never
-// closed), never a formula anyone can second-guess. Sits at the top of the entry tab so a
-// production incharge sees what they're starting with before logging anything new.
+// closed), never a formula anyone can second-guess.
 export function LedgerOpeningBalanceSummary({ pools }: Props) {
+  const { t, lang } = useT();
   const pool = (id: string) => pools[id] || { opening: 0, prepared: 0, closingActual: null, wastage: null };
-
+  const cells = [
+    ...GLOBAL_POOLS.map((id) => ({ id, label: id === 'dough' ? t('stock.prod.dough').replace(/ \(.*\)$/, '') : t('stock.prod.batter').replace(/ \(.*\)$/, '') })),
+    ...MOMO_TYPES.map((m) => ({ id: getPerTypePoolId(m), label: `${momoName(lang, m.inventoryKey, m.label)} · ${m.perTypePoolField === 'stuffing' ? t('stock.prod.stuffingKg') : t('stock.prod.coatingKg')}`.replace(/ \(.*\)$/, '') })),
+  ];
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-1">Opening Balance</h2>
-      <p className="text-sm text-gray-500 mb-4">What's left over from yesterday, before anything new is prepared today</p>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
-        {GLOBAL_POOLS.map((id) => (
-          <div key={id} className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 border border-orange-100">
-            <div className="text-xs uppercase tracking-wide text-orange-700 mb-1">{id === 'dough' ? 'Dough' : 'Batter'} (shared)</div>
-            <div className="text-xl font-semibold text-gray-900">{pool(id).opening.toFixed(2)} kg</div>
+    <section className="flex flex-col gap-2">
+      <div className="mx-1 flex flex-col">
+        <h3 className="text-body-md font-semibold text-text">{t('stock.prod.opening')}</h3>
+        <span className="text-label text-text-3">{t('stock.prod.openingHint')}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {cells.map((c) => (
+          <div key={c.id} className="flex flex-col rounded-md border border-border bg-surface px-3 py-2">
+            <dt className="text-caption text-text-3">{c.label}</dt>
+            <dd className="num text-body-md font-semibold text-text">{t('stock.prod.kg', { n: pool(c.id).opening.toFixed(2) })}</dd>
           </div>
         ))}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {MOMO_TYPES.map((t) => {
-          const poolId = getPerTypePoolId(t);
-          const fieldLabel = t.perTypePoolField === 'stuffing' ? 'Stuffing' : 'Coating';
-          return (
-            <div key={poolId} className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-              <div className="text-[11px] text-gray-500 mb-0.5">{t.label} {fieldLabel}</div>
-              <div className="text-base font-semibold text-gray-900">{pool(poolId).opening.toFixed(2)} kg</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+      </dl>
+    </section>
   );
 }

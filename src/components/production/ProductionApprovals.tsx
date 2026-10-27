@@ -1,168 +1,101 @@
-// Pending production entries for the operations manager / cluster head (moved out of ProductionManagement.tsx unchanged).
+// Production days waiting for approval (operations manager / cluster head): a list of days, and
+// a sheet with the day's pieces per type and a sticky Approve.
 import { useState } from 'react';
+import { CheckCircle2, CheckSquare, Factory } from 'lucide-react';
 import type { InventoryContextType, ProductionData } from '../../App';
-import { CheckCircle, AlertTriangle, CheckSquare } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { Button } from '../ui/button';
+import { EmptyState } from '../ui/empty-state';
+import { ListGroup, ListRow } from '../ui/list-row';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { StatGrid, StatTile } from '../ui/stat-tile';
+import { StatusChip } from '../ui/status-chip';
+import { MOMO_TYPES } from '../../constants/momoTypes';
+import { useT } from '../../utils/i18n';
+import { dayLabel, formatCount, momoName } from '../stock/stockShared';
 
 type Props = {
   context: InventoryContextType;
   isPendingForViewer: (p: ProductionData) => boolean;
 };
 
+const piecesOf = (p: ProductionData) =>
+  p.chickenMomos.final + p.chickenCheeseMomos.final + p.vegMomos.final + p.cheeseCornMomos.final + p.paneerMomos.final + p.vegKurkureMomos.final + p.chickenKurkureMomos.final;
+const wastageOf = (p: ProductionData) => p.wastage.dough + p.wastage.stuffing + p.wastage.batter + p.wastage.coating;
+
 export function ProductionApprovals({ context, isPendingForViewer }: Props) {
-  // The pending-approvals list's own Approve buttons: one approval at a time, so a double tap
-  // can't send the same approval twice.
+  const { t, lang } = useT();
+  // One approval at a time, so a double tap can't send the same approval twice.
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const pendingProduction = context.productionData
+    .filter(isPendingForViewer)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const open = pendingProduction.find((p) => p.id === openId) || null;
+  const houseName = (p: ProductionData) => context.productionHouses?.find((h) => h.id === (p.productionHouseId || p.storeId))?.name || '';
+
+  const approve = async (production: ProductionData) => {
+    if (approvingId) return;
+    setApprovingId(production.id);
+    try {
+      await context.approveProductionData(production.id);
+      toast.success('Production approved');
+      setOpenId(null);
+    } catch (error) {
+      toast.error("Couldn't approve. Try again.");
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   return (
-        <div className="space-y-4">
-          {(() => {
-            const pendingProduction = context.productionData
-              .filter(isPendingForViewer)
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    <>
+      <ListGroup
+        title="Waiting for approval"
+        meta={pendingProduction.length ? String(pendingProduction.length) : undefined}
+        empty={<EmptyState icon={CheckCircle2} title={t('empty.allCaughtUp')} body="No production days are waiting for approval." />}
+      >
+        {pendingProduction.map((production) => (
+          <ListRow
+            key={production.id}
+            icon={Factory}
+            title={dayLabel(lang, production.date)}
+            subtitle={[houseName(production), `${formatCount(piecesOf(production))} pcs`, `${wastageOf(production).toFixed(2)} kg wasted`, `by ${production.createdBy}`].filter(Boolean).join(' · ')}
+            trailing={<StatusChip status="approval.pending" />}
+            onClick={() => setOpenId(production.id)}
+          />
+        ))}
+      </ListGroup>
 
-            if (pendingProduction.length === 0) {
-              return (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
-                  <CheckCircle className="w-16 h-16 mx-auto text-green-500 mb-4" />
-                  <h3 className="text-xl font-bold text-gray-900 tracking-tight mb-2">All Caught Up!</h3>
-                  <p className="text-gray-600">No pending production approvals at this time.</p>
-                </div>
-              );
-            }
-
-            return pendingProduction.map((production) => {
-              const totalProduction = 
-                production.chickenMomos.final +
-                production.chickenCheeseMomos.final +
-                production.vegMomos.final +
-                production.cheeseCornMomos.final +
-                production.paneerMomos.final +
-                production.vegKurkureMomos.final +
-                production.chickenKurkureMomos.final;
-
-              const totalWastage =
-                production.wastage.dough +
-                production.wastage.stuffing +
-                production.wastage.batter +
-                production.wastage.coating;
-
-              return (
-                <div key={production.id} className="bg-white rounded-2xl shadow-sm border-2 border-yellow-300 p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <AlertTriangle className="w-5 h-5 text-yellow-600" />
-                        <h3 className="text-xl font-bold text-gray-900 tracking-tight">
-                          {new Date(production.date).toLocaleDateString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric'
-                          })}
-                        </h3>
-                      </div>
-                      <p className="text-sm text-gray-600">Submitted by: {production.createdBy}</p>
-                    </div>
-                    <button
-                      onClick={async () => {
-                        if (approvingId) return;
-                        setApprovingId(production.id);
-                        try {
-                          await context.approveProductionData(production.id);
-                          alert('Production data approved successfully!');
-                        } catch (error) {
-                          alert('Failed to approve production data. Please try again.');
-                        } finally {
-                          setApprovingId(null);
-                        }
-                      }}
-                      disabled={approvingId !== null}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait"
-                    >
-                      <CheckSquare className="w-5 h-5" />
-                      {approvingId === production.id ? 'Approving...' : 'Approve'}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-4">
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-                      <div className="text-xs uppercase tracking-wide text-orange-100 mb-1">Total Production</div>
-                      <div className="text-2xl font-semibold">{totalProduction} pcs</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
-                      <div className="text-xs uppercase tracking-wide text-red-100 mb-1">Total Wastage</div>
-                      <div className="text-2xl font-semibold">{totalWastage.toFixed(2)} kg</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
-                      <div className="text-xs uppercase tracking-wide text-amber-100 mb-1">Kurkure Production</div>
-                      <div className="text-2xl font-semibold">
-                        {production.vegKurkureMomos.final + production.chickenKurkureMomos.final} pcs
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
-                      <div className="text-xs uppercase tracking-wide text-blue-100 mb-1">Regular Momos</div>
-                      <div className="text-2xl font-semibold">
-                        {production.chickenMomos.final +
-                          production.chickenCheeseMomos.final +
-                          production.vegMomos.final +
-                          production.cheeseCornMomos.final +
-                          production.paneerMomos.final}{' '}
-                        pcs
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-4">
-                    <h4 className="text-sm text-gray-700 mb-3">Production Breakdown:</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
-                      {production.chickenMomos.final > 0 && (
-                        <div className="bg-red-50 p-2 rounded">
-                          <p className="text-gray-600">Chicken</p>
-                          <p className="text-gray-900">{production.chickenMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.chickenCheeseMomos.final > 0 && (
-                        <div className="bg-yellow-50 p-2 rounded">
-                          <p className="text-gray-600">Chk Cheese</p>
-                          <p className="text-gray-900">{production.chickenCheeseMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.vegMomos.final > 0 && (
-                        <div className="bg-green-50 p-2 rounded">
-                          <p className="text-gray-600">Veg</p>
-                          <p className="text-gray-900">{production.vegMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.cheeseCornMomos.final > 0 && (
-                        <div className="bg-amber-50 p-2 rounded">
-                          <p className="text-gray-600">Cheese Corn</p>
-                          <p className="text-gray-900">{production.cheeseCornMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.paneerMomos.final > 0 && (
-                        <div className="bg-blue-50 p-2 rounded">
-                          <p className="text-gray-600">Paneer</p>
-                          <p className="text-gray-900">{production.paneerMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.vegKurkureMomos.final > 0 && (
-                        <div className="bg-lime-50 p-2 rounded">
-                          <p className="text-gray-600">Veg Kurkure</p>
-                          <p className="text-gray-900">{production.vegKurkureMomos.final} pcs</p>
-                        </div>
-                      )}
-                      {production.chickenKurkureMomos.final > 0 && (
-                        <div className="bg-orange-50 p-2 rounded">
-                          <p className="text-gray-600">Chk Kurkure</p>
-                          <p className="text-gray-900">{production.chickenKurkureMomos.final} pcs</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            });
-          })()}
-        </div>
+      <ResponsiveModal
+        open={!!open}
+        onOpenChange={(o) => { if (!o) setOpenId(null); }}
+        title={open ? dayLabel(lang, open.date) : ''}
+        description={open ? [houseName(open), `Sent by ${open.createdBy}`].filter(Boolean).join(' · ') : undefined}
+        size="detail"
+        footer={open ? (
+          <Button size="lg" className="flex-1" leadingIcon={<CheckSquare />} loading={approvingId === open.id} disabled={approvingId !== null && approvingId !== open.id} onClick={() => approve(open)}>
+            Approve
+          </Button>
+        ) : undefined}
+      >
+        {open && (
+          <div className="flex flex-col gap-5">
+            <StatGrid>
+              <StatTile label="Pieces made" value={<span className="num">{formatCount(piecesOf(open))}</span>} />
+              <StatTile label="Wastage" value={<span className="num">{wastageOf(open).toFixed(2)} kg</span>} />
+              <StatTile label="Kurkure" value={<span className="num">{formatCount(open.vegKurkureMomos.final + open.chickenKurkureMomos.final)}</span>} />
+              <StatTile label="Regular momos" value={<span className="num">{formatCount(open.chickenMomos.final + open.chickenCheeseMomos.final + open.vegMomos.final + open.cheeseCornMomos.final + open.paneerMomos.final)}</span>} />
+            </StatGrid>
+            <ListGroup overline="Pieces by type">
+              {MOMO_TYPES.filter((m) => (open as any)[m.key]?.final > 0).map((m) => (
+                <ListRow key={m.key} density="compact" title={momoName(lang, m.inventoryKey, m.label)} trailing={<span className="num text-body-md font-semibold text-text">{formatCount((open as any)[m.key].final)}</span>} />
+              ))}
+            </ListGroup>
+          </div>
+        )}
+      </ResponsiveModal>
+    </>
   );
 }

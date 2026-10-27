@@ -5,7 +5,11 @@
 // the entry was skipped, not that nothing was made. Tapping a day opens it for entry.
 
 import { useMemo } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, CalendarCheck } from 'lucide-react';
+import { Button } from './ui/button';
+import { cn } from './ui/utils';
+import { useT } from '../utils/i18n';
+import { CollapsibleCard } from './stock/stockShared';
 import type { ProductionData } from '../App';
 import type * as api from '../utils/api';
 import { MOMO_TYPES } from '../constants/momoTypes';
@@ -18,11 +22,11 @@ const dayNum = (iso: string) => Number(iso.slice(8, 10));
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
 const CHIP: Record<Status, string> = {
-  logged: 'bg-emerald-100 text-emerald-800',
-  pending: 'bg-emerald-100 text-emerald-800 ring-2 ring-amber-400',
-  empty: 'bg-rose-100 text-rose-800 ring-2 ring-rose-300',
-  missing: 'bg-rose-600 text-white ring-2 ring-rose-300',
-  today: 'bg-amber-100 text-amber-800',
+  logged: 'bg-success-soft text-success',
+  pending: 'bg-success-soft text-success ring-2 ring-inset ring-warning',
+  empty: 'bg-danger-soft text-danger ring-2 ring-inset ring-danger-border',
+  missing: 'bg-danger text-on-danger',
+  today: 'bg-warning-soft text-warning',
 };
 const LABEL: Record<Status, string> = {
   logged: 'Logged',
@@ -56,6 +60,7 @@ export function ProductionCoverage({
   selectedDate: string;
   onPickDate: (date: string) => void;
 }) {
+  const { t, lang } = useT();
   const today = getTodayIST();
   const monthStart = `${selectedDate.slice(0, 7)}-01`;
   const monthEnd = addDays(`${addDays(monthStart, 32).slice(0, 7)}-01`, -1);
@@ -97,63 +102,51 @@ export function ProductionCoverage({
   const loggedDays = cells.filter((c) => c.status === 'logged' || c.status === 'pending');
 
   return (
-    <div className={`bg-white rounded-2xl p-4 sm:p-5 border shadow-sm mb-6 ${gaps.length ? 'border-rose-200' : 'border-gray-200'}`}>
-      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-        <div>
-          <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
-            {gaps.length > 0 && <AlertCircle className="w-5 h-5 text-rose-600" />}
-            Production log check
-          </h3>
-          <p className="text-xs sm:text-sm text-gray-500">
-            {gaps.length > 0
-              ? `${gaps.length} day${gaps.length === 1 ? '' : 's'} in ${new Date(`${monthStart}T00:00:00`).toLocaleDateString('en-IN', { month: 'long' })} with no production logged. Tap a day to open it and fill it in.`
-              : 'Every day this month so far has a production entry.'}
-            {pending > 0 && ` ${pending} logged day${pending === 1 ? ' is' : 's are'} waiting for approval.`}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-600">
+    <CollapsibleCard
+      defaultOpen={gaps.length > 0}
+      icon={<span className={`flex size-9 shrink-0 items-center justify-center rounded-md [&_svg]:size-5 ${gaps.length ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-text-2'}`} aria-hidden="true">{gaps.length ? <AlertCircle /> : <CalendarCheck />}</span>}
+      title={t('stock.prod.logCheck')}
+      subtitle={`${gaps.length > 0 ? t('stock.prod.gaps', { n: gaps.length }) : t('stock.prod.noGaps')}${pending > 0 ? ` ${pending} waiting for approval.` : ''}`}
+    >
+      <div className="flex flex-col gap-3 p-4" lang={lang}>
+        <p className="num text-label text-text-3">{t('stock.prod.loggedDays', { logged: loggedDays.length, days: cells.length, pieces: inr(loggedDays.reduce((s, c) => s + c.pieces, 0)) })}</p>
+        <ul className="grid grid-cols-7 gap-1" aria-label={t('stock.prod.logCheck')}>
+          {cells.map((c) => (
+            <li key={c.date}>
+              <button
+                type="button"
+                onClick={() => onPickDate(c.date)}
+                title={`${shortDate(c.date)} · ${LABEL[c.status]}${c.pieces > 0 ? ` · ${inr(c.pieces)} pieces` : ''}${c.dispatched ? ' · stock sent to the store' : ''}`}
+                aria-label={`${shortDate(c.date)}: ${LABEL[c.status]}`}
+                aria-current={c.date === selectedDate ? 'date' : undefined}
+                className={cn(
+                  'hit-44 num flex h-10 w-full items-center justify-center rounded-md text-label font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  CHIP[c.status],
+                  c.date === selectedDate && 'ring-2 ring-text ring-offset-1 ring-offset-surface',
+                )}
+              >
+                {dayNum(c.date)}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-caption text-text-2">
           {(['missing', 'empty', 'today', 'pending', 'logged'] as Status[]).map((s) => (
-            <span key={s} className="inline-flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${CHIP[s]}`} aria-hidden="true" />{LABEL[s]}</span>
+            <span key={s} className="inline-flex items-center gap-1.5"><span className={cn('size-3 rounded-xs', CHIP[s])} aria-hidden="true" />{LABEL[s]}</span>
           ))}
         </div>
+        {gaps.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {gaps.map((c) => (
+              <Button key={c.date} variant="secondary" size="sm" onClick={() => onPickDate(c.date)}>
+                <span className="font-semibold">{shortDate(c.date)}</span>
+                <span className="text-text-2">{c.status === 'empty' ? 'saved with 0 pieces' : 'no entry'}{c.dispatched ? ' · stock was sent' : ''}</span>
+              </Button>
+            ))}
+          </div>
+        )}
+        <p className="text-caption text-text-3">Production is logged at the end of each working day. "Stock was sent" means momos left for the store that day, so the kitchen was working: check what was made and log it.</p>
       </div>
-
-      <p className="text-xs text-gray-500 mb-1.5">
-        {loggedDays.length} of {cells.length} days logged · {inr(loggedDays.reduce((t, c) => t + c.pieces, 0))} pieces
-      </p>
-      <ul className="flex flex-wrap gap-1" aria-label="Production entry status by day">
-        {cells.map((c) => (
-          <li key={c.date}>
-            <button
-              type="button"
-              onClick={() => onPickDate(c.date)}
-              className={`inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-semibold tabular-nums cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-orange-500 ${CHIP[c.status]} ${c.date === selectedDate ? 'outline outline-2 outline-offset-1 outline-gray-900' : ''}`}
-              title={`${shortDate(c.date)} · ${LABEL[c.status]}${c.pieces > 0 ? ` · ${inr(c.pieces)} pieces` : ''}${c.dispatched ? ` · stock sent to the store` : ''}`}
-              aria-label={`${shortDate(c.date)}: ${LABEL[c.status]}`}
-            >
-              {dayNum(c.date)}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {gaps.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {gaps.map((c) => (
-            <button
-              key={c.date}
-              type="button"
-              onClick={() => onPickDate(c.date)}
-              className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-xs text-rose-800 cursor-pointer hover:bg-rose-100"
-            >
-              <span className="font-semibold">{shortDate(c.date)}</span>
-              <span>{c.status === 'empty' ? 'saved with 0 pieces' : 'no entry'}{c.dispatched ? ' · stock was sent' : ''}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      <p className="mt-3 text-[11px] text-gray-500">
-        Production is logged at the end of each working day. "Stock was sent" means momos left for the store that day, so the kitchen was working: check what was made and log it.
-      </p>
-    </div>
+    </CollapsibleCard>
   );
 }
