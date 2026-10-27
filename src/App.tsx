@@ -59,7 +59,10 @@ import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
 import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
-import { startAuthTracking, currentAccessToken } from './utils/accessToken';
+import { startAuthTracking, currentAccessToken, peekStoredSession } from './utils/accessToken';
+import { clearMemoryCache, loadServerFeatures, onConnectivity, requestJson } from './utils/http';
+import { ALL_DATASET_KEYS, DATASETS, DEDUPED_DATASETS, datasetsFor, dedupeById, keepsStaffList, loadDatasets, mergeDateWindow, needsBusinessData, profileFrom, stripEmployeeImages, type DatasetKey } from './utils/startupData';
+import { SyncStatus } from './components/SyncStatus';
 import { useRiderLocationSharing } from './utils/riderLocationSharing';
 import { getTodayIST } from './utils/timezone';
 
@@ -371,6 +374,38 @@ export type InventoryContextType = {
  dataRefreshedAt: number;
 };
 
+type AppUser = NonNullable<InventoryContextType['user']>;
+type SessionUser = { id: string; email?: string; app_metadata?: Record<string, any>; user_metadata?: Record<string, any> };
+
+// The signed-in person as the app uses them, from their login (role, employee id) plus their
+// employee record (store, designation, assignments) when known.
+function userFromSession(sessionUser: SessionUser, accessToken: string, profile: dataCache.CachedProfile | null): AppUser {
+ const am = sessionUser.app_metadata || {};
+ const md = sessionUser.user_metadata || {};
+ const base: AppUser = {
+  email: sessionUser.email || '',
+  name: md.name || sessionUser.email?.split('@')[0] || 'User',
+  role: (am.role ?? md.role) || 'manager',
+  employeeId: (am.employeeId ?? md.employeeId) || null,
+  accessToken,
+  storeId: null,
+  designation: (am.designation ?? md.designation) || null,
+  assignedStoreIds: [],
+  assignedProductionHouseIds: [],
+ };
+ return profile ? withProfile(base, profile) : base;
+}
+
+function withProfile(person: AppUser, profile: dataCache.CachedProfile): AppUser {
+ return {
+  ...person,
+  storeId: profile.storeId || null,
+  designation: (profile.designation || person.designation || null) as AppUser['designation'],
+  assignedStoreIds: profile.assignedStoreIds || [],
+  assignedProductionHouseIds: profile.assignedProductionHouseIds || [],
+ };
+}
+
 export default function App() {
  // All useState hooks must be at the top, before any conditional returns
  const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs' | 'workplace'>('analytics');
@@ -412,7 +447,6 @@ export default function App() {
  const [aggregatorSettlements, setAggregatorSettlements] = useState<api.AggregatorSettlement[]>([]);
  const [productionData, setProductionData] = useState<ProductionData[]>([]);
  const [isLoadingData, setIsLoadingData] = useState(false);
- const [dataError, setDataError] = useState<string | null>(null);
  // Bumped on every manual "Refresh data" press - a signal for child components that fetch
  // their OWN data independently of context (e.g. cash top-up requests in
  // SalesManagement.tsx/SalesView.tsx) to know a refresh happened and re-fetch too. Without
@@ -455,6 +489,7 @@ export default function App() {
  if (event === 'SIGNED_OUT' && userRef.current && !manualLogoutRef.current) {
  console.warn('Signed out by the login server - showing the sign-in page.');
  setUser(null);
+ resetLoadedData();
  dataCache.setCacheUser(null);
  setAuthError('Your login has ended. Please sign in again.');
  }
@@ -479,231 +514,258 @@ export default function App() {
  }
  };
 
- // Load employees for cluster heads
- const loadEmployees = async () => {
- try {
- const employeesData = await api.getAllEmployees();
- setEmployees(employeesData);
- } catch (error) {
- // Silently handle authentication errors (user not logged in yet)
- if (error instanceof Error && 
- (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
- return;
- }
- console.error('Error loading employees:', error);
- }
+ // ============================================
+ // DATA LOADING
+ // ============================================
+ // The app opens straight onto the copy saved on this phone (utils/dataCache.ts, IndexedDB, kept 7
+ // days) and refreshes in the background (utils/startupData.ts: one /bootstrap call when the server
+ // offers it, else one call per dataset, each allowed to fail on its own). It used to hold the
+ // "Loading..." screen until ~20 requests in 7 rounds had finished (9-15 s), and one failed request
+ // threw all the results away.
+
+ // When the data on screen last came from the server, which parts couldn't be refreshed, and
+ // whether anything was on screen at all - for the status line (components/SyncStatus.tsx).
+ const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+ const [failedParts, setFailedParts] = useState<{ key: DatasetKey; offline: boolean }[]>([]);
+ const [hasSavedData, setHasSavedData] = useState(false);
+ // Which datasets currently hold rows (saved or loaded) - a date-range top-up needs a base to add to.
+ const loadedKeysRef = useRef<Set<DatasetKey>>(new Set());
+ // The arrays last written to the phone's copy, so only changed datasets are written again.
+ const persistedRef = useRef<Partial<Record<DatasetKey, unknown>>>({});
+ const refreshInFlightRef = useRef<Promise<void> | null>(null);
+
+ // Puts one dataset on screen. `fromSavedCopy`: it came from the phone, so it needn't be saved again.
+ const applyDataset = (key: DatasetKey, value: any, person: AppUser, fromSavedCopy = false) => {
+  let rows = value;
+  if (DEDUPED_DATASETS.includes(key) && Array.isArray(rows)) {
+   const unique = dedupeById(rows);
+   if (unique.length !== rows.length && !fromSavedCopy) duplicatesSeenRef.current = true;
+   rows = unique;
+  }
+  if (fromSavedCopy) persistedRef.current[key] = rows;
+  loadedKeysRef.current.add(key);
+  switch (key) {
+   case 'inventory': setInventory(rows || []); break;
+   case 'overheads': setOverheads(rows || []); break;
+   case 'fixedCosts': setFixedCosts(rows || []); break;
+   case 'salesData': setSalesData(rows || []); break;
+   case 'categorySales': setCategorySalesData(rows || []); break;
+   case 'productionData': setProductionData(rows || []); break;
+   case 'productionHouses': setProductionHouses(rows || []); break;
+   case 'stockRequests': setStockRequests(rows || []); break;
+   case 'productionRequests': setProductionRequests(rows || []); break;
+   case 'inventoryItems': setInventoryItems(rows || []); break;
+   case 'onlineCashRecalibrations': setOnlineCashRecalibrations(rows || []); break;
+   case 'onlineSalesData': setOnlineSalesData(rows || []); break;
+   case 'onlinePayoutData': setOnlinePayoutData(rows || []); break;
+   case 'aggregatorSettlements': setAggregatorSettlements(rows || []); break;
+   case 'stores': setStores(rows || []); break;
+   case 'employees': {
+    if (keepsStaffList(person)) setEmployees(rows || []);
+    // Their own store and designation: on screen and saved, so the next open needn't wait for it.
+    const profile = profileFrom(rows, person.employeeId);
+    if (profile && !fromSavedCopy) {
+     dataCache.setCachedProfile(profile);
+     setUser((current) => {
+      if (!current || current.employeeId !== person.employeeId) return current;
+      const next = withProfile(current, profile);
+      const same = next.storeId === current.storeId && next.designation === current.designation
+       && JSON.stringify(next.assignedStoreIds) === JSON.stringify(current.assignedStoreIds || [])
+       && JSON.stringify(next.assignedProductionHouseIds) === JSON.stringify(current.assignedProductionHouseIds || []);
+      if (same) return current;
+      userRef.current = next;
+      return next;
+     });
+    }
+    break;
+   }
+   case 'clusterInfo': {
+    setManagedStoreIds(rows?.managedStoreIds || []);
+    setManagedProductionHouseIds(rows?.managedProductionHouseIds || []);
+    // Not a list anyone edits on this phone, so saved here rather than by the effect below.
+    if (!fromSavedCopy && rows) dataCache.writeDataset('clusterInfo', rows);
+    break;
+   }
+  }
  };
 
- // Load cluster data for cluster heads
- const loadClusterData = async (accessToken: string) => {
- try {
- const clusterInfo = await api.getClusterInfo(accessToken);
- if (clusterInfo) {
- setManagedStoreIds(clusterInfo.managedStoreIds || []);
- setManagedProductionHouseIds(clusterInfo.managedProductionHouseIds || []);
- console.log('🌐 Cluster assignments loaded:', {
- stores: clusterInfo.managedStoreIds?.length || 0,
- productionHouses: clusterInfo.managedProductionHouseIds?.length || 0
- });
- }
- } catch (error) {
- // Silently handle - cluster head might not have assignments yet
- console.log('No cluster assignments found (this is okay for new cluster heads)');
- }
+ // Empties everything loaded for the last person (sign-out, or a different person signing in on a
+ // shared phone - their lists mustn't linger in memory behind the new person's screens).
+ const resetLoadedData = () => {
+  setInventory([]); setOverheads([]); setFixedCosts([]); setSalesData([]); setCategorySalesData([]);
+  setProductionData([]); setProductionHouses([]); setStockRequests([]); setProductionRequests([]);
+  setInventoryItems([]); setOnlineCashRecalibrations([]); setOnlineSalesData([]); setOnlinePayoutData([]);
+  setAggregatorSettlements([]); setStores([]); setEmployees([]); setManagedStoreIds([]); setManagedProductionHouseIds([]);
+  loadedKeysRef.current = new Set();
+  persistedRef.current = {};
+  setLastUpdatedAt(null);
+  setFailedParts([]);
+  setHasSavedData(false);
  };
 
- // Load inventory and overhead data with aggressive caching
- const loadData = async (accessToken: string, forceRefresh = false) => {
- // Try to load from cache first for instant display
- const cacheKeys = [
- 'inventory',
- 'overheads',
- 'fixedCosts',
- 'salesData',
- 'categorySales',
- 'productionData',
- 'productionHouses',
- 'stockRequests',
- 'productionRequests',
- 'inventoryItems',
- 'onlineCashRecalibrations',
- 'onlineSalesData',
- 'onlinePayoutData',
- 'aggregatorSettlements'
- ];
-
- // Load cached data immediately if available
- if (!forceRefresh) {
- const cachedData = dataCache.batchGetCache(cacheKeys);
- 
- if (cachedData.get('inventory')) {
- console.log('⚡ Loading from cache - instant display!');
- setInventory(cachedData.get('inventory') as InventoryItem[] || []);
- setOverheads(cachedData.get('overheads') as OverheadItem[] || []);
- setFixedCosts(cachedData.get('fixedCosts') as FixedCostItem[] || []);
- setSalesData(cachedData.get('salesData') as SalesData[] || []);
- setCategorySalesData((cachedData.get('categorySales') as any)?.data || []);
- setProductionData(cachedData.get('productionData') as ProductionData[] || []);
- setProductionHouses(cachedData.get('productionHouses') as api.ProductionHouse[] || []);
- setStockRequests(cachedData.get('stockRequests') as api.StockRequest[] || []);
- setProductionRequests(cachedData.get('productionRequests') as api.ProductionRequest[] || []);
- setInventoryItems(cachedData.get('inventoryItems') as api.DynamicInventoryItem[] || []);
- setOnlineCashRecalibrations(cachedData.get('onlineCashRecalibrations') as OnlineCashRecalibration[] || []);
- setOnlineSalesData(cachedData.get('onlineSalesData') as api.OnlineSalesEntry[] || []);
- setOnlinePayoutData(cachedData.get('onlinePayoutData') as api.OnlinePayoutEntry[] || []);
- setAggregatorSettlements(cachedData.get('aggregatorSettlements') as api.AggregatorSettlement[] || []);
-
- // Check if cache is fresh
- const isFresh = cacheKeys.every(key => dataCache.isCacheFresh(key));
- if (isFresh) {
- console.log('✅ Cache is fresh - skipping API calls');
- return; // Cache is fresh, no need to fetch
- }
- console.log('⚡ Cache loaded, refreshing in background...');
- }
- }
-
- setIsLoadingData(true);
- setDataError(null);
- try {
- console.log('🔍 Starting loadData - fetching from API...');
- const [inventoryData, overheadsData, fixedCostsData, salesData, categorySalesResponse, productionData, productionHousesData, stockRequestsData, productionRequestsData, inventoryItemsData, onlineCashRecalibrationsData, onlineSalesDataResult, onlinePayoutDataResult, aggregatorSettlementsData] = await Promise.all([
- api.fetchInventory(accessToken),
- api.fetchOverheads(accessToken),
- api.fetchFixedCosts(accessToken),
- api.fetchSalesData(accessToken),
- api.getSalesData(accessToken), // NEW: Detailed category sales data
- api.fetchProductionData(),
- api.getProductionHouses(),
- api.getStockRequests(accessToken),
- api.fetchProductionRequests(accessToken),
- api.fetchInventoryItems(), // NEW: Dynamic inventory items metadata
- api.fetchOnlineCashRecalibrations(accessToken), // NEW: Online cash recalibrations
- api.getOnlineSalesData(accessToken),
- api.getOnlinePayoutData(accessToken),
- api.getAggregatorSettlements(accessToken)
- ]);
- 
- console.log('🔍 Stock Requests API Response:', stockRequestsData);
- console.log('🔍 Stock Requests count:', stockRequestsData?.length || 0);
- console.log('🔍 Sample stock request:', stockRequestsData?.[0]);
- 
- // Debug logging to check for duplicates
- console.log('📦 Loaded Inventory Purchase Records (Raw Materials):', inventoryData.length);
- console.log('🔧 Loaded Overhead/Expense Items:', overheadsData.length);
- console.log('🔧 Loaded Fixed Cost Items:', fixedCostsData.length);
- 
- // Deduplicate by ID using Map (keeps the first occurrence of each ID)
- const uniqueInventory = Array.from(
- new Map(inventoryData.map(item => [item.id, item])).values()
- );
- 
- const uniqueOverheads = Array.from(
- new Map(overheadsData.map(item => [item.id, item])).values()
- );
- 
- const uniqueFixedCosts = Array.from(
- new Map(fixedCostsData.map(item => [item.id, item])).values()
- );
- 
- const uniqueSalesData = Array.from(
- new Map(salesData.map(item => [item.id, item])).values()
- );
- 
- const uniqueProductionData = Array.from(
- new Map(productionData.map(item => [item.id, item])).values()
- );
- 
- const inventoryDupes = inventoryData.length - uniqueInventory.length;
- const overheadDupes = overheadsData.length - uniqueOverheads.length;
- const fixedCostDupes = fixedCostsData.length - uniqueFixedCosts.length;
- const salesDupes = salesData.length - uniqueSalesData.length;
- const productionDupes = productionData.length - uniqueProductionData.length;
- const totalDupes = inventoryDupes + overheadDupes + fixedCostDupes + salesDupes + productionDupes;
- 
- console.log('✅ After deduplication:');
- console.log('Inventory Purchase Records: Before:', inventoryData.length, '→ After:', uniqueInventory.length);
- console.log('Overhead/Expense Items: Before:', overheadsData.length, '→ After:', uniqueOverheads.length);
- console.log('Fixed Costs: Before:', fixedCostsData.length, '→ After:', uniqueFixedCosts.length);
- console.log('Sales: Before:', salesData.length, '→ After:', uniqueSalesData.length);
- 
- // Silently auto-clean duplicates for cluster heads in background
- if (totalDupes > 0) {
- // Don't log warning to console - just clean silently
- // Check if we already cleaned in this session to prevent refresh loop
- const hasCleanedThisSession = sessionStorage.getItem('db_cleaned');
- 
- if (!hasCleanedThisSession) {
- setTimeout(async () => {
- try {
- const userData = await supabaseClient.auth.getUser(accessToken);
- const userRole = userData.data?.user?.app_metadata?.role ?? userData.data?.user?.user_metadata?.role;
- 
- // Only proceed if user is authenticated and is a cluster head
- if (userData.data?.user && userRole === 'cluster_head') {
- console.log('🧹 Silently cleaning duplicates in background...');
- sessionStorage.setItem('db_cleaned', 'true'); // Mark as cleaned
- const result = await api.cleanupDuplicates(accessToken);
- console.log(`✅ Cleaned ${result.removed} duplicates successfully`);
- // Don't reload - duplicates are already deduplicated in memory
- // Reload would cause issues if session expires during cleanup
- }
- } catch (error) {
- // Silently fail if not authenticated or other errors
- console.log('Auto-cleanup skipped:', error instanceof Error ? error.message : 'Unknown error');
- // Don't remove the flag - this prevents infinite retry loops
- // The duplicates are already deduplicated in memory anyway
- }
- }, 1500); // Small delay to ensure UI is loaded
- }
- }
- 
- setInventory(uniqueInventory);
- setOverheads(uniqueOverheads);
- setFixedCosts(uniqueFixedCosts);
- setSalesData(uniqueSalesData);
- setCategorySalesData(categorySalesResponse.data || []); // NEW: Set category sales data
- setProductionData(uniqueProductionData);
- setProductionHouses(productionHousesData);
- console.log('📦 Loaded Stock Requests from API:', stockRequestsData.length, stockRequestsData);
- setStockRequests(stockRequestsData);
- setProductionRequests(productionRequestsData);
- setInventoryItems(inventoryItemsData); // NEW: Set inventory items metadata
- setOnlineCashRecalibrations(onlineCashRecalibrationsData); // NEW: Set online cash recalibrations
- setOnlineSalesData(onlineSalesDataResult || []);
- setOnlinePayoutData(onlinePayoutDataResult || []);
- setAggregatorSettlements(aggregatorSettlementsData || []);
-
- // Cache all data for instant future loads
- const cacheMap = new Map<string, any>();
- cacheMap.set('inventory', uniqueInventory);
- cacheMap.set('overheads', uniqueOverheads);
- cacheMap.set('fixedCosts', uniqueFixedCosts);
- cacheMap.set('salesData', uniqueSalesData);
- cacheMap.set('categorySales', categorySalesResponse);
- cacheMap.set('productionData', uniqueProductionData);
- cacheMap.set('productionHouses', productionHousesData);
- cacheMap.set('stockRequests', stockRequestsData);
- cacheMap.set('productionRequests', productionRequestsData);
- cacheMap.set('inventoryItems', inventoryItemsData);
- cacheMap.set('onlineCashRecalibrations', onlineCashRecalibrationsData);
- cacheMap.set('onlineSalesData', onlineSalesDataResult);
- cacheMap.set('onlinePayoutData', onlinePayoutDataResult);
- cacheMap.set('aggregatorSettlements', aggregatorSettlementsData);
- dataCache.batchSetCache(cacheMap);
- console.log('💾 Data cached for instant future loads');
- } catch (error) {
- // Silently handle authentication errors (user not logged in yet)
- if (error instanceof Error && 
- (error.message === 'Not authenticated' || error.message === 'Unauthorized')) {
- return;
- }
- console.error('Error loading data:', error);
- setDataError('Failed to load inventory data. Please refresh the page.');
- } finally {
- setIsLoadingData(false);
- }
+ // A date-range top-up: replaces the saved rows for those days with the server's.
+ const applyWindow = (key: DatasetKey, window: { from: string; to: string; rows: any[] }) => {
+  const merge = (prev: any[]) => dedupeById(mergeDateWindow(prev, window.rows, window.from, window.to));
+  switch (key) {
+   case 'inventory': setInventory(merge); break;
+   case 'overheads': setOverheads(merge); break;
+   case 'fixedCosts': setFixedCosts(merge); break;
+   case 'salesData': setSalesData(merge); break;
+   case 'productionData': setProductionData(merge); break;
+  }
  };
+
+ // Old duplicate rows came back from the server: the cluster head's phone quietly asks the server to
+ // remove them (once per session), as before.
+ const duplicatesSeenRef = useRef(false);
+ const cleanDuplicatesOnce = (person: AppUser) => {
+  if (!duplicatesSeenRef.current || person.role !== 'cluster_head' || sessionStorage.getItem('db_cleaned')) return;
+  sessionStorage.setItem('db_cleaned', 'true');
+  setTimeout(async () => {
+   try {
+    console.log('🧹 Silently cleaning duplicates in background...');
+    const result = await api.cleanupDuplicates('');
+    console.log(`✅ Cleaned ${result.removed} duplicates successfully`);
+   } catch (error) {
+    console.log('Auto-cleanup skipped:', error instanceof Error ? error.message : 'Unknown error');
+   }
+  }, 1500);
+ };
+
+ // Refreshes this person's data from the server in the background. One at a time; `force` (the
+ // Refresh button) skips the memory copies, the bootstrap etag and date-range top-ups.
+ const refreshData = (options: { force?: boolean } = {}): Promise<void> => {
+  const person = userRef.current;
+  if (!person) return Promise.resolve();
+  if (refreshInFlightRef.current) return refreshInFlightRef.current;
+  const run = (async () => {
+   setIsLoadingData(true);
+   if (options.force) clearMemoryCache();
+   const keys = datasetsFor(person);
+   const result = await loadDatasets(keys, { force: options.force, hasSavedRows: (key) => loadedKeysRef.current.has(key) });
+   if (userRef.current?.email !== person.email) return; // signed out or switched meanwhile
+   for (const [key, value] of Object.entries(result.data)) applyDataset(key as DatasetKey, value, person);
+   for (const [key, window] of Object.entries(result.windows)) applyWindow(key as DatasetKey, window!);
+   const succeeded = keys.filter((key) => !result.failed.some((f) => f.key === key));
+   dataCache.markFetched(succeeded, result.hashes as Record<string, string>, {
+    etag: result.etag,
+    ...(result.full && result.failed.length === 0 ? { lastFullAt: Date.now() } : {}),
+   });
+   setFailedParts(result.failed);
+   if (succeeded.length > 0 || keys.length === 0) setLastUpdatedAt(Date.now());
+   cleanDuplicatesOnce(person);
+  })().catch((error) => {
+   console.error('Error refreshing data:', error);
+  }).finally(() => {
+   refreshInFlightRef.current = null;
+   setIsLoadingData(false);
+  });
+  refreshInFlightRef.current = run;
+  return run;
+ };
+
+ // Kept for AuditDashboard's onDataUpdate and older callers: (token, force) - the token is unused.
+ const loadData = async (_accessToken?: string, forceRefresh = false) => refreshData({ force: forceRefresh });
+
+ // Writes changed datasets to the phone's copy a moment after they change (a load, or an expense
+ // added on this phone), so the next open shows them without waiting for the server.
+ useEffect(() => {
+  if (!user) return;
+  const timer = setTimeout(() => {
+   const current: Partial<Record<DatasetKey, unknown>> = {
+    inventory, overheads, fixedCosts, salesData, categorySales: categorySalesData, productionData, productionHouses,
+    stockRequests, productionRequests, inventoryItems, onlineCashRecalibrations, onlineSalesData, onlinePayoutData,
+    aggregatorSettlements, stores, employees,
+   };
+   for (const key of datasetsFor(user)) {
+    if (key === 'clusterInfo' || !loadedKeysRef.current.has(key)) continue;
+    const value = current[key];
+    if (persistedRef.current[key] === value) continue;
+    persistedRef.current[key] = value;
+    dataCache.writeDataset(key, key === 'employees' ? stripEmployeeImages((value as api.Employee[]) || []) : value);
+   }
+  }, 1500);
+  return () => clearTimeout(timer);
+ }, [user, inventory, overheads, fixedCosts, salesData, categorySalesData, productionData, productionHouses, stockRequests, productionRequests, inventoryItems, onlineCashRecalibrations, onlineSalesData, onlinePayoutData, aggregatorSettlements, stores, employees]);
+
+ // Opens a session: the saved copy on screen at once, then a background refresh. Used at startup
+ // (with the session read straight from storage - no network) and after signing in.
+ const openSession = async (sessionUser: SessionUser, accessToken: string) => {
+  const cacheOwner = ((sessionUser.app_metadata?.employeeId ?? sessionUser.user_metadata?.employeeId) || sessionUser.email || sessionUser.id) as string;
+  // Read and write this person's own saved copy (shared phones - see dataCache.ts)
+  dataCache.setCacheUser(cacheOwner);
+  resetLoadedData();
+  const saved = await dataCache.readCache(ALL_DATASET_KEYS);
+  let person = userFromSession(sessionUser, accessToken, saved.meta?.profile ?? null);
+
+  // Never opened on this phone (or not for 7 days): their store and designation come from their
+  // employee record, which the screens need - wait for it, but not forever.
+  if (person.employeeId && !saved.meta?.profile) {
+   try {
+    const json = await requestJson(`${api.API_BASE}/employees`, {}, { timeoutMs: 10_000, retries: 1 });
+    const profile = profileFrom(DATASETS.employees.pick(json), person.employeeId);
+    if (profile) {
+     dataCache.setCachedProfile(profile);
+     person = userFromSession(sessionUser, accessToken, profile);
+    }
+   } catch (error) {
+    console.error('Error fetching employee storeId on session check:', error);
+   }
+  }
+
+  const wanted = datasetsFor(person);
+  let shown = 0;
+  let oldest = Infinity;
+  for (const key of wanted) {
+   if (saved.data[key] === undefined) continue;
+   applyDataset(key, saved.data[key], person, true);
+   shown++;
+   oldest = Math.min(oldest, dataCache.getFetchedAt(key) || dataCache.getSavedAt(key) || Infinity);
+  }
+  setHasSavedData(shown > 0);
+  setLastUpdatedAt(shown > 0 && oldest !== Infinity ? oldest : null);
+  setFailedParts([]);
+  userRef.current = person;
+  setUser(person);
+  // Everything under 5 minutes old (reopened straight after closing): no refresh yet.
+  if (wanted.length > 0 && wanted.every((key) => saved.data[key] !== undefined && dataCache.isCacheFresh(key))) {
+   console.log('✅ Saved data is fresh - skipping API calls');
+   return;
+  }
+  console.log(shown > 0 ? `⚡ Showing ${shown} saved datasets - refreshing in background` : '🔄 Nothing saved on this phone - loading');
+  refreshData();
+ };
+
+ // Check for an existing session on mount. The session is read straight from storage (no network),
+ // so the app opens on saved data at once; supabase-js renews the token in the background. (This
+ // used to force a renewal first and then wait for all the data.)
+ useEffect(() => {
+  // Clear any stale redirect flags from previous sessions
+  sessionStorage.removeItem('logout_redirect_in_progress');
+  // Old copies (7 days) and the old localStorage copies
+  dataCache.clearOldCaches();
+  loadServerFeatures();
+  startAuthTracking();
+
+  const checkSession = async () => {
+   try {
+    const stored = peekStoredSession();
+    if (stored) {
+     await openSession(stored.user as SessionUser, stored.access_token);
+     return;
+    }
+    // Not readable from storage (older supabase-js format): ask supabase-js.
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session?.user) await openSession(session.user as SessionUser, session.access_token);
+   } catch (error) {
+    console.log('Session check error:', error);
+   } finally {
+    setIsCheckingAuth(false);
+   }
+  };
+  checkSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, []); // Empty dependency array - only run once on mount
 
  // Load inventory items metadata
  const loadInventoryItems = async () => {
@@ -812,101 +874,6 @@ export default function App() {
  }
  };
 
- // Check for existing session on mount using useEffect
- useEffect(() => {
- // Clear any stale redirect flags from previous sessions
- sessionStorage.removeItem('logout_redirect_in_progress');
- 
- // Clean up old cache entries on app initialization
- dataCache.clearOldCaches();
- 
- const checkSession = async () => {
- try {
- // First check if there's an existing session
- const { data: { session: existingSession } } = await supabaseClient.auth.getSession();
- 
- if (!existingSession) {
- // No session at all, user needs to log in
- setIsCheckingAuth(false);
- return;
- }
- 
- // Try to refresh to get a fresh token
- const { data: { session: refreshedSession }, error: refreshError } = await supabaseClient.auth.refreshSession();
- 
- if (refreshError || !refreshedSession) {
- console.warn('Session refresh failed:', refreshError?.message || 'No session returned');
- // If refresh fails but we have an existing session, try to use it
- if (existingSession?.user) {
- await processSession(existingSession);
- } else {
- // Session is invalid, clear it
- await supabaseClient.auth.signOut();
- setIsCheckingAuth(false);
- }
- } else {
- // Successfully refreshed
- await processSession(refreshedSession);
- }
- } catch (error) {
- console.log('Session check error:', error);
- } finally {
- setIsCheckingAuth(false);
- }
- };
- 
- const processSession = async (session: any) => {
- let storeId = null;
- let designation = (session.user.app_metadata?.designation ?? session.user.user_metadata?.designation) || null;
- let assignedStoreIds: string[] = [];
- let assignedProductionHouseIds: string[] = [];
-
- // For employees, fetch full employee record to get storeId
- if ((session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId)) {
- try {
- const employees = await api.getEmployees();
- const employeeRecord = employees.find(emp => emp.employeeId === (session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId));
- if (employeeRecord) {
- storeId = employeeRecord.storeId || null;
- designation = employeeRecord.designation || designation;
- assignedStoreIds = employeeRecord.assignedStoreIds || [];
- assignedProductionHouseIds = employeeRecord.assignedProductionHouseIds || [];
- }
- } catch (error) {
- console.error('Error fetching employee storeId on session check:', error);
- }
- }
-
- const userData = {
- email: session.user.email || '',
- name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
- role: (session.user.app_metadata?.role ?? session.user.user_metadata?.role) || 'manager',
- employeeId: (session.user.app_metadata?.employeeId ?? session.user.user_metadata?.employeeId) || null,
- accessToken: session.access_token,
- storeId,
- designation,
- assignedStoreIds,
- assignedProductionHouseIds
- };
- setUser(userData);
- // Read and write this person's own cache (shared phones - see dataCache.ts)
- dataCache.setCacheUser(userData.employeeId || userData.email);
- 
- // Load data for the user
- await loadData(session.access_token);
- 
- // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
- if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
- await loadStores();
- await loadEmployees();
- if (userData.role === 'cluster_head') {
- await loadClusterData(session.access_token);
- }
- }
- };
- 
- checkSession();
- }, []); // Empty dependency array - only run once on mount
 
  // Shared by both the web-push (service worker) and native (Capacitor/FCM) navigation paths,
  // and by the in-app notification bell (Notifications.tsx) - one resolver, so every entry
@@ -994,7 +961,11 @@ export default function App() {
  // Data" click or a full page reload, so a POS sync that lands mid-session (not just the
  // nightly one) can sit stale in a tab left open for a while. Matches dataCache's own
  // 5-minute freshness window; only runs while the tab is actually visible so it doesn't
- // burn API calls in a backgrounded tab.
+ // burn API calls in a backgrounded tab. Not forced: with the server's date ranges or
+ // bootstrap etag an unchanged refresh costs almost nothing. Also refreshes when the app comes
+ // back to the front or the signal returns, if the data is over two minutes old.
+ const lastUpdatedRef = useRef<number | null>(null);
+ lastUpdatedRef.current = lastUpdatedAt;
  useEffect(() => {
  if (!user) return;
 
@@ -1002,13 +973,18 @@ export default function App() {
  const tick = () => {
  if (document.visibilityState === 'visible') {
  console.log('🔄 Periodic background refresh (5 min)');
- loadData(user.accessToken, true);
+ refreshData();
  }
  };
-
  const interval = setInterval(tick, REFRESH_INTERVAL_MS);
- return () => clearInterval(interval);
- }, [user]);
+ const stopListening = onConnectivity((event) => {
+ if (event === 'offline') return;
+ const age = Date.now() - (lastUpdatedRef.current || 0);
+ if (age > 2 * 60 * 1000) refreshData();
+ });
+ return () => { clearInterval(interval); stopListening(); };
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [user?.email]);
 
  // Deep-link handling for push notification clicks (see public/sw.js).
  // Two delivery paths depending on whether a tab was already open when clicked:
@@ -1057,50 +1033,9 @@ export default function App() {
  }
 
  if (data.user && data.session) {
- let storeId = null;
- let designation = (data.user.app_metadata?.designation ?? data.user.user_metadata?.designation) || null;
- let assignedStoreIds: string[] = [];
- let assignedProductionHouseIds: string[] = [];
-
- // For employees, fetch full employee record to get storeId
- if ((data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId)) {
- try {
- const employees = await api.getEmployees();
- const employeeRecord = employees.find(emp => emp.employeeId === (data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId));
- if (employeeRecord) {
- storeId = employeeRecord.storeId || null;
- designation = employeeRecord.designation || designation;
- assignedStoreIds = employeeRecord.assignedStoreIds || [];
- assignedProductionHouseIds = employeeRecord.assignedProductionHouseIds || [];
- }
- } catch (error) {
- console.error('Error fetching employee storeId:', error);
- }
- }
-
- const userData = {
- email: data.user.email || '',
- name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
- role: (data.user.app_metadata?.role ?? data.user.user_metadata?.role) || 'manager',
- employeeId: (data.user.app_metadata?.employeeId ?? data.user.user_metadata?.employeeId) || null,
- accessToken: data.session.access_token,
- storeId,
- designation,
- assignedStoreIds,
- assignedProductionHouseIds
- };
- setUser(userData);
- // Read and write this person's own cache (shared phones - see dataCache.ts)
- dataCache.setCacheUser(userData.employeeId || userData.email);
- 
- // Load data for the user
- await loadData(data.session.access_token);
- 
- // Load stores and employees for managers (cluster heads, operations managers, and audit users need this)
- if (userData.role === 'cluster_head' || userData.role === 'manager' || userData.role === 'audit') {
- await loadStores();
- await loadEmployees();
- }
+ // Same path as reopening the app: their saved copy (if this phone has one) at once, then the
+ // background refresh. They used to wait for the staff list before anything showed.
+ await openSession(data.user as SessionUser, data.session.access_token);
  }
  } catch (error) {
  console.log('Login error:', error);
@@ -1204,10 +1139,7 @@ export default function App() {
  manualLogoutRef.current = false;
  }
  setUser(null);
- setInventory([]);
- setOverheads([]);
- setFixedCosts([]);
- setSalesData([]);
+ resetLoadedData();
  setActiveView('sales');
  dataCache.invalidateAllCaches(); // Clear all caches on logout
  dataCache.setCacheUser(null);
@@ -1900,6 +1832,21 @@ export default function App() {
  </>
  );
 
+ // The status line under the top bar: "Updated 10 min ago · Refreshing…", offline, or what
+ // couldn't be refreshed (with Retry). Crew and riders load no business lists, so for them it only
+ // speaks up when something is wrong.
+ const syncStatus = (
+ <SyncStatus
+ lastUpdatedAt={lastUpdatedAt}
+ refreshing={isLoadingData}
+ failed={failedParts.map((f) => DATASETS[f.key].label)}
+ offline={failedParts.length > 0 && failedParts.every((f) => f.offline)}
+ hasData={hasSavedData || lastUpdatedAt !== null}
+ onRetry={() => refreshData()}
+ quiet={!needsBusinessData(user)}
+ />
+ );
+
  // Cluster heads should only see the dashboard
  const isClusterHead = user.role === 'cluster_head';
  const isEmployee = user.role === 'employee';
@@ -1956,6 +1903,7 @@ export default function App() {
  {pushNotificationWidget}
  {passwordDialog}
  <PasswordExpiryBanner policy={passwordPolicy} />
+ {syncStatus}
  <AuditDashboard
  user={user}
  inventory={inventory}
@@ -2481,6 +2429,7 @@ export default function App() {
  {/* Under the top bar rather than on one screen: plain employees and riders have no shared
  home screen, and a reminder push lands wherever their first screen is. */}
  <PasswordExpiryBanner policy={passwordPolicy} />
+ {syncStatus}
 
  {/* Employee Main Content */}
  <main className="pb-6" data-ai-screen>
@@ -3121,31 +3070,9 @@ export default function App() {
  </div>
  )}
 
- {/* Data Error Banner */}
- {dataError && (
- <div className="bg-red-50 border-b border-red-200 px-4 py-3">
- <div className="max-w-7xl mx-auto flex items-center gap-2 text-red-800">
- <AlertCircle className="w-5 h-5" />
- <p className="text-sm">{dataError}</p>
- <button
- onClick={() => user && loadData(user.accessToken)}
- className="ml-auto text-sm text-red-600 hover:text-red-700 underline"
- >
- Retry
- </button>
- </div>
- </div>
- )}
-
- {/* Loading State */}
- {isLoadingData && (
- <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
- <div className="max-w-7xl mx-auto flex items-center gap-2 text-blue-800">
- <Package className="w-5 h-5 animate-pulse" />
- <p className="text-sm">Loading inventory data...</p>
- </div>
- </div>
- )}
+ {/* Last updated / refreshing / offline / couldn't refresh - one quiet line instead of the
+    blue "Loading inventory data..." bar and the red "Failed to load" bar. */}
+ {syncStatus}
 
  {/* Main Content */}
  <main className="pb-6" data-ai-screen>
