@@ -83,7 +83,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -113,6 +113,7 @@ export type ScreenSpec =
   | { screen: 'More' }
   | { screen: 'Inbox' }
   | { screen: 'Events' }
+  | { screen: 'Recipes'; mode: 'capture' | 'review' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -352,6 +353,12 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   // Event stalls (owner, 27 Oct 2026): the owner and managers find them under More; staff assigned
   // to an event open it from their Home card. Which events anyone may see is the server's call.
   if (kind !== 'rider') add('events', 'event.events', 'events', { screen: 'Events' }, null, 'events');
+  // SOP recipe sheets (owner, 27 Oct 2026): the production head (and the kitchen crew he picks)
+  // fills them in; the owner and operations managers review them and set the standards and costs.
+  // The server decides who may enter, review or see costs.
+  if (kind === 'production-incharge') add('production/recipes', 'recipes.title', 'recipes', { screen: 'Recipes', mode: 'capture' }, null, 'recipes');
+  if (kind === 'crew' && (user.designation || '').startsWith('production')) add('recipes', 'recipes.title', 'recipes', { screen: 'Recipes', mode: 'capture' }, null, 'recipes');
+  if (kind === 'owner' || kind === 'ops') add('recipes-costs', 'recipes.costsTitle', 'recipes', { screen: 'Recipes', mode: 'review' }, null, 'recipes');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -380,7 +387,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     more = [
       group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events'),
       group('more.assets', 'equipment', 'investments'),
-      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup'),
+      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
     ];
   } else if (kind === 'ops') {
@@ -393,7 +400,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'events', 'my-kpis'),
+      group('more.business', 'insights', 'events', 'recipes-costs', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report'),
@@ -404,7 +411,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('home', 'nav.home', 'home', []),
       kind === 'store-incharge'
         ? tab('stock', 'nav.stock', 'stock', subs('stock/requests', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders'))
-        : tab('production', 'nav.production', 'production', subs('production/requests', 'production/batches', 'production/on-hand', 'production/riders', 'production/out-of-stock'), 'requestsToAccept'),
+        : tab('production', 'nav.production', 'production', subs('production/requests', 'production/batches', 'production/recipes', 'production/on-hand', 'production/riders', 'production/out-of-stock'), 'requestsToAccept'),
       tab('money', 'nav.money', 'money', kind === 'store-incharge' ? subs('money/sales', 'money/expenses') : subs('money/expenses', 'money/sales')),
       tab('team', 'nav.team', 'team', subs('team/people', 'team/attendance', 'team/pay', 'team/checks')),
       tab('me', 'nav.me', 'me', []),
@@ -422,7 +429,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
-    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks')];
+    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'recipes')];
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
     tabs = [

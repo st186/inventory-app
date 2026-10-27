@@ -14,6 +14,7 @@ import { TeamDestination } from './TeamDestination';
 import { InsightsDestination } from './InsightsDestination';
 import { MoreDestinations } from './MoreDestinations';
 import { EventsDestination } from './EventsDestination';
+import { RecipesDestination } from './RecipesDestination';
 
 const OwnerHome = lazy(() => import('../../home/OwnerHome').then((m) => ({ default: m.OwnerHome })));
 const StaffHome = lazy(() => import('../../home/StaffHome').then((m) => ({ default: m.StaffHome })));
@@ -140,6 +141,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'Events':
         content = <EventsDestination params={params} />;
+        break;
+      case 'Recipes':
+        content = <RecipesDestination mode={spec.mode} params={params} withHeader={!dest.path.startsWith('production/')} />;
         break;
       default:
         content = null;
