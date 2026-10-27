@@ -113,7 +113,7 @@ function SubItem({ label, on, onClick }: { label: string; on: boolean; onClick: 
         onClick={onClick}
         aria-current={on ? 'page' : undefined}
         className={cn(
-          'flex min-h-10 w-full items-center rounded-md px-2 text-left text-body-sm outline-none',
+          'flex min-h-11 w-full items-center rounded-md px-2 text-left text-body-sm outline-none',
           'focus-visible:ring-2 focus-visible:ring-ring',
           on ? 'font-semibold text-primary' : 'font-medium text-text-2 hover:bg-surface-2 hover:text-text',
         )}
