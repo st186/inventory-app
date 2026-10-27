@@ -22,6 +22,9 @@ export function setLanguageOwner(userId: string | null | undefined) {
   listeners.forEach((fn) => fn(lang));
 }
 
+// Whose phone storage this is (the signed-in person), for other per-person settings like chat history.
+export const languageOwner = () => owner;
+
 export function getBunnyLanguage(): BunnyLanguage {
   try {
     const saved = localStorage.getItem(storageKey()) || localStorage.getItem('voiceLanguage');

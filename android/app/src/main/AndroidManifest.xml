@@ -65,6 +65,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice entry and the Bunny chat mic: the in-app speech recogniser (VoicePlugin.java). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Rider ride-request alert (RiderCallAlert): full-screen alarm-style notification, vibration,
          ringing through Do Not Disturb (user-granted), and surviving battery optimisation. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -80,6 +82,9 @@
     <queries>
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
         <!-- Read-aloud of Bunny's answers: lets text-to-speech find the phone's voice engine. -->
         <intent>

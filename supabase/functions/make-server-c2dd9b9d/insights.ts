@@ -895,6 +895,31 @@ ${JSON.stringify({
     } catch (err) { return fail(c, err); }
   });
 
+  // Shortens the older part of a long Bunny chat into a summary the chat carries forward, so a
+  // long conversation keeps its context without resending every message.
+  app.post(`${P}/ai/summarize-chat`, async (c: any) => {
+    const g = await guard(c, 'view'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json();
+      const msgs = (Array.isArray(body.messages) ? body.messages : [])
+        .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .slice(-40)
+        .map((m: any) => `${m.role === 'user' ? 'Person' : 'Bunny'}: ${m.content.slice(0, 2000)}`)
+        .join('\n\n');
+      if (!msgs) return c.json({ summary: String(body.summary || '') });
+      const res = await callClaude(deps, {
+        purpose: 'chat-summary',
+        system: 'You summarise a conversation between a shop owner or manager and Bunny, the business assistant in their staff app, so the conversation can continue later. Keep every number, date, item, decision, request and open question. Plain English, under 200 words. No preamble.',
+        effort: 'low',
+        noThinking: /haiku/.test(AI_MODEL),
+        maxTokens: 800,
+        user: aiUser(g.actor!),
+        messages: [{ role: 'user', content: `${body.summary ? `Earlier summary:\n${String(body.summary).slice(0, 3000)}\n\n` : ''}Conversation to add:\n${msgs}` }],
+      });
+      return c.json({ summary: textOf(res).slice(0, 3000) });
+    } catch (err) { return fail(c, err); }
+  });
+
   // Voice entry: one spoken sentence -> sales cash-count or expense fields. The app fills the form
   // with them and the person checks it before saving. About ₹0.01 a sentence on Haiku.
   app.post(`${P}/ai/voice-fill`, async (c: any) => {
@@ -1043,6 +1068,12 @@ ${JSON.stringify({
         .map((m: any) => ({ role: m.role, content: m.content.slice(0, 4000) }));
       if (!history.length || history[history.length - 1].role !== 'user') return c.json({ error: 'Ask a question' }, 400);
       const today = deps.getTodayIST();
+      // A long chat arrives as a summary of its older part plus the recent messages (the app
+      // keeps the full history on the phone - see /ai/summarize-chat).
+      const earlier = typeof body.summary === 'string' && body.summary.trim()
+        ? `Summary of the earlier part of this conversation:\n${body.summary.trim().slice(0, 3000)}\n\n`
+        : '';
+      if (earlier) history[0] = { role: history[0].role, content: `${earlier}${history[0].content}` };
       const screen = body.screen && typeof body.screen === 'object' ? body.screen : null;
       const screenText = screen?.text ? scrubPrivate(String(screen.text)).slice(0, 6000) : '';
       const screenPart = screen

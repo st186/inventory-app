@@ -10,6 +10,10 @@ export type VoiceLanguage = 'bn-IN' | 'en-IN' | 'hi-IN';
 interface VoicePluginApi {
   available(): Promise<{ available: boolean }>;
   listen(options: { language: VoiceLanguage; prompt?: string }): Promise<{ text: string; alternatives: string[] }>;
+  startListening(options: { language: VoiceLanguage }): Promise<{ started: boolean }>;
+  stopListening(): Promise<{ text: string }>;
+  cancelListening(): Promise<void>;
+  addListener(event: 'partial' | 'error', fn: (data: { text?: string; error?: string }) => void): Promise<{ remove: () => Promise<void> }>;
   speak(options: { text: string; language: VoiceLanguage }): Promise<{ done: boolean }>;
   stopSpeaking(): Promise<void>;
 }
@@ -45,6 +49,66 @@ export async function listen(language: VoiceLanguage, prompt?: string): Promise<
     rec.start();
   });
 }
+
+// ---- Tap to start, tap to finish ----
+// Listens across pauses until stopListening(); onPartial gets the words so far as they come.
+// Android: the in-app recogniser (VoicePlugin startListening). Browser: continuous recognition,
+// restarted whenever the browser ends it on its own.
+let session: { stop: () => Promise<string>; cancel: () => Promise<void> } | null = null;
+
+export async function startListening(language: VoiceLanguage, onPartial: (text: string) => void, onError?: (message: string) => void): Promise<void> {
+  if (session) await session.cancel();
+  if (isAndroidApp()) {
+    const partial = await Voice.addListener('partial', (d) => onPartial(d.text || ''));
+    const failed = await Voice.addListener('error', (d) => onError?.(d.error || 'Voice input failed'));
+    const cleanup = async () => { await partial.remove(); await failed.remove(); };
+    try {
+      await Voice.startListening({ language });
+    } catch (e) {
+      await cleanup();
+      throw e;
+    }
+    session = {
+      stop: async () => { try { return ((await Voice.stopListening()).text || '').trim(); } finally { await cleanup(); session = null; } },
+      cancel: async () => { await Voice.cancelListening().catch(() => {}); await cleanup(); session = null; },
+    };
+    return;
+  }
+  const Recognition = BrowserRecognition();
+  if (!Recognition) throw new Error('Voice input needs the Android app or Chrome.');
+  let finals = '';
+  let interim = '';
+  let active = true;
+  let resolveStop: ((text: string) => void) | null = null;
+  const rec = new Recognition();
+  rec.lang = language;
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onresult = (e: any) => {
+    interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0]?.transcript || '';
+      if (e.results[i].isFinal) finals = `${finals} ${t}`.trim();
+      else interim += t;
+    }
+    onPartial(`${finals} ${interim}`.trim());
+  };
+  rec.onerror = (e: any) => {
+    if (e.error === 'not-allowed') { active = false; onError?.('Allow the microphone for this site to use voice.'); }
+  };
+  rec.onend = () => {
+    if (active) { try { rec.start(); } catch { /* already restarting */ } return; }
+    resolveStop?.(`${finals} ${interim}`.trim());
+  };
+  rec.start();
+  session = {
+    stop: () => new Promise<string>((resolve) => { resolveStop = (t) => { session = null; resolve(t); }; active = false; rec.stop(); }),
+    cancel: async () => { active = false; resolveStop = () => { session = null; }; rec.abort(); },
+  };
+}
+
+export const stopListening = async (): Promise<string> => (session ? session.stop() : '');
+export const cancelListening = async (): Promise<void> => { if (session) await session.cancel(); };
 
 // Plain words for reading aloud: no markdown marks, "Rs" said as rupees.
 const forSpeech = (text: string) => text

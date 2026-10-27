@@ -1,9 +1,15 @@
 package com.bunnymomos.inventory;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
@@ -13,9 +19,12 @@ import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,15 +34,168 @@ import java.util.Map;
 
 /**
  * Voice for the app (Bunny chat, Quick Add expense, sales cash count):
- * - listen: opens the phone's own speech screen (Google), which records and recognises Bengali
- *   (bn-IN), English or Hindi and hands back the text - free, and the app itself never needs the
- *   microphone permission. Turning the text into form fields happens on the server (/ai/voice-fill).
+ * - startListening / stopListening: the phone's speech recogniser running inside the app, so a
+ *   person can talk with pauses and tap to finish (the speech screen below stops at the first
+ *   pause). It restarts itself after each phrase until stopped; live text comes as "partial"
+ *   events. Needs the microphone permission, asked for once. Bengali (bn-IN), English or Hindi.
+ * - listen: the phone's own speech screen (Google) - kept as a fallback when the in-app
+ *   recogniser isn't available. Turning text into form fields happens on the server (/ai/voice-fill).
  * - speak / stopSpeaking: reads Bunny's answers aloud with the phone's text-to-speech in the
  *   person's language (a Bengali or Hindi voice may need downloading in the phone's settings).
  * JS side: src/utils/voice.ts.
  */
-@CapacitorPlugin(name = "Voice")
+@CapacitorPlugin(name = "Voice", permissions = { @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }) })
 public class VoicePlugin extends Plugin {
+
+    // ---- Continuous listening (tap to start, tap to finish) ----
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private SpeechRecognizer recognizer;
+    private boolean listening = false;
+    private String listenLanguage = "bn-IN";
+    private final StringBuilder transcript = new StringBuilder();
+    private String lastPartial = "";
+    private PluginCall stopCall;
+
+    @PluginMethod
+    public void startListening(PluginCall call) {
+        listenLanguage = call.getString("language", "bn-IN");
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            requestPermissionForAlias("microphone", call, "microphonePermission");
+            return;
+        }
+        beginListening(call);
+    }
+
+    @PermissionCallback
+    private void microphonePermission(PluginCall call) {
+        if (getPermissionState("microphone") == PermissionState.GRANTED) beginListening(call);
+        else call.reject("Allow the microphone to speak to the app.", "MIC_DENIED");
+    }
+
+    private void beginListening(PluginCall call) {
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+            call.reject("This phone has no speech recognition. Install or update the Google app.", "NO_RECOGNIZER");
+            return;
+        }
+        main.post(() -> {
+            transcript.setLength(0);
+            lastPartial = "";
+            stopCall = null;
+            listening = true;
+            startRecognizer();
+            JSObject out = new JSObject();
+            out.put("started", true);
+            call.resolve(out);
+        });
+    }
+
+    private void startRecognizer() {
+        if (recognizer != null) recognizer.destroy();
+        recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+        recognizer.setRecognitionListener(new Listener());
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, listenLanguage);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, listenLanguage);
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
+        recognizer.startListening(intent);
+    }
+
+    private String fullText() {
+        String done = transcript.toString().trim();
+        String partial = lastPartial.trim();
+        return partial.isEmpty() ? done : (done.isEmpty() ? partial : done + " " + partial);
+    }
+
+    private void emitPartial() {
+        JSObject out = new JSObject();
+        out.put("text", fullText());
+        notifyListeners("partial", out);
+    }
+
+    // After each phrase: keep the words, and listen again until the person taps to finish.
+    private void phraseEnded(String finalText) {
+        if (finalText != null && !finalText.trim().isEmpty()) {
+            if (transcript.length() > 0) transcript.append(' ');
+            transcript.append(finalText.trim());
+        }
+        lastPartial = "";
+        emitPartial();
+        if (listening) startRecognizer();
+        else finishStop();
+    }
+
+    private void finishStop() {
+        if (stopCall == null) return;
+        JSObject out = new JSObject();
+        out.put("text", fullText());
+        stopCall.resolve(out);
+        stopCall = null;
+        if (recognizer != null) { recognizer.destroy(); recognizer = null; }
+    }
+
+    @PluginMethod
+    public void stopListening(PluginCall call) {
+        main.post(() -> {
+            if (!listening && recognizer == null) {
+                JSObject out = new JSObject();
+                out.put("text", fullText());
+                call.resolve(out);
+                return;
+            }
+            listening = false;
+            stopCall = call;
+            if (recognizer != null) recognizer.stopListening();
+            // The recogniser normally hands back the last words within a second; don't wait longer.
+            main.postDelayed(this::finishStop, 1500);
+        });
+    }
+
+    @PluginMethod
+    public void cancelListening(PluginCall call) {
+        main.post(() -> {
+            listening = false;
+            stopCall = null;
+            transcript.setLength(0);
+            lastPartial = "";
+            if (recognizer != null) { recognizer.cancel(); recognizer.destroy(); recognizer = null; }
+            call.resolve();
+        });
+    }
+
+    private class Listener implements RecognitionListener {
+        @Override public void onReadyForSpeech(Bundle params) { }
+        @Override public void onBeginningOfSpeech() { }
+        @Override public void onRmsChanged(float rmsdB) { }
+        @Override public void onBufferReceived(byte[] buffer) { }
+        @Override public void onEndOfSpeech() { }
+        @Override public void onEvent(int eventType, Bundle params) { }
+
+        @Override public void onPartialResults(Bundle partialResults) {
+            ArrayList<String> m = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            if (m != null && !m.isEmpty()) { lastPartial = m.get(0); emitPartial(); }
+        }
+
+        @Override public void onResults(Bundle results) {
+            ArrayList<String> m = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            phraseEnded(m != null && !m.isEmpty() ? m.get(0) : lastPartial);
+        }
+
+        @Override public void onError(int error) {
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                listening = false;
+                JSObject out = new JSObject();
+                out.put("error", "Allow the microphone to speak to the app.");
+                notifyListeners("error", out);
+                finishStop();
+                return;
+            }
+            // Silence, no match or busy between phrases: keep what was heard and listen again.
+            phraseEnded(lastPartial);
+        }
+    }
 
     private TextToSpeech tts;
     private boolean ttsReady = false;
@@ -173,6 +335,8 @@ public class VoicePlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        listening = false;
+        if (recognizer != null) { recognizer.destroy(); recognizer = null; }
         if (tts != null) {
             tts.stop();
             tts.shutdown();

@@ -669,6 +669,12 @@ export async function dismissCalendarSuggestion(accessToken: string, date: strin
   await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/dismiss`, accessToken, { method: 'POST' });
 }
 
+// Shortens the older part of a long Bunny chat into a summary (server /ai/summarize-chat).
+export async function summarizeChat(accessToken: string, summary: string, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<string> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/summarize-chat`, accessToken, { method: 'POST', body: JSON.stringify({ summary, messages }) });
+  return data.summary || summary;
+}
+
 // "Complete your profile" (server profile.ts): the signed-in person's own Aadhaar photos, phone
 // and personal email.
 export interface MyProfileStatus { required: boolean; complete: boolean; missing: ('aadharFront' | 'aadharBack' | 'phone' | 'contactEmail')[]; phone?: string; contactEmail?: string }
@@ -698,7 +704,7 @@ export async function askBunny(
   accessToken: string,
   storeId: string | null,
   messages: { role: 'user' | 'assistant'; content: string }[],
-  options: { language: 'en' | 'bn' | 'hi'; screen?: { page: string; tab?: string; text?: string } },
+  options: { language: 'en' | 'bn' | 'hi'; screen?: { page: string; tab?: string; text?: string }; summary?: string },
 ): Promise<{ answer: string; followUps: string[]; toolsUsed: string[] }> {
   const data = await fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages, ...options }) });
   return { answer: data.answer, followUps: data.followUps || [], toolsUsed: data.toolsUsed || [] };

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, RotateCcw, Send, Sparkles, Square, Volume2, X } from 'lucide-react';
+import { History, Loader2, RotateCcw, Send, Sparkles, Square, Trash2, Volume2, X } from 'lucide-react';
 import * as api from '../utils/api';
 import { VoiceButton } from './VoiceButton';
-import { BUNNY_LANGUAGES, speechLocale, useBunnyLanguage, type BunnyLanguage } from '../utils/bunnyLanguage';
+import { BUNNY_LANGUAGES, languageOwner, speechLocale, useBunnyLanguage, type BunnyLanguage } from '../utils/bunnyLanguage';
 import { speak, speechSupported, stopSpeaking } from '../utils/voice';
 import { PAGE_LABELS, TAB_LABELS, captureScreenText, screenIsPrivate, useScreenContext } from '../utils/screenContext';
 
@@ -11,8 +11,26 @@ import { PAGE_LABELS, TAB_LABELS, captureScreenText, screenIsPrivate, useScreenC
 // data-ai-private parts left out - answers in their language (set on Home), can read answers
 // aloud, and suggests questions to start with and follow-ups after each answer. Look-ups only:
 // Claude never changes anything here.
+//
+// History: each person's chats are kept on their phone (last 20) and can be reopened. When a
+// chat grows long, its older part is summarised once (server /ai/summarize-chat) and Bunny gets
+// the summary plus the recent messages - the full chat still shows on screen.
 
 type Msg = { role: 'user' | 'assistant'; content: string; followUps?: string[]; failed?: boolean };
+type Chat = { id: string; title: string; updatedAt: string; messages: Msg[]; summary?: string; summarizedCount?: number };
+
+const MAX_CHATS = 20;
+const KEEP_RECENT = 6; // messages always sent as they are
+const SUMMARISE_AT_CHARS = 8000; // unsummarised text beyond this gets summarised
+const SUMMARISE_AT_COUNT = 14;
+const chatsKey = () => `bunnyChats:${languageOwner()}`;
+const loadChats = (): Chat[] => {
+  try { return JSON.parse(localStorage.getItem(chatsKey()) || '[]'); } catch { return []; }
+};
+const saveChats = (chats: Chat[]) => {
+  try { localStorage.setItem(chatsKey(), JSON.stringify(chats.slice(0, MAX_CHATS))); } catch { /* storage full or blocked */ }
+};
+const newChatId = () => `chat-${Date.now().toString(36)}`;
 type Texts = Record<BunnyLanguage, string>;
 
 const T = {
@@ -25,6 +43,9 @@ const T = {
   listen: { en: 'Listen', bn: 'শুনুন', hi: 'सुनें' },
   stop: { en: 'Stop', bn: 'থামান', hi: 'रोकें' },
   newChat: { en: 'New chat', bn: 'নতুন চ্যাট', hi: 'नई चैट' },
+  history: { en: 'Past chats', bn: 'আগের চ্যাট', hi: 'पिछली चैट' },
+  noHistory: { en: 'No past chats yet.', bn: 'এখনও কোনো আগের চ্যাট নেই।', hi: 'अभी कोई पिछली चैट नहीं।' },
+  summarised: { en: 'Earlier messages are summarised for Bunny to keep answers quick.', bn: 'আগের কথাগুলো সংক্ষেপে বানিকে দেওয়া হয়েছে।', hi: 'पहले के संदेश बनी के लिए संक्षेप में रखे गए हैं।' },
   hourLimit: { en: "You've asked Bunny a lot this hour. Try again in {m} minutes.", bn: 'এই ঘণ্টায় অনেক প্রশ্ন হয়ে গেছে। {m} মিনিট পরে আবার চেষ্টা করুন।', hi: 'इस घंटे बहुत सवाल हो गए। {m} मिनट बाद फिर कोशिश करें।' },
   dayLimit: { en: "You've used today's share of Bunny. Try again tomorrow.", bn: 'আজকের জন্য বানির ভাগ শেষ। কাল আবার চেষ্টা করুন।', hi: 'आज के लिए बनी का हिस्सा ख़त्म हो गया। कल फिर कोशिश करें।' },
 } satisfies Record<string, Texts>;
@@ -58,6 +79,11 @@ const say = (t: Texts, lang: BunnyLanguage) => t[lang] || t.en;
 export function BunnyChat({ accessToken, storeId, raised = false }: { accessToken: string; storeId: string | null; raised?: boolean }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [chatId, setChatId] = useState(newChatId);
+  const [summary, setSummary] = useState('');
+  const [summarizedCount, setSummarizedCount] = useState(0);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
@@ -67,6 +93,46 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
   const isPrivate = screenIsPrivate(screen.page);
 
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, busy, open]);
+  // Past chats for whoever is signed in; reopen the latest one if it was used in the last 12 hours.
+  useEffect(() => {
+    if (!open) return;
+    const saved = loadChats();
+    setChats(saved);
+    if (!messages.length && saved[0] && Date.now() - Date.parse(saved[0].updatedAt) < 12 * 3600000) openChat(saved[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  // Save the open chat whenever it changes.
+  useEffect(() => {
+    if (!messages.length) return;
+    const first = messages.find((m) => m.role === 'user')?.content || '';
+    const chat: Chat = { id: chatId, title: first.slice(0, 60), updatedAt: new Date().toISOString(), messages: messages.slice(-80), summary, summarizedCount };
+    const nextChats = [chat, ...loadChats().filter((c) => c.id !== chatId)];
+    saveChats(nextChats);
+    setChats(nextChats.slice(0, MAX_CHATS));
+  }, [messages, summary, summarizedCount, chatId]);
+
+  const openChat = (chat: Chat) => {
+    stopSpeaking();
+    setChatId(chat.id);
+    setMessages(chat.messages || []);
+    setSummary(chat.summary || '');
+    setSummarizedCount(chat.summarizedCount || 0);
+    setShowHistory(false);
+  };
+  const startNewChat = () => {
+    stopSpeaking();
+    setChatId(newChatId());
+    setMessages([]);
+    setSummary('');
+    setSummarizedCount(0);
+    setShowHistory(false);
+  };
+  const deleteChat = (id: string) => {
+    const nextChats = loadChats().filter((c) => c.id !== id);
+    saveChats(nextChats);
+    setChats(nextChats);
+    if (id === chatId) startNewChat();
+  };
   useEffect(() => { if (!open) { stopSpeaking(); setSpeakingIndex(null); } }, [open]);
 
   const screenName = [PAGE_LABELS[screen.page] || screen.page, screen.tab ? TAB_LABELS[screen.tab] || screen.tab : '']
@@ -99,8 +165,28 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
     setInput('');
     setBusy(true);
     try {
-      const history = next.filter((m) => !m.failed).map((m) => ({ role: m.role, content: m.content }));
+      // Long chat: summarise everything but the recent messages once, then send summary + recent.
+      let sumText = summary;
+      let sumCount = summarizedCount;
+      const unsent = next.slice(sumCount).filter((m) => !m.failed);
+      const unsentChars = unsent.reduce((t, m) => t + m.content.length, 0);
+      if (unsent.length > SUMMARISE_AT_COUNT || unsentChars > SUMMARISE_AT_CHARS) {
+        let cut = next.length - KEEP_RECENT;
+        while (cut > sumCount && next[cut]?.role !== 'user') cut--; // the recent part starts with a question
+        if (cut > sumCount) {
+          const older = next.slice(sumCount, cut).filter((m) => !m.failed).map((m) => ({ role: m.role, content: m.content }));
+          try {
+            sumText = await api.summarizeChat(accessToken, sumText, older);
+            sumCount = cut;
+            setSummary(sumText);
+            setSummarizedCount(cut);
+          } catch { /* fall back to sending the recent messages only */ }
+        }
+      }
+      let history = next.slice(sumCount).filter((m) => !m.failed).map((m) => ({ role: m.role, content: m.content }));
+      while (history.length && history[0].role !== 'user') history = history.slice(1);
       const res = await api.askBunny(accessToken, storeId, history, {
+        summary: sumText || undefined,
         language: lang,
         screen: { page: PAGE_LABELS[screen.page] || screen.page, tab: screen.tab ? TAB_LABELS[screen.tab] || screen.tab : undefined, text: captureScreenText() },
       });
@@ -148,8 +234,11 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
               <p className="font-bold text-gray-900">{say(T.title, lang)}</p>
               <p className="text-[11px] text-gray-500 truncate">{say(T.about, lang)}: {screenName}</p>
             </div>
+            <button type="button" onClick={() => setShowHistory(!showHistory)} className={`p-1.5 ${showHistory ? 'text-violet-700' : 'text-gray-400 hover:text-gray-700'}`} aria-label={say(T.history, lang)} title={say(T.history, lang)}>
+              <History className="w-4 h-4" />
+            </button>
             {messages.length > 0 && (
-              <button type="button" onClick={() => { stopSpeaking(); setMessages([]); }} className="p-1.5 text-gray-400 hover:text-gray-700" aria-label={say(T.newChat, lang)} title={say(T.newChat, lang)}>
+              <button type="button" onClick={startNewChat} className="p-1.5 text-gray-400 hover:text-gray-700" aria-label={say(T.newChat, lang)} title={say(T.newChat, lang)}>
                 <RotateCcw className="w-4 h-4" />
               </button>
             )}
@@ -170,7 +259,29 @@ export function BunnyChat({ accessToken, storeId, raised = false }: { accessToke
             ))}
           </div>
 
+          {showHistory && (
+            <div className="border-b border-gray-200 bg-white max-h-[45%] overflow-y-auto">
+              <p className="px-4 pt-3 text-xs font-semibold text-gray-600">{say(T.history, lang)}</p>
+              {chats.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-500">{say(T.noHistory, lang)}</p>
+              ) : (
+                <ul className="py-1">
+                  {chats.map((c) => (
+                    <li key={c.id} className={`flex items-center gap-2 px-4 py-2 ${c.id === chatId ? 'bg-violet-50' : ''}`}>
+                      <button type="button" onClick={() => openChat(c)} className="flex-1 min-w-0 text-left">
+                        <p className="text-sm text-gray-900 truncate">{c.title || '…'}</p>
+                        <p className="text-[11px] text-gray-500">{new Date(c.updatedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} · {c.messages.length}</p>
+                      </button>
+                      <button type="button" onClick={() => deleteChat(c.id)} className="p-1.5 text-gray-400 hover:text-rose-600" aria-label="Delete chat"><Trash2 className="w-4 h-4" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {summarizedCount > 0 && <p className="text-[11px] text-gray-400 text-center">{say(T.summarised, lang)}</p>}
             {messages.length === 0 && (
               <>
                 <p className="text-sm text-gray-600">{say(T.hello, lang)}</p>
