@@ -44,7 +44,7 @@ function PersonOptions({ people }: { people: Person[] }) {
 
 function DayToggles({ days, onToggle }: { days: number[]; onToggle: (d: number) => void }) {
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Days">
+    <div className="flex flex-wrap gap-1" role="group" aria-label="Days">
       {DAY_LETTERS.map((d, k) => {
         const on = days.includes(k);
         return (

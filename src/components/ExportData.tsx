@@ -288,7 +288,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId, context, 
       </div>
       <div className="flex flex-col gap-3">
         <span className="text-body-sm font-medium text-text">{t('reports.covers')}</span>
-        <SegmentedControl aria-label={t('reports.covers')} value={scope} onValueChange={changed(setScope)} options={SCOPES.map((s) => ({ value: s, label: t(scopeKey(s)) }))} />
+        <SegmentedControl aria-label={t('reports.covers')} value={scope} onValueChange={changed(setScope)} options={SCOPES.map((s) => ({ value: s, label: t(s === 'combined' ? 'reports.scope.combinedShort' : scopeKey(s)) }))} />
         <p className="text-caption text-text-3">{storeNames.store} · {storeNames.house}</p>
       </div>
     </div>
