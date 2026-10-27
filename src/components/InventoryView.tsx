@@ -14,11 +14,11 @@ type Props = {
 
 function StatChip({ label, value, color = 'blue' }: { label: string; value: number; color?: 'blue' | 'amber' | 'purple' | 'rose' }) {
   return (
-    <div className={`rounded-2xl p-4 text-white shadow-lg bg-gradient-to-br ${
-      color === 'blue' ? 'from-blue-500 to-blue-600 shadow-blue-500/20'
-      : color === 'amber' ? 'from-amber-500 to-amber-600 shadow-amber-500/20'
-      : color === 'purple' ? 'from-purple-500 to-purple-600 shadow-purple-500/20'
-      : 'from-rose-500 to-rose-600 shadow-rose-500/20'
+    <div className={`rounded-2xl p-4 text-white shadow-lg bg-surface-2 ${
+      color === 'blue' ? ''
+      : color === 'amber' ? ''
+      : color === 'purple' ? ''
+      : ''
     }`}>
       <p className="text-xs uppercase tracking-wide text-white/80">{label}</p>
       <p className="text-xl font-semibold mt-1">₹{value.toLocaleString()}</p>
@@ -212,17 +212,17 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       {/* Header with Read-Only Badge */}
       <div className="mb-4 sm:mb-8 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
-            <Eye className="w-6 h-6 text-white" />
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
+            <Eye className="w-6 h-6 text-text" />
           </div>
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory overview</h1>
-            <p className="text-sm sm:text-base text-gray-500">Read-only view of purchases and costs</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight">Inventory overview</h1>
+            <p className="text-sm sm:text-base text-text-3">Read-only view of purchases and costs</p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-full flex-shrink-0">
-          <Lock className="w-3.5 h-3.5 text-amber-700" />
-          <span className="text-xs text-amber-800">View only</span>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-warning-soft rounded-full flex-shrink-0">
+          <Lock className="w-3.5 h-3.5 text-warning" />
+          <span className="text-xs text-warning">View only</span>
         </div>
       </div>
 
@@ -235,7 +235,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       {/* Store vs Production House vs Combined - production house data can't be reached
           via the store selector above (it only lists retail stores), so this tab is the
           only way to view its inventory/overhead costs. */}
-      <div className="flex bg-gray-100 rounded-xl p-1 mt-4">
+      <div className="flex bg-surface-2 rounded-xl p-1 mt-4">
         {(['store', 'production', 'combined', 'utilities'] as const).map((tab) => (
           <button
             key={tab}
@@ -243,13 +243,13 @@ export function InventoryView({ context, selectedStoreId }: Props) {
             className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
               activeTab === tab
                 ? tab === 'combined'
-                  ? 'bg-purple-600 text-white shadow-sm'
+                  ? 'bg-primary text-white shadow-sm'
                   : tab === 'production'
-                  ? 'bg-green-600 text-white shadow-sm'
+                  ? 'bg-primary text-white shadow-sm'
                   : tab === 'utilities'
-                  ? 'bg-sky-600 text-white shadow-sm'
-                  : 'bg-blue-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-primary text-white shadow-sm'
+                : 'text-text-2 hover:text-text'
             }`}
           >
             {tab === 'combined' ? 'Combined' : tab === 'production' ? 'Production House' : tab === 'utilities' ? 'Utilities' : 'Store'}
@@ -278,9 +278,9 @@ export function InventoryView({ context, selectedStoreId }: Props) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {([
-            { label: 'Production House', icon: <Building2 className="w-4 h-4" />, value: productionMTD, prev: productionPrevMTD, accent: 'text-emerald-600' },
-            { label: 'Store', icon: <StoreIcon className="w-4 h-4" />, value: storeMTD, prev: storePrevMTD, accent: 'text-blue-600' },
-            { label: 'Combined', icon: <Layers className="w-4 h-4" />, value: combinedMTD, prev: combinedPrevMTD, accent: 'text-purple-600' },
+            { label: 'Production House', icon: <Building2 className="w-4 h-4" />, value: productionMTD, prev: productionPrevMTD, accent: 'text-success' },
+            { label: 'Store', icon: <StoreIcon className="w-4 h-4" />, value: storeMTD, prev: storePrevMTD, accent: 'text-info' },
+            { label: 'Combined', icon: <Layers className="w-4 h-4" />, value: combinedMTD, prev: combinedPrevMTD, accent: 'text-info' },
           ] as const).map(({ label, icon, value, prev, accent }) => {
             const change = pctChange(value, prev);
             const direction: 'up' | 'down' | 'same' = change > 0.5 ? 'up' : change < -0.5 ? 'down' : 'same';
@@ -294,7 +294,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                   <p className="text-xl font-bold text-foreground tabular-nums">₹{value.toLocaleString()}</p>
                   {prev > 0 && (
                     <span className={`flex items-center gap-0.5 text-xs font-semibold flex-shrink-0 ${
-                      direction === 'up' ? 'text-red-600' : direction === 'down' ? 'text-emerald-600' : 'text-gray-400'
+                      direction === 'up' ? 'text-danger' : direction === 'down' ? 'text-success' : 'text-text-3'
                     }`}>
                       {direction === 'up' && <ArrowUp className="w-3 h-3" />}
                       {direction === 'down' && <ArrowDown className="w-3 h-3" />}
@@ -304,7 +304,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                   )}
                 </div>
                 {prev > 0 && (
-                  <p className="text-[11px] text-muted-foreground mt-1">vs ₹{prev.toLocaleString()} last month</p>
+                  <p className="text-caption text-muted-foreground mt-1">vs ₹{prev.toLocaleString()} last month</p>
                 )}
               </div>
             );
@@ -372,7 +372,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-foreground truncate">
                           {item.itemName || (
-                            <span className="text-red-600 italic inline-flex items-center gap-1">
+                            <span className="text-danger italic inline-flex items-center gap-1">
                               <AlertTriangle className="w-3 h-3" /> Missing name
                             </span>
                           )}
@@ -461,7 +461,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
             Monthly stock recalibration
           </button>
           <button
-            className="flex items-center gap-2 bg-stone-700 hover:bg-stone-800 text-white py-2.5 px-4 rounded-xl text-sm transition-colors"
+            className="flex items-center gap-2 bg-text hover:bg-text text-white py-2.5 px-4 rounded-xl text-sm transition-colors"
             onClick={() => setShowCategoryManager(true)}
           >
             <Package className="w-4 h-4" />

@@ -888,17 +888,17 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 sm:p-6">
+      <div className="bg-surface rounded-2xl shadow-sm border border-border p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
-              <Wallet className="w-6 h-6 text-white" />
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
+              <Wallet className="w-6 h-6 text-text" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+              <h2 className="text-2xl font-bold text-text tracking-tight">
                 Aggregator Payout Reconciliation (Swiggy & Zomato)
               </h2>
-              <p className="text-sm text-gray-500 mt-1">
+              <p className="text-sm text-text-3 mt-1">
                 Upload each settlement report as it's downloaded from Swiggy/Zomato - net payout, gross sales, and
                 commission are computed automatically, and the net payout is credited to Online Cash in Hand (Paytm)
                 on that settlement's own date.
@@ -908,7 +908,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           {canEdit && (
             <button
               onClick={() => { setShowUploadModal(true); setUploadStoreId(defaultUploadStoreId); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
-              className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-semibold hover:from-orange-700 hover:to-red-700 transition-all shadow-lg"
+              className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-semibold   transition-all shadow-lg"
             >
               <Upload className="w-4 h-4" />
               Upload Settlement
@@ -918,14 +918,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       </div>
 
       {/* Date filter - applies to both the summary cards and the settlement history below */}
-      <div className="bg-white rounded-2xl p-4 border border-gray-200 shadow-sm">
+      <div className="bg-surface rounded-2xl p-4 border border-border shadow-sm">
         <div className="flex flex-wrap gap-2">
           {FILTER_OPTIONS.map(([value, label]) => (
             <button
               key={value}
               onClick={() => setFilterPreset(value)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                filterPreset === value ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                filterPreset === value ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
               }`}
             >
               {label}
@@ -939,24 +939,24 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               type="date"
               value={draftCustomStart}
               onChange={(e) => setDraftCustomStart(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+              className="px-3 py-1.5 border border-border-strong rounded-lg text-sm"
             />
-            <span className="text-gray-500 text-sm">to</span>
+            <span className="text-text-3 text-sm">to</span>
             <input
               type="date"
               value={draftCustomEnd}
               onChange={(e) => setDraftCustomEnd(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+              className="px-3 py-1.5 border border-border-strong rounded-lg text-sm"
             />
             <button
               onClick={() => { setAppliedCustomStart(draftCustomStart); setAppliedCustomEnd(draftCustomEnd); }}
               disabled={!draftCustomStart || !draftCustomEnd}
-              className="px-4 py-1.5 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Apply
             </button>
             {!appliedCustomStart && (
-              <span className="text-xs text-gray-400">Pick both dates and press Apply</span>
+              <span className="text-xs text-text-3">Pick both dates and press Apply</span>
             )}
           </div>
         )}
@@ -975,42 +975,42 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 sm:p-6 shadow-lg shadow-emerald-500/20 text-white">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-emerald-100 font-medium">Net Order Value ({FILTER_LABELS[filterPreset]})</span>
-            <DollarSign className="w-5 h-5 text-emerald-100" />
+            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Order Value ({FILTER_LABELS[filterPreset]})</span>
+            <DollarSign className="w-5 h-5 text-text-2" />
           </div>
           <p className="text-2xl font-semibold">₹{filteredStats.totalSales.toFixed(2)}</p>
           {/* From the aggregator's own settlement report (post-discount, pre-payout) - not
               the same figure as Online Revenue elsewhere in the app, which comes from POS
               billing. Used here for commission % and the Channel Economics comparison. */}
-          <p className="text-xs text-emerald-100 mt-1">From settlement report, post-discount - not the same as Online Revenue</p>
+          <p className="text-xs text-text-2 mt-1">From settlement report, post-discount - not the same as Online Revenue</p>
         </div>
 
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 sm:p-6 shadow-lg shadow-blue-500/20 text-white">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-blue-100 font-medium">Net Payout ({FILTER_LABELS[filterPreset]})</span>
-            <Wallet className="w-5 h-5 text-blue-100" />
+            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Payout ({FILTER_LABELS[filterPreset]})</span>
+            <Wallet className="w-5 h-5 text-text-2" />
           </div>
           <p className="text-2xl font-semibold">₹{filteredStats.totalPayouts.toFixed(2)}</p>
         </div>
 
-        <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 sm:p-6 shadow-lg shadow-amber-500/20 text-white">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-amber-100 font-medium">Net Commission ({FILTER_LABELS[filterPreset]})</span>
-            <TrendingUp className="w-5 h-5 text-amber-100" />
+            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Commission ({FILTER_LABELS[filterPreset]})</span>
+            <TrendingUp className="w-5 h-5 text-text-2" />
           </div>
           <p className="text-2xl font-semibold">₹{filteredStats.totalCommission.toFixed(2)}</p>
-          <p className="text-xs text-amber-100 mt-1">Zomato/Swiggy's service + payment fees, taxes on those, and other order-level deductions - separate from Ad Spend, shown on its own below</p>
+          <p className="text-xs text-text-2 mt-1">Zomato/Swiggy's service + payment fees, taxes on those, and other order-level deductions - separate from Ad Spend, shown on its own below</p>
         </div>
 
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 sm:p-6 shadow-lg shadow-purple-500/20 text-white">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-purple-100 font-medium">Ad Spend ({FILTER_LABELS[filterPreset]})</span>
-            <TrendingUp className="w-5 h-5 text-purple-100" />
+            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Ad Spend ({FILTER_LABELS[filterPreset]})</span>
+            <TrendingUp className="w-5 h-5 text-text-2" />
           </div>
           <p className="text-2xl font-semibold">₹{filteredStats.totalAdSpend.toFixed(2)}</p>
-          <p className="text-xs text-purple-100 mt-1">Zomato ads + Swiggy ads, from each settlement's Payout Breakup</p>
+          <p className="text-xs text-text-2 mt-1">Zomato ads + Swiggy ads, from each settlement's Payout Breakup</p>
         </div>
       </div>
 
@@ -1019,77 +1019,77 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         {(['zomato', 'swiggy'] as const).map(agg => {
           const stats = byAggregator[agg];
           return (
-            <div key={agg} className={`bg-white rounded-2xl p-5 border shadow-sm ${agg === 'zomato' ? 'border-red-200' : 'border-orange-200'}`}>
-              <h3 className="text-base font-bold text-gray-900 capitalize mb-3">{agg} ({FILTER_LABELS[filterPreset]})</h3>
+            <div key={agg} className={`bg-surface rounded-2xl p-5 border shadow-sm ${agg === 'zomato' ? 'border-danger-border' : 'border-border-strong'}`}>
+              <h3 className="text-base font-bold text-text capitalize mb-3">{agg} ({FILTER_LABELS[filterPreset]})</h3>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="text-xs text-gray-500">Orders</p>
-                  <p className="text-lg font-semibold text-gray-900">{stats.orders}</p>
+                  <p className="text-xs text-text-3">Orders</p>
+                  <p className="text-lg font-semibold text-text">{stats.orders}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Items Total</p>
+                  <p className="text-xs text-text-3">Items Total</p>
                   {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-gray-900">₹{stats.itemSubtotal.toFixed(2)}</p>
+                    <p className="text-lg font-semibold text-text">₹{stats.itemSubtotal.toFixed(2)}</p>
                   ) : (
-                    <p className="text-sm text-gray-400 mt-1">Not tracked yet</p>
+                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Discounts</p>
+                  <p className="text-xs text-text-3">Discounts</p>
                   {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-red-600">− ₹{stats.discount.toFixed(2)}</p>
+                    <p className="text-lg font-semibold text-danger">− ₹{stats.discount.toFixed(2)}</p>
                   ) : (
-                    <p className="text-sm text-gray-400 mt-1">Not tracked yet</p>
+                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">GST</p>
+                  <p className="text-xs text-text-3">GST</p>
                   {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-gray-900">+ ₹{stats.gstCollected.toFixed(2)}</p>
+                    <p className="text-lg font-semibold text-text">+ ₹{stats.gstCollected.toFixed(2)}</p>
                   ) : (
-                    <p className="text-sm text-gray-400 mt-1">Not tracked yet</p>
+                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
                   )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
+              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-border">
                 <div>
-                  <p className="text-xs text-gray-500">Net Order Value</p>
-                  <p className="text-lg font-semibold text-gray-900">₹{stats.grossSales.toFixed(2)}</p>
+                  <p className="text-xs text-text-3">Net Order Value</p>
+                  <p className="text-lg font-semibold text-text">₹{stats.grossSales.toFixed(2)}</p>
                   {stats.untrackedCount > 0 ? (
-                    <p className="text-[11px] text-amber-600" title={`₹${stats.untrackedGrossSales.toFixed(2)} from ${stats.untrackedCount} settlement(s) uploaded before item-level tracking existed - re-upload them to include in Items Total/Discounts/GST`}>
+                    <p className="text-caption text-warning" title={`₹${stats.untrackedGrossSales.toFixed(2)} from ${stats.untrackedCount} settlement(s) uploaded before item-level tracking existed - re-upload them to include in Items Total/Discounts/GST`}>
                       Includes ₹{stats.untrackedGrossSales.toFixed(2)} from {stats.untrackedCount} untracked settlement{stats.untrackedCount > 1 ? 's' : ''} - re-upload to reconcile
                     </p>
                   ) : (
-                    <p className="text-[11px] text-gray-400">Items Total − Discounts + GST</p>
+                    <p className="text-caption text-text-3">Items Total − Discounts + GST</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Net Commission</p>
-                  <p className={`text-lg font-semibold ${stats.netCommission >= 0 ? 'text-orange-600' : 'text-red-600'}`}>₹{stats.netCommission.toFixed(2)}</p>
+                  <p className="text-xs text-text-3">Net Commission</p>
+                  <p className={`text-lg font-semibold ${stats.netCommission >= 0 ? 'text-primary' : 'text-danger'}`}>₹{stats.netCommission.toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Ad Spend</p>
-                  <p className="text-lg font-semibold text-purple-600">₹{stats.adSpend.toFixed(2)}</p>
+                  <p className="text-xs text-text-3">Ad Spend</p>
+                  <p className="text-lg font-semibold text-info">₹{stats.adSpend.toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Net Payout</p>
-                  <p className="text-lg font-semibold text-blue-600">₹{stats.netPayout.toFixed(2)}</p>
-                  <p className="text-[11px] text-gray-400">Net Order Value − Commission − Ad Spend</p>
+                  <p className="text-xs text-text-3">Net Payout</p>
+                  <p className="text-lg font-semibold text-info">₹{stats.netPayout.toFixed(2)}</p>
+                  <p className="text-caption text-text-3">Net Order Value − Commission − Ad Spend</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
+              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-border">
                 <div className="flex items-center justify-between col-span-2">
-                  <span className="text-xs text-gray-500">Payout % <span className="text-gray-400">(of Items Total)</span></span>
-                  <span className={`text-sm font-semibold ${stats.payoutPct === null ? 'text-gray-400' : stats.payoutPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  <span className="text-xs text-text-3">Payout % <span className="text-text-3">(of Items Total)</span></span>
+                  <span className={`text-sm font-semibold ${stats.payoutPct === null ? 'text-text-3' : stats.payoutPct >= 0 ? 'text-success' : 'text-danger'}`}>
                     {stats.payoutPct === null ? 'Not tracked yet' : `${stats.payoutPct.toFixed(1)}%`}
                   </span>
                 </div>
                 <div className="flex items-center justify-between col-span-2">
-                  <span className="text-xs text-gray-500">Commission % <span className="text-gray-400">(of Net Order Value)</span></span>
-                  <span className={`text-sm font-semibold ${stats.commissionPct >= 0 ? 'text-orange-600' : 'text-red-600'}`}>{stats.commissionPct.toFixed(1)}%</span>
+                  <span className="text-xs text-text-3">Commission % <span className="text-text-3">(of Net Order Value)</span></span>
+                  <span className={`text-sm font-semibold ${stats.commissionPct >= 0 ? 'text-primary' : 'text-danger'}`}>{stats.commissionPct.toFixed(1)}%</span>
                 </div>
               </div>
             </div>
@@ -1105,9 +1105,9 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           const hasPayoutPct = trend.some(r => r.payoutPct !== null);
           const hasAnyData = trend.some(r => r.payoutPct !== null || r.commissionPct !== null);
           return (
-            <div key={agg} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
-              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight capitalize mb-1">{agg} - Payout % vs Commission %</h3>
-              <p className="text-xs text-gray-500 mb-4">
+            <div key={agg} className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
+              <h3 className="text-base sm:text-lg font-bold text-text tracking-tight capitalize mb-1">{agg} - Payout % vs Commission %</h3>
+              <p className="text-xs text-text-3 mb-4">
                 By settlement date{!hasPayoutPct ? ' · Payout % needs Items Total, not tracked for this aggregator yet' : ''}
               </p>
               {hasAnyData ? (
@@ -1125,7 +1125,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="text-center text-gray-500 py-8 text-sm">No {agg} settlements in this period</div>
+                <div className="text-center text-text-3 py-8 text-sm">No {agg} settlements in this period</div>
               )}
             </div>
           );
@@ -1136,12 +1136,12 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           derived from, using this page's own date-range filter above. */}
       {hasActiveRange && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
-              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
+          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
+            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
+              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-info" />
               Zomato Discount % of Menu Subtotal
             </h3>
-            <p className="text-xs text-gray-500 mb-4">Promo + flat-off discount as a % of the pre-discount dish price total, from Zomato's own settlement file</p>
+            <p className="text-xs text-text-3 mb-4">Promo + flat-off discount as a % of the pre-discount dish price total, from Zomato's own settlement file</p>
             {discountChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={discountChartData}>
@@ -1153,16 +1153,16 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="text-center text-gray-500 py-8 text-sm">No Zomato settlements with discount data in this period</div>
+              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with discount data in this period</div>
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
-              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-rose-600" />
+          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
+            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
+              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-danger" />
               Promo vs Flat-off Discount
             </h3>
-            <p className="text-xs text-gray-500 mb-4">₹ discount by type, per settlement date</p>
+            <p className="text-xs text-text-3 mb-4">₹ discount by type, per settlement date</p>
             {discountChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={discountChartData}>
@@ -1176,7 +1176,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="text-center text-gray-500 py-8 text-sm">No Zomato settlements with discount data in this period</div>
+              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with discount data in this period</div>
             )}
           </div>
         </div>
@@ -1189,31 +1189,31 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Per-promo-code breakdown - replaces Zomato's own "Discounts Summary" sheet,
               which is broken (formula errors) in every real export seen so far. */}
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
+          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
+            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-info" />
               Discount by Promo Code
             </h3>
-            <p className="text-xs text-gray-500 mb-4">Top Zomato codes by total ₹ discount given in this period, with the order count each one applied to</p>
+            <p className="text-xs text-text-3 mb-4">Top Zomato codes by total ₹ discount given in this period, with the order count each one applied to</p>
             {discountByConstructData.length > 0 ? (
               <div className="space-y-2">
                 {discountByConstructData.map(row => {
                   const maxDiscount = discountByConstructData[0]?.discount || 1;
                   return (
                     <div key={row.construct} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-600 w-40 sm:w-48 truncate flex-shrink-0" title={row.construct}>{row.construct}</span>
+                      <span className="text-xs text-text-2 w-40 sm:w-48 truncate flex-shrink-0" title={row.construct}>{row.construct}</span>
                       <div className="flex-1 min-w-0">
-                        <div className="w-full bg-gray-100 rounded-full h-2">
-                          <div className="h-2 rounded-full bg-purple-500" style={{ width: `${Math.max(4, (row.discount / maxDiscount) * 100)}%` }} />
+                        <div className="w-full bg-surface-2 rounded-full h-2">
+                          <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(4, (row.discount / maxDiscount) * 100)}%` }} />
                         </div>
                       </div>
-                      <span className="text-xs font-semibold text-gray-900 flex-shrink-0 w-28 text-right tabular-nums">₹{row.discount.toLocaleString('en-IN')} ({row.orders})</span>
+                      <span className="text-xs font-semibold text-text flex-shrink-0 w-28 text-right tabular-nums">₹{row.discount.toLocaleString('en-IN')} ({row.orders})</span>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="text-center text-gray-500 py-8 text-sm">No Zomato settlements with promo-code data in this period</div>
+              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with promo-code data in this period</div>
             )}
           </div>
 
@@ -1221,68 +1221,68 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           {/* Channel Economics - "would these dishes have earned more sold at the counter than what
               the aggregator actually paid us?" For Zomato or Swiggy (toggle). Counter prices are each
               dish's newest price from POS sales; see channelEconomicsData / latestCounterPrices. */}
-          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 sm:p-6">
+          <div className="bg-surface rounded-2xl border border-warning-border shadow-sm p-4 sm:p-6">
             <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
-              <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
-                <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+              <h3 className="text-base sm:text-lg font-bold text-text tracking-tight flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-warning" />
                 Channel Economics
               </h3>
-              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="group" aria-label="Aggregator">
+              <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs" role="group" aria-label="Aggregator">
                 {(['zomato', 'swiggy'] as const).map((agg, i) => (
                   <button
                     key={agg}
                     onClick={() => setEconPlatform(agg)}
-                    className={`px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-gray-200' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-red-600 text-white' : 'bg-orange-500 text-white') : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                    className={`px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-border' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-danger text-white' : 'bg-primary text-white') : 'bg-surface text-text-2 hover:bg-surface-2'}`}
                   >
                     {agg}
                   </button>
                 ))}
               </div>
             </div>
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-xs text-text-3 mb-4">
               For every real {platformName} order this period, what the exact same dishes would have cost at your counter - compared to what {platformName}'s menu listed them at, and what {platformName} actually paid you.
             </p>
 
             {channelEconomicsData.totalOrders === 0 ? (
-              <div className="text-center text-gray-500 py-8 text-sm">No {platformName} orders with item-level detail in this period</div>
+              <div className="text-center text-text-3 py-8 text-sm">No {platformName} orders with item-level detail in this period</div>
             ) : (
               <>
                 {/* The three raw inputs, side by side, before the derived deficit/markup
                     cards below - so the two big numbers aren't a black box. */}
                 <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-                  <div className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Counter Price</p>
-                    <p className="text-sm font-bold text-emerald-700">₹{channelEconomicsData.totals.theoreticalOffline.toLocaleString('en-IN')}</p>
-                    <p className="text-[10px] text-gray-400">same dishes, latest dine-in price</p>
+                  <div className="bg-surface-2 rounded-lg p-2.5">
+                    <p className="text-caption uppercase tracking-wide text-text-3">Counter Price</p>
+                    <p className="text-sm font-bold text-success">₹{channelEconomicsData.totals.theoreticalOffline.toLocaleString('en-IN')}</p>
+                    <p className="text-caption text-text-3">same dishes, latest dine-in price</p>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-gray-500">{platformName} Menu Price</p>
-                    <p className="text-sm font-bold text-slate-700">₹{channelEconomicsData.totals.itemSubtotal.toLocaleString('en-IN')}</p>
-                    <p className="text-[10px] text-gray-400">what {platformName} listed them at</p>
+                  <div className="bg-surface-2 rounded-lg p-2.5">
+                    <p className="text-caption uppercase tracking-wide text-text-3">{platformName} Menu Price</p>
+                    <p className="text-sm font-bold text-text-2">₹{channelEconomicsData.totals.itemSubtotal.toLocaleString('en-IN')}</p>
+                    <p className="text-caption text-text-3">what {platformName} listed them at</p>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-gray-500">{platformName} Paid You</p>
-                    <p className="text-sm font-bold text-orange-600">₹{channelEconomicsData.totals.netPayout.toLocaleString('en-IN')}</p>
-                    <p className="text-[10px] text-gray-400">actual net payout</p>
+                  <div className="bg-surface-2 rounded-lg p-2.5">
+                    <p className="text-caption uppercase tracking-wide text-text-3">{platformName} Paid You</p>
+                    <p className="text-sm font-bold text-primary">₹{channelEconomicsData.totals.netPayout.toLocaleString('en-IN')}</p>
+                    <p className="text-caption text-text-3">actual net payout</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  <div className={`rounded-xl p-4 shadow-lg text-white ${channelEconomicsData.deficitVsPayout > 0 ? 'bg-gradient-to-br from-amber-500 to-amber-600 shadow-amber-500/20' : 'bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/20'}`}>
-                    <div className="text-xs uppercase tracking-wide text-white/80 mb-1">
+                  <div className={`rounded-xl p-4 shadow-lg text-text ${channelEconomicsData.deficitVsPayout > 0 ? 'bg-surface border border-border' : 'bg-surface border border-border'}`}>
+                    <div className="text-xs uppercase tracking-wide text-text mb-1">
                       {channelEconomicsData.deficitVsPayout > 0 ? 'Money Left on the Table' : `${platformName} Paid a Premium`}
                     </div>
                     <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsPayout).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                    <div className="text-xs text-white/80 mt-1">
+                    <div className="text-xs text-text mt-1">
                       {channelEconomicsData.deficitVsPayout > 0
                         ? `Counter Price − ${platformName} Paid You: these dishes would have earned this much more sold at the counter`
                         : `Counter Price − ${platformName} Paid You: ${platformName} actually paid more than counter price for these dishes`}
                     </div>
                   </div>
-                  <div className="rounded-xl p-4 shadow-lg text-white bg-gradient-to-br from-slate-500 to-slate-600 shadow-slate-500/20">
-                    <div className="text-xs uppercase tracking-wide text-white/80 mb-1">Online Menu Markup</div>
+                  <div className="rounded-xl p-4 shadow-lg text-text bg-surface border border-border">
+                    <div className="text-xs uppercase tracking-wide text-text mb-1">Online Menu Markup</div>
                     <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsMenuSubtotal).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                    <div className="text-xs text-white/80 mt-1">
+                    <div className="text-xs text-text mt-1">
                       {channelEconomicsData.deficitVsMenuSubtotal < 0
                         ? `Counter Price − ${platformName} Menu Price: ${platformName} lists these dishes higher than the counter, but it isn't enough to cover the deficit above`
                         : `Counter Price − ${platformName} Menu Price: ${platformName}'s listed prices are at or below counter price for these dishes`}
@@ -1291,15 +1291,15 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </div>
 
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-3 text-xs">
-                  <span className="text-gray-500">
-                    Based on <span className="font-semibold text-gray-700">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} {platformName} orders ({channelEconomicsData.matchRatePct}% matched to item + price data)
+                  <span className="text-text-3">
+                    Based on <span className="font-semibold text-text-2">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} {platformName} orders ({channelEconomicsData.matchRatePct}% matched to item + price data)
                   </span>
                   <div className="flex gap-1.5">
                     {channelEconomicsData.unmatchedOrders > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">{channelEconomicsData.unmatchedOrders} unmatched</span>
+                      <span className="px-2 py-0.5 rounded-full bg-surface-2 text-text-2 font-medium">{channelEconomicsData.unmatchedOrders} unmatched</span>
                     )}
                     {channelEconomicsData.unpricedOrders > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium" title={channelEconomicsData.unpricedItemNames.join(', ')}>
+                      <span className="px-2 py-0.5 rounded-full bg-warning-soft text-warning font-medium" title={channelEconomicsData.unpricedItemNames.join(', ')}>
                         {channelEconomicsData.unpricedOrders} missing item price
                       </span>
                     )}
@@ -1307,14 +1307,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </div>
 
                 {/* Where each counter price came from - the newest sale at the counter, or the saved menu price as a fallback. */}
-                <details className="mb-3 rounded-lg border border-gray-200 bg-gray-50/60">
-                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700">
+                <details className="mb-3 rounded-lg border border-border bg-surface-2">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text-2">
                     Counter prices used - {channelEconomicsData.latestPricedCount} of {channelEconomicsData.pricesUsedList.length} dishes priced from the latest counter sales
                   </summary>
                   <div className="px-3 pb-3 overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="text-left text-gray-500">
+                        <tr className="text-left text-text-3">
                           <th className="py-1.5 pr-2 font-medium">Dish</th>
                           <th className="py-1.5 px-1 font-medium text-right">Sold</th>
                           <th className="py-1.5 px-1 font-medium text-right">Counter ₹</th>
@@ -1323,14 +1323,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                       </thead>
                       <tbody>
                         {channelEconomicsData.pricesUsedList.map(row => (
-                          <tr key={row.name} className="border-t border-gray-100">
-                            <td className="py-1.5 pr-2 text-gray-800">{row.name}</td>
-                            <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{row.quantity}</td>
-                            <td className="py-1.5 px-1 text-right tabular-nums font-semibold text-gray-900">
+                          <tr key={row.name} className="border-t border-border">
+                            <td className="py-1.5 pr-2 text-text">{row.name}</td>
+                            <td className="py-1.5 px-1 text-right tabular-nums text-text-2">{row.quantity}</td>
+                            <td className="py-1.5 px-1 text-right tabular-nums font-semibold text-text">
                               ₹{row.used}
-                              {row.saved !== null && row.saved !== row.used && <span className="block text-[10px] font-normal text-amber-600">saved menu: ₹{row.saved}</span>}
+                              {row.saved !== null && row.saved !== row.used && <span className="block text-caption font-normal text-warning">saved menu: ₹{row.saved}</span>}
                             </td>
-                            <td className="py-1.5 pl-1 text-gray-500">
+                            <td className="py-1.5 pl-1 text-text-3">
                               {row.source === 'latest' ? `Latest sale${row.lastSeen ? ` (${formatDateIN(row.lastSeen, { day: 'numeric', month: 'short' })})` : ''}` : 'Saved menu price'}
                             </td>
                           </tr>
@@ -1359,27 +1359,27 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           </div>
 
           {/* Aggregated across every online platform, so the combined picture is visible at a glance. */}
-          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 sm:p-5">
-            <h4 className="text-sm font-bold text-gray-900 tracking-tight mb-0.5">All online platforms</h4>
-            <p className="text-[11px] text-gray-500 mb-3">Zomato + Swiggy together for this period, same matched orders as above</p>
+          <div className="bg-surface rounded-2xl border border-warning-border shadow-sm p-4 sm:p-5">
+            <h4 className="text-sm font-bold text-text tracking-tight mb-0.5">All online platforms</h4>
+            <p className="text-caption text-text-3 mb-3">Zomato + Swiggy together for this period, same matched orders as above</p>
             <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-              <div className="bg-gray-50 rounded-lg p-2.5">
-                <p className="text-[10px] uppercase tracking-wide text-gray-500">Counter Price</p>
-                <p className="text-sm font-bold text-emerald-700 tabular-nums">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</p>
+              <div className="bg-surface-2 rounded-lg p-2.5">
+                <p className="text-caption uppercase tracking-wide text-text-3">Counter Price</p>
+                <p className="text-sm font-bold text-success tabular-nums">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-2.5">
-                <p className="text-[10px] uppercase tracking-wide text-gray-500">Online Menu Price</p>
-                <p className="text-sm font-bold text-slate-700 tabular-nums">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</p>
+              <div className="bg-surface-2 rounded-lg p-2.5">
+                <p className="text-caption uppercase tracking-wide text-text-3">Online Menu Price</p>
+                <p className="text-sm font-bold text-text-2 tabular-nums">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-2.5">
-                <p className="text-[10px] uppercase tracking-wide text-gray-500">Online Paid You</p>
-                <p className="text-sm font-bold text-orange-600 tabular-nums">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</p>
+              <div className="bg-surface-2 rounded-lg p-2.5">
+                <p className="text-caption uppercase tracking-wide text-text-3">Online Paid You</p>
+                <p className="text-sm font-bold text-primary tabular-nums">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</p>
               </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-gray-500">
+                  <tr className="text-left text-text-3">
                     <th className="py-1.5 pr-2 font-medium">Platform</th>
                     <th className="py-1.5 px-1 font-medium text-right">Orders</th>
                     <th className="py-1.5 px-1 font-medium text-right">Counter</th>
@@ -1390,24 +1390,24 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                 </thead>
                 <tbody>
                   {allPlatformsEconomics.rows.map(r => (
-                    <tr key={r.agg} className="border-t border-gray-100">
-                      <td className="py-1.5 pr-2 font-medium text-gray-800">{r.label}</td>
-                      <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{r.orders}</td>
+                    <tr key={r.agg} className="border-t border-border">
+                      <td className="py-1.5 pr-2 font-medium text-text">{r.label}</td>
+                      <td className="py-1.5 px-1 text-right tabular-nums text-text-2">{r.orders}</td>
                       <td className="py-1.5 px-1 text-right tabular-nums">₹{r.counter.toLocaleString('en-IN')}</td>
                       <td className="py-1.5 px-1 text-right tabular-nums">₹{r.menu.toLocaleString('en-IN')}</td>
                       <td className="py-1.5 px-1 text-right tabular-nums">₹{r.paid.toLocaleString('en-IN')}</td>
-                      <td className={`py-1.5 pl-1 text-right tabular-nums font-semibold ${r.counter - r.paid > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      <td className={`py-1.5 pl-1 text-right tabular-nums font-semibold ${r.counter - r.paid > 0 ? 'text-warning' : 'text-success'}`}>
                         {r.counter - r.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(r.counter - r.paid)).toLocaleString('en-IN')}
                       </td>
                     </tr>
                   ))}
-                  <tr className="border-t-2 border-gray-200 font-bold">
-                    <td className="py-1.5 pr-2 text-gray-900">Total</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">{allPlatformsEconomics.total.orders}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-gray-900">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</td>
-                    <td className={`py-1.5 pl-1 text-right tabular-nums ${allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  <tr className="border-t-2 border-border font-bold">
+                    <td className="py-1.5 pr-2 text-text">Total</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-text">{allPlatformsEconomics.total.orders}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</td>
+                    <td className={`py-1.5 pl-1 text-right tabular-nums ${allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? 'text-warning' : 'text-success'}`}>
                       {allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid)).toLocaleString('en-IN')}
                     </td>
                   </tr>
@@ -1431,21 +1431,21 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
             const rowsWithData = data?.rows.filter(r => r.hasData) || [];
             const chartRows = rowsWithData.slice(0, 10); // top 10 by volume - a bar per item beyond that stops being readable
             return (
-              <div key={agg} className={`bg-white rounded-2xl border shadow-sm p-4 sm:p-6 ${agg === 'zomato' ? 'border-red-200' : 'border-orange-200'}`}>
-                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight capitalize mb-1">{agg} - Are We Pricing This Right?</h3>
-                <p className="text-xs text-gray-500 mb-4">
+              <div key={agg} className={`bg-surface rounded-2xl border shadow-sm p-4 sm:p-6 ${agg === 'zomato' ? 'border-danger-border' : 'border-border-strong'}`}>
+                <h3 className="text-base sm:text-lg font-bold text-text tracking-tight capitalize mb-1">{agg} - Are We Pricing This Right?</h3>
+                <p className="text-xs text-text-3 mb-4">
                   Effective payout per plate (the price actually billed after any discount, × Payout %, minus that plate's share of ad spend) vs your dine-in price for the same menu item. "Online ₹/plate" is the latest menu listing price (from the newest {agg} orders) - see "billed avg" below it where the two differ
                 </p>
                 {!data ? (
-                  <div className="text-center text-gray-500 py-8 text-sm">Needs Items Total data - upload/re-upload settlements with item-level tracking for this period</div>
+                  <div className="text-center text-text-3 py-8 text-sm">Needs Items Total data - upload/re-upload settlements with item-level tracking for this period</div>
                 ) : rowsWithData.length === 0 ? (
-                  <div className="text-center text-gray-500 py-8 text-sm">No {agg} online sales matched to POS item data in this period (needs pos-sync data from 2026-08-23 onward)</div>
+                  <div className="text-center text-text-3 py-8 text-sm">No {agg} online sales matched to POS item data in this period (needs pos-sync data from 2026-08-23 onward)</div>
                 ) : (
                   <>
                     <div className="overflow-x-auto overflow-y-auto max-h-80 -mx-1">
                       <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-white">
-                          <tr className="text-left text-gray-500 text-xs uppercase tracking-wide">
+                        <thead className="sticky top-0 bg-surface">
+                          <tr className="text-left text-text-3 text-xs uppercase tracking-wide">
                             <th className="py-2 px-1 font-medium">Item</th>
                             <th className="py-2 px-1 font-medium text-right">Online ₹/plate</th>
                             <th className="py-2 px-1 font-medium text-right">Real ₹/plate</th>
@@ -1458,30 +1458,30 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                           {rowsWithData.map(r => {
                             const isLoss = (r.marginPct ?? 0) < 0;
                             return (
-                              <tr key={r.key} className="border-t border-gray-100">
+                              <tr key={r.key} className="border-t border-border">
                                 <td className="py-2 px-1 flex items-center gap-1.5">
                                   <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />
                                   {r.label}
-                                  <span className="text-[10px] text-gray-400 font-normal">({r.piecesPerPlate}pc)</span>
+                                  <span className="text-caption text-text-3 font-normal">({r.piecesPerPlate}pc)</span>
                                 </td>
-                                <td className="py-2 px-1 text-right text-gray-700">
+                                <td className="py-2 px-1 text-right text-text-2">
                                   ₹{r.onlinePrice.toFixed(1)}
                                   {r.hasCatalogPrice && Math.abs(r.realizedPrice - r.onlinePrice) > 0.5 && (
-                                    <div className="text-[10px] text-amber-600 font-normal" title="Average actually billed after order-level discounts, vs. the listed menu price at left">
+                                    <div className="text-caption text-warning font-normal" title="Average actually billed after order-level discounts, vs. the listed menu price at left">
                                       billed avg ₹{r.realizedPrice.toFixed(1)}
                                     </div>
                                   )}
                                 </td>
-                                <td className="py-2 px-1 text-right text-gray-700">₹{r.realPrice.toFixed(1)}</td>
-                                <td className="py-2 px-1 text-right text-gray-700">₹{r.effectivePayout.toFixed(1)}</td>
-                                <td className={`py-2 px-1 text-right font-medium ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>
+                                <td className="py-2 px-1 text-right text-text-2">₹{r.realPrice.toFixed(1)}</td>
+                                <td className="py-2 px-1 text-right text-text-2">₹{r.effectivePayout.toFixed(1)}</td>
+                                <td className={`py-2 px-1 text-right font-medium ${isLoss ? 'text-danger' : 'text-success'}`}>
                                   {r.marginPct !== null ? `${r.marginPct >= 0 ? '+' : ''}${r.marginPct.toFixed(0)}%` : '—'}
                                 </td>
                                 <td className="py-2 px-1 text-right">
                                   {r.priceIncreasePct !== null && r.priceIncreasePct > 1 ? (
-                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">Raise +{r.priceIncreasePct.toFixed(0)}%</span>
+                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-danger-soft text-danger">Raise +{r.priceIncreasePct.toFixed(0)}%</span>
                                   ) : (
-                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">Healthy</span>
+                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-success-soft text-success">Healthy</span>
                                   )}
                                 </td>
                               </tr>
@@ -1490,7 +1490,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                         </tbody>
                       </table>
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-2">Sorted by online pieces sold, most first{rowsWithData.length > chartRows.length ? ` - chart below shows the top ${chartRows.length}` : ''}</p>
+                    <p className="text-caption text-text-3 mt-2">Sorted by online pieces sold, most first{rowsWithData.length > chartRows.length ? ` - chart below shows the top ${chartRows.length}` : ''}</p>
                     <ResponsiveContainer width="100%" height={180}>
                       <BarChart data={chartRows.map(r => ({ name: r.label, marginPct: r.marginPct !== null ? Math.round(r.marginPct * 10) / 10 : 0, color: (r.marginPct ?? 0) < 0 ? '#dc2626' : '#059669' }))} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" />
@@ -1504,7 +1504,7 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
-                    <p className="text-[11px] text-gray-400 mt-2">
+                    <p className="text-caption text-text-3 mt-2">
                       Discount + GST + commission keep {data.payoutPct.toFixed(1)}% of listing price, then a further ₹{data.adSharePerPlate.toFixed(2)}/plate goes to ad spend (same flat share whether it's a 2pc burger, 6pc plate, or 12pc combo) - shown separately so ad spend isn't deducted twice
                     </p>
                   </>
@@ -1516,61 +1516,61 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
       )}
 
       {/* Settlement History - collapsible, uses the date filter above */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+      <div className="bg-surface rounded-2xl border border-border shadow-sm">
         <button
           onClick={() => setIsHistoryOpen(!isHistoryOpen)}
           className="w-full flex items-center justify-between p-6 text-left"
         >
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Settlement History</h3>
-          {isHistoryOpen ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}
+          <h3 className="text-lg sm:text-xl font-bold text-text tracking-tight">Settlement History</h3>
+          {isHistoryOpen ? <ChevronUp className="w-5 h-5 text-text-3" /> : <ChevronDown className="w-5 h-5 text-text-3" />}
         </button>
 
         {isHistoryOpen && (
           <div className="px-6 pb-6">
             {!hasActiveRange ? (
-              <div className="py-8 text-center text-sm text-gray-500">Pick a custom date range and press Apply above</div>
+              <div className="py-8 text-center text-sm text-text-3">Pick a custom date range and press Apply above</div>
             ) : filteredSettlements.length === 0 ? (
-              <div className="py-8 text-center text-sm text-gray-500">No settlements in this date range yet - use "Upload Settlement" above to add one</div>
+              <div className="py-8 text-center text-sm text-text-3">No settlements in this date range yet - use "Upload Settlement" above to add one</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b-2 border-gray-200">
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Settlement Date</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Aggregator</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-700">Orders</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-700">Net Order Value</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-700">Net Payout</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-700">Commission</th>
-                      <th className="text-right py-3 px-4 font-semibold text-gray-700">Ad Spend</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Bank UTR</th>
-                      {canEdit && <th className="text-right py-3 px-4 font-semibold text-gray-700"></th>}
+                    <tr className="border-b-2 border-border">
+                      <th className="text-left py-3 px-4 font-semibold text-text-2">Settlement Date</th>
+                      <th className="text-left py-3 px-4 font-semibold text-text-2">Aggregator</th>
+                      <th className="text-right py-3 px-4 font-semibold text-text-2">Orders</th>
+                      <th className="text-right py-3 px-4 font-semibold text-text-2">Net Order Value</th>
+                      <th className="text-right py-3 px-4 font-semibold text-text-2">Net Payout</th>
+                      <th className="text-right py-3 px-4 font-semibold text-text-2">Commission</th>
+                      <th className="text-right py-3 px-4 font-semibold text-text-2">Ad Spend</th>
+                      <th className="text-left py-3 px-4 font-semibold text-text-2">Bank UTR</th>
+                      {canEdit && <th className="text-right py-3 px-4 font-semibold text-text-2"></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredSettlements.map(s => (
-                      <tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-4 text-gray-700">
+                      <tr key={s.id} className="border-b border-border hover:bg-surface-2">
+                        <td className="py-3 px-4 text-text-2">
                           <div>{formatDateIN(s.settlementDate)}</div>
-                          <div className="text-xs text-gray-400">Sales: {formatSettlementPeriod(s)}</div>
+                          <div className="text-xs text-text-3">Sales: {formatSettlementPeriod(s)}</div>
                         </td>
-                        <td className="py-3 px-4 text-gray-700 capitalize">{s.aggregator}</td>
-                        <td className="py-3 px-4 text-right text-gray-700">{s.orderCount}</td>
-                        <td className="py-3 px-4 text-right text-gray-700">₹{s.grossSales.toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right font-semibold text-blue-600">₹{s.netPayout.toFixed(2)}</td>
-                        <td className={`py-3 px-4 text-right font-semibold ${s.netCommission >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
+                        <td className="py-3 px-4 text-text-2 capitalize">{s.aggregator}</td>
+                        <td className="py-3 px-4 text-right text-text-2">{s.orderCount}</td>
+                        <td className="py-3 px-4 text-right text-text-2">₹{s.grossSales.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right font-semibold text-info">₹{s.netPayout.toFixed(2)}</td>
+                        <td className={`py-3 px-4 text-right font-semibold ${s.netCommission >= 0 ? 'text-primary' : 'text-danger'}`}>
                           ₹{s.netCommission.toFixed(2)}
                         </td>
-                        <td className="py-3 px-4 text-right text-gray-700">
-                          {s.adSpend !== undefined ? `₹${s.adSpend.toFixed(2)}` : <span className="text-gray-400">—</span>}
+                        <td className="py-3 px-4 text-right text-text-2">
+                          {s.adSpend !== undefined ? `₹${s.adSpend.toFixed(2)}` : <span className="text-text-3">—</span>}
                         </td>
-                        <td className="py-3 px-4 text-gray-500 text-xs">{s.bankUTR}</td>
+                        <td className="py-3 px-4 text-text-3 text-xs">{s.bankUTR}</td>
                         {canEdit && (
                           <td className="py-3 px-4 text-right">
                             <button
                               onClick={() => handleDelete(s.id)}
                               disabled={deletingId === s.id}
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                              className="p-1.5 text-text-3 hover:text-danger hover:bg-danger-soft rounded transition-colors disabled:opacity-50"
                               title="Delete settlement"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1589,15 +1589,15 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
       {/* Upload Settlement Modal */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={() => setShowUploadModal(false)}>
-          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
+        <div className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50" onClick={() => setShowUploadModal(false)}>
+          <div className="bg-surface rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface border border-border p-6 text-text">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <FileSpreadsheet className="w-5 h-5" />
                   Upload Settlement Report
                 </h2>
-                <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
+                <button onClick={() => setShowUploadModal(false)} className="p-2 hover:bg-surface-2 rounded-lg transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -1605,16 +1605,16 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
             <div className="p-6 space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Store</label>
+                <label className="block text-sm font-semibold text-text-2 mb-2">Store</label>
                 {defaultUploadStoreId ? (
-                  <div className="px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800">
+                  <div className="px-3 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text">
                     {availableStores.find(s => s.id === defaultUploadStoreId)?.name || defaultUploadStoreId}
                   </div>
                 ) : (
                   <select
                     value={uploadStoreId}
                     onChange={(e) => { setUploadStoreId(e.target.value); setSaveError(null); }}
-                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    className="w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text focus:ring-2 focus:ring-ring focus:border-primary"
                   >
                     <option value="">Select store</option>
                     {availableStores.map(store => (
@@ -1625,14 +1625,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Aggregator</label>
+                <label className="block text-sm font-semibold text-text-2 mb-2">Aggregator</label>
                 <div className="flex gap-2">
                   {(['zomato', 'swiggy'] as const).map(agg => (
                     <button
                       key={agg}
                       onClick={() => { setUploadAggregator(agg); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
                       className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium capitalize transition-colors ${
-                        uploadAggregator === agg ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        uploadAggregator === agg ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                       }`}
                     >
                       {agg}
@@ -1642,10 +1642,10 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Settlement File(s) (.xlsx)</label>
-                <label className="flex items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-orange-400 hover:bg-orange-50/50 transition-colors">
-                  <Upload className="w-5 h-5 text-gray-400" />
-                  <span className="text-sm text-gray-600">
+                <label className="block text-sm font-semibold text-text-2 mb-2">Settlement File(s) (.xlsx)</label>
+                <label className="flex items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-border-strong rounded-lg cursor-pointer hover:border-primary hover:bg-primary-soft transition-colors">
+                  <Upload className="w-5 h-5 text-text-3" />
+                  <span className="text-sm text-text-2">
                     {parsedSettlements && parsedSettlements.length > 0
                       ? `${new Set(parsedSettlements.map(s => s.sourceFileName)).size} file(s) parsed - click to add more`
                       : 'Click to choose one or more settlement reports'}
@@ -1665,21 +1665,21 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               </div>
 
               {isParsing && (
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                <div className="flex items-center gap-2 text-sm text-text-3">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                   Parsing file(s)...
                 </div>
               )}
 
               {parseErrors.length > 0 && (
-                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 space-y-1.5">
+                <div className="bg-danger-soft border-2 border-danger-border rounded-lg p-4 space-y-1.5">
                   <div className="flex gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                    <p className="text-sm font-semibold text-red-800">
+                    <AlertCircle className="w-5 h-5 text-danger flex-shrink-0" />
+                    <p className="text-sm font-semibold text-danger">
                       {parseErrors.length} file{parseErrors.length !== 1 ? 's' : ''} couldn't be parsed:
                     </p>
                   </div>
-                  <ul className="text-sm text-red-800 list-disc list-inside pl-8">
+                  <ul className="text-sm text-danger list-disc list-inside pl-8">
                     {parseErrors.map((e, i) => (
                       <li key={i}><span className="font-medium">{e.fileName}</span>: {e.message}</li>
                     ))}
@@ -1688,21 +1688,21 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               )}
 
               {saveError && (
-                <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-800 whitespace-pre-line">{saveError}</p>
+                <div className="bg-danger-soft border-2 border-danger-border rounded-lg p-4 flex gap-3">
+                  <AlertCircle className="w-5 h-5 text-danger flex-shrink-0" />
+                  <p className="text-sm text-danger whitespace-pre-line">{saveError}</p>
                 </div>
               )}
 
               {skippedDuplicates.length > 0 && (
-                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 space-y-1.5">
+                <div className="bg-warning-soft border-2 border-warning-border rounded-lg p-4 space-y-1.5">
                   <div className="flex gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
-                    <p className="text-sm font-semibold text-amber-800">
+                    <AlertCircle className="w-5 h-5 text-warning flex-shrink-0" />
+                    <p className="text-sm font-semibold text-warning">
                       {skippedDuplicates.length} duplicate settlement{skippedDuplicates.length !== 1 ? 's' : ''} skipped (already saved or already queued):
                     </p>
                   </div>
-                  <ul className="text-sm text-amber-800 list-disc list-inside pl-8">
+                  <ul className="text-sm text-warning list-disc list-inside pl-8">
                     {skippedDuplicates.map((d, i) => (
                       <li key={i}><span className="font-medium">{d.fileName}</span> - settlement date {formatDateIN(d.settlementDate)}</li>
                     ))}
@@ -1712,57 +1712,57 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
 
               {parsedSettlements && parsedSettlements.length > 0 && (
                 <div className="space-y-3">
-                  <p className="text-sm font-semibold text-gray-700">
+                  <p className="text-sm font-semibold text-text-2">
                     Found {parsedSettlements.length} settlement{parsedSettlements.length !== 1 ? 's' : ''} from {new Set(parsedSettlements.map(s => s.sourceFileName)).size} file(s) - review before saving:
                   </p>
                   {parsedSettlements.map((s, i) => (
-                    <div key={i} className={`border-2 rounded-lg p-4 space-y-1.5 ${s.replacesId ? 'bg-amber-50 border-amber-300' : 'bg-orange-50 border-orange-200'}`}>
+                    <div key={i} className={`border-2 rounded-lg p-4 space-y-1.5 ${s.replacesId ? 'bg-warning-soft border-warning-border' : 'bg-primary-soft border-border-strong'}`}>
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs text-gray-500 truncate">{s.sourceFileName}</span>
+                        <span className="text-xs text-text-3 truncate">{s.sourceFileName}</span>
                         <button
                           onClick={() => setParsedSettlements(prev => (prev || []).filter((_, idx) => idx !== i))}
-                          className="p-1 text-gray-400 hover:text-red-600 rounded flex-shrink-0"
+                          className="p-1 text-text-3 hover:text-danger rounded flex-shrink-0"
                           title="Remove this settlement from the queue"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                       {s.replacesId && (
-                        <p className="text-xs font-semibold text-amber-800 bg-amber-100 border border-amber-300 rounded px-2 py-1">
+                        <p className="text-xs font-semibold text-warning bg-warning-soft border border-warning-border rounded px-2 py-1">
                           Replaces an existing settlement already uploaded for this date/UTR - the old one will be overwritten.
                         </p>
                       )}
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Settlement Date</span>
-                        <span className="font-medium text-gray-900">{formatDateIN(s.settlementDate, { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                        <span className="text-text-2">Settlement Date</span>
+                        <span className="font-medium text-text">{formatDateIN(s.settlementDate, { day: 'numeric', month: 'long', year: 'numeric' })}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Sales Period</span>
-                        <span className="font-medium text-gray-900">{formatSettlementPeriod(s)}</span>
+                        <span className="text-text-2">Sales Period</span>
+                        <span className="font-medium text-text">{formatSettlementPeriod(s)}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Bank UTR</span>
-                        <span className="font-medium text-gray-900">{s.bankUTR || '-'}</span>
+                        <span className="text-text-2">Bank UTR</span>
+                        <span className="font-medium text-text">{s.bankUTR || '-'}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Orders</span>
-                        <span className="font-medium text-gray-900">{s.orderCount}</span>
+                        <span className="text-text-2">Orders</span>
+                        <span className="font-medium text-text">{s.orderCount}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Net Order Value</span>
-                        <span className="font-medium text-gray-900">₹{s.grossSales.toFixed(2)}</span>
+                        <span className="text-text-2">Net Order Value</span>
+                        <span className="font-medium text-text">₹{s.grossSales.toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Net Payout</span>
-                        <span className="font-semibold text-blue-700">₹{s.netPayout.toFixed(2)}</span>
+                        <span className="text-text-2">Net Payout</span>
+                        <span className="font-semibold text-info">₹{s.netPayout.toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between text-sm pt-1.5 border-t border-orange-200">
-                        <span className="text-gray-600">Net Commission</span>
-                        <span className={`font-semibold ${s.netCommission >= 0 ? 'text-orange-700' : 'text-red-700'}`}>₹{s.netCommission.toFixed(2)}</span>
+                      <div className="flex justify-between text-sm pt-1.5 border-t border-border-strong">
+                        <span className="text-text-2">Net Commission</span>
+                        <span className={`font-semibold ${s.netCommission >= 0 ? 'text-primary' : 'text-danger'}`}>₹{s.netCommission.toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Ad Spend</span>
-                        <span className="font-medium text-purple-700">
+                        <span className="text-text-2">Ad Spend</span>
+                        <span className="font-medium text-info">
                           {s.adSpend !== undefined ? `₹${s.adSpend.toFixed(2)}` : 'not found in file'}
                         </span>
                       </div>
@@ -1774,14 +1774,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => setShowUploadModal(false)}
-                  className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  className="flex-1 px-4 py-2.5 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleConfirmSave}
                   disabled={!parsedSettlements || parsedSettlements.length === 0 || isSaving}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-medium hover:from-orange-700 hover:to-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-medium   transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isSaving ? (
                     <>

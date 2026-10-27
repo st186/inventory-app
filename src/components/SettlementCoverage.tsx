@@ -28,10 +28,10 @@ const dateSpan = (dates: string[]) => {
 const monthName = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { month: 'short' });
 
 const CHIP: Record<Status, string> = {
-  settled: 'bg-emerald-100 text-emerald-800',
-  missing: 'bg-rose-600 text-white ring-2 ring-rose-300',
-  awaiting: 'bg-amber-100 text-amber-800',
-  none: 'bg-gray-100 text-gray-400',
+  settled: 'bg-success-soft text-success',
+  missing: 'bg-danger text-white ring-2 ring-ring',
+  awaiting: 'bg-warning-soft text-warning',
+  none: 'bg-surface-2 text-text-3',
 };
 const LABEL: Record<Status, string> = { settled: 'Settled', missing: 'Settlement missing', awaiting: 'Not due yet', none: 'No online orders' };
 
@@ -105,20 +105,20 @@ export function SettlementCoverage({
   const totalMissing = rows.reduce((t, r) => t + r.missing.length, 0);
 
   return (
-    <div className={`bg-white rounded-2xl p-4 sm:p-5 border shadow-sm ${totalMissing ? 'border-rose-200' : 'border-gray-200'}`}>
+    <div className={`bg-surface rounded-2xl p-4 sm:p-5 border shadow-sm ${totalMissing ? 'border-danger-border' : 'border-border'}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
         <div>
-          <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
-            {totalMissing > 0 && <AlertCircle className="w-5 h-5 text-rose-600" />}
+          <h3 className="text-base sm:text-lg font-bold text-text tracking-tight flex items-center gap-2">
+            {totalMissing > 0 && <AlertCircle className="w-5 h-5 text-danger" />}
             Settlement check
           </h3>
-          <p className="text-xs sm:text-sm text-gray-500">
+          <p className="text-xs sm:text-sm text-text-3">
             {totalMissing > 0
               ? `${totalMissing} day${totalMissing === 1 ? '' : 's'} with online orders but no settlement uploaded. Download those settlement reports from Zomato or Swiggy and upload them here.`
               : 'Every day with online orders in this range has a settlement, apart from days not due yet.'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-600">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-caption text-text-2">
           {(['missing', 'awaiting', 'settled', 'none'] as Status[]).map((s) => (
             <span key={s} className="inline-flex items-center gap-1.5"><span className={`w-3 h-3 rounded ${CHIP[s]}`} aria-hidden="true" />{LABEL[s]}</span>
           ))}
@@ -129,17 +129,17 @@ export function SettlementCoverage({
         {rows.map((r) => (
           <div key={r.agg}>
             <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1.5">
-              <p className={`text-sm font-semibold ${r.agg === 'zomato' ? 'text-red-700' : 'text-orange-700'}`}>{NAME[r.agg]}</p>
-              <p className="text-xs text-gray-500">
+              <p className={`text-sm font-semibold ${r.agg === 'zomato' ? 'text-danger' : 'text-primary'}`}>{NAME[r.agg]}</p>
+              <p className="text-xs text-text-3">
                 {r.settledDays} of {r.salesDays} order days settled
-                {r.missing.length > 0 && <span className="font-semibold text-rose-700"> · {r.missing.length} missing ({inr(r.missingAmount)} of orders)</span>}
+                {r.missing.length > 0 && <span className="font-semibold text-danger"> · {r.missing.length} missing ({inr(r.missingAmount)} of orders)</span>}
                 {r.awaitingDays > 0 && <span> · {r.awaitingDays} not due yet</span>}
               </p>
             </div>
             <ul className="flex flex-wrap gap-1" aria-label={`${NAME[r.agg]} settlement status by day`}>
               {r.cells.map((c, i) => (
                 <li key={c.date} className="flex items-center gap-1">
-                  {(i === 0 || dayNum(c.date) === 1) && <span className="text-[10px] font-semibold uppercase text-gray-400 pr-0.5">{monthName(c.date)}</span>}
+                  {(i === 0 || dayNum(c.date) === 1) && <span className="text-caption font-semibold uppercase text-text-3 pr-0.5">{monthName(c.date)}</span>}
                   <span
                     className={`inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-semibold tabular-nums ${CHIP[c.status]}`}
                     title={`${shortDate(c.date)} · ${LABEL[c.status]}${c.amount > 0 ? ` · ${inr(c.amount)} of ${NAME[r.agg]} orders` : ''}${c.status === 'awaiting' || c.status === 'missing' ? ` · payout ${c.status === 'missing' ? 'was ' : ''}due ${dayDate(c.payout)}` : ''}`}
@@ -152,10 +152,10 @@ export function SettlementCoverage({
             {r.missing.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {r.missing.map((c) => (
-                  <span key={c.date} className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-xs text-rose-800">
+                  <span key={c.date} className="inline-flex items-center gap-1 rounded-full bg-danger-soft border border-danger-border px-2.5 py-0.5 text-xs text-danger">
                     <span className="font-semibold">{shortDate(c.date)}</span>
                     <span className="tabular-nums">{inr(c.amount)}</span>
-                    <span className="text-rose-600">· was due {shortDate(c.payout)}</span>
+                    <span className="text-danger">· was due {shortDate(c.payout)}</span>
                   </span>
                 ))}
               </div>
@@ -163,7 +163,7 @@ export function SettlementCoverage({
             {r.upcoming.length > 0 && (
               <ul className="mt-2 space-y-1" aria-label={`${NAME[r.agg]} payouts still to come`}>
                 {r.upcoming.map((u) => (
-                  <li key={u.payout} className="flex items-baseline justify-between gap-3 text-xs text-amber-900 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                  <li key={u.payout} className="flex items-baseline justify-between gap-3 text-xs text-warning bg-warning-soft rounded-lg px-2.5 py-1.5">
                     <span><span className="font-semibold">{dayDate(u.payout)}</span>{r.agg === 'swiggy' && ' (in bank next day)'} · for {dateSpan(u.dates)} orders</span>
                     <span className="tabular-nums font-semibold">{inr(u.amount)}</span>
                   </li>
@@ -173,7 +173,7 @@ export function SettlementCoverage({
           </div>
         ))}
       </div>
-      <p className="mt-3 text-[11px] text-gray-500">
+      <p className="mt-3 text-caption text-text-3">
         Order amounts come from the POS (before commission). Zomato pays 3 days after the orders, Monday to Friday only, so Wednesday to Friday orders are paid the next Monday. Swiggy pays every Tuesday for the Sunday to Saturday week before (in the bank on Wednesday), and pays a month's last days separately 3 days after the month ends. A day turns red when its settlement still isn't uploaded the day after its payout. Until then its commission is estimated in profit.
       </p>
     </div>

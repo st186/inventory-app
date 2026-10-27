@@ -100,30 +100,30 @@ export function RepayLoanModal({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-surface rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-green-500 to-emerald-500 p-6 text-white">
+        <div className="bg-surface border border-border p-6 text-text">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">
-                <TrendingDown className="w-6 h-6 text-white" />
+              <div className="w-11 h-11 bg-surface-2 rounded-xl flex items-center justify-center border border-border flex-shrink-0">
+                <TrendingDown className="w-6 h-6 text-text" />
               </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
                   Repay Loan
                 </h2>
-                <p className="text-green-100 mt-1 text-sm">{loan.storeName}</p>
+                <p className="text-text-2 mt-1 text-sm">{loan.storeName}</p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
             >
               <XCircle className="w-6 h-6" />
             </button>
@@ -132,67 +132,67 @@ export function RepayLoanModal({
 
         {/* Success Message */}
         {success && (
-          <div className="m-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg flex items-center gap-3">
-            <TrendingDown className="w-6 h-6 text-green-600 flex-shrink-0" />
+          <div className="m-6 p-4 bg-success-soft border-2 border-success-border rounded-lg flex items-center gap-3">
+            <TrendingDown className="w-6 h-6 text-success flex-shrink-0" />
             <div>
-              <p className="font-semibold text-green-900">Loan Repayment Successful!</p>
-              <p className="text-sm text-green-700">The amount has been deducted from your Online Cash in Hand.</p>
+              <p className="font-semibold text-success">Loan Repayment Successful!</p>
+              <p className="text-sm text-success">The amount has been deducted from your Online Cash in Hand.</p>
             </div>
           </div>
         )}
 
         {/* Error Message */}
         {error && (
-          <div className="m-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0" />
-            <p className="text-red-900">{error}</p>
+          <div className="m-6 p-4 bg-danger-soft border-2 border-danger-border rounded-lg flex items-center gap-3">
+            <AlertCircle className="w-6 h-6 text-danger flex-shrink-0" />
+            <p className="text-danger">{error}</p>
           </div>
         )}
 
         {/* Loan Info */}
-        <div className="m-6 p-4 bg-gradient-to-br from-orange-50 to-rose-50 border-2 border-orange-200 rounded-lg">
-          <h3 className="font-semibold text-orange-900 mb-3">Loan Details</h3>
+        <div className="m-6 p-4 bg-primary-soft border-2 border-border-strong rounded-lg">
+          <h3 className="font-semibold text-primary mb-3">Loan Details</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-700">Original Loan:</span>
-              <span className="font-semibold text-gray-900">₹{loan.loanAmount.toLocaleString()}</span>
+              <span className="text-text-2">Original Loan:</span>
+              <span className="font-semibold text-text">₹{loan.loanAmount.toLocaleString()}</span>
             </div>
             {loan.interestRate && loan.interestRate > 0 && (
               <div className="flex justify-between">
-                <span className="text-gray-700">Interest Rate:</span>
-                <span className="font-semibold text-blue-700">{loan.interestRate}% per month</span>
+                <span className="text-text-2">Interest Rate:</span>
+                <span className="font-semibold text-info">{loan.interestRate}% per month</span>
               </div>
             )}
             <div className="flex justify-between">
-              <span className="text-gray-700">Already Repaid:</span>
-              <span className="font-semibold text-green-700">₹{loan.repaidAmount.toLocaleString()}</span>
+              <span className="text-text-2">Already Repaid:</span>
+              <span className="font-semibold text-success">₹{loan.repaidAmount.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between pt-2 border-t border-orange-300">
-              <span className="text-gray-700 font-semibold">Remaining Principal:</span>
-              <span className="font-bold text-orange-900">₹{remainingAmount.toLocaleString()}</span>
+            <div className="flex justify-between pt-2 border-t border-border-strong">
+              <span className="text-text-2 font-semibold">Remaining Principal:</span>
+              <span className="font-bold text-primary">₹{remainingAmount.toLocaleString()}</span>
             </div>
             {loan.interestRate && loan.interestRate > 0 && (
               <>
                 <div className="flex justify-between">
-                  <span className="text-gray-700">Interest Accrued (till repayment date):</span>
-                  <span className="font-semibold text-orange-700">₹{interestAccrued.toFixed(2)}</span>
+                  <span className="text-text-2">Interest Accrued (till repayment date):</span>
+                  <span className="font-semibold text-primary">₹{interestAccrued.toFixed(2)}</span>
                 </div>
                 {interestAccrued > 0 && (
-                  <div className="flex justify-between pt-2 border-t-2 border-orange-400">
-                    <span className="text-gray-900 font-bold">Total Amount (with interest):</span>
-                    <span className="font-bold text-red-700 text-lg">₹{totalAmountWithInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <div className="flex justify-between pt-2 border-t-2 border-primary">
+                    <span className="text-text font-bold">Total Amount (with interest):</span>
+                    <span className="font-bold text-danger text-lg">₹{totalAmountWithInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 )}
                 {interestAccrued === 0 && (
-                  <p className="text-xs text-gray-600 italic">
+                  <p className="text-xs text-text-2 italic">
                     💡 Change the repayment date to see interest calculation
                   </p>
                 )}
               </>
             )}
-            <div className="flex justify-between text-xs pt-2 border-t border-orange-200">
-              <span className="text-gray-600">Loan Date:</span>
-              <span className="text-gray-800">{new Date(loan.loanDate).toLocaleDateString('en-IN')}</span>
+            <div className="flex justify-between text-xs pt-2 border-t border-border-strong">
+              <span className="text-text-2">Loan Date:</span>
+              <span className="text-text">{new Date(loan.loanDate).toLocaleDateString('en-IN')}</span>
             </div>
           </div>
         </div>
@@ -201,30 +201,30 @@ export function RepayLoanModal({
         <form onSubmit={handleSubmit} className="p-6 pt-0 space-y-6">
           {/* Repayment Amount */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Repayment Amount *
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 text-lg">₹</span>
               <input
                 type="number"
                 step="0.01"
                 value={repaymentAmount}
                 onChange={(e) => setRepaymentAmount(e.target.value)}
                 max={totalAmountWithInterest}
-                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg"
+                className="w-full pl-8 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-success text-lg"
                 placeholder="Enter repayment amount"
                 required
               />
             </div>
             <div className="flex justify-between items-center mt-2">
-              <p className="text-xs text-gray-600">
+              <p className="text-xs text-text-2">
                 {isFullRepayment ? '✅ Full repayment' : '⚠️ Partial repayment'}
               </p>
               <button
                 type="button"
                 onClick={() => setRepaymentAmount(totalAmountWithInterest.toString())}
-                className="text-xs text-orange-600 hover:text-orange-700 font-medium"
+                className="text-xs text-primary hover:text-primary font-medium"
               >
                 Pay Full Amount
               </button>
@@ -233,16 +233,16 @@ export function RepayLoanModal({
 
           {/* Repayment Date */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Repayment Date *
             </label>
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
               <input
                 type="date"
                 value={repaymentDate}
                 onChange={(e) => setRepaymentDate(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-success"
                 required
               />
             </div>
@@ -250,26 +250,26 @@ export function RepayLoanModal({
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Notes (Optional)
             </label>
             <div className="relative">
-              <FileText className="absolute left-3 top-3 text-gray-500 w-5 h-5" />
+              <FileText className="absolute left-3 top-3 text-text-3 w-5 h-5" />
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-success"
                 placeholder="Optional notes about this repayment..."
               />
             </div>
           </div>
 
           {/* Warning Box */}
-          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
+          <div className="bg-warning-soft border-2 border-warning-border rounded-lg p-4">
             <div className="flex gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-yellow-900">
+              <AlertCircle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-warning">
                 <p className="font-semibold mb-1">⚠️ Important</p>
                 <p>
                   This repayment amount will be <strong>deducted</strong> from your Online Cash in Hand (Paytm) balance.
@@ -284,7 +284,7 @@ export function RepayLoanModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              className="flex-1 px-6 py-3 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
               disabled={saving}
             >
               Cancel
@@ -292,7 +292,7 @@ export function RepayLoanModal({
             <button
               type="submit"
               disabled={saving || !repaymentAmount}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-primary text-on-primary rounded-lg   transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <>

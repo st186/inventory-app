@@ -42,16 +42,16 @@ export function ProductionCashChoice({ checked, onChange, amount, cover, editing
   if (!productionCashChoiceAvailable(amount, cover, editingItem)) return null;
   const before = cover ? cashBefore(cover, editingItem) : null;
   return (
-    <label className="flex items-start gap-2 p-3 border border-amber-200 bg-amber-50 rounded-lg cursor-pointer">
+    <label className="flex items-start gap-2 p-3 border border-warning-border bg-warning-soft rounded-lg cursor-pointer">
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="w-4 h-4 mt-0.5 text-amber-600"
+        className="w-4 h-4 mt-0.5 text-warning"
       />
       <div className="flex-1">
-        <span className="text-sm text-gray-900">Taken from production cash in hand</span>
-        <p className="text-xs text-gray-500">
+        <span className="text-sm text-text">Taken from production cash in hand</span>
+        <p className="text-xs text-text-3">
           {before
             ? `Store cash for the day is ${formatRupees(before.store)}; production has ${formatRupees(before.production)}. `
             : ''}

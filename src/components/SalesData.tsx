@@ -880,8 +880,8 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading sales data...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-text-2">Loading sales data...</p>
         </div>
       </div>
     );
@@ -890,17 +890,17 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
   return (
     <div className="space-y-6">
       {/* Header & Upload Section */}
-      <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-2xl shadow-lg p-6 border border-orange-100">
+      <div className="bg-primary-soft rounded-2xl shadow-lg p-6 border border-border-strong">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
-              <FileSpreadsheet className="w-6 h-6 text-white" />
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
+              <FileSpreadsheet className="w-6 h-6 text-text" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+              <h2 className="text-2xl font-bold text-text tracking-tight">
                 Daily Sales Data
               </h2>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-text-3">
                 Upload daily sales XLSX files to track momo sales by category
               </p>
             </div>
@@ -915,7 +915,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             
             <button
               onClick={() => setShowPlateConfig(!showPlateConfig)}
-              className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl hover:from-blue-700 hover:to-blue-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
             >
               <Settings className="w-4 h-4" />
               <span className="font-medium">Plate Config</span>
@@ -923,7 +923,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
             <button
               onClick={() => setShowMenuItemPrices(!showMenuItemPrices)}
-              className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+              className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform"
               title="Offline vs Online price per real menu item (Zomato/Swiggy share one Online price via Ciferon's Online Submenu)"
             >
               <Settings className="w-4 h-4" />
@@ -934,7 +934,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <button
                 onClick={handleSyncFromPOS}
                 disabled={isSyncingCategoryData}
-                className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                 title="Pull momo category counts for the selected period straight from Ciferon POS, instead of uploading an XLSX for each day"
               >
                 <Package className="w-4 h-4" />
@@ -942,7 +942,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               </button>
             )}
 
-            <label className={`px-6 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-xl hover:from-orange-700 hover:to-red-700 transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`px-6 py-2.5 bg-primary   text-on-primary rounded-xl   transition-all duration-300 cursor-pointer flex items-center gap-2 shadow-lg hover:shadow-xl transform ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Upload className="w-4 h-4" />
               <span className="font-medium">{uploading ? 'Uploading...' : 'Upload XLSX'}</span>
               <input
@@ -957,13 +957,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         </div>
         
         {/* Info Banner */}
-        <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <div className="mt-4 bg-info-soft border border-info-border rounded-xl p-4">
           <div className="flex gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-900">
+            <AlertCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-info">
               <p className="font-medium mb-1">File Format Requirements:</p>
-              <ul className="list-disc list-inside space-y-1 text-blue-800">
-                <li>Must contain columns: <code className="bg-blue-100 px-1 rounded">Item</code> and <code className="bg-blue-100 px-1 rounded">Total Quantity</code></li>
+              <ul className="list-disc list-inside space-y-1 text-info">
+                <li>Must contain columns: <code className="bg-info-soft px-1 rounded">Item</code> and <code className="bg-info-soft px-1 rounded">Total Quantity</code></li>
                 <li>Item names should include momo type (e.g., "Chicken Pan-Fried Momos (8 pcs)")</li>
                 <li>Quantity should be the number of plates/items sold</li>
               </ul>
@@ -974,17 +974,17 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
       {/* Plate Configuration Modal */}
       {showPlateConfig && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-blue-600 to-sky-600 p-6 text-white rounded-t-2xl">
+        <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-surface border border-border p-6 text-text rounded-t-2xl">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-2xl font-bold mb-2">Plate Configuration</h3>
-                  <p className="text-sm text-blue-100">Set how many pieces are in each plate for each momo type</p>
+                  <p className="text-sm text-text-2">Set how many pieces are in each plate for each momo type</p>
                 </div>
                 <button
                   onClick={() => setShowPlateConfig(false)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                 >
                   <AlertCircle className="w-6 h-6" />
                 </button>
@@ -993,13 +993,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             
             <div className="p-6 space-y-4">
               {(Object.keys(piecesPerPlate) as Array<keyof CategoryData>).map((category, index) => (
-                <div key={category} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
+                <div key={category} className="flex items-center justify-between p-4 bg-surface-2 rounded-xl border-2 border-border">
                   <div className="flex items-center gap-3">
                     <div
                       className="w-4 h-4 rounded-full"
                       style={{ backgroundColor: getChartColor(index) }}
                     />
-                    <label className="text-gray-900 font-medium">{category}</label>
+                    <label className="text-text font-medium">{category}</label>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
@@ -1009,46 +1009,46 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         max="20"
                         value={piecesPerPlate[category]}
                         onChange={(e) => updatePlateConfig(category, parseInt(e.target.value) || 6)}
-                        className="w-20 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                        className="w-20 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
                       />
-                      <span className="text-gray-600 text-sm">pcs/plate</span>
+                      <span className="text-text-2 text-sm">pcs/plate</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-600 text-sm">₹</span>
+                      <span className="text-text-2 text-sm">₹</span>
                       <input
                         type="number"
                         min="0"
                         step="1"
                         value={pricePerPlate[category]}
                         onChange={(e) => updatePriceConfig(category, parseFloat(e.target.value) || 0)}
-                        className="w-24 px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-center font-semibold"
+                        className="w-24 px-3 py-2 border-2 border-border-strong rounded-lg focus:border-info focus:outline-none text-center font-semibold"
                       />
-                      <span className="text-gray-600 text-sm">/plate</span>
+                      <span className="text-text-2 text-sm">/plate</span>
                     </div>
                   </div>
                 </div>
               ))}
-              {isSavingPlateConfig && <p className="text-xs text-gray-400">Saving...</p>}
+              {isSavingPlateConfig && <p className="text-xs text-text-3">Saving...</p>}
             </div>
             
-            <div className="p-6 bg-blue-50 border-t-2 border-blue-200">
+            <div className="p-6 bg-info-soft border-t-2 border-info-border">
               <div className="flex items-start gap-3">
-                <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-blue-900">
+                <CheckCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-info">
                   <p className="font-medium mb-1">How it works:</p>
                   <p>
                     This configuration determines how pieces are converted to plates in the display.
                     For example, if Chicken Momos has 6 pieces/plate and you sold 262 pieces,
-                    it will show as <span className="font-mono bg-white px-2 py-1 rounded">262 pcs / 44 plates</span>.
+                    it will show as <span className="font-mono bg-surface px-2 py-1 rounded">262 pcs / 44 plates</span>.
                   </p>
                 </div>
               </div>
             </div>
             
-            <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end">
+            <div className="p-4 bg-surface-2 rounded-b-2xl flex justify-end">
               <button
                 onClick={() => setShowPlateConfig(false)}
-                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-sky-600 text-white rounded-xl hover:from-blue-700 hover:to-blue-700 transition-all shadow-lg"
+                className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all shadow-lg"
               >
                 Done
               </button>
@@ -1071,20 +1071,20 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         })).filter(g => g.items.length > 0);
 
         return (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white rounded-t-2xl sticky top-0 z-10">
+          <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50 p-4">
+            <div className="bg-surface rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="bg-surface border border-border p-6 text-text rounded-t-2xl sticky top-0 z-10">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-2xl font-bold mb-2">Menu Item Prices</h3>
-                    <p className="text-sm text-emerald-100">
+                    <p className="text-sm text-text-2">
                       Offline (in-store) and Online (Zomato/Swiggy) list price per real menu item
                       {!isClusterHead && ' - view only'}
                     </p>
                   </div>
                   <button
                     onClick={() => setShowMenuItemPrices(false)}
-                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                    className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                   >
                     <AlertCircle className="w-6 h-6" />
                   </button>
@@ -1093,49 +1093,49 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
               <div className="p-6 space-y-6">
                 {isClusterHead && (
-                  <div className="border border-dashed border-emerald-300 rounded-xl p-4 bg-emerald-50/50">
+                  <div className="border border-dashed border-success-border rounded-xl p-4 bg-success-soft">
                     {!showAddMenuItem ? (
                       <button
                         onClick={() => setShowAddMenuItem(true)}
-                        className="text-sm font-medium text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5"
+                        className="text-sm font-medium text-success hover:text-success flex items-center gap-1.5"
                       >
                         <span className="text-lg leading-none">+</span> Add New Item
                       </button>
                     ) : (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-gray-900">Add New Item</h4>
-                          <p className="text-xs text-gray-500">
+                          <h4 className="text-sm font-semibold text-text">Add New Item</h4>
+                          <p className="text-xs text-text-3">
                             For a menu item Ciferon hasn't sent a price for yet (e.g. an alternate-portion SKU) - find its Product ID and Name in Ciferon's own order export, or from an "unmatched item" note elsewhere in the app.
                           </p>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Product ID (Ciferon's)</label>
+                            <label className="block text-xs text-text-2 mb-1">Product ID (Ciferon's)</label>
                             <input
                               type="text"
                               value={newMenuItem.productId}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, productId: e.target.value }))}
                               placeholder="e.g. 1108056"
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Product Name</label>
+                            <label className="block text-xs text-text-2 mb-1">Product Name</label>
                             <input
                               type="text"
                               value={newMenuItem.productName}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, productName: e.target.value }))}
                               placeholder="e.g. Chicken Steamed Momos (8 pcs) - A"
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Category</label>
+                            <label className="block text-xs text-text-2 mb-1">Category</label>
                             <select
                               value={newMenuItem.momoCategory}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, momoCategory: e.target.value as keyof CategoryData }))}
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             >
                               {(Object.keys(DEFAULT_PIECES_PER_PLATE) as Array<keyof CategoryData>).map(cat => (
                                 <option key={cat} value={cat}>{cat}</option>
@@ -1143,37 +1143,37 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                             </select>
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Pieces Per Unit</label>
+                            <label className="block text-xs text-text-2 mb-1">Pieces Per Unit</label>
                             <input
                               type="number"
                               value={newMenuItem.piecesPerUnit}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, piecesPerUnit: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Offline Price (₹)</label>
+                            <label className="block text-xs text-text-2 mb-1">Offline Price (₹)</label>
                             <input
                               type="number"
                               value={newMenuItem.offlinePrice}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, offlinePrice: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Online Price (₹)</label>
+                            <label className="block text-xs text-text-2 mb-1">Online Price (₹)</label>
                             <input
                               type="number"
                               value={newMenuItem.onlinePrice}
                               onChange={(e) => setNewMenuItem(prev => ({ ...prev, onlinePrice: e.target.value }))}
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              className="w-full px-3 py-1.5 border border-border-strong rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
                             />
                           </div>
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button
                             onClick={() => setShowAddMenuItem(false)}
-                            className="px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            className="px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2 rounded-lg transition-colors"
                             disabled={isSavingNewMenuItem}
                           >
                             Cancel
@@ -1181,7 +1181,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           <button
                             onClick={handleAddMenuItem}
                             disabled={isSavingNewMenuItem}
-                            className="px-4 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                            className="px-4 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
                           >
                             {isSavingNewMenuItem ? 'Saving...' : 'Save Item'}
                           </button>
@@ -1191,35 +1191,35 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   </div>
                 )}
                 {menuItemPrices.length === 0 ? (
-                  <p className="text-sm text-gray-500">No menu items configured yet.</p>
+                  <p className="text-sm text-text-3">No menu items configured yet.</p>
                 ) : (
                   grouped.map(({ category, items }) => (
                     <div key={category}>
-                      <h4 className="text-lg font-semibold text-gray-900 mb-2">{category}</h4>
+                      <h4 className="text-lg font-semibold text-text mb-2">{category}</h4>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b-2 border-gray-200">
-                              <th className="text-left py-2 px-3 font-semibold text-gray-700">Menu Item</th>
-                              <th className="text-right py-2 px-3 font-semibold text-gray-700">Offline Price</th>
-                              <th className="text-right py-2 px-3 font-semibold text-gray-700">Online Price</th>
+                            <tr className="border-b-2 border-border">
+                              <th className="text-left py-2 px-3 font-semibold text-text-2">Menu Item</th>
+                              <th className="text-right py-2 px-3 font-semibold text-text-2">Offline Price</th>
+                              <th className="text-right py-2 px-3 font-semibold text-text-2">Online Price</th>
                             </tr>
                           </thead>
                           <tbody>
                             {items.map(item => (
-                              <tr key={item.productId} className="border-b border-gray-100">
-                                <td className="py-2 px-3 text-gray-900">{item.productName}</td>
+                              <tr key={item.productId} className="border-b border-border">
+                                <td className="py-2 px-3 text-text">{item.productName}</td>
                                 <td className="py-2 px-3 text-right">
                                   {isClusterHead ? (
                                     <input
                                       type="number"
                                       value={item.offlinePrice}
                                       onChange={(e) => handleMenuPriceChange(item, 'offlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="w-24 px-2 py-1 text-right border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                      className="w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
                                       disabled={isSavingMenuPrice === item.productId}
                                     />
                                   ) : (
-                                    <span className="text-gray-700">₹{item.offlinePrice.toFixed(2)}</span>
+                                    <span className="text-text-2">₹{item.offlinePrice.toFixed(2)}</span>
                                   )}
                                 </td>
                                 <td className="py-2 px-3 text-right">
@@ -1228,11 +1228,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                                       type="number"
                                       value={item.onlinePrice}
                                       onChange={(e) => handleMenuPriceChange(item, 'onlinePrice', parseFloat(e.target.value) || 0)}
-                                      className="w-24 px-2 py-1 text-right border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                      className="w-24 px-2 py-1 text-right border border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent"
                                       disabled={isSavingMenuPrice === item.productId}
                                     />
                                   ) : (
-                                    <span className="text-gray-700">₹{item.onlinePrice.toFixed(2)}</span>
+                                    <span className="text-text-2">₹{item.onlinePrice.toFixed(2)}</span>
                                   )}
                                 </td>
                               </tr>
@@ -1245,10 +1245,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 )}
               </div>
 
-              <div className="p-4 bg-gray-50 rounded-b-2xl flex justify-end sticky bottom-0">
+              <div className="p-4 bg-surface-2 rounded-b-2xl flex justify-end sticky bottom-0">
                 <button
                   onClick={() => setShowMenuItemPrices(false)}
-                  className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg"
+                  className="px-6 py-2.5 bg-primary text-on-primary rounded-xl   transition-all shadow-lg"
                 >
                   Done
                 </button>
@@ -1260,15 +1260,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
       {/* Sales Analytics Charts */}
       {salesRecords.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+        <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-500 flex items-center justify-center shadow-md shadow-teal-500/20 flex-shrink-0">
-                <BarChart3 className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
+                <BarChart3 className="w-5 h-5 text-text" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 tracking-tight">Sales Trends by Category</h2>
-                <p className="text-sm text-gray-500">Analyze momo sales patterns across different time periods</p>
+                <h2 className="text-xl font-bold text-text tracking-tight">Sales Trends by Category</h2>
+                <p className="text-sm text-text-3">Analyze momo sales patterns across different time periods</p>
               </div>
             </div>
             
@@ -1278,10 +1278,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform hover:scale-105 ${
+                  className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
                     timeFilter === filter
-                      ? 'bg-gradient-to-r from-teal-500 to-teal-600 text-white shadow-lg'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-surface border border-border   text-text shadow-lg'
+                      : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                   }`}
                 >
                   {getFilterLabel(filter)}
@@ -1292,7 +1292,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
           {/* Custom Date Range Picker */}
           {timeFilter === 'custom' && (
-            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="mb-6 bg-info-soft border border-info-border rounded-xl p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <DatePicker
                   label="From Date"
@@ -1365,11 +1365,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   return (
                     <div 
                       key={category}
-                      className="bg-gradient-to-br from-white to-gray-50 rounded-xl p-5 border-2 border-gray-200 hover:shadow-lg transition-all duration-300 hover:scale-102"
+                      className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
                       style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                     >
                       <div className="flex items-start justify-between mb-3">
-                        <h3 className="text-sm font-semibold text-gray-700">{category}</h3>
+                        <h3 className="text-sm font-semibold text-text-2">{category}</h3>
                         <div 
                           className="w-3 h-3 rounded-full" 
                           style={{ backgroundColor: color }}
@@ -1377,39 +1377,39 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                       </div>
                       
                       <div className="mb-3">
-                        <p className="text-4xl font-bold text-gray-900 mb-1">
+                        <p className="text-4xl font-bold text-text mb-1">
                           {current.toLocaleString()}
                         </p>
-                        <p className="text-xs text-gray-500">pieces sold</p>
+                        <p className="text-xs text-text-3">pieces sold</p>
                       </div>
                       
                       {previous > 0 && (
                         <div className="flex items-center gap-2">
                           <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
-                            isIncrease ? 'bg-green-100' : isDecrease ? 'bg-red-100' : 'bg-gray-100'
+                            isIncrease ? 'bg-success-soft' : isDecrease ? 'bg-danger-soft' : 'bg-surface-2'
                           }`}>
-                            {isIncrease && <ArrowUp className="w-3 h-3 text-green-600" />}
-                            {isDecrease && <ArrowDown className="w-3 h-3 text-red-600" />}
+                            {isIncrease && <ArrowUp className="w-3 h-3 text-success" />}
+                            {isDecrease && <ArrowDown className="w-3 h-3 text-danger" />}
                             <span className={`text-xs font-semibold ${
-                              isIncrease ? 'text-green-700' : isDecrease ? 'text-red-700' : 'text-gray-700'
+                              isIncrease ? 'text-success' : isDecrease ? 'text-danger' : 'text-text-2'
                             }`}>
                               {Math.abs(percentChange).toFixed(1)}%
                             </span>
                           </div>
-                          <span className="text-xs text-gray-500">
+                          <span className="text-xs text-text-3">
                             vs previous
                           </span>
                         </div>
                       )}
                       
                       {previous === 0 && current > 0 && (
-                        <div className="text-xs text-blue-600 font-medium">
+                        <div className="text-xs text-info font-medium">
                           New sales in this period
                         </div>
                       )}
                       
                       {previous === 0 && current === 0 && (
-                        <div className="text-xs text-gray-400">
+                        <div className="text-xs text-text-3">
                           No data for both periods
                         </div>
                       )}
@@ -1453,33 +1453,33 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
               return (
                 <>
-                  <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-4 shadow-lg shadow-teal-500/20 text-white">
-                    <p className="text-xs uppercase tracking-wide text-teal-100 mb-1">Total Sales</p>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Total Sales</p>
                     <p className="text-2xl font-semibold">
                       {grandTotal.toLocaleString()}
                     </p>
-                    <p className="text-xs text-teal-100 mt-1">pieces</p>
+                    <p className="text-xs text-text-2 mt-1">pieces</p>
                   </div>
-                  <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-                    <p className="text-xs uppercase tracking-wide text-orange-100 mb-1">Top Category</p>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Top Category</p>
                     <p className="text-lg font-semibold">
                       {topCategory?.[0]?.split(' ')[0] || 'N/A'}
                     </p>
-                    <p className="text-xs text-orange-100 mt-1">{topCategory?.[1]?.toLocaleString() || 0} pcs</p>
+                    <p className="text-xs text-text-2 mt-1">{topCategory?.[1]?.toLocaleString() || 0} pcs</p>
                   </div>
-                  <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 shadow-lg shadow-rose-500/20 text-white">
-                    <p className="text-xs uppercase tracking-wide text-rose-100 mb-1">Avg per Period</p>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Avg per Period</p>
                     <p className="text-2xl font-semibold">
                       {filteredRecords.length > 0 ? Math.round(grandTotal / filteredRecords.length).toLocaleString() : 0}
                     </p>
-                    <p className="text-xs text-rose-100 mt-1">pieces</p>
+                    <p className="text-xs text-text-2 mt-1">pieces</p>
                   </div>
-                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
-                    <p className="text-xs uppercase tracking-wide text-blue-100 mb-1">Data Points</p>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                    <p className="text-xs uppercase tracking-wide text-text-2 mb-1">Data Points</p>
                     <p className="text-2xl font-semibold">
                       {filteredRecords.length}
                     </p>
-                    <p className="text-xs text-blue-100 mt-1">records</p>
+                    <p className="text-xs text-text-2 mt-1">records</p>
                   </div>
                 </>
               );
@@ -1641,26 +1641,26 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         const sortArrow = (col: typeof itemChannelSort.col) => itemChannelSort.col === col ? (itemChannelSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
 
         return (
-          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-500 flex items-center justify-center shadow-md shadow-teal-500/20 flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-white" />
+                <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
+                  <TrendingUp className="w-5 h-5 text-text" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-900 tracking-tight">Revenue Per Item By Channel</h2>
+                <h2 className="text-xl font-bold text-text tracking-tight">Revenue Per Item By Channel</h2>
               </div>
               {isClusterHead && (
                 <button
                   onClick={handleSyncFromPOS}
                   disabled={isSyncingCategoryData}
-                  className="px-4 py-2 bg-gradient-to-r from-teal-500 to-teal-600 text-white rounded-xl text-sm hover:from-teal-600 hover:to-teal-700 transition-all shadow-lg disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 bg-primary text-on-primary rounded-xl text-sm   transition-all shadow-lg disabled:opacity-50 flex items-center gap-2"
                 >
                   <Download className="w-4 h-4" />
                   {isSyncingCategoryData ? 'Syncing...' : 'Sync from POS'}
                 </button>
               )}
             </div>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-text-2 mb-4">
               Every menu item, not rolled up to the 7 momo categories. Offline is the real POS price. Zomato/Swiggy
               are the real effective price after that order's discount and commission - only orders matched to an
               uploaded settlement count ({matchedOnlineOrders} of {totalOnlineOrders} online orders in this period
@@ -1668,13 +1668,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
             </p>
             {hasData && (
               <div className="flex flex-wrap items-center gap-2 mb-3">
-                <span className="text-xs text-gray-500">Sort by:</span>
+                <span className="text-xs text-text-3">Sort by:</span>
                 {(['pcs', 'offline', 'zomato', 'swiggy'] as const).map(col => (
                   <button
                     key={col}
                     onClick={() => toggleSort(col)}
                     className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
-                      itemChannelSort.col === col ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      itemChannelSort.col === col ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                     }`}
                   >
                     {col === 'pcs' ? 'Total Pcs' : col}{sortArrow(col)}
@@ -1683,26 +1683,26 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               </div>
             )}
             {!hasData ? (
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-text-3">
                 No POS-synced item detail in this period yet - {isClusterHead ? 'use "Sync from POS" above.' : 'ask a cluster head to sync from POS for this period.'}
               </p>
             ) : (
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-white">
-                    <tr className="border-b-2 border-gray-200">
-                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Menu Item</th>
-                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Category</th>
+                  <thead className="sticky top-0 bg-surface">
+                    <tr className="border-b-2 border-border">
+                      <th className="text-left py-2 px-3 font-semibold text-text-2">Menu Item</th>
+                      <th className="text-left py-2 px-3 font-semibold text-text-2">Category</th>
                       {CHANNELS.map(ch => (
-                        <th key={ch} colSpan={2} className="text-right py-2 px-3 font-semibold text-gray-700 border-l border-gray-100">{ch}</th>
+                        <th key={ch} colSpan={2} className="text-right py-2 px-3 font-semibold text-text-2 border-l border-border">{ch}</th>
                       ))}
                     </tr>
-                    <tr className="border-b-2 border-gray-200 text-xs text-gray-500">
+                    <tr className="border-b-2 border-border text-xs text-text-3">
                       <th className="py-1 px-3"></th>
                       <th className="py-1 px-3"></th>
                       {CHANNELS.map(ch => (
                         <React.Fragment key={ch}>
-                          <th className="text-right py-1 px-3 font-normal border-l border-gray-100">Pcs</th>
+                          <th className="text-right py-1 px-3 font-normal border-l border-border">Pcs</th>
                           <th className="text-right py-1 px-3 font-normal">₹/Pc</th>
                         </React.Fragment>
                       ))}
@@ -1711,21 +1711,21 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   <tbody>
                     {groupedRows.map(({ group, rows: groupRows }) => (
                       <React.Fragment key={group}>
-                        <tr className="bg-teal-50">
-                          <td colSpan={2 + CHANNELS.length * 2} className="py-1.5 px-3 font-semibold text-teal-800 text-xs uppercase tracking-wide">
+                        <tr className="bg-success-soft">
+                          <td colSpan={2 + CHANNELS.length * 2} className="py-1.5 px-3 font-semibold text-success text-xs uppercase tracking-wide">
                             {group}
                           </td>
                         </tr>
                         {groupRows.map(row => (
-                          <tr key={row.productName} className="border-b border-gray-100 hover:bg-gray-50">
-                            <td className="py-2 px-3 text-gray-900">{row.productName}</td>
-                            <td className="py-2 px-3 text-gray-700">{row.category || '-'}</td>
+                          <tr key={row.productName} className="border-b border-border hover:bg-surface-2">
+                            <td className="py-2 px-3 text-text">{row.productName}</td>
+                            <td className="py-2 px-3 text-text-2">{row.category || '-'}</td>
                             {CHANNELS.map(ch => {
                               const v = row[ch];
                               return (
                                 <React.Fragment key={ch}>
-                                  <td className="py-2 px-3 text-right text-gray-700 border-l border-gray-50">{v.pieces > 0 ? v.pieces.toLocaleString() : '-'}</td>
-                                  <td className="py-2 px-3 text-right font-semibold text-teal-700">{v.pieces > 0 ? `₹${(v.revenue / v.pieces).toFixed(2)}` : '-'}</td>
+                                  <td className="py-2 px-3 text-right text-text-2 border-l border-border">{v.pieces > 0 ? v.pieces.toLocaleString() : '-'}</td>
+                                  <td className="py-2 px-3 text-right font-semibold text-success">{v.pieces > 0 ? `₹${(v.revenue / v.pieces).toFixed(2)}` : '-'}</td>
                                 </React.Fragment>
                               );
                             })}
@@ -1788,21 +1788,21 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         const hasMatches = matchedOrders > 0;
 
         return (
-          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center shadow-md shadow-purple-500/20 flex-shrink-0">
-                <TrendingUp className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
+                <TrendingUp className="w-5 h-5 text-text" />
               </div>
-              <h2 className="text-xl font-bold text-gray-900 tracking-tight">Real Order-Level Effective Price</h2>
+              <h2 className="text-xl font-bold text-text tracking-tight">Real Order-Level Effective Price</h2>
             </div>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-text-2 mb-4">
               Exact, not an estimate - each Zomato/Swiggy order's real payout (from an uploaded settlement) is matched
               to that same order's real momo content (from Ciferon) via its Order ID, then split across items
               proportional to their share of the order's value. {matchedOrders} of {totalOnlineOrders} online orders
               in this period matched an uploaded settlement ({offlineOrders} offline orders excluded - nothing to join them to).
             </p>
             {!hasMatches ? (
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-text-3">
                 No online orders in this period matched an uploaded settlement yet - upload the Zomato/Swiggy
                 settlement covering these dates in the Aggregator Payout tab, then check back here.
               </p>
@@ -1810,13 +1810,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b-2 border-gray-200">
-                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Momo Type</th>
-                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Pieces (matched orders)</th>
-                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Gross Value</th>
-                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Net Payout</th>
-                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Effective ₹/Momo</th>
-                      <th className="text-right py-2 px-3 font-semibold text-gray-700">Effective Plate Price</th>
+                    <tr className="border-b-2 border-border">
+                      <th className="text-left py-2 px-3 font-semibold text-text-2">Momo Type</th>
+                      <th className="text-right py-2 px-3 font-semibold text-text-2">Pieces (matched orders)</th>
+                      <th className="text-right py-2 px-3 font-semibold text-text-2">Gross Value</th>
+                      <th className="text-right py-2 px-3 font-semibold text-text-2">Net Payout</th>
+                      <th className="text-right py-2 px-3 font-semibold text-text-2">Effective ₹/Momo</th>
+                      <th className="text-right py-2 px-3 font-semibold text-text-2">Effective Plate Price</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1826,13 +1826,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                       const effectivePerMomo = s.netPayout / s.pieces;
                       const plates = piecesPerPlate[cat] || 6;
                       return (
-                        <tr key={cat} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-3 text-gray-900">{cat}</td>
-                          <td className="py-2 px-3 text-right text-gray-700">{s.pieces.toFixed(0)}</td>
-                          <td className="py-2 px-3 text-right text-gray-700">₹{s.grossValue.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right text-gray-700">₹{s.netPayout.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right font-semibold text-gray-900">₹{effectivePerMomo.toFixed(2)}</td>
-                          <td className="py-2 px-3 text-right font-semibold text-purple-700">₹{(effectivePerMomo * plates).toFixed(2)}</td>
+                        <tr key={cat} className="border-b border-border hover:bg-surface-2">
+                          <td className="py-2 px-3 text-text">{cat}</td>
+                          <td className="py-2 px-3 text-right text-text-2">{s.pieces.toFixed(0)}</td>
+                          <td className="py-2 px-3 text-right text-text-2">₹{s.grossValue.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right text-text-2">₹{s.netPayout.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-semibold text-text">₹{effectivePerMomo.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-semibold text-info">₹{(effectivePerMomo * plates).toFixed(2)}</td>
                         </tr>
                       );
                     })}
@@ -1914,15 +1914,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         ];
 
         return (
-          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-surface rounded-2xl shadow-lg p-6 border border-border">
             <div className="mb-6">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center shadow-md shadow-blue-500/20 flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-white" />
+                <div className="w-10 h-10 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
+                  <TrendingUp className="w-5 h-5 text-text" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-900 tracking-tight">Weekly Pattern Analysis</h2>
+                <h2 className="text-xl font-bold text-text tracking-tight">Weekly Pattern Analysis</h2>
               </div>
-              <p className="text-sm text-gray-600 mb-4">
+              <p className="text-sm text-text-2 mb-4">
                 Average momo sales by day of the week across all records
               </p>
               
@@ -1932,10 +1932,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                   <button
                     key={day.num}
                     onClick={() => setSelectedDayOfWeek(day.num)}
-                    className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform hover:scale-105 ${
+                    className={`px-4 py-2 rounded-xl text-sm transition-all duration-300 transform ${
                       selectedDayOfWeek === day.num
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        ? 'bg-surface border border-border   text-text shadow-lg'
+                        : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                     }`}
                   >
                     {day.name}
@@ -1984,11 +1984,11 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     return (
                       <div 
                         key={category}
-                        className="bg-gradient-to-br from-white to-gray-50 rounded-xl p-5 border-2 border-gray-200 hover:shadow-lg transition-all duration-300 hover:scale-102"
+                        className="bg-surface-2 rounded-xl p-5 border-2 border-border hover:shadow-lg transition-all duration-300"
                         style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                       >
                         <div className="flex items-start justify-between mb-3">
-                          <h3 className="text-sm font-semibold text-gray-700">{category}</h3>
+                          <h3 className="text-sm font-semibold text-text-2">{category}</h3>
                           <div 
                             className="w-3 h-3 rounded-full" 
                             style={{ backgroundColor: color }}
@@ -1996,15 +1996,15 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         </div>
                         
                         <div className="mb-3">
-                          <p className="text-4xl font-bold text-gray-900 mb-1">
+                          <p className="text-4xl font-bold text-text mb-1">
                             {Math.round(current).toLocaleString()}
                           </p>
-                          <p className="text-xs text-gray-500">avg pieces/day</p>
+                          <p className="text-xs text-text-3">avg pieces/day</p>
                         </div>
                         
                         {isBestDay ? (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-yellow-100">
-                            <span className="text-xs font-semibold text-yellow-700">
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-warning-soft">
+                            <span className="text-xs font-semibold text-warning">
                               🏆 Best day
                             </span>
                           </div>
@@ -2012,25 +2012,25 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
-                                percentDiff >= 0 ? 'bg-green-100' : 'bg-red-100'
+                                percentDiff >= 0 ? 'bg-success-soft' : 'bg-danger-soft'
                               }`}>
-                                {percentDiff >= 0 ? <ArrowUp className="w-3 h-3 text-green-600" /> : <ArrowDown className="w-3 h-3 text-red-600" />}
+                                {percentDiff >= 0 ? <ArrowUp className="w-3 h-3 text-success" /> : <ArrowDown className="w-3 h-3 text-danger" />}
                                 <span className={`text-xs font-semibold ${
-                                  percentDiff >= 0 ? 'text-green-700' : 'text-red-700'
+                                  percentDiff >= 0 ? 'text-success' : 'text-danger'
                                 }`}>
                                   {Math.abs(percentDiff).toFixed(1)}%
                                 </span>
                               </div>
-                              <span className="text-xs text-gray-500">
+                              <span className="text-xs text-text-3">
                                 vs {bestDay.day.slice(0, 3)}
                               </span>
                             </div>
-                            <p className="text-xs text-gray-400">
+                            <p className="text-xs text-text-3">
                               Best: {Math.round(bestDay.avg)} on {bestDay.day}
                             </p>
                           </div>
                         ) : (
-                          <div className="text-xs text-gray-400">
+                          <div className="text-xs text-text-3">
                             No sales data
                           </div>
                         )}
@@ -2089,26 +2089,26 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
 
                 return (
                   <>
-                    <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
-                      <p className="text-xs uppercase tracking-wide text-emerald-100 mb-1">🔥 Busiest Day</p>
+                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">🔥 Busiest Day</p>
                       <p className="text-xl font-semibold">
                         {busiestDay.day}
                       </p>
-                      <p className="text-xs text-emerald-100 mt-1">{busiestDayTotal.toLocaleString()} pcs avg</p>
+                      <p className="text-xs text-text-2 mt-1">{busiestDayTotal.toLocaleString()} pcs avg</p>
                     </div>
-                    <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
-                      <p className="text-xs uppercase tracking-wide text-amber-100 mb-1">📉 Quietest Day</p>
+                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">📉 Quietest Day</p>
                       <p className="text-xl font-semibold">
                         {quietestDay.day}
                       </p>
-                      <p className="text-xs text-amber-100 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
+                      <p className="text-xs text-text-2 mt-1">{quietestDayTotal.toLocaleString()} pcs avg</p>
                     </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-                      <p className="text-xs uppercase tracking-wide text-orange-100 mb-1">⭐ Top Seller Today</p>
+                    <div className="bg-surface border border-border rounded-xl p-4 shadow-lg text-text">
+                      <p className="text-xs uppercase tracking-wide text-text-2 mb-1">⭐ Top Seller Today</p>
                       <p className="text-base font-semibold">
                         {topItemOnSelectedDay?.[0] || 'N/A'}
                       </p>
-                      <p className="text-xs text-orange-100 mt-1">
+                      <p className="text-xs text-text-2 mt-1">
                         {topItemOnSelectedDay ? `${(topItemOnSelectedDay[1] as number).toLocaleString()} pcs avg` : 'No data'}
                       </p>
                     </div>
@@ -2123,27 +2123,27 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       {/* Sales Records - date filter (collapsed by default) so this doesn't render every
           record ever uploaded, all expanded, in one indefinitely-scrolling list. */}
       {salesRecords.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+        <div className="bg-surface rounded-2xl shadow-lg border border-border overflow-hidden">
           <button
             type="button"
             onClick={() => setShowRecordsFilter(!showRecordsFilter)}
             className="w-full flex items-center justify-between gap-2 px-4 sm:px-6 py-3 text-left"
           >
-            <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-text-2 flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-text-3" />
               Filter by Date
-              <span className="text-xs font-normal text-gray-500">
+              <span className="text-xs font-normal text-text-3">
                 ({filteredSalesRecords.length} of {salesRecords.length} record{salesRecords.length !== 1 ? 's' : ''})
               </span>
             </span>
-            {showRecordsFilter ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+            {showRecordsFilter ? <ChevronUp className="w-5 h-5 text-text-3" /> : <ChevronDown className="w-5 h-5 text-text-3" />}
           </button>
           {showRecordsFilter && (
             <div className="px-4 sm:px-6 pb-4">
               <select
                 value={recordsDateFilter}
                 onChange={(e) => setRecordsDateFilter(e.target.value as TimeFilter)}
-                className="sm:hidden w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 mb-2"
+                className="sm:hidden w-full px-3 py-2.5 border border-border-strong rounded-lg text-sm bg-surface text-text mb-2"
               >
                 {(['today', 'yesterday', 'thisWeek', 'previousWeek', 'thisMonth', 'previousMonth', 'custom'] as TimeFilter[]).map((f) => (
                   <option key={f} value={f}>{f === 'previousWeek' ? 'Last Week' : f === 'previousMonth' ? 'Last Month' : f.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</option>
@@ -2156,7 +2156,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     type="button"
                     onClick={() => setRecordsDateFilter(f)}
                     className={`px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
-                      recordsDateFilter === f ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      recordsDateFilter === f ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
                     }`}
                   >
                     {f === 'previousWeek' ? 'Last Week' : f === 'previousMonth' ? 'Last Month' : f.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}
@@ -2183,10 +2183,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       )}
 
       {filteredSalesRecords.length === 0 ? (
-        <div className="bg-white rounded-2xl shadow-lg p-12 text-center border border-gray-100">
-          <FileSpreadsheet className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-gray-900 mb-2">{salesRecords.length === 0 ? 'No Sales Data Yet' : 'No records in this date range'}</h3>
-          <p className="text-gray-600">{salesRecords.length === 0 ? 'Upload your first sales file to get started' : 'Try a wider date range above.'}</p>
+        <div className="bg-surface rounded-2xl shadow-lg p-12 text-center border border-border">
+          <FileSpreadsheet className="w-16 h-16 text-text-disabled mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-text mb-2">{salesRecords.length === 0 ? 'No Sales Data Yet' : 'No records in this date range'}</h3>
+          <p className="text-text-2">{salesRecords.length === 0 ? 'Upload your first sales file to get started' : 'Try a wider date range above.'}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -2201,10 +2201,10 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
               : (context.stores?.find(s => s.id === record.storeId)?.name || record.storeName || 'Unknown Store');
             
             return (
-              <div key={record.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
+              <div key={record.id} className="bg-surface rounded-2xl shadow-lg border border-border overflow-hidden hover:shadow-xl transition-shadow duration-300">
                 {/* Header */}
                 <div 
-                  className="bg-gradient-to-r from-orange-500 to-amber-500 p-4 text-white cursor-pointer"
+                  className="bg-surface border border-border p-4 text-text cursor-pointer"
                   onClick={() => toggleRecordCollapse(record.id)}
                 >
                   <div className="flex items-center justify-between">
@@ -2219,7 +2219,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                             day: 'numeric' 
                           })}
                         </h3>
-                        <p className="text-sm text-orange-100">
+                        <p className="text-sm text-text-2">
                           {displayStoreName} • Total: {totalPieces.toLocaleString()} pieces
                         </p>
                       </div>
@@ -2231,13 +2231,13 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                           e.stopPropagation();
                           handleDelete(record.id);
                         }}
-                        className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                        className="p-2 hover:bg-surface rounded-lg transition-colors"
                         title="Delete record"
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
                       <button
-                        className="p-2 hover:bg-white/20 rounded-lg transition-all duration-300"
+                        className="p-2 hover:bg-surface rounded-lg transition-all duration-300"
                         title={isCollapsed ? "Expand" : "Collapse"}
                       >
                         <svg 
@@ -2267,23 +2267,23 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                         return (
                           <div 
                             key={category} 
-                            className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200 hover:shadow-md transition-all duration-300 hover:scale-105"
+                            className="bg-surface-2 rounded-xl p-4 border-2 border-border hover:shadow-md transition-all duration-300"
                             style={{ borderLeftColor: color, borderLeftWidth: '4px' }}
                           >
                             <div className="flex items-start justify-between mb-2">
-                              <Package className="w-5 h-5 text-gray-400" />
-                              <span className="text-xs font-semibold text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+                              <Package className="w-5 h-5 text-text-3" />
+                              <span className="text-xs font-semibold text-text-3 bg-surface-3 px-2 py-1 rounded-full">
                                 {percentage}%
                               </span>
                             </div>
-                            <h4 className="text-sm text-gray-600 mb-1">{category}</h4>
-                            <p className="text-2xl text-gray-900" style={{ fontWeight: '700' }}>
+                            <h4 className="text-sm text-text-2 mb-1">{category}</h4>
+                            <p className="text-2xl text-text" style={{ fontWeight: '700' }}>
                               {safeCount.toLocaleString()}
                             </p>
                             <div className="flex items-center gap-2 mt-1">
-                              <p className="text-xs text-gray-500">pieces</p>
-                              <span className="text-xs text-gray-400">•</span>
-                              <p className="text-xs text-gray-600 font-semibold">{plates} plates</p>
+                              <p className="text-xs text-text-3">pieces</p>
+                              <span className="text-xs text-text-3">•</span>
+                              <p className="text-xs text-text-2 font-semibold">{plates} plates</p>
                             </div>
                           </div>
                         );
@@ -2291,9 +2291,9 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
                     </div>
                     
                     {/* Upload Info */}
-                    <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between text-sm text-gray-500">
+                    <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-sm text-text-3">
                       {record.uploadedBy === 'pos-sync' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full border border-purple-300/50">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-info-soft text-info text-xs font-medium rounded-full border border-info-border">
                           ✓ Auto-synced from Ciferon POS
                         </span>
                       ) : (

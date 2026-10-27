@@ -67,16 +67,16 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
   return (
     <div className="mt-6 bg-card rounded-2xl border border-border p-5">
       <div className="flex items-center gap-2 mb-3">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-md shadow-emerald-500/20 flex-shrink-0">
-          <Smartphone className="w-4 h-4 text-white" />
+        <div className="w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
+          <Smartphone className="w-4 h-4 text-text" />
         </div>
         <h2 className="text-foreground font-bold text-lg sm:text-xl tracking-tight">Weekly Paytm Reconciliation</h2>
       </div>
 
       {isSunday && !alreadyLoggedThisWeek && (
-        <div className="mb-4 rounded-xl border border-amber-300/50 bg-amber-50 p-3 flex items-center gap-2">
-          <CalendarCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
-          <p className="text-sm text-amber-800">It's Sunday — check the actual Paytm balance and log it below.</p>
+        <div className="mb-4 rounded-xl border border-warning-border bg-warning-soft p-3 flex items-center gap-2">
+          <CalendarCheck className="w-4 h-4 text-warning flex-shrink-0" />
+          <p className="text-sm text-warning">It's Sunday — check the actual Paytm balance and log it below.</p>
         </div>
       )}
 
@@ -132,7 +132,7 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
                     System ₹{r.systemBalance.toLocaleString()} vs Actual ₹{r.actualBalance.toLocaleString()}
                   </p>
                 </div>
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs ${hasDiscrepancy ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs ${hasDiscrepancy ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}`}>
                   {hasDiscrepancy ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                   {r.difference >= 0 ? '+' : ''}₹{r.difference.toLocaleString()}
                 </span>

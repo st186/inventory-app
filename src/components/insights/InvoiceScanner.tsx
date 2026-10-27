@@ -168,23 +168,23 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
     }
   };
 
-  const field = 'w-full px-2.5 py-2 border border-gray-300 rounded-lg text-sm bg-white';
+  const field = 'w-full px-2.5 py-2 border border-border-strong rounded-lg text-sm bg-surface';
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="font-bold text-gray-900 flex items-center gap-2"><ScanText className="w-5 h-5 text-violet-600" /> Scan an invoice</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg" aria-label="Close"><X className="w-5 h-5" /></button>
+    <div className="fixed inset-0 bg-scrim flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+      <div className="bg-surface rounded-t-2xl sm:rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="font-bold text-text flex items-center gap-2"><ScanText className="w-5 h-5 text-info" /> Scan an invoice</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-surface-2 rounded-lg" aria-label="Close"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-4 overflow-y-auto space-y-4">
           {step === 'pick' && (
             <>
-              <p className="text-sm text-gray-600">Take a clear photo of the whole bill - printed or handwritten, English or Bengali. AI reads the lines; you check every one before anything is saved.</p>
+              <p className="text-sm text-text-2">Take a clear photo of the whole bill - printed or handwritten, English or Bengali. AI reads the lines; you check every one before anything is saved.</p>
               <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => cameraRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/50 text-violet-800 font-semibold flex flex-col items-center gap-2"><Camera className="w-7 h-7" /> Take a photo</button>
-                <button onClick={() => galleryRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-gray-300 text-gray-700 font-semibold flex flex-col items-center gap-2"><ImageUp className="w-7 h-7" /> Choose a photo</button>
+                <button onClick={() => cameraRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-info-border bg-info-soft text-info font-semibold flex flex-col items-center gap-2"><Camera className="w-7 h-7" /> Take a photo</button>
+                <button onClick={() => galleryRef.current?.click()} className="px-4 py-6 rounded-xl border-2 border-dashed border-border-strong text-text-2 font-semibold flex flex-col items-center gap-2"><ImageUp className="w-7 h-7" /> Choose a photo</button>
               </div>
               <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
               <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
@@ -193,26 +193,26 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
 
           {step === 'reading' && (
             <div className="flex flex-col items-center gap-3 py-6">
-              {preview && <img src={preview} alt="The invoice being read" className="max-h-48 rounded-lg border border-gray-200" />}
-              <p className="text-sm text-violet-700 inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the bill...</p>
+              {preview && <img src={preview} alt="The invoice being read" className="max-h-48 rounded-lg border border-border" />}
+              <p className="text-sm text-info inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the bill...</p>
             </div>
           )}
 
           {step === 'review' && invoice && (
             <>
               <div className="flex gap-3 items-start">
-                {preview && <img src={preview} alt="Scanned invoice" className="w-20 h-24 object-cover rounded-lg border border-gray-200 flex-shrink-0" />}
+                {preview && <img src={preview} alt="Scanned invoice" className="w-20 h-24 object-cover rounded-lg border border-border flex-shrink-0" />}
                 <div className="grid grid-cols-2 gap-2 flex-1">
-                  <label className="text-xs text-gray-600 col-span-2 sm:col-span-1">Shop / supplier<input value={vendor} onChange={(e) => setVendor(e.target.value)} className={`${field} mt-1`} /></label>
-                  <label className="text-xs text-gray-600 col-span-2 sm:col-span-1">Bill date<input type="date" value={date} max={getTodayIST()} onChange={(e) => setDate(e.target.value)} className={`${field} mt-1`} /></label>
+                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Shop / supplier<input value={vendor} onChange={(e) => setVendor(e.target.value)} className={`${field} mt-1`} /></label>
+                  <label className="text-xs text-text-2 col-span-2 sm:col-span-1">Bill date<input type="date" value={date} max={getTodayIST()} onChange={(e) => setDate(e.target.value)} className={`${field} mt-1`} /></label>
                 </div>
               </div>
-              {invoice.note && <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle className="w-4 h-4 flex-shrink-0" />{invoice.note}</p>}
+              {invoice.note && <p className="text-xs text-warning bg-warning-soft rounded-lg px-3 py-2 flex gap-2"><AlertTriangle className="w-4 h-4 flex-shrink-0" />{invoice.note}</p>}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div className="flex bg-gray-100 rounded-xl p-1 sm:col-span-1">
+                <div className="flex bg-surface-2 rounded-xl p-1 sm:col-span-1">
                   {(['store', 'production_house'] as const).map((opt) => (
-                    <button key={opt} type="button" onClick={() => setEntity(opt)} className={`flex-1 text-xs font-medium py-2 rounded-lg ${entity === opt ? 'bg-orange-600 text-white' : 'text-gray-600'}`}>{opt === 'store' ? 'Store' : 'Production'}</button>
+                    <button key={opt} type="button" onClick={() => setEntity(opt)} className={`flex-1 text-xs font-medium py-2 rounded-lg ${entity === opt ? 'bg-primary text-white' : 'text-text-2'}`}>{opt === 'store' ? 'Store' : 'Production'}</button>
                   ))}
                 </div>
                 {entity === 'store' && storeOptions && storeOptions.length > 1 ? (
@@ -232,15 +232,15 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
 
               <ul className="space-y-2">
                 {lines.map((l, i) => (
-                  <li key={i} className={`rounded-xl border p-3 ${!l.include ? 'border-gray-100 bg-gray-50 opacity-70' : l.unsure ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}>
+                  <li key={i} className={`rounded-xl border p-3 ${!l.include ? 'border-border bg-surface-2 opacity-70' : l.unsure ? 'border-warning-border bg-warning-soft' : 'border-border'}`}>
                     <div className="flex items-start gap-2">
                       <input type="checkbox" checked={l.include} onChange={(e) => update(i, { include: e.target.checked })} className="w-5 h-5 mt-2" aria-label={`Save ${l.name}`} />
                       <div className="flex-1 grid grid-cols-6 gap-2">
                         <div className="col-span-6 sm:col-span-3">
                           <input value={l.name} onChange={(e) => update(i, { name: e.target.value })} className={field} aria-label="Item name" />
-                          <p className="text-[11px] text-gray-500 mt-0.5">On the bill: {l.asWritten}{l.unsure ? ' · hard to read - check it' : ''}</p>
+                          <p className="text-caption text-text-3 mt-0.5">On the bill: {l.asWritten}{l.unsure ? ' · hard to read - check it' : ''}</p>
                         </div>
-                        <select value={l.kind} onChange={(e) => update(i, { kind: e.target.value })} className={`${field} col-span-6 sm:col-span-3 ${!l.kind ? 'border-amber-400' : ''}`} aria-label="Category">
+                        <select value={l.kind} onChange={(e) => update(i, { kind: e.target.value })} className={`${field} col-span-6 sm:col-span-3 ${!l.kind ? 'border-warning' : ''}`} aria-label="Category">
                           <option value="">Pick a category...</option>
                           {KIND_GROUPS.map((g) => (
                             <optgroup key={g.type} label={g.label}>
@@ -257,19 +257,19 @@ export function InvoiceScanner({ context, selectedDate, defaultEntity, storeId, 
                 ))}
               </ul>
 
-              <div className={`rounded-lg px-3 py-2 text-sm flex justify-between ${mismatch ? 'bg-amber-50 text-amber-900' : 'bg-gray-50 text-gray-800'}`}>
+              <div className={`rounded-lg px-3 py-2 text-sm flex justify-between ${mismatch ? 'bg-warning-soft text-warning' : 'bg-surface-2 text-text'}`}>
                 <span>{included.length} line{included.length === 1 ? '' : 's'} ticked{invoice.billTotal ? ` · bill total ₹${invoice.billTotal.toLocaleString('en-IN')}` : ''}</span>
                 <span className="font-semibold tabular-nums">₹{total.toLocaleString('en-IN')}</span>
               </div>
-              {mismatch && <p className="text-xs text-amber-800">The ticked lines don't add up to the bill total - check for a missed or misread line.</p>}
+              {mismatch && <p className="text-xs text-warning">The ticked lines don't add up to the bill total - check for a missed or misread line.</p>}
             </>
           )}
         </div>
 
         {step === 'review' && (
-          <div className="p-4 border-t border-gray-200 flex gap-2">
-            <button onClick={() => { setStep('pick'); setInvoice(null); setLines([]); }} className="px-4 py-3 border border-gray-300 rounded-lg text-sm">Rescan</button>
-            <button onClick={save} disabled={saving} className="flex-1 px-4 py-3 bg-violet-600 text-white rounded-lg font-semibold disabled:opacity-60">
+          <div className="p-4 border-t border-border flex gap-2">
+            <button onClick={() => { setStep('pick'); setInvoice(null); setLines([]); }} className="px-4 py-3 border border-border-strong rounded-lg text-sm">Rescan</button>
+            <button onClick={save} disabled={saving} className="flex-1 px-4 py-3 bg-primary text-white rounded-lg font-semibold disabled:opacity-60">
               {saving ? 'Saving...' : `Save ${included.length} expense${included.length === 1 ? '' : 's'}`}
             </button>
           </div>

@@ -166,32 +166,32 @@ export function MonthlyCommissionEntry({
 
   if (isLoading) {
     return (
-      <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200">
+      <div className="bg-primary-soft rounded-lg p-6 border-2 border-border-strong">
         <div className="flex items-center justify-center">
-          <div className="text-gray-600">Loading...</div>
+          <div className="text-text-2">Loading...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-lg p-6 border-2 border-orange-200 mb-6">
+    <div className="bg-primary-soft rounded-lg p-6 border-2 border-border-strong mb-6">
       <div className="flex items-center gap-3 mb-4">
-        <div className="bg-orange-500 rounded-full p-2">
+        <div className="bg-primary rounded-full p-2">
           <Percent className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h3 className="text-lg font-semibold text-gray-900">
+          <h3 className="text-lg font-semibold text-text">
             Monthly Commission Entry
           </h3>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-text-2">
             {existingCommission ? 'Update' : 'Enter'} aggregator commission for {currentMonthLabel}
           </p>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg p-4 mb-4">
-        <div className="flex items-start gap-2 text-sm text-blue-700 bg-blue-50 rounded-lg p-3 mb-4">
+      <div className="bg-surface rounded-lg p-4 mb-4">
+        <div className="flex items-start gap-2 text-sm text-info bg-info-soft rounded-lg p-3 mb-4">
           <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium mb-1">Monthly Commission Policy</p>
@@ -204,34 +204,34 @@ export function MonthlyCommissionEntry({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-text-2 mb-2">
               Commission Amount for {currentMonthLabel} (₹) *
             </label>
             <div className="relative">
-              <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-3 w-5 h-5" />
               <input
                 type="number"
                 step="0.01"
                 value={commissionAmount}
                 onChange={(e) => setCommissionAmount(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                 placeholder="Enter total commission amount"
                 disabled={isSaving}
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-text-3 mt-1">
               Typically 20-25% of your total online sales for the month
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-text-2 mb-2">
               Payment Method
             </label>
             <select
               value={paymentMethod}
               onChange={(e) => setPaymentMethod(e.target.value as 'online' | 'cash' | 'both')}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full px-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
               disabled={isSaving}
             >
               <option value="online">Online (Paytm)</option>
@@ -243,17 +243,17 @@ export function MonthlyCommissionEntry({
           {paymentMethod === 'both' && (
             <>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-text-2 mb-2">
                   Cash Amount (₹)
                 </label>
                 <div className="relative">
-                  <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-3 w-5 h-5" />
                   <input
                     type="number"
                     step="0.01"
                     value={cashAmount}
                     onChange={(e) => setCashAmount(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                     placeholder="Enter cash amount"
                     disabled={isSaving}
                   />
@@ -261,17 +261,17 @@ export function MonthlyCommissionEntry({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-text-2 mb-2">
                   Online Amount (₹)
                 </label>
                 <div className="relative">
-                  <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-3 w-5 h-5" />
                   <input
                     type="number"
                     step="0.01"
                     value={onlineAmount}
                     onChange={(e) => setOnlineAmount(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                     placeholder="Enter online amount"
                     disabled={isSaving}
                   />
@@ -281,13 +281,13 @@ export function MonthlyCommissionEntry({
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-text-2 mb-2">
               Notes (Optional)
             </label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full px-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
               placeholder="Add any notes about this commission"
               rows={2}
               disabled={isSaving}
@@ -299,7 +299,7 @@ export function MonthlyCommissionEntry({
       <button
         onClick={handleSave}
         disabled={isSaving || !commissionAmount}
-        className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+        className="w-full bg-primary hover:bg-primary-hover disabled:bg-surface-3 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
       >
         {isSaving ? (
           <>
@@ -315,7 +315,7 @@ export function MonthlyCommissionEntry({
       </button>
 
       {existingCommission && (
-        <p className="text-xs text-green-600 text-center mt-2 flex items-center justify-center gap-1">
+        <p className="text-xs text-success text-center mt-2 flex items-center justify-center gap-1">
           <CheckCircle className="w-4 h-4" />
           Commission already recorded for {currentMonthLabel}. You can update it above.
         </p>

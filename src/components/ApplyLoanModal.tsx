@@ -55,22 +55,22 @@ export function ApplyLoanModal({
   if (!effectiveStoreId || !store) {
     return (
       <div 
-        className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+        className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
         onClick={onClose}
       >
         <div
-          className="bg-white rounded-2xl max-w-lg w-full shadow-2xl p-6"
+          className="bg-surface rounded-2xl max-w-lg w-full shadow-2xl p-6"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="text-center">
-            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 tracking-tight mb-2">Store Not Selected</h3>
-            <p className="text-gray-500 mb-4">
+            <AlertCircle className="w-12 h-12 text-danger mx-auto mb-4" />
+            <h3 className="text-xl font-bold text-text tracking-tight mb-2">Store Not Selected</h3>
+            <p className="text-text-3 mb-4">
               Please select a store from the dropdown at the top of the page before applying for a loan.
             </p>
             <button
               onClick={onClose}
-              className="px-6 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2 bg-surface border border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors"
             >
               Close
             </button>
@@ -130,30 +130,30 @@ export function ApplyLoanModal({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-surface rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
+        <div className="bg-surface border border-border p-6 text-text">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center border border-white/30 flex-shrink-0">
-                <DollarSign className="w-6 h-6 text-white" />
+              <div className="w-11 h-11 bg-surface-2 rounded-xl flex items-center justify-center border border-border flex-shrink-0">
+                <DollarSign className="w-6 h-6 text-text" />
               </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
                   Request Loan
                 </h2>
-                <p className="text-orange-100 mt-1 text-sm">{storeName}</p>
+                <p className="text-text-2 mt-1 text-sm">{storeName}</p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
             >
               <XCircle className="w-6 h-6" />
             </button>
@@ -162,20 +162,20 @@ export function ApplyLoanModal({
 
         {/* Success Message */}
         {success && (
-          <div className="m-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg flex items-center gap-3">
-            <DollarSign className="w-6 h-6 text-green-600 flex-shrink-0" />
+          <div className="m-6 p-4 bg-success-soft border-2 border-success-border rounded-lg flex items-center gap-3">
+            <DollarSign className="w-6 h-6 text-success flex-shrink-0" />
             <div>
-              <p className="font-semibold text-green-900">Loan Request Sent!</p>
-              <p className="text-sm text-green-700">A cluster head will review it. Once approved, it's added to Online Cash in Hand (Paytm).</p>
+              <p className="font-semibold text-success">Loan Request Sent!</p>
+              <p className="text-sm text-success">A cluster head will review it. Once approved, it's added to Online Cash in Hand (Paytm).</p>
             </div>
           </div>
         )}
 
         {/* Error Message */}
         {error && (
-          <div className="m-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0" />
-            <p className="text-red-900">{error}</p>
+          <div className="m-6 p-4 bg-danger-soft border-2 border-danger-border rounded-lg flex items-center gap-3">
+            <AlertCircle className="w-6 h-6 text-danger flex-shrink-0" />
+            <p className="text-danger">{error}</p>
           </div>
         )}
 
@@ -183,38 +183,38 @@ export function ApplyLoanModal({
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Loan Amount */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Loan Amount *
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 text-lg">₹</span>
               <input
                 type="number"
                 step="0.01"
                 value={loanAmount}
                 onChange={(e) => setLoanAmount(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
+                className="w-full pl-8 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary text-lg"
                 placeholder="Enter loan amount"
                 required
               />
             </div>
-            <p className="text-xs text-gray-600 mt-1">
+            <p className="text-xs text-text-2 mt-1">
               Must be more than ₹5,000. Once a cluster head approves this request, it's added to Online Cash in Hand (Paytm).
             </p>
           </div>
 
           {/* Loan Date */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Loan Date *
             </label>
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
               <input
                 type="date"
                 value={loanDate}
                 onChange={(e) => setLoanDate(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                 required
               />
             </div>
@@ -222,16 +222,16 @@ export function ApplyLoanModal({
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Notes / Purpose
             </label>
             <div className="relative">
-              <FileText className="absolute left-3 top-3 text-gray-500 w-5 h-5" />
+              <FileText className="absolute left-3 top-3 text-text-3 w-5 h-5" />
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                 placeholder="Purpose of loan, source, repayment terms, etc."
               />
             </div>
@@ -239,15 +239,15 @@ export function ApplyLoanModal({
 
           {/* Investor Selection */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Investor *
             </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
               <select
                 value={investorId}
                 onChange={(e) => setInvestorId(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                 required
               >
                 <option value="">Select Investor</option>
@@ -266,17 +266,17 @@ export function ApplyLoanModal({
 
           {/* Interest Rate */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Interest Rate *
             </label>
             <div className="relative">
-              <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
               <input
                 type="number"
                 step="0.01"
                 value={interestRate}
                 onChange={(e) => setInterestRate(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
                 placeholder="Enter interest rate"
                 required
               />
@@ -284,10 +284,10 @@ export function ApplyLoanModal({
           </div>
 
           {/* Info Box */}
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+          <div className="bg-info-soft border-2 border-info-border rounded-lg p-4">
             <div className="flex gap-3">
-              <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-blue-900">
+              <AlertCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-info">
                 <p className="font-semibold mb-1">💡 How Loans Work</p>
                 <ul className="list-disc list-inside space-y-1">
                   <li>Only requests over ₹5,000 can be raised, for heavy expenses</li>
@@ -305,7 +305,7 @@ export function ApplyLoanModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              className="flex-1 px-6 py-3 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
               disabled={saving}
             >
               Cancel
@@ -313,7 +313,7 @@ export function ApplyLoanModal({
             <button
               type="submit"
               disabled={saving || !loanAmount}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-primary text-on-primary rounded-lg   transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <>

@@ -148,11 +148,11 @@ export function OnlineCashRecalibration({
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl p-8">
+      <div className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50">
+        <div className="bg-surface rounded-xl p-8">
           <div className="flex items-center gap-3">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
-            <p className="text-gray-700">Loading recalibration data...</p>
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+            <p className="text-text-2">Loading recalibration data...</p>
           </div>
         </div>
       </div>
@@ -163,28 +163,28 @@ export function OnlineCashRecalibration({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-scrim flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-surface rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-orange-500 to-amber-500 p-6 text-white">
+        <div className="bg-surface border border-border p-6 text-text">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Smartphone className="w-6 h-6" />
                 Paytm Reconciliation
               </h2>
-              <p className="text-orange-100 mt-1">
+              <p className="text-text-2 mt-1">
                 {storeName} - {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
               </p>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
             >
               <XCircle className="w-6 h-6" />
             </button>
@@ -193,29 +193,29 @@ export function OnlineCashRecalibration({
 
         {/* Success Message */}
         {success && (
-          <div className="m-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg flex items-center gap-3">
-            <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
+          <div className="m-6 p-4 bg-success-soft border-2 border-success-border rounded-lg flex items-center gap-3">
+            <CheckCircle className="w-6 h-6 text-success flex-shrink-0" />
             <div>
-              <p className="font-semibold text-green-900">Recalibration Saved Successfully!</p>
-              <p className="text-sm text-green-700">Your online cash balance has been updated.</p>
+              <p className="font-semibold text-success">Recalibration Saved Successfully!</p>
+              <p className="text-sm text-success">Your online cash balance has been updated.</p>
             </div>
           </div>
         )}
 
         {/* Error Message */}
         {error && (
-          <div className="m-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center gap-3">
-            <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
-            <p className="text-red-900">{error}</p>
+          <div className="m-6 p-4 bg-danger-soft border-2 border-danger-border rounded-lg flex items-center gap-3">
+            <AlertTriangle className="w-6 h-6 text-danger flex-shrink-0" />
+            <p className="text-danger">{error}</p>
           </div>
         )}
 
         {/* Last Recalibration Info */}
         {lastRecalibration && (
-          <div className="m-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+          <div className="m-6 p-4 bg-info-soft border-2 border-info-border rounded-xl">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
-                <p className="text-sm text-blue-900">
+                <p className="text-sm text-info">
                   <strong>Existing Recalibration for {new Date(targetDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}:</strong>
                   <br />
                   <strong>Created:</strong> {lastRecalibration.createdAt ? formatDateTimeIST(lastRecalibration.createdAt) : 'N/A'}
@@ -224,11 +224,11 @@ export function OnlineCashRecalibration({
                   <br />
                   System Balance: ₹{lastRecalibration.systemBalance.toLocaleString()} | 
                   Actual Balance: ₹{lastRecalibration.actualBalance.toLocaleString()} | 
-                  Difference: <span className={lastRecalibration.difference >= 0 ? 'text-green-700' : 'text-red-700'}>
+                  Difference: <span className={lastRecalibration.difference >= 0 ? 'text-success' : 'text-danger'}>
                     {lastRecalibration.difference >= 0 ? '+' : ''}₹{lastRecalibration.difference.toLocaleString()}
                   </span>
                   <br />
-                  <span className="text-xs text-blue-700 mt-1 inline-block">
+                  <span className="text-xs text-info mt-1 inline-block">
                     ℹ️ You can edit the date, balance, and notes below. Saving will update this recalibration.
                   </span>
                 </p>
@@ -250,7 +250,7 @@ export function OnlineCashRecalibration({
                     }
                   }
                 }}
-                className="px-3 py-1.5 bg-red-500 text-white text-xs font-medium rounded hover:bg-red-600 transition-colors whitespace-nowrap"
+                className="px-3 py-1.5 bg-danger text-white text-xs font-medium rounded hover:bg-danger-hover transition-colors whitespace-nowrap"
               >
                 Delete
               </button>
@@ -261,60 +261,60 @@ export function OnlineCashRecalibration({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* System Balance (Read-only) */}
-          <div className="bg-gradient-to-br from-orange-50 to-rose-50 rounded-xl p-6 border-2 border-orange-200">
+          <div className="bg-primary-soft rounded-xl p-6 border-2 border-border-strong">
             <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-orange-600" />
-              <label className="text-sm font-semibold text-orange-900 uppercase tracking-wide">
+              <TrendingUp className="w-5 h-5 text-primary" />
+              <label className="text-sm font-semibold text-primary uppercase tracking-wide">
                 System Calculated Balance
               </label>
             </div>
-            <p className="text-4xl font-bold text-orange-900">
+            <p className="text-4xl font-bold text-primary">
               ₹{systemBalance.toLocaleString()}
             </p>
-            <p className="text-xs text-orange-700 mt-2">
+            <p className="text-xs text-primary mt-2">
               This is the balance calculated from all your Paytm receipts, online sales, expenses, and commissions up to today.
             </p>
           </div>
 
           {/* Actual Balance Input */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Actual Balance (Verified) *
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 text-lg">₹</span>
               <input
                 type="number"
                 step="0.01"
                 value={actualBalance}
                 onChange={(e) => setActualBalance(e.target.value)}
-                className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
+                className="w-full pl-8 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary text-lg"
                 placeholder="Enter actual balance from Paytm app"
                 required
               />
             </div>
-            <p className="text-xs text-gray-600 mt-1">
+            <p className="text-xs text-text-2 mt-1">
               Check your actual Paytm/online wallet balance and enter it here
             </p>
           </div>
 
           {/* Recalibration Date */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Recalibration Date *
             </label>
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 w-5 h-5" />
               <input
                 type="date"
                 value={manualDate || today}
                 onChange={(e) => setManualDate(e.target.value)}
                 max={today}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
+                className="w-full pl-10 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary text-lg"
                 required
               />
             </div>
-            <p className="text-xs text-gray-600 mt-1">
+            <p className="text-xs text-text-2 mt-1">
               Select the date for this recalibration (defaults to today)
             </p>
           </div>
@@ -323,19 +323,19 @@ export function OnlineCashRecalibration({
           {actualBalance && (
             <div className={`p-4 rounded-lg border-2 ${
               difference >= 0 
-                ? 'bg-green-50 border-green-200' 
-                : 'bg-red-50 border-red-200'
+                ? 'bg-success-soft border-success-border' 
+                : 'bg-danger-soft border-danger-border'
             }`}>
               <p className="text-sm font-semibold mb-1">
                 Difference (Actual - System):
               </p>
               <p className={`text-3xl font-bold ${
-                difference >= 0 ? 'text-green-700' : 'text-red-700'
+                difference >= 0 ? 'text-success' : 'text-danger'
               }`}>
                 {difference >= 0 ? '+' : ''}₹{difference.toLocaleString()}
               </p>
               {Math.abs(difference) > 0 && (
-                <p className="text-xs mt-2 text-gray-700">
+                <p className="text-xs mt-2 text-text-2">
                   {difference > 0 
                     ? '✅ You have more cash than the system expected (surplus)'
                     : '⚠️ You have less cash than the system expected (shortage)'}
@@ -346,27 +346,27 @@ export function OnlineCashRecalibration({
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Notes / Explanation
             </label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full px-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
               placeholder="Optional: Explain any discrepancies or special situations..."
             />
           </div>
 
           {/* Discrepancy Type */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-text-2 mb-2">
               Discrepancy Type
             </label>
             <select
               value={discrepancyType}
               onChange={(e) => setDiscrepancyType(e.target.value as 'none' | 'mistake' | 'loan')}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full px-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary"
             >
               <option value="none">None</option>
               <option value="mistake">Mistake</option>
@@ -377,17 +377,17 @@ export function OnlineCashRecalibration({
           {/* Loan Amount */}
           {discrepancyType === 'loan' && (
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-text-2 mb-2">
                 Loan Amount
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">₹</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 text-lg">₹</span>
                 <input
                   type="number"
                   step="0.01"
                   value={loanAmount}
                   onChange={(e) => setLoanAmount(e.target.value)}
-                  className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-lg"
+                  className="w-full pl-8 pr-4 py-3 border-2 border-border-strong rounded-lg focus:ring-2 focus:ring-ring focus:border-primary text-lg"
                   placeholder="Enter loan amount"
                 />
               </div>
@@ -395,10 +395,10 @@ export function OnlineCashRecalibration({
           )}
 
           {/* Info Box */}
-          <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
+          <div className="bg-warning-soft border-2 border-warning-border rounded-lg p-4">
             <div className="flex gap-3">
-              <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-yellow-900">
+              <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-warning">
                 <p className="font-semibold mb-1">📅 Weekly Recalibration</p>
                 <p>
                   Check the actual Paytm wallet balance every Sunday and log it here. Comparing it
@@ -414,7 +414,7 @@ export function OnlineCashRecalibration({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              className="flex-1 px-6 py-3 border-2 border-border-strong text-text-2 rounded-lg hover:bg-surface-2 transition-colors font-medium"
               disabled={saving}
             >
               Cancel
@@ -422,7 +422,7 @@ export function OnlineCashRecalibration({
             <button
               type="submit"
               disabled={saving || !actualBalance}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-rose-600 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-primary text-on-primary rounded-lg   transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <>
