@@ -9778,18 +9778,24 @@ app.post('/make-server-c2dd9b9d/notifications/auto-cleanup', async (c) => {
   }
 
   try {
+    // Read notifications go after 30 days, unread ones after 90 (owner, 27 Oct 2026).
     const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
     const allNotifications = await getAllByPrefixWithRetry('notification:');
-    const stale = allNotifications.filter((n: any) =>
-      n.read && n.createdAt && new Date(n.createdAt).getTime() < thirtyDaysAgoMs
-    );
+    const stale = allNotifications.filter((n: any) => {
+      const created = n.createdAt ? new Date(n.createdAt).getTime() : NaN;
+      if (!Number.isFinite(created)) return false;
+      return n.read ? created < thirtyDaysAgoMs : created < ninetyDaysAgoMs;
+    });
 
     if (stale.length === 0) {
       return c.json({ success: true, deleted: 0 });
     }
 
     const keys = stale.map((n: any) => `notification:${n.userId}:${n.id}`);
-    const CHUNK_SIZE = 500;
+    // 500 keys made the delete request's URL too long ("Bad Request"), so the clean-up had
+    // failed every night since it was added; 100 fits.
+    const CHUNK_SIZE = 100;
     for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
       await kvWithRetry.mdel(keys.slice(i, i + CHUNK_SIZE));
     }
