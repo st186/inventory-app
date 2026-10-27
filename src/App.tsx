@@ -40,6 +40,10 @@ import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
+// Workplace checks (daily photo proof that each area is clean) - all in components/workplace.
+const WorkplaceChecks = lazy(() => import('./components/workplace/WorkplaceChecks').then(module => ({ default: module.WorkplaceChecks })));
+import { WorkplaceDueCard } from './components/workplace/WorkplaceDueCard';
+import { ClipboardCheck } from 'lucide-react';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
@@ -365,7 +369,7 @@ export type InventoryContextType = {
 
 export default function App() {
  // All useState hooks must be at the top, before any conditional returns
- const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs'>('analytics');
+ const [activeView, setActiveViewRaw] = useState<'inventory' | 'sales' | 'payroll' | 'analytics' | 'export' | 'attendance' | 'employees' | 'assets' | 'production' | 'stock-requests' | 'advanced-inventory' | 'inventory-items' | 'backup' | 'riders' | 'rider-profile' | 'receive-stock' | 'stock-outs' | 'workplace'>('analytics');
  // Wrap in startTransition to prevent Suspense from replacing UI with loading indicator on tab switches
  const setActiveView = useCallback((view: typeof activeView) => {
  startTransition(() => { setActiveViewRaw(view); });
@@ -2085,6 +2089,20 @@ export default function App() {
  </button>
  )}
 
+ {!isRider && (
+ <button
+ onClick={() => setActiveView('workplace')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border-2 ${
+ activeView === 'workplace'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <ClipboardCheck className="w-4 h-4" />
+ <span>Workplace checks</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => setActiveView('payroll')}
@@ -2309,6 +2327,23 @@ export default function App() {
  </button>
  )}
 
+ {!isRider && (
+ <button
+ onClick={() => {
+ setActiveView('workplace');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+ activeView === 'workplace'
+ ? 'bg-white text-orange-600'
+ : 'bg-white/20 text-white hover:bg-white/30'
+ }`}
+ >
+ <ClipboardCheck className="w-5 h-5" />
+ <span>Workplace checks</span>
+ </button>
+ )}
+
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => {
@@ -2373,6 +2408,8 @@ export default function App() {
  <main className="pb-6" data-ai-screen>
  {/* Aadhaar, phone and email still missing: asked for on the home screen until done. */}
  {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
+ {/* Plain staff land on payroll, incharges on analytics: both count as home here. */}
+ {!isRider && (activeView === 'analytics' || activeView === 'payroll') && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
@@ -2380,6 +2417,8 @@ export default function App() {
  <IncomingDeliveries accessToken={user.accessToken || ''} storeId={user.storeId || ''} />
  ) : activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isAnyIncharge} />
+ ) : activeView === 'workplace' && !isRider ? (
+ <WorkplaceChecks initialTab={highlightTab} initialLocation={highlightRequestId} />
  ) : activeView === 'riders' && (isRider || isAnyIncharge) ? (
  <RiderTrips
  mode={isRider ? 'rider' : 'staff'}
@@ -2531,6 +2570,17 @@ export default function App() {
  >
  <Bike className="w-4 h-4" />
  <span>Riders</span>
+ </button>
+ <button
+ onClick={() => setActiveView('workplace')}
+ className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+ activeView === 'workplace'
+ ? 'bg-white text-orange-600 shadow-lg font-semibold'
+ : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+ }`}
+ >
+ <ClipboardCheck className="w-4 h-4" />
+ <span className="hidden xl:inline">Workplace checks</span>
  </button>
  {isClusterHead ? (
  <>
@@ -2736,6 +2786,20 @@ export default function App() {
  >
  <Bike className="w-5 h-5" />
  <span>Riders</span>
+ </button>
+ <button
+ onClick={() => {
+ setActiveView('workplace');
+ setIsMobileMenuOpen(false);
+ }}
+ className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
+ activeView === 'workplace'
+ ? 'bg-white text-orange-600 font-semibold shadow-sm'
+ : 'bg-white/10 text-white hover:bg-white/20'
+ }`}
+ >
+ <ClipboardCheck className="w-5 h-5" />
+ <span>Workplace checks</span>
  </button>
  {isClusterHead ? (
  <>
@@ -2999,9 +3063,12 @@ export default function App() {
  {/* Main Content */}
  <main className="pb-6" data-ai-screen>
  {activeView === 'analytics' && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
+ {activeView === 'analytics' && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />
+ ) : activeView === 'workplace' ? (
+ <WorkplaceChecks initialTab={highlightTab} initialLocation={highlightRequestId} />
  ) : activeView === 'riders' ? (
  <RiderTrips
  mode="staff"

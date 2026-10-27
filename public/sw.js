@@ -111,6 +111,10 @@ const NOTIFICATION_VIEW_MAP = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
+  // Workplace checks: staff land on their own list; "review" falls back to it for non-reviewers.
+  workplace_due: { view: 'workplace', tab: 'mine' },
+  workplace_missed: { view: 'workplace', tab: 'review' },
+  workplace_flag: { view: 'workplace', tab: 'review' },
 };
 
 function getNavigationTarget(data) {
