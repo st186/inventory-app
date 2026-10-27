@@ -3493,6 +3493,8 @@ export interface RiderStop {
   name: string;
   latitude?: number | null;
   longitude?: number | null;
+  // Rider logins only, on rides still under way: who to call at this stop.
+  contact?: { name: string; phone: string } | null;
 }
 export type RiderFareStatus = 'agreed' | 'proposed' | 'needs_rate';
 
@@ -3511,6 +3513,8 @@ export interface RiderTrip {
   // Stock requests this ride carries; confirming the ride's delivery marks them delivered (and
   // marking them delivered in Stock Requests confirms the ride).
   requestIds?: string[];
+  // Rider logins only (they don't get the stock requests list): the linked requests' quantities.
+  linkedRequests?: { id: string; storeId: string; requestDate: string; status: string; shippedQuantities?: Record<string, number>; dispatch?: { bags?: Record<string, number>; boxes?: number } | null }[];
   productionHouseName: string | null;
   // Fare for the ride: the agreed amount, and (while the rider has asked for a different rate and
   // production hasn't answered) the amount being proposed.

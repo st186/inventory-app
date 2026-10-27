@@ -3539,7 +3539,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.16.0';
+const LATEST_APP_VERSION = '1.16.1';
 
 // What this server supports, so a newer app can switch each feature on only against a server
 // that has it (an older app ignores the list). Add a name here only once the feature ships:
@@ -10118,6 +10118,37 @@ async function getRiderActor(authUser: any) {
   };
 }
 
+// Riders don't get the staff list or the stock requests, so their own rides carry what the ride
+// screens would take from them: who to call at each store / production house stop (rides still
+// under way only) and the linked stock requests, for "Carrying 20 bags · 580 momos".
+const RIDE_REQUEST_FIELDS = ['id', 'storeId', 'requestDate', 'status', 'shippedQuantities', 'dispatch', 'chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos', 'vegKurkureMomos', 'chickenKurkureMomos'];
+async function withRiderRideDetails(trips: any[]): Promise<any[]> {
+  const anyActive = trips.some((t) => RIDER_ACTIVE_STATUSES.includes(t.status));
+  const staff: any[] = anyActive ? ((await kv.getByPrefix('unified-employee:')) || []) : [];
+  const telOf = (phone?: string) => String(phone || '').replace(/[^\d+]/g, '');
+  const contactFor = (stop: any) => {
+    if (!stop?.id || stop.kind === 'custom') return null;
+    const wanted = stop.kind === 'store' ? 'store_incharge' : 'production_incharge';
+    const assigned = (p: any) => (stop.kind === 'store' ? p.assignedStoreIds : p.assignedProductionHouseIds) || [];
+    const person = staff.find((p) => p.designation === wanted && p.status !== 'inactive' && (p.storeId === stop.id || assigned(p).includes(stop.id)) && telOf(p.phone).length >= 10);
+    return person ? { name: person.name, phone: telOf(person.phone) } : null;
+  };
+  const ids = [...new Set(trips.flatMap((t) => (Array.isArray(t.requestIds) ? t.requestIds : [])))] as string[];
+  const found = ids.length > 0 ? await kv.mget(ids.map((id) => `production_request_${id}`)) : [];
+  const requests = new Map<string, any>();
+  for (const r of found) {
+    if (!r?.id) continue;
+    const slim: any = {};
+    for (const f of RIDE_REQUEST_FIELDS) if (r[f] !== undefined) slim[f] = r[f];
+    requests.set(r.id, slim);
+  }
+  return trips.map((t) => {
+    const linked = (Array.isArray(t.requestIds) ? t.requestIds : []).map((id: string) => requests.get(id)).filter(Boolean);
+    const stops = RIDER_ACTIVE_STATUSES.includes(t.status) ? t.stops.map((st: any) => ({ ...st, contact: contactFor(st) })) : t.stops;
+    return { ...t, stops, ...(linked.length > 0 ? { linkedRequests: linked } : {}) };
+  });
+}
+
 async function notifyEmployeeIds(employees: any[], type: string, title: string, message: string, trip: any) {
   const seen = new Set<string>();
   for (const emp of employees) {
@@ -10403,6 +10434,7 @@ app.get('/make-server-c2dd9b9d/rider/trips', async (c) => {
     }
     // Give older rides the same shape as new ones so the screens only deal with one format.
     trips = trips.map((t: any) => ({ ...t, stops: tripStops(t), legIndex: tripLegIndex(t), tripType: t.tripType || (t.direction === 'to_production' ? 'to_production' : 'to_store') }));
+    if (actor.isRider) trips = await withRiderRideDetails(trips);
     trips.sort((a: any, b: any) => String(b.calledAt).localeCompare(String(a.calledAt)));
     return c.json({ trips, maxTripsPerDay: RIDER_MAX_TRIPS_PER_DAY });
   } catch (error) {

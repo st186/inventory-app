@@ -79,10 +79,11 @@ export type RideLoad = { requests: number; momos: number | null; bags: number | 
 
 // Momos: what was shipped when the request has been shipped, else what was asked for. Bags and
 // boxes only when production recorded them while packing (app 1.15.17 on).
-export function loadOf(trip: Pick<RiderTrip, 'requestIds'>, requests: RideRequest[]): RideLoad | null {
+export function loadOf(trip: Pick<RiderTrip, 'requestIds' | 'linkedRequests'>, requests: RideRequest[]): RideLoad | null {
   const ids = trip.requestIds || [];
   if (ids.length === 0) return null;
-  const linked = requests.filter((r) => ids.includes(r.id));
+  const fromList = requests.filter((r) => ids.includes(r.id));
+  const linked: RideRequest[] = fromList.length > 0 ? fromList : (trip.linkedRequests || []).filter((r) => ids.includes(r.id));
   if (linked.length === 0) return { requests: ids.length, momos: null, bags: null, boxes: null };
   let momos = 0;
   let bags = 0;
@@ -198,6 +199,7 @@ const telOf = (phone?: string) => (phone || '').replace(/[^\d+]/g, '');
 
 export function contactForStop(stop: RiderStop, people: PhoneBookEntry[]): Contact | null {
   if (!stop.id || stop.kind === 'custom') return null;
+  if (stop.contact?.phone) return stop.contact;
   const wanted = stop.kind === 'store' ? 'store_incharge' : 'production_incharge';
   const at = (p: PhoneBookEntry) =>
     p.storeId === stop.id || (stop.kind === 'store' ? p.assignedStoreIds : p.assignedProductionHouseIds)?.includes(stop.id as string);

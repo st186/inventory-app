@@ -11,6 +11,16 @@ import { useT } from '../../utils/i18n';
 import { useRiderApi } from './riderApi';
 import { isActive, isTracked } from './tripUtils';
 
+// A ride action returns the bare ride; keep the call contacts and stock request quantities the
+// rider's ride list came with (GET /rider/trips adds them for rider logins).
+function keepRiderDetails(before: RiderTrip, after: RiderTrip): RiderTrip {
+  return {
+    ...after,
+    linkedRequests: after.linkedRequests ?? before.linkedRequests,
+    stops: after.stops?.map((st, i) => (st.contact !== undefined || before.stops?.[i]?.id !== st.id ? st : { ...st, contact: before.stops[i].contact })),
+  };
+}
+
 export function useRiderTrips(mode: 'rider' | 'staff') {
   const rapi = useRiderApi();
   const { t } = useT();
@@ -47,7 +57,7 @@ export function useRiderTrips(mode: 'rider' | 'staff') {
     setBusyId(id);
     try {
       const updated = await action();
-      setTrips((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setTrips((prev) => prev.map((x) => (x.id === updated.id ? keepRiderDetails(x, updated) : x)));
       toast.success(success);
       return true;
     } catch (error) {
