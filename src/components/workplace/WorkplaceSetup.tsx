@@ -274,11 +274,13 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
 
           <Button variant="secondary" leadingIcon={<Plus />} onClick={addCheck}>Add a check</Button>
 
-          <div className="sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+12px)] z-(--z-sticky) md:bottom-4">
-            <Button size="lg" fullWidth loading={saving} disabled={!dirty && !isDefault} onClick={save} className="shadow-e2">
-              Save checklist
-            </Button>
-          </div>
+          {(dirty || isDefault || saving) && (
+            <div className="sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] z-(--z-sticky) -mx-4 border-t border-border bg-bg px-4 py-3 md:bottom-0">
+              <Button size="lg" fullWidth loading={saving} onClick={save}>
+                Save checklist
+              </Button>
+            </div>
+          )}
         </>
       )}
 

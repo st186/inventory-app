@@ -333,7 +333,7 @@ export function ExportData({ userRole, selectedStoreId, currentUserId, context, 
             key={r.id}
             icon={r.icon}
             title={r.id === 'tax' && taxYear ? t('reports.r.taxFy', { fy: fyLabel(taxYear.fyStartYear) }) : t(r.title)}
-            subtitle={<>{t(r.body)}<span className="mt-1 block text-text-2">{r.formats.map((f) => t(formatKey(f))).join(' · ')}</span></>}
+            subtitle={r.formats.map((f) => t(formatKey(f))).join(' · ')}
             chevron
             onClick={() => openDownload(r.id)}
           />
