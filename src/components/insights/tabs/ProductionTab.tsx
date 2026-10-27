@@ -114,8 +114,8 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
   const [sopOpen, setSopOpen] = useState(false);
 
   const mainSeries: SeriesSpec[] = [
-    { key: 'regularFinal', name: 'Momos', color: CHART_SERIES[0], kind: 'bar', stack: 'made' },
-    { key: 'kurkureFinal', name: 'Kurkure', color: CHART_SERIES[1], kind: 'bar', stack: 'made' },
+    { key: 'regularFinal', name: t('wp8.prod.momos'), color: CHART_SERIES[0], kind: 'bar', stack: 'made' },
+    { key: 'kurkureFinal', name: t('wp8.prod.kurkure'), color: CHART_SERIES[1], kind: 'bar', stack: 'made' },
     { key: 'prev_totalFinal', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true },
   ];
   const mixItems = output.periodMix.filter((m) => m.value > 0).sort((a, b) => b.value - a.value);
@@ -157,8 +157,8 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
       >
         <StatSplit
           items={[
-            { label: 'Momos', value: fmt(summary.types.filter((x) => !x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
-            { label: 'Kurkure', value: fmt(summary.types.filter((x) => x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
+            { label: t('wp8.prod.momos'), value: fmt(summary.types.filter((x) => !x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
+            { label: t('wp8.prod.kurkure'), value: fmt(summary.types.filter((x) => x.key.includes('Kurkure')).reduce((s, x) => s + x.current, 0)) },
             { label: t('wp8.prod.wastage'), value: `${summary.totalWastage.toFixed(2)} kg` },
           ]}
         />

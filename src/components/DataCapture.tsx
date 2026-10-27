@@ -614,7 +614,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   };
   const openLog = dailyLogs.find((l) => l.date === openLogDate) || null;
   const logged = (ok: boolean, at: string | null, by: string, what?: string) =>
-    ok ? [what ?? 'Logged', formatDateTime(at), by ? `by ${by}` : ''].filter(Boolean).join(' · ') : 'Not logged';
+    ok ? [what ?? 'Logged', at ? formatDateTime(at) : '', by ? `by ${by}` : ''].filter(Boolean).join(' · ') : 'Not logged';
 
   return (
     <div className="flex flex-col gap-5">

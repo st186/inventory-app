@@ -1271,14 +1271,14 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         </section>
       )}
 
-      {/* Settlement history - closed until asked for */}
+      {/* Settlement history - closed until asked for; a list at every width (the Money page is too
+          narrow for its nine columns) */}
       <ListGroup
         title="Settlement history"
         meta={isHistoryOpen && hasActiveRange ? `${filteredSettlements.length}` : undefined}
         empty={!hasActiveRange
           ? <EmptyState compact icon={FileSpreadsheet} title="Pick a custom date range and press Apply above" />
           : <EmptyState compact icon={FileSpreadsheet} title="No settlements in this date range yet" body={canEdit ? 'Use "Upload settlement" above to add one.' : undefined} />}
-        className={isHistoryOpen && hasActiveRange && filteredSettlements.length > 0 ? 'lg:hidden' : undefined}
       >
         {!isHistoryOpen ? (
           <ListRow muted title="Show the settlements in this period" onClick={() => setIsHistoryOpen(true)} chevron="down" aria-expanded={false} />
@@ -1302,48 +1302,6 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
           ))
         ) : null}
       </ListGroup>
-      {isHistoryOpen && hasActiveRange && filteredSettlements.length > 0 && (
-        <div className="hidden flex-col gap-2 lg:flex">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Settlement date</TableHead>
-                <TableHead>Aggregator</TableHead>
-                <TableHead numeric>Orders</TableHead>
-                <TableHead numeric>Net order value</TableHead>
-                <TableHead numeric>Net payout</TableHead>
-                <TableHead numeric>Commission</TableHead>
-                <TableHead numeric>Ad spend</TableHead>
-                <TableHead>Bank UTR</TableHead>
-                {canEdit && <TableHead><span className="sr-only">Delete</span></TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredSettlements.map(s => (
-                <TableRow key={s.id}>
-                  <TableCell>
-                    <span className="block">{formatDateIN(s.settlementDate)}</span>
-                    <span className="block text-label text-text-3">Sales: {formatSettlementPeriod(s)}</span>
-                  </TableCell>
-                  <TableCell className="capitalize text-text-2">{s.aggregator}</TableCell>
-                  <TableCell numeric className="text-text-2">{s.orderCount}</TableCell>
-                  <TableCell numeric className="text-text-2">{rupees(s.grossSales)}</TableCell>
-                  <TableCell numeric className="font-semibold">{rupees(s.netPayout)}</TableCell>
-                  <TableCell numeric className={s.netCommission >= 0 ? undefined : 'text-danger'}>{rupees(s.netCommission)}</TableCell>
-                  <TableCell numeric className="text-text-2">{s.adSpend !== undefined ? rupees(s.adSpend) : '—'}</TableCell>
-                  <TableCell className="text-label text-text-3">{s.bankUTR}</TableCell>
-                  {canEdit && (
-                    <TableCell>
-                      <IconButton label="Delete settlement" variant="danger-ghost" icon={<Trash2 />} disabled={deletingId === s.id} onClick={() => handleDelete(s.id)} />
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-
       {/* Upload Settlement Modal */}
       <ResponsiveModal
         open={showUploadModal}
