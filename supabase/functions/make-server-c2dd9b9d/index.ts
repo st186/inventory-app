@@ -271,7 +271,9 @@ const DISABLED_ROUTES = [
 const OWNER_ONLY = ['cluster_head'];
 const LEADS = ['cluster_head', 'manager'];
 const WRITES = ['POST', 'PUT', 'DELETE'];
-const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
+const INCHARGE_DESIGNATIONS = ['store_incharge', 'production_incharge', 'operations_incharge'];
+// alsoDesignations: let these designations through whatever their login role (incharges on employee logins).
+const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesignations?: string[] }[] = [
   { test: /^\/unified-employees\/[^/]+\/reset-password$/, roles: OWNER_ONLY },
   { test: /^\/admin\/employees\/[^/]+\/force-password-reset$/, roles: OWNER_ONLY },
   { test: /^\/cluster-heads(\/|$)/, methods: WRITES, roles: OWNER_ONLY },
@@ -288,9 +290,10 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[] }[] = [
   // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
   { test: /^\/send-/, roles: LEADS },
   // Item catalog edits: renaming, merging or deleting expense items and changing the momo
-  // item list (inventory-items.tsx has no checks of its own).
-  { test: /^\/custom-items\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: LEADS },
-  { test: /^\/inventory-items(\/|$)/, methods: WRITES, roles: LEADS },
+  // item list (inventory-items.tsx has no checks of its own). Incharges on employee logins keep
+  // editing it, as before (owner, 27 Oct 2026).
+  { test: /^\/custom-items\/[^/]+$/, methods: ['PUT', 'DELETE'], roles: LEADS, alsoDesignations: INCHARGE_DESIGNATIONS },
+  { test: /^\/inventory-items(\/|$)/, methods: WRITES, roles: LEADS, alsoDesignations: INCHARGE_DESIGNATIONS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 
@@ -313,7 +316,8 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   if (passwordBlock) return c.json(passwordBlock, 403);
   const role = auth.user.user_metadata?.role;
   const gate = ROLE_GATES.find((g) => g.test.test(path) && (!g.methods || g.methods.includes(c.req.method)));
-  if (gate && !gate.roles.includes(role)) return c.json({ error: 'You are not allowed to do this' }, 403);
+  const designation = auth.user.user_metadata?.designation;
+  if (gate && !gate.roles.includes(role) && !gate.alsoDesignations?.includes(designation)) return c.json({ error: 'You are not allowed to do this' }, 403);
 
   if (WRITES.includes(c.req.method) && /^\/unified-employees(\/|$)/.test(path) && role !== 'cluster_head') {
     // Only the owner hands out manager, owner or audit roles.
