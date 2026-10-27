@@ -33,6 +33,12 @@ import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { BunnyChat } from './components/BunnyChat';
 import { ProfileCompletionCard } from './components/ProfileCompletionCard';
 import { usePasswordPolicy, ChangePasswordDialog, PasswordExpiryBanner } from './components/PasswordSecurity';
+// Shift clock card, "Team KPIs" / "My KPIs" (components/kpi). The two views aren't added to the
+// activeView union (a line everyone edits); they are compared as strings instead.
+import { ShiftClockCard } from './components/kpi/ShiftClockCard';
+import { KpiNavButton } from './components/kpi/KpiNav';
+const TeamKpis = lazy(() => import('./components/kpi/TeamKpis').then(module => ({ default: module.TeamKpis })));
+const MyKpis = lazy(() => import('./components/kpi/MyKpis').then(module => ({ default: module.MyKpis })));
 import { setLanguageOwner } from './utils/bunnyLanguage';
 import { setScreenPage } from './utils/screenContext';
 import { StoreSelector } from './components/StoreSelector';
@@ -1760,7 +1766,7 @@ export default function App() {
  if (!user) return;
  // A rider only ever needs their rides, plus their own attendance/payouts.
     if (user.designation === 'rider') {
-      if (!['riders', 'payroll', 'rider-profile'].includes(activeView)) setActiveView('riders');
+      if (!['riders', 'payroll', 'rider-profile', 'my-kpis'].includes(activeView)) setActiveView('riders');
       return;
     }
     const isPlainEmployee = user.role === 'employee' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
@@ -2122,6 +2128,7 @@ export default function App() {
  </button>
  )}
 
+ <KpiNavButton view="my-kpis" variant="employee-desktop" active={(activeView as string) === 'my-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => setActiveView('payroll')}
@@ -2358,6 +2365,7 @@ export default function App() {
  </button>
  )}
 
+ <KpiNavButton view="my-kpis" variant="employee-mobile" active={(activeView as string) === 'my-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />
  {/* Payroll and Attendance for non-manager/cluster-head users */}
  <button
  onClick={() => {
@@ -2438,9 +2446,13 @@ export default function App() {
  {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
  {/* Plain staff land on payroll, incharges on analytics: both count as home here. */}
  {!isRider && (activeView === 'analytics' || activeView === 'payroll') && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
+ {/* Shift clock on each person's landing screen: incharges Analytics, riders their rides, crew My Payouts. */}
+ {(isAnyIncharge ? activeView === 'analytics' : isRider ? activeView === 'riders' : activeView === 'payroll') && <ShiftClockCard isLead={isAnyIncharge} />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
+ ) : (activeView as string) === 'my-kpis' ? (
+ <MyKpis />
  ) : activeView === 'receive-stock' && canReceiveStock ? (
  <IncomingDeliveries accessToken={user.accessToken || ''} storeId={user.storeId || ''} />
  ) : activeView === 'stock-outs' && canViewStockOuts ? (
@@ -2781,6 +2793,8 @@ export default function App() {
  <EquipmentNavButton variant="manager-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />
  </>
  )}
+ {(isClusterHead || isOperationsManager) && <KpiNavButton view="team-kpis" variant="manager-desktop" active={(activeView as string) === 'team-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />}
+ {!isClusterHead && <KpiNavButton view="my-kpis" variant="manager-desktop" active={(activeView as string) === 'my-kpis'} onSelect={(v) => setActiveView(v as typeof activeView)} />}
  {/* Refresh moved to the always-visible bar next to the notification bell above. */}
  <button
  onClick={passwordPolicy.openDialog}
@@ -3026,6 +3040,8 @@ export default function App() {
                   <EquipmentNavButton variant="manager-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />
                   </>
  )}
+ {(isClusterHead || isOperationsManager) && <KpiNavButton view="team-kpis" variant="manager-mobile" active={(activeView as string) === 'team-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />}
+ {!isClusterHead && <KpiNavButton view="my-kpis" variant="manager-mobile" active={(activeView as string) === 'my-kpis'} onSelect={(v) => { setActiveView(v as typeof activeView); setIsMobileMenuOpen(false); }} />}
  <button
  onClick={() => {
  passwordPolicy.openDialog();
@@ -3094,11 +3110,16 @@ export default function App() {
  <main className="pb-6" data-ai-screen>
  {activeView === 'analytics' && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
  {activeView === 'analytics' && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
+ {activeView === 'analytics' && !isClusterHead && <ShiftClockCard isLead />}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />
  ) : activeView === 'workplace' ? (
  <WorkplaceChecks initialTab={highlightTab} initialLocation={highlightRequestId} />
+ ) : (activeView as string) === 'team-kpis' && (isClusterHead || isOperationsManager) ? (
+ <TeamKpis />
+ ) : (activeView as string) === 'my-kpis' && !isClusterHead ? (
+ <MyKpis />
  ) : activeView === 'riders' ? (
  <RiderTrips
  mode="staff"

@@ -73,6 +73,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Shift clock automatic check-in (components/kpi/shiftTracker.ts): lets staff pick "Allow all
+         the time" so arrival is noticed with the phone in a pocket. Only used around shift hours. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- Voice (VoicePlugin.java): the phone's speech-recognition screen and text-to-speech engine. -->
     <queries>
         <intent>

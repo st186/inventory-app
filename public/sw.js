@@ -124,6 +124,8 @@ const NOTIFICATION_VIEW_MAP = {
   workplace_due: { view: 'workplace', tab: 'mine' },
   workplace_missed: { view: 'workplace', tab: 'review' },
   workplace_flag: { view: 'workplace', tab: 'review' },
+  kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
+  shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
 };
 
 function getNavigationTarget(payload) {

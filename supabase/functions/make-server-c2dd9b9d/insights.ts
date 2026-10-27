@@ -381,6 +381,23 @@ async function callClaude(deps: Deps, opts: {
 
 const textOf = (res: any) => (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').trim();
 
+// For other server modules (kpi.ts): one structured-output request that goes through the same
+// monthly ₹ cap, per-person allowance and usage log as everything here, so it isn't duplicated.
+export { AiError };
+export async function askClaudeForJson(kv: Kv, opts: {
+  purpose: string; system: string; prompt: string; schema: any; user: AiUser;
+  effort?: 'low' | 'medium' | 'high'; maxTokens?: number;
+}): Promise<{ data: any; model: string }> {
+  const res = await callClaude({ kv } as Deps, {
+    purpose: opts.purpose, system: opts.system, user: opts.user, effort: opts.effort || 'low', maxTokens: opts.maxTokens || 3000,
+    format: { type: 'json_schema', schema: opts.schema }, messages: [{ role: 'user', content: opts.prompt }],
+  });
+  let data: any = null;
+  try { data = JSON.parse(textOf(res)); } catch { /* reported below */ }
+  if (!data) throw new AiError('Claude did not return a usable answer - try again.', 502);
+  return { data, model: res.model };
+}
+
 function compactDay(d: DayRecord, events: Map<string, CalendarEvent>) {
   const p = d.pieces || {};
   const nonVeg = FORECAST_TYPES.filter((t) => !t.veg).reduce((s, t) => s + (p[t.key] || 0), 0);

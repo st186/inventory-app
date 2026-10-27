@@ -13,6 +13,7 @@ import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm
 import { registerAssetsRoutes } from './assets.ts';
 import { registerWorkplaceRoutes } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
+import { registerKpiRoutes } from './kpi.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -16545,6 +16546,8 @@ registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: L
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
 registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST });
 registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
+// Shift clock-in/out, team KPIs and variable pay (attendance.ts, kpi.ts).
+registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

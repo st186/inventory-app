@@ -33,7 +33,7 @@ export function useScreenContext() {
 
 // Pages whose content never goes to the AI: people's details, pay, attendance, rider locations,
 // backups and exports.
-const PRIVATE_PAGES = new Set(['employees', 'payroll', 'attendance', 'riders', 'rider-profile', 'backup', 'export', 'assets']);
+const PRIVATE_PAGES = new Set(['employees', 'payroll', 'attendance', 'riders', 'rider-profile', 'backup', 'export', 'assets', 'team-kpis', 'my-kpis']);
 export const screenIsPrivate = (page: string) => PRIVATE_PAGES.has(page);
 
 // The screen's visible text (main content only, private parts removed), trimmed for the AI.

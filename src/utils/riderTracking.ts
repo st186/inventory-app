@@ -10,7 +10,9 @@ import type { BackgroundGeolocationPlugin } from '@capacitor-community/backgroun
 import { API_BASE } from './api';
 import { getSupabaseClient } from './supabase/client';
 
-const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
+// Exported for the shift clock's automatic check-in (components/kpi/shiftTracker.ts) - a plugin
+// may only be registered once.
+export const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>('BackgroundGeolocation');
 
 export type TrackingState = 'starting' | 'active' | 'denied' | 'error' | 'stopped';
 
