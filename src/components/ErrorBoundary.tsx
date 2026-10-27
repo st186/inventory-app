@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { AlertTriangle, RotateCw } from 'lucide-react';
 
 type Props = { children: ReactNode };
 type State = { error: Error | null; info: ErrorInfo | null };
@@ -30,42 +31,25 @@ export class ErrorBoundary extends Component<Props, State> {
     }
 
     return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px',
-        background: '#FFF8F0',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-      }}>
-        <div style={{
-          maxWidth: '480px',
-          width: '100%',
-          background: '#fff',
-          borderRadius: '16px',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.1)',
-          padding: '24px',
-        }}>
-          <h1 style={{ fontSize: '18px', color: '#111', marginBottom: '8px' }}>Something went wrong</h1>
-          <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
-            The app hit an error it couldn't recover from. Reloading usually fixes it - if it
-            keeps happening, share this message with support.
-          </p>
-          <details style={{ marginBottom: '16px' }}>
-            <summary style={{ fontSize: '13px', color: '#c2410c', cursor: 'pointer' }}>Error details</summary>
-            <pre style={{
-              fontSize: '11px',
-              color: '#991b1b',
-              background: '#fef2f2',
-              padding: '10px',
-              borderRadius: '8px',
-              marginTop: '8px',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              maxHeight: '240px',
-              overflowY: 'auto',
-            }}>
+      <div className="flex min-h-dvh items-center justify-center bg-bg p-4 text-text sm:p-6" role="alert">
+        <div className="flex w-full max-w-[480px] flex-col gap-4 rounded-xl border border-border bg-surface p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-danger-soft text-danger" aria-hidden="true">
+              <AlertTriangle className="size-5" />
+            </span>
+            <div className="flex flex-col gap-1">
+              <h1 className="text-title font-semibold text-text">Something went wrong</h1>
+              <p className="text-body-sm text-text-2">
+                The app hit an error it couldn't recover from. Reloading usually fixes it - if it
+                keeps happening, share this message with support.
+              </p>
+            </div>
+          </div>
+          <details className="rounded-md border border-border bg-surface-2">
+            <summary className="flex min-h-11 cursor-pointer items-center px-3 text-body-sm font-medium text-primary">
+              Error details
+            </summary>
+            <pre className="max-h-60 overflow-y-auto border-t border-border px-3 py-2.5 text-caption break-words whitespace-pre-wrap text-danger">
               {error.message}
               {'\n\n'}
               {error.stack}
@@ -73,19 +57,11 @@ export class ErrorBoundary extends Component<Props, State> {
             </pre>
           </details>
           <button
+            type="button"
             onClick={this.handleReload}
-            style={{
-              width: '100%',
-              padding: '12px',
-              background: '#ea580c',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '10px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="inline-flex h-13 w-full items-center justify-center gap-2 rounded-md bg-primary text-body font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
+            <RotateCw className="size-5" aria-hidden="true" />
             Reload
           </button>
         </div>
