@@ -54,22 +54,55 @@ function withTrustedRoles(user: any) {
   return { ...user, user_metadata: meta };
 }
 
-// The signed-in caller's role and employee id (already verified by the login gate).
-async function viewerOf(c: any): Promise<{ role?: string; employeeId?: string }> {
+type Viewer = { role?: string; employeeId?: string; lean?: boolean };
+
+// The signed-in caller's role and employee id (already verified by the login gate), and
+// whether the app asked for lean lists (see withoutImages).
+async function viewerOf(c: any): Promise<Viewer> {
+  const lean = wantsLeanLists(c);
   const auth = await verifyUser(c.req.header('Authorization'));
-  return 'error' in auth ? {} : { role: auth.user.user_metadata?.role, employeeId: auth.user.user_metadata?.employeeId };
+  return 'error' in auth ? { lean } : { role: auth.user.user_metadata?.role, employeeId: auth.user.user_metadata?.employeeId, lean };
+}
+
+// The whole record, Aadhaar images included: the owner, and the person themself.
+function seesFullEmployeeRecord(emp: any, viewer: Viewer): boolean {
+  if (viewer.role === 'cluster_head') return true;
+  return !!viewer.employeeId && (emp?.employeeId === viewer.employeeId || emp?.id === viewer.employeeId);
 }
 
 // Who sees what in employee records: Aadhaar card images only the owner and the person
 // themself; pay, date of birth and phone also managers and audit.
-function employeeForViewer(emp: any, viewer: { role?: string; employeeId?: string }) {
-  if (!emp || viewer.role === 'cluster_head') return emp;
-  if (viewer.employeeId && (emp.employeeId === viewer.employeeId || emp.id === viewer.employeeId)) return emp;
+function employeeForViewer(emp: any, viewer: Viewer) {
+  if (!emp) return emp;
+  if (seesFullEmployeeRecord(emp, viewer)) return viewer.lean ? withoutImages(emp) : emp;
   const { aadharFront, aadharBack, ...rest } = emp;
   const out: any = { ...rest, hasAadharImages: !!(aadharFront || aadharBack) };
   if (viewer.role !== 'manager' && viewer.role !== 'audit') {
     for (const k of ['salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'dob', 'dateOfBirth', 'phone', 'bankDetails', 'tempPassword']) delete out[k];
   }
+  return viewer.lean ? withoutImages(out) : out;
+}
+
+// ---- Lean employee lists (lean-lists-v1, speed work 28 Oct 2026) ----
+// An app that sends X-Bunny-Client: 2 gets employee lists without any image data (Aadhaar
+// front/back, photos, any data: URL), with hasAadharImages saying whether Aadhaar images exist;
+// it opens them one person at a time from GET /employees/:id/documents. The owner's phone used
+// to download ~0.7 MB of photos per app open. Without the header the lists are as before.
+const IMAGE_FIELD = /aadh?ar(front|back)|photo|image|selfie|avatar|picture/i;
+
+function wantsLeanLists(c: any): boolean {
+  return c.req.header('X-Bunny-Client') === '2';
+}
+
+function isImageField(key: string, value: unknown): boolean {
+  return typeof value === 'string' && (IMAGE_FIELD.test(key) || value.startsWith('data:'));
+}
+
+function withoutImages(emp: any) {
+  if (!emp || typeof emp !== 'object') return emp;
+  const out: any = {};
+  for (const [k, v] of Object.entries(emp)) if (!isImageField(k, v)) out[k] = v;
+  out.hasAadharImages = emp.hasAadharImages === true || !!(emp.aadharFront || emp.aadharBack);
   return out;
 }
 
@@ -3401,7 +3434,10 @@ const LATEST_APP_VERSION = '1.15.21';
 //                  /aggregator-settlements (settlementDate), /stock-requests and /production-requests
 //                  (requestDate), /online-cash-recalibration/all, /timesheets/all, /payouts,
 //                  /leaves/all (leaveDate), /order-item-detail
-const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1'];
+//   lean-lists-v1  X-Bunny-Client: 2 strips images from the employee lists (/employees,
+//                  /unified-employees[/manager|/cluster-head], /archived-employees, /cluster-heads,
+//                  /me/employee) and keeps hasAadharImages; GET /employees/:id/documents has them
+const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1'];
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -3580,6 +3616,70 @@ app.get('/make-server-c2dd9b9d/employees', async (c) => {
       return c.json({ success: true, employees: [], warning: 'Database temporarily unavailable' });
     }
     return c.json({ error: 'Failed to fetch employees' }, 500);
+  }
+});
+
+// The signed-in person's own employee record (same shape as their entry in GET /employees),
+// so a plain employee's phone needn't download the whole staff list to find itself.
+// employee is null for a login with no employee record.
+app.get('/make-server-c2dd9b9d/me/employee', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const employeeId = authResult.user.user_metadata?.employeeId;
+    const record = employeeId ? await kvWithRetry.get(`unified-employee:${employeeId}`) : null;
+    const viewer = await viewerOf(c);
+    return c.json({ success: true, employee: record ? employeeForViewer(normalizeEmployee(record), viewer) : null });
+  } catch (error) {
+    console.log('Error fetching own employee record:', error);
+    return c.json({ error: 'Failed to fetch your employee record' }, 500);
+  }
+});
+
+// One person's document images (Aadhaar front and back, and any other photo kept on the
+// record), for the lean lists above. Exactly who sees them in the full lists: the owner and the
+// person themself; anyone else gets 403. ?archived=true reads the past-employee record (ids
+// were reused in the past, so an active record with the same id may exist too).
+app.get('/make-server-c2dd9b9d/employees/:id/documents', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) {
+    return c.json({ error: authResult.error }, authResult.status);
+  }
+
+  try {
+    const id = c.req.param('id');
+    const wantArchived = c.req.query('archived') === 'true';
+    const [active, archived] = await Promise.all([
+      wantArchived ? Promise.resolve(null) : kvWithRetry.get(`unified-employee:${id}`),
+      kvWithRetry.get(`archived-employee:${id}`),
+    ]);
+    const record = active || archived;
+    if (!record) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+    const viewer = await viewerOf(c);
+    if (!seesFullEmployeeRecord(normalizeEmployee(record), viewer)) {
+      return c.json({ error: 'Only the owner and the employee themself can see these documents' }, 403);
+    }
+
+    const images: Record<string, string> = {};
+    for (const [k, v] of Object.entries(record)) {
+      if (k !== 'aadharFront' && k !== 'aadharBack' && isImageField(k, v)) images[k] = v as string;
+    }
+    return c.json({
+      success: true,
+      employeeId: record.employeeId || record.id || id,
+      archived: !active,
+      aadharFront: record.aadharFront || null,
+      aadharBack: record.aadharBack || null,
+      images,
+    });
+  } catch (error) {
+    console.log('Error fetching employee documents:', error);
+    return c.json({ error: 'Failed to fetch employee documents' }, 500);
   }
 });
 
@@ -8222,7 +8322,7 @@ app.get('/make-server-c2dd9b9d/cluster-heads', async (c) => {
   try {
     const allEmployees = await kv.getByPrefix('unified-employee:');
     const clusterHeads = allEmployees.filter((emp: any) => emp.role === 'cluster_head');
-    return c.json({ clusterHeads });
+    return c.json({ clusterHeads: wantsLeanLists(c) ? clusterHeads.map(withoutImages) : clusterHeads });
   } catch (error) {
     console.log('Error fetching cluster heads:', error);
     return c.json({ error: 'Failed to fetch cluster heads' }, 500);
