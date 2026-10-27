@@ -137,7 +137,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   return (
     <HomePage wide>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-7">
+        <div className="lg:col-span-8">
           <SalesTodayHero
             today={clock.today}
             nowMinutes={clock.minutes}
@@ -148,7 +148,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
             onOpen={has('money/sales') ? () => open('money/sales') : undefined}
           />
         </div>
-        <div className="lg:col-span-5">
+        <div className="lg:col-span-4">
           <OwnerKpis
             today={clock.today}
             profit={home.profit}
@@ -182,7 +182,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         </div>
 
         {insightsStoreId && (
-          <div className="lg:col-span-6">
+          <div className="lg:col-span-12">
             <ForecastCard
               compact
               data={overview.data}
@@ -194,7 +194,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
           </div>
         )}
         {teamPath && (
-          <div className="lg:col-span-6">
+          <div className="lg:col-span-12">
             <div className="overflow-hidden rounded-lg border border-border bg-surface">
               <ListRow
                 icon={Users}

@@ -201,7 +201,7 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
         <div className="flex min-w-0 flex-col">
           <h2 id="shift-card-title" className="text-subtitle font-semibold text-text">{t('shift.yours')}</h2>
           <span className="num text-label text-text-3">
-            {t('shift.today', { from: hhmm12(today.settings.shiftStart).toLowerCase(), to: hhmm12(today.settings.shiftEnd).toLowerCase() })}
+            {hhmm12(today.settings.shiftStart).toLowerCase()}–{hhmm12(today.settings.shiftEnd).toLowerCase()}
           </span>
         </div>
         {statusChip}
@@ -297,7 +297,7 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
             </>
           )}
         </span>
-        {employeeId && (
+        {employeeId && !today.exempt && (
           <Button variant="link" size="sm" className="hit-44 relative shrink-0" onClick={() => setConsentOpen(true)}>{t('shift.whyLocation')}</Button>
         )}
       </div>
