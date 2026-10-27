@@ -2687,7 +2687,7 @@ app.post('/make-server-c2dd9b9d/production/:id/approve', async (c) => {
     // entries past that came back "not found".
     const allProduction = await getAllByPrefixWithRetry('production:');
     const existingProduction = allProduction.find((p: any) => p.id === itemId);
-
+    
     if (!existingProduction) {
       return c.json({ error: 'Production data not found' }, 404);
     }
@@ -10948,7 +10948,7 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/status', async (c) => {
     if (!existingRequest) {
       return c.json({ error: 'Production request not found' }, 404);
     }
-
+    
     // Accept .. ship are production steps: production incharge, operations managers, cluster
     // head. Confirming delivery is also open to the receiving store's own people (the store
     // incharge's "Confirm Delivery" before receive-and-count goes live), and only from shipped.
@@ -11114,9 +11114,9 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/ship', async (c) => {
     if (REQUEST_DONE.includes(existingRequest.status)) {
       return c.json({ error: `This delivery is already marked ${existingRequest.status}` }, 409);
     }
-
+    
     const now = new Date().toISOString();
-
+    
     // Determine if this is a partial shipment
     let isPartialShipment = false;
 
@@ -12931,7 +12931,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/approve', async (c) => {
       return c.json({ error: 'Only the cluster head and operations managers can approve a stock count' }, 403);
     }
     const recalibrationId = c.req.param('id');
-
+    
     // Get the recalibration record
     const recalibration = await kv.get(`recalibration_${recalibrationId}`);
     if (!recalibration) {
@@ -12982,7 +12982,7 @@ app.post('/make-server-c2dd9b9d/stock-recalibration/:id/reject', async (c) => {
     }
     const recalibrationId = c.req.param('id');
     const { reason } = await c.req.json();
-
+    
     if (!reason) {
       return c.json({ error: 'Rejection reason is required' }, 400);
     }
