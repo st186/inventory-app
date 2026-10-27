@@ -22,30 +22,30 @@ type Persona = { id: string; label: string; user: NonNullable<InventoryContextTy
 
 const base = { accessToken: 'preview', assignedStoreIds: [], assignedProductionHouseIds: [] };
 export const PREVIEW_PERSONAS: Persona[] = [
-  { id: 'owner', label: 'Owner', user: { ...base, email: 'owner@example.test', name: 'Subham Tewari', role: 'cluster_head', employeeId: 'BM001', storeId: null, designation: null } },
-  { id: 'ops-manager', label: 'Operations manager', user: { ...base, email: 'ops@example.test', name: 'Ritu Das', role: 'manager', employeeId: 'BM010', storeId: null, designation: null } },
-  { id: 'store-incharge', label: 'Store incharge', user: { ...base, email: 'store@example.test', name: 'Nabendu Bera', role: 'employee', employeeId: 'BM021', storeId: 'STORE-1', designation: 'store_incharge' } },
-  { id: 'store-incharge-manager', label: 'Store incharge (manager login)', user: { ...base, email: 'storem@example.test', name: 'Arup Sen', role: 'manager', employeeId: 'BM022', storeId: 'STORE-1', designation: 'store_incharge' } },
-  { id: 'production-incharge', label: 'Production incharge', user: { ...base, email: 'prod@example.test', name: 'Mithun Roy', role: 'employee', employeeId: 'BM031', storeId: 'PH-1', designation: 'production_incharge' } },
-  { id: 'production-incharge-manager', label: 'Production incharge (manager login)', user: { ...base, email: 'prodm@example.test', name: 'Sujit Pal', role: 'manager', employeeId: 'BM032', storeId: 'PH-1', designation: 'production_incharge' } },
-  { id: 'store-crew', label: 'Store crew', user: { ...base, email: 'crew@example.test', name: 'Rakesh Kumar', role: 'employee', employeeId: 'BM041', storeId: 'STORE-1', designation: 'store_ops' } },
-  { id: 'kitchen-crew', label: 'Kitchen crew', user: { ...base, email: 'kitchen@example.test', name: 'Rina Kar', role: 'employee', employeeId: 'BM051', storeId: 'PH-1', designation: 'production_ops' } },
-  { id: 'rider', label: 'Rider', user: { ...base, email: 'rider@example.test', name: 'Bablu Sheikh', role: 'employee', employeeId: 'BM061', storeId: null, designation: 'rider' } },
+  { id: 'owner', label: 'Owner', user: { ...base, email: 'owner@example.test', name: 'Owner Demo', role: 'cluster_head', employeeId: 'DEMO-01', storeId: null, designation: null } },
+  { id: 'ops-manager', label: 'Operations manager', user: { ...base, email: 'ops@example.test', name: 'Ops Manager Demo', role: 'manager', employeeId: 'DEMO-10', storeId: null, designation: null } },
+  { id: 'store-incharge', label: 'Store incharge', user: { ...base, email: 'store@example.test', name: 'Store Incharge Demo', role: 'employee', employeeId: 'DEMO-21', storeId: 'STORE-1', designation: 'store_incharge' } },
+  { id: 'store-incharge-manager', label: 'Store incharge (manager login)', user: { ...base, email: 'storem@example.test', name: 'Store Lead Demo', role: 'manager', employeeId: 'DEMO-22', storeId: 'STORE-1', designation: 'store_incharge' } },
+  { id: 'production-incharge', label: 'Production incharge', user: { ...base, email: 'prod@example.test', name: 'Kitchen Head Demo', role: 'employee', employeeId: 'DEMO-31', storeId: 'PH-1', designation: 'production_incharge' } },
+  { id: 'production-incharge-manager', label: 'Production incharge (manager login)', user: { ...base, email: 'prodm@example.test', name: 'Kitchen Lead Demo', role: 'manager', employeeId: 'DEMO-32', storeId: 'PH-1', designation: 'production_incharge' } },
+  { id: 'store-crew', label: 'Store crew', user: { ...base, email: 'crew@example.test', name: 'Counter Crew Demo', role: 'employee', employeeId: 'DEMO-41', storeId: 'STORE-1', designation: 'store_ops' } },
+  { id: 'kitchen-crew', label: 'Kitchen crew', user: { ...base, email: 'kitchen@example.test', name: 'Kitchen Crew Demo', role: 'employee', employeeId: 'DEMO-51', storeId: 'PH-1', designation: 'production_ops' } },
+  { id: 'rider', label: 'Rider', user: { ...base, email: 'rider@example.test', name: 'Rider Demo', role: 'employee', employeeId: 'DEMO-61', storeId: null, designation: 'rider' } },
   { id: 'auditor', label: 'Auditor', user: { ...base, email: 'audit@example.test', name: 'Audit Desk', role: 'audit', employeeId: 'AUDIT001', storeId: null, designation: null } },
 ];
 
 const STORES = [
-  { id: 'STORE-1', name: 'Kasba store', location: 'Kasba', managerId: null, productionHouseId: 'PH-1' },
-  { id: 'STORE-2', name: 'Gariahat store', location: 'Gariahat', managerId: null },
+  { id: 'STORE-1', name: 'Store A', location: 'Demo street', managerId: null, productionHouseId: 'PH-1' },
+  { id: 'STORE-2', name: 'Store B', location: 'Demo road', managerId: null },
 ] as unknown as api.Store[];
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 const NOTIFICATIONS: api.Notification[] = [
-  { id: 'n1', userId: 'u', type: 'discrepancy_request', title: 'Cash short by ₹240', message: "Yesterday's day close at Kasba store needs your approval.", relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(12) },
-  { id: 'n2', userId: 'u', type: 'leave_pending', title: 'Leave request', message: 'Rina Kar asked for 2 days next week.', relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(95) },
-  { id: 'n3', userId: 'u', type: 'stock_out', title: 'Chicken cheese momo is out of stock', message: 'Marked 6:40 pm at Kasba store.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(200) },
-  { id: 'n4', userId: 'u', type: 'production_request_shipped', title: 'Stock request shipped', message: 'Packed and on the way to Kasba store.', relatedId: 'PR-1', relatedDate: null, read: true, createdAt: minutesAgo(60 * 30) },
-  { id: 'n5', userId: 'u', type: 'salary_credited', title: 'October salary paid', message: '₹9,350 sent to your account.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(60 * 50) },
+  { id: 'n1', userId: 'u', type: 'discrepancy_request', title: 'Cash short by ₹240', message: "Yesterday's day close at Store A needs your approval.", relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(12) },
+  { id: 'n2', userId: 'u', type: 'leave_pending', title: 'Leave request', message: 'A crew member asked for 2 days next week.', relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(95) },
+  { id: 'n3', userId: 'u', type: 'stock_out', title: 'Chicken cheese momo is out of stock', message: 'Marked 6:40 pm at Store A.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(200) },
+  { id: 'n4', userId: 'u', type: 'production_request_shipped', title: 'Stock request shipped', message: 'Packed and on the way to Store A.', relatedId: 'PR-1', relatedDate: null, read: true, createdAt: minutesAgo(60 * 30) },
+  { id: 'n5', userId: 'u', type: 'salary_credited', title: 'October salary paid', message: 'Sent to your account.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(60 * 50) },
 ];
 
 function mockSource(): NotificationsSource {
