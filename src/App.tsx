@@ -29,12 +29,14 @@ const AttendancePortal = lazy(() => import('./components/AttendancePortal').then
 const EmployeeManagement = lazy(() => import('./components/EmployeeManagement').then(module => ({ default: module.EmployeeManagement })));
 import { Notifications } from './components/Notifications';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
-import { BunnyChat } from './components/BunnyChat';
-import { ProfileCompletionCard } from './components/ProfileCompletionCard';
+const BunnyChat = lazy(() => import('./components/BunnyChat').then(module => ({ default: module.BunnyChat })));
+const ProfileCompletionCard = lazy(() => import('./components/ProfileCompletionCard').then(module => ({ default: module.ProfileCompletionCard })));
 import { usePasswordPolicy, ChangePasswordDialog, PasswordExpiryBanner } from './components/PasswordSecurity';
 // Shift clock card, "Team KPIs" / "My KPIs" (components/kpi). The two views aren't added to the
 // activeView union (a line everyone edits); they are compared as strings instead.
-import { ShiftClockCard } from './components/kpi/ShiftClockCard';
+// Lazy like the cards below: none of them is needed for the first frame (shift tracking itself is
+// loaded eagerly through riderTracking/riderLocationSharing).
+const ShiftClockCard = lazy(() => import('./components/kpi/ShiftClockCard').then(module => ({ default: module.ShiftClockCard })));
 import { KpiNavButton } from './components/kpi/KpiNav';
 const TeamKpis = lazy(() => import('./components/kpi/TeamKpis').then(module => ({ default: module.TeamKpis })));
 const MyKpis = lazy(() => import('./components/kpi/MyKpis').then(module => ({ default: module.MyKpis })));
@@ -50,7 +52,7 @@ import { ClipboardCheck } from 'lucide-react';
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
 // polling is needed. (AttendanceReminderScheduler's file has since been deleted.)
-import { PushNotificationStatus } from './components/PushNotificationStatus';
+const PushNotificationStatus = lazy(() => import('./components/PushNotificationStatus').then(module => ({ default: module.PushNotificationStatus })));
 import { LoadingSkeleton, CompactLoadingSkeleton } from './components/LoadingSkeleton';
 import { Package, BarChart3, LogOut, AlertCircle, DollarSign, Trash2, Users, TrendingUp, Download, Menu, X, Clock, Calendar, UserPlus, CheckSquare, Store, Factory, Bell, Activity, RefreshCw, Database, Bike, PackageCheck, PackageX, KeyRound } from 'lucide-react';
 import { getSupabaseClient } from './utils/supabase/client';
@@ -60,9 +62,10 @@ import * as pushNotifications from './utils/pushNotifications';
 import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
 import { startAuthTracking, currentAccessToken, peekStoredSession } from './utils/accessToken';
-import { clearMemoryCache, loadServerFeatures, onConnectivity, requestJson } from './utils/http';
-import { ALL_DATASET_KEYS, DATASETS, DEDUPED_DATASETS, datasetsFor, dedupeById, keepsStaffList, loadDatasets, mergeDateWindow, needsBusinessData, profileFrom, stripEmployeeImages, type DatasetKey } from './utils/startupData';
+import { clearMemoryCache, hasFeature, loadServerFeatures, onConnectivity, requestJson, whenFeaturesKnown } from './utils/http';
+import { ALL_DATASET_KEYS, DATASETS, DEDUPED_DATASETS, datasetsFor, dedupeById, keepsStaffList, loadDatasets, mergeDateWindow, needsBusinessData, profileFrom, profileFromRecord, stripEmployeeImages, type DatasetKey, type DateWindow } from './utils/startupData';
 import { SyncStatus, useOutbox } from './components/SyncStatus';
+import { useForegroundInterval } from './utils/appVisibility';
 import * as outbox from './utils/outbox';
 import { toast } from 'sonner';
 
@@ -552,39 +555,19 @@ export default function App() {
   }
   if (fromSavedCopy) persistedRef.current[key] = rows;
   loadedKeysRef.current.add(key);
+  const setList = LIST_SETTERS[key];
+  if (setList) {
+   setList(rows || []);
+   return;
+  }
   switch (key) {
-   case 'inventory': setInventory(rows || []); break;
-   case 'overheads': setOverheads(rows || []); break;
-   case 'fixedCosts': setFixedCosts(rows || []); break;
-   case 'salesData': setSalesData(rows || []); break;
-   case 'categorySales': setCategorySalesData(rows || []); break;
-   case 'productionData': setProductionData(rows || []); break;
-   case 'productionHouses': setProductionHouses(rows || []); break;
-   case 'stockRequests': setStockRequests(rows || []); break;
-   case 'productionRequests': setProductionRequests(rows || []); break;
-   case 'inventoryItems': setInventoryItems(rows || []); break;
-   case 'onlineCashRecalibrations': setOnlineCashRecalibrations(rows || []); break;
-   case 'onlineSalesData': setOnlineSalesData(rows || []); break;
-   case 'onlinePayoutData': setOnlinePayoutData(rows || []); break;
-   case 'aggregatorSettlements': setAggregatorSettlements(rows || []); break;
-   case 'stores': setStores(rows || []); break;
    case 'employees': {
     if (keepsStaffList(person)) setEmployees(rows || []);
-    // Their own store and designation: on screen and saved, so the next open needn't wait for it.
-    const profile = profileFrom(rows, person.employeeId);
-    if (profile && !fromSavedCopy) {
-     dataCache.setCachedProfile(profile);
-     setUser((current) => {
-      if (!current || current.employeeId !== person.employeeId) return current;
-      const next = withProfile(current, profile);
-      const same = next.storeId === current.storeId && next.designation === current.designation
-       && JSON.stringify(next.assignedStoreIds) === JSON.stringify(current.assignedStoreIds || [])
-       && JSON.stringify(next.assignedProductionHouseIds) === JSON.stringify(current.assignedProductionHouseIds || []);
-      if (same) return current;
-      userRef.current = next;
-      return next;
-     });
-    }
+    if (!fromSavedCopy) applyProfile(profileFrom(rows, person.employeeId), person);
+    break;
+   }
+   case 'meEmployee': {
+    if (!fromSavedCopy) applyProfile(profileFromRecord(rows, person.employeeId), person);
     break;
    }
    case 'clusterInfo': {
@@ -595,6 +578,32 @@ export default function App() {
     break;
    }
   }
+ };
+
+ // The list datasets and their state setters (employees and cluster info need more than a set).
+ const LIST_SETTERS: Partial<Record<DatasetKey, (value: any) => void>> = {
+  inventory: setInventory, overheads: setOverheads, fixedCosts: setFixedCosts, salesData: setSalesData,
+  categorySales: setCategorySalesData, productionData: setProductionData, productionHouses: setProductionHouses,
+  stockRequests: setStockRequests, productionRequests: setProductionRequests, inventoryItems: setInventoryItems,
+  onlineCashRecalibrations: setOnlineCashRecalibrations, onlineSalesData: setOnlineSalesData,
+  onlinePayoutData: setOnlinePayoutData, aggregatorSettlements: setAggregatorSettlements, stores: setStores,
+ };
+
+ // Their own store and designation, from their employee record: on screen, and saved so the next
+ // open needn't wait for it.
+ const applyProfile = (profile: dataCache.CachedProfile | null, person: AppUser) => {
+  if (!profile) return;
+  dataCache.setCachedProfile(profile);
+  setUser((current) => {
+   if (!current || current.employeeId !== person.employeeId) return current;
+   const next = withProfile(current, profile);
+   const same = next.storeId === current.storeId && next.designation === current.designation
+    && JSON.stringify(next.assignedStoreIds) === JSON.stringify(current.assignedStoreIds || [])
+    && JSON.stringify(next.assignedProductionHouseIds) === JSON.stringify(current.assignedProductionHouseIds || []);
+   if (same) return current;
+   userRef.current = next;
+   return next;
+  });
  };
 
  // Empties everything loaded for the last person (sign-out, or a different person signing in on a
@@ -612,15 +621,11 @@ export default function App() {
  };
 
  // A date-range top-up: replaces the saved rows for those days with the server's.
- const applyWindow = (key: DatasetKey, window: { from: string; to: string; rows: any[] }) => {
-  const merge = (prev: any[]) => dedupeById(mergeDateWindow(prev, window.rows, window.from, window.to));
-  switch (key) {
-   case 'inventory': setInventory(merge); break;
-   case 'overheads': setOverheads(merge); break;
-   case 'fixedCosts': setFixedCosts(merge); break;
-   case 'salesData': setSalesData(merge); break;
-   case 'productionData': setProductionData(merge); break;
-  }
+ const applyWindow = (key: DatasetKey, window: DateWindow) => {
+  const setList = LIST_SETTERS[key];
+  if (!setList) return;
+  loadedKeysRef.current.add(key);
+  setList((prev: any[]) => dedupeById(mergeDateWindow(prev || [], window.rows || [], window.from, window.to, window.field)));
  };
 
  // Old duplicate rows came back from the server: the cluster head's phone quietly asks the server to
@@ -665,6 +670,7 @@ export default function App() {
    const succeeded = keys.filter((key) => !result.failed.some((f) => f.key === key));
    dataCache.markFetched(succeeded, result.hashes as Record<string, string>, {
     etag: result.etag,
+    etagWindow: result.etagWindow,
     ...(result.full && result.failed.length === 0 ? { lastFullAt: Date.now() } : {}),
    });
    setFailedParts(result.failed);
@@ -694,7 +700,10 @@ export default function App() {
     aggregatorSettlements, stores, employees,
    };
    for (const key of datasetsFor(user)) {
-    if (key === 'clusterInfo' || !loadedKeysRef.current.has(key)) continue;
+    // Cluster info is saved when it loads; their own record lives in the meta (profile); the staff
+    // list only for those whose screens use it.
+    if (key === 'clusterInfo' || key === 'meEmployee' || !loadedKeysRef.current.has(key)) continue;
+    if (key === 'employees' && !keepsStaffList(user)) continue;
     const value = current[key];
     if (persistedRef.current[key] === value) continue;
     persistedRef.current[key] = value;
@@ -718,8 +727,14 @@ export default function App() {
   // employee record, which the screens need - wait for it, but not forever.
   if (person.employeeId && !saved.meta?.profile) {
    try {
-    const json = await requestJson(`${api.API_BASE}/employees`, {}, { timeoutMs: 10_000, retries: 1 });
-    const profile = profileFrom(DATASETS.employees.pick(json), person.employeeId);
+    // Their own record where the server has the route (28 Oct 2026 on), else the staff list.
+    await whenFeaturesKnown(3_000);
+    const selfRoute = hasFeature('bootstrap-v1');
+    const lean = hasFeature('lean-lists-v1') ? { 'X-Bunny-Client': '2' } : undefined;
+    const json = await requestJson(`${api.API_BASE}${selfRoute ? DATASETS.meEmployee.path : DATASETS.employees.path}`, { headers: lean }, { timeoutMs: 10_000, retries: 1 });
+    const profile = selfRoute
+     ? profileFromRecord(DATASETS.meEmployee.pick(json), person.employeeId)
+     : profileFrom(DATASETS.employees.pick(json), person.employeeId);
     if (profile) {
      dataCache.setCachedProfile(profile);
      person = userFromSession(sessionUser, accessToken, profile);
@@ -728,6 +743,11 @@ export default function App() {
     console.error('Error fetching employee storeId on session check:', error);
    }
   }
+
+  // Their home screen's code starts loading now, alongside the data (Analytics for managers and
+  // incharges, the rides screen for riders).
+  if (needsBusinessData(person)) import('./components/Analytics').catch(() => undefined);
+  else if (person.designation === 'rider') import('./components/RiderTrips').catch(() => undefined);
 
   const wanted = datasetsFor(person);
   let shown = 0;
@@ -746,7 +766,8 @@ export default function App() {
   // Their entries still waiting on this phone (and sending them, if there is a signal).
   outbox.setOwner(sessionUser.id);
   // Everything under 5 minutes old (reopened straight after closing): no refresh yet.
-  if (wanted.length > 0 && wanted.every((key) => saved.data[key] !== undefined && dataCache.isCacheFresh(key))) {
+  const savedKinds = wanted.filter((key) => key !== 'meEmployee' && (key !== 'employees' || keepsStaffList(person)));
+  if (savedKinds.length > 0 && savedKinds.every((key) => saved.data[key] !== undefined && dataCache.isCacheFresh(key))) {
    console.log('✅ Saved data is fresh - skipping API calls');
    return;
   }
@@ -984,23 +1005,17 @@ export default function App() {
  // back to the front or the signal returns, if the data is over two minutes old.
  const lastUpdatedRef = useRef<number | null>(null);
  lastUpdatedRef.current = lastUpdatedAt;
+ useForegroundInterval(() => {
+  console.log('🔄 Periodic background refresh (5 min)');
+  refreshData();
+ }, user ? 5 * 60 * 1000 : null);
  useEffect(() => {
  if (!user) return;
-
- const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
- const tick = () => {
- if (document.visibilityState === 'visible') {
- console.log('🔄 Periodic background refresh (5 min)');
- refreshData();
- }
- };
- const interval = setInterval(tick, REFRESH_INTERVAL_MS);
- const stopListening = onConnectivity((event) => {
+ return onConnectivity((event) => {
  if (event === 'offline') return;
  const age = Date.now() - (lastUpdatedRef.current || 0);
  if (age > 2 * 60 * 1000) refreshData();
  });
- return () => { clearInterval(interval); stopListening(); };
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [user?.email]);
 
@@ -1727,11 +1742,32 @@ export default function App() {
   return next;
  }, [salesData, pendingRows.sales]);
 
- const contextValue: InventoryContextType = {
+ // The actions close over the latest state, so they are new functions on every render; screens get
+ // stable wrappers instead, and the context only changes when the data does - which is what lets
+ // React.memo on Analytics skip the re-renders (every App render used to re-render it).
+ const actions = {
+  loadInventoryItems, addInventoryItem, addOverheadItem, addFixedCostItem, updateInventoryItem, updateOverheadItem,
+  updateFixedCostItem, deleteInventoryItem, deleteOverheadItem, deleteFixedCostItem, addSalesData, updateSalesData,
+  approveSalesData, requestSalesApproval, approveDiscrepancy, rejectDiscrepancy, addProductionData, updateProductionData,
+  approveProductionData, addProductionHouse, updateProductionHouse, updateProductionHouseInventory, deleteProductionHouse,
+  createStockRequest, fulfillStockRequest, cancelStockRequest, refreshData: handleRefreshData,
+ };
+ const actionsRef = useRef(actions);
+ actionsRef.current = actions;
+ const stableActions = useMemo(() => {
+  const stable = {} as typeof actions;
+  for (const name of Object.keys(actionsRef.current) as (keyof typeof actions)[]) {
+   (stable as any)[name] = (...args: any[]) => (actionsRef.current[name] as (...a: any[]) => any)(...args);
+  }
+  return stable;
+ }, []);
+
+ const contextValue: InventoryContextType = useMemo(() => ({
  inventory: inventoryShown,
  overheads: overheadsShown,
  fixedCosts: fixedCostsShown,
- salesData: salesShown, categorySalesData, // NEW: Detailed category sales data
+ salesData: salesShown,
+ categorySalesData, // NEW: Detailed category sales data
  onlineCashRecalibrations,
  onlineSalesData,
  onlinePayoutData,
@@ -1744,38 +1780,12 @@ export default function App() {
  managedStoreIds,
  managedProductionHouseIds,
  inventoryItems,
- loadInventoryItems,
- addInventoryItem,
- addOverheadItem,
- addFixedCostItem,
- updateInventoryItem,
- updateOverheadItem,
- updateFixedCostItem,
- deleteInventoryItem,
- deleteOverheadItem,
- deleteFixedCostItem,
- addSalesData,
- updateSalesData,
- approveSalesData,
- requestSalesApproval,
- approveDiscrepancy,
- rejectDiscrepancy,
- addProductionData,
- updateProductionData,
- approveProductionData,
- addProductionHouse,
- updateProductionHouse,
- updateProductionHouseInventory,
- deleteProductionHouse,
+ ...stableActions,
  setProductionHouses,
- createStockRequest,
- fulfillStockRequest,
- cancelStockRequest,
  isManager: user?.role === 'manager',
  user,
- refreshData: handleRefreshData,
  dataRefreshedAt
- };
+ }), [inventoryShown, overheadsShown, fixedCostsShown, salesShown, categorySalesData, onlineCashRecalibrations, onlineSalesData, onlinePayoutData, aggregatorSettlements, productionData, productionHouses, stockRequests, productionRequests, stores, managedStoreIds, managedProductionHouseIds, inventoryItems, stableActions, user, dataRefreshedAt]);
 
  // A plain employee (contract worker, or role: 'employee' with no incharge
  // designation) should only ever land on their own Payroll/Attendance section - not
@@ -1874,7 +1884,7 @@ export default function App() {
  >
  <X className="w-5 h-5" />
  </button>
- <PushNotificationStatus userId={user.employeeId || user.email} />
+ <Suspense fallback={null}><PushNotificationStatus userId={user.employeeId || user.email} /></Suspense>
  </div>
  </div>
  )}
@@ -2483,11 +2493,11 @@ export default function App() {
  {/* Employee Main Content */}
  <main className="pb-6" data-ai-screen>
  {/* Aadhaar, phone and email still missing: asked for on the home screen until done. */}
- {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
+ {(activeView === 'analytics' || (isRider && activeView === 'riders')) && <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>}
  {/* Plain staff land on payroll, incharges on analytics: both count as home here. */}
  {!isRider && (activeView === 'analytics' || activeView === 'payroll') && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
  {/* Shift clock on each person's landing screen: incharges Analytics, riders their rides, crew My Payouts. */}
- {(isAnyIncharge ? activeView === 'analytics' : isRider ? activeView === 'riders' : activeView === 'payroll') && <ShiftClockCard isLead={isAnyIncharge} />}
+ {(isAnyIncharge ? activeView === 'analytics' : isRider ? activeView === 'riders' : activeView === 'payroll') && <Suspense fallback={null}><ShiftClockCard isLead={isAnyIncharge} /></Suspense>}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'rider-profile' && isRider ? (
  <RiderProfile />
@@ -2596,7 +2606,7 @@ export default function App() {
  <>
  {pushNotificationWidget}
  {passwordDialog}
- {canAskBunny && <BunnyChat accessToken={user.accessToken || ''} storeId={askBunnyStoreId} raised={!!pushNotificationWidget} />}
+ {canAskBunny && <Suspense fallback={null}><BunnyChat accessToken={user.accessToken || ''} storeId={askBunnyStoreId} raised={!!pushNotificationWidget} /></Suspense>}
  <UpdateAvailableBanner />
 
  <div className="min-h-screen bg-gray-50">
@@ -3125,9 +3135,9 @@ export default function App() {
 
  {/* Main Content */}
  <main className="pb-6" data-ai-screen>
- {activeView === 'analytics' && <ProfileCompletionCard accessToken={user.accessToken || ''} />}
+ {activeView === 'analytics' && <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>}
  {activeView === 'analytics' && <WorkplaceDueCard onOpen={() => setActiveView('workplace')} />}
- {activeView === 'analytics' && !isClusterHead && <ShiftClockCard isLead />}
+ {activeView === 'analytics' && !isClusterHead && <Suspense fallback={null}><ShiftClockCard isLead /></Suspense>}
  <Suspense fallback={<><div className="md:hidden"><CompactLoadingSkeleton /></div><div className="hidden md:block"><LoadingSkeleton /></div></>}>
  {activeView === 'stock-outs' && canViewStockOuts ? (
  <StockOutLog accessToken={user.accessToken || ''} stores={stockOutStores} defaultStoreId={stockOutDefaultStore} canDelete={isStoreInchargeManager || isOperationsManager || isClusterHead} />

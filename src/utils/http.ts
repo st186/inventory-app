@@ -13,6 +13,7 @@
 
 import { projectId, publicAnonKey } from './supabase/info';
 import { getAccessToken, refreshAccessToken, signOutAfterRejection, currentAuthUserId } from './accessToken';
+import { onAppVisibilityChange } from './appVisibility';
 
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
 
@@ -94,11 +95,8 @@ function wireConnectivity() {
   connectivityWired = true;
   window.addEventListener('online', () => { loadServerFeatures(true); emit('online'); });
   window.addEventListener('offline', () => emit('offline'));
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') emit('resume');
-  });
-  // Capacitor fires 'resume' on document when the Android app comes back to the front.
-  document.addEventListener('resume', () => emit('resume'));
+  // Back to the front (tab visible / Android app resumed - appVisibility.ts watches both).
+  onAppVisibilityChange((visible) => { if (visible) emit('resume'); });
 }
 
 export function onConnectivity(listener: (event: ConnectivityEvent) => void): () => void {
@@ -279,6 +277,22 @@ function buildHeaders(init: RequestInit, token: string | null, method: string, i
   return headers;
 }
 
+// The `code` field of a JSON error answer (e.g. IDEMPOTENCY_IN_PROGRESS).
+export function responseCode(response: RawResponse): string | undefined {
+  try {
+    const body = response.text ? JSON.parse(response.text) : null;
+    return typeof body?.code === 'string' ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const IN_PROGRESS_MAX_WAITS = 6;
+function retryAfterMs(response: RawResponse): number {
+  const seconds = Number(response.headers.get('Retry-After'));
+  return Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 2_000, 5_000);
+}
+
 async function send(url: string, init: RequestInit, opts: HttpOptions): Promise<RawResponse> {
   const method = (init.method || 'GET').toUpperCase();
   const isRead = method === 'GET' || method === 'HEAD';
@@ -290,6 +304,7 @@ async function send(url: string, init: RequestInit, opts: HttpOptions): Promise<
 
   let token = await getAccessToken();
   let renewed = false;
+  let inProgressWaits = 0;
   for (let tryNo = 0; ; tryNo++) {
     const result = await attempt(url, init, buildHeaders(init, token, method, idempotencyKey), timeoutMs, opts.signal);
 
@@ -304,7 +319,19 @@ async function send(url: string, init: RequestInit, opts: HttpOptions): Promise<
     }
 
     const response = result.response;
-    if (response.status >= 500 && tryNo < maxRetries) {
+    // The same save still running on the server (a retry arrived first): wait and ask again with the
+    // same key - it then answers with the first save's result.
+    if (!isRead && response.status === 409 && inProgressWaits < IN_PROGRESS_MAX_WAITS && responseCode(response) === 'IDEMPOTENCY_IN_PROGRESS') {
+      inProgressWaits++;
+      await sleep(retryAfterMs(response));
+      tryNo--;
+      continue;
+    }
+    // Reads: any 5xx is worth another try. Writes: only a 503 (the login check or database
+    // blipped before the save ran) - the server doesn't keep a 5xx answer under the key, so
+    // repeating a 500 could run a save that partly happened a second time.
+    const retryableStatus = isRead ? response.status >= 500 : response.status === 503;
+    if (retryableStatus && tryNo < maxRetries) {
       console.warn(`Server error [${url}] ${response.status} (attempt ${tryNo + 1}/${maxRetries + 1}) - retrying...`);
       await sleep(jitter(RETRY_DELAYS_MS[tryNo] ?? 7_000));
       continue;
@@ -344,7 +371,10 @@ export async function requestRaw(url: string, init: RequestInit = {}, opts: Http
     return response;
   }
 
-  const key = `${currentAuthUserId() || 'anon'}|${url}`;
+  // A lean employee list (X-Bunny-Client: 2, no photos) is a different answer from the full one the
+  // staff screen needs, so it is shared and kept separately.
+  const variant = new Headers(init.headers || {}).get('X-Bunny-Client') || '';
+  const key = `${currentAuthUserId() || 'anon'}|${variant}|${url}`;
   const cacheable = MEMORY_CACHE_PATHS.has(pathOf(url)) && !opts.noCache;
   if (cacheable) {
     const hit = memoryCache.get(key);

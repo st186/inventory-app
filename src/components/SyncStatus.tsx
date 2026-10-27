@@ -58,6 +58,8 @@ export function entryStatus(entry: outbox.OutboxEntry, short = false): string {
       if (short) return 'Not confirmed';
       return entry.notOnServer
         ? 'Not on the server yet - tap Send now'
+        : entry.uncertainty === 'server'
+        ? 'Not confirmed - the server failed while saving; it may already be saved'
         : 'Not confirmed - the signal dropped while sending; it may already be saved';
     case 'failed': return short ? 'Not saved' : `Not saved: ${entry.lastError || 'the server refused it'}`;
   }
@@ -65,10 +67,13 @@ export function entryStatus(entry: outbox.OutboxEntry, short = false): string {
 
 async function sendNow(entry: outbox.OutboxEntry) {
   // Sending an expense again when it may already be saved could make a duplicate - unless the
-  // server dedupes (idempotency-v1), ask first.
-  if (entry.state === 'unsure' && entry.kind !== 'sales' && !hasFeature('idempotency-v1')) {
+  // server replays the first answer (idempotency-v1, after a dropped signal), ask first.
+  const serverReplays = hasFeature('idempotency-v1') && entry.uncertainty !== 'server';
+  if (entry.state === 'unsure' && entry.kind !== 'sales' && !serverReplays) {
     const question = entry.notOnServer
       ? `Send "${entry.label}" again? The latest download from the server doesn't have it.`
+      : entry.uncertainty === 'server'
+      ? `The server failed while saving "${entry.label}", so it may be partly saved. Check the expense list first. Send it again anyway?`
       : `The signal dropped while "${entry.label}" was being sent, so it may already be saved. Check the expense list first. Send it again anyway?`;
     if (!confirm(question)) return;
   }

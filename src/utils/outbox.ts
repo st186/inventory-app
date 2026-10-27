@@ -7,10 +7,12 @@
 //   body (the server keeps unknown fields, so a later list download shows whether it arrived).
 // - Sent automatically when the signal is back (online / app resume / server reachable again, and
 //   every 30 s while anything waits). An entry never attempted is always safe to send.
-// - An attempt that may or may not have reached the server (the signal dropped mid-request) is
-//   "unsure". The day close is safe to repeat (the server saves onto the day's row), so it is just
-//   sent again. An expense is a new row each time: it is resent automatically only when the server
-//   dedupes (idempotency-v1); otherwise it waits for a person to tap "Send now" - unless a later
+// - An attempt that may or may not have reached the server (the signal dropped mid-request, or the
+//   server failed with a 5xx) is "unsure". The day close is safe to repeat (the server saves onto
+//   the day's row), so it is just sent again. An expense is a new row each time: after a dropped
+//   signal it is resent automatically only when the server dedupes (idempotency-v1 replays the
+//   first answer); after a 5xx never (the server doesn't keep a 5xx under the key, so a repeat
+//   would run the save again). Otherwise it waits for a person to tap "Send now" - unless a later
 //   download shows it did arrive, which clears it (reconcile()).
 // - A refusal (4xx) stops: the entry is shown with the server's reason until someone removes it.
 //
@@ -22,6 +24,7 @@ import {
   requestRaw, whenFeaturesKnown,
 } from './http';
 import { currentAuthUserId } from './accessToken';
+import { isAppVisible } from './appVisibility';
 
 export type OutboxKind = 'inventory' | 'overhead' | 'fixed-cost' | 'sales';
 export type OutboxState = 'queued' | 'sending' | 'unsure' | 'failed';
@@ -41,6 +44,8 @@ export interface OutboxEntry {
   lastAttemptAt?: number;
   lastError?: string;
   notOnServer?: boolean; // unsure, and a full download made well after the attempt doesn't have it
+  mayHaveArrived?: boolean; // an attempt may have reached the server - its body can't change now
+  uncertainty?: 'network' | 'server'; // why: the signal dropped, or the server failed (5xx)
 }
 
 export interface OutboxInput {
@@ -98,7 +103,11 @@ export function onSent(listener: (entry: OutboxEntry, response: any) => void): (
   return () => { sentListeners.delete(listener); };
 }
 
-const safeToRepeat = (entry: OutboxEntry) => entry.kind === 'sales' || hasFeature('idempotency-v1');
+// Sending again after an attempt that may have arrived: harmless for the day close, and for anything
+// after a dropped signal when the server replays the first answer for the same key.
+const safeToRepeat = (entry: OutboxEntry, uncertainty: 'network' | 'server' = entry.uncertainty || 'network') =>
+  entry.kind === 'sales' || (uncertainty === 'network' && hasFeature('idempotency-v1'));
+const sendsByItself = (entry: OutboxEntry) => entry.state === 'queued' || (entry.state === 'unsure' && safeToRepeat(entry));
 
 // Entries whose last write to the phone's storage failed (storage full): they still send this
 // session, and their absence from storage doesn't mean another tab sent them.
@@ -157,11 +166,9 @@ function wire() {
 }
 
 function scheduleFlushes() {
-  const waiting = entries.some((e) => e.state === 'queued' || (e.state === 'unsure' && safeToRepeat(e)));
+  const waiting = entries.some(sendsByItself);
   if (waiting && !flushTimer) {
-    flushTimer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') flush();
-    }, FLUSH_EVERY_MS);
+    flushTimer = setInterval(() => { if (isAppVisible()) flush(); }, FLUSH_EVERY_MS);
   } else if (!waiting && flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
@@ -183,7 +190,12 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 async function recoverInterrupted() {
   for (const entry of entries) {
     if (entry.state !== 'sending' || sendingNow.has(entry.id)) continue;
-    await update(entry.id, { state: safeToRepeat(entry) ? 'queued' : 'unsure', lastError: 'The app was closed while this was being sent.' });
+    await update(entry.id, {
+      state: safeToRepeat(entry, 'network') ? 'queued' : 'unsure',
+      mayHaveArrived: true,
+      uncertainty: 'network',
+      lastError: 'The app was closed while this was being sent.',
+    });
   }
 }
 
@@ -207,7 +219,7 @@ async function sendEntry(id: string, mode: SendMode): Promise<SendOutcome> {
     if (stored && stored.state !== local.state) replaceLocal(stored);
     let entry = entries.find((e) => e.id === id)!;
     if (entry.owner !== currentAuthUserId()) return { status: 'kept', entry, network: false } as SendOutcome;
-    if (mode === 'auto' && (entry.state === 'failed' || (entry.state === 'unsure' && !safeToRepeat(entry)))) {
+    if (mode === 'auto' && !sendsByItself(entry)) {
       return { status: 'kept', entry, network: false } as SendOutcome;
     }
 
@@ -234,17 +246,31 @@ async function sendEntry(id: string, mode: SendMode): Promise<SendOutcome> {
       let body: any = null;
       try { body = response.text ? JSON.parse(response.text) : null; } catch { body = null; }
       const message = (body && (body.error || body.message)) || `HTTP ${response.status}`;
+      const code = body?.code;
       // Login trouble (renewal pending, password expired): the server did nothing - try again later.
-      if (response.status === 401 || (response.status === 403 && body?.code === 'PASSWORD_EXPIRED')) {
+      if (response.status === 401 || (response.status === 403 && code === 'PASSWORD_EXPIRED')) {
         const kept = await update(id, { state: 'queued', lastError: 'Waiting for you to sign in again.' });
         return { status: 'kept', entry: kept!, network: false } as SendOutcome;
       }
-      // Busy / rate limited: not processed. A server error may have saved part of it.
-      if (response.status === 408 || response.status === 429 || response.status >= 500) {
-        const processed = response.status >= 500;
-        const tooMany = entry.attempts >= MAX_AUTO_ATTEMPTS;
-        const state: OutboxState = tooMany ? 'failed' : (!processed || safeToRepeat(entry) ? 'queued' : 'unsure');
-        const kept = await update(id, { state, lastError: tooMany ? `The server keeps failing on this entry (${message}).` : message });
+      const tooMany = entry.attempts >= MAX_AUTO_ATTEMPTS;
+      // Not processed: timed out at the gateway queue, rate limited, or the login check / database
+      // blipped before the save ran (503). Or the first copy is still running (409 in progress).
+      if (response.status === 408 || response.status === 429 || response.status === 503 || code === 'IDEMPOTENCY_IN_PROGRESS') {
+        const kept = await update(id, {
+          state: tooMany ? 'failed' : 'queued',
+          mayHaveArrived: entry.mayHaveArrived || code === 'IDEMPOTENCY_IN_PROGRESS',
+          lastError: tooMany ? `The server keeps failing on this entry (${message}).` : message,
+        });
+        return { status: 'kept', entry: kept!, network: false } as SendOutcome;
+      }
+      // Any other server error may have saved part of it.
+      if (response.status >= 500) {
+        const kept = await update(id, {
+          state: tooMany ? 'failed' : (safeToRepeat(entry, 'server') ? 'queued' : 'unsure'),
+          mayHaveArrived: true,
+          uncertainty: 'server',
+          lastError: tooMany ? `The server keeps failing on this entry (${message}).` : message,
+        });
         return { status: 'kept', entry: kept!, network: false } as SendOutcome;
       }
       // Refused (4xx): someone has to fix or remove it. On the first try the form shows the reason
@@ -259,7 +285,9 @@ async function sendEntry(id: string, mode: SendMode): Promise<SendOutcome> {
     } catch (error) {
       const network = isNetworkError(error);
       const kept = await update(id, {
-        state: safeToRepeat(entry) ? 'queued' : 'unsure',
+        state: safeToRepeat(entry, 'network') ? 'queued' : 'unsure',
+        mayHaveArrived: true,
+        uncertainty: 'network',
         lastError: error instanceof Error ? error.message : String(error),
       });
       return { status: 'kept', entry: kept!, network } as SendOutcome;
@@ -328,7 +356,7 @@ export function flush(): Promise<void> {
     await withLock(recoverInterrupted);
     for (const entry of [...entries]) {
       if (entry.owner !== owner || firstSendPending.has(entry.id)) continue;
-      if (!(entry.state === 'queued' || (entry.state === 'unsure' && safeToRepeat(entry)))) continue;
+      if (!sendsByItself(entry)) continue;
       const outcome = await sendEntry(entry.id, 'auto');
       if (outcome.status === 'kept' && outcome.network) break;
     }
@@ -348,6 +376,9 @@ export async function updateBody(id: string, body: Record<string, any>): Promise
   const entry = entries.find((e) => e.id === id);
   if (!entry) throw new Error('This entry has already been sent - refresh and edit it again.');
   if (entry.state === 'sending' || sendingNow.has(id)) throw new Error('This entry is being sent right now - try again in a moment.');
+  // The server may already have it under this key - a changed body would be lost (the server
+  // replays the first answer) or saved as a second entry. Edit it in the list once it shows there.
+  if (entry.mayHaveArrived) throw new Error('This entry may already have reached the server - wait until it shows as sent, then edit it in the list.');
   await update(id, { body: { ...body, clientEntryId: entry.id }, state: entry.state === 'failed' ? 'queued' : entry.state, lastError: undefined });
 }
 

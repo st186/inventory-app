@@ -38,6 +38,7 @@ export interface CacheMeta {
   fetchedAt: Record<string, number>; // when each dataset last came fresh from the server
   hash: Record<string, string>; // hash of the server's answer, to skip re-rendering an unchanged one
   etag?: string | null; // GET /bootstrap
+  etagWindow?: string; // the date range that etag was for ('' = everything)
   lastFullAt?: number; // last refresh that wasn't a date-range top-up
   profile?: CachedProfile | null; // the person's own store/designation (from their employee record)
 }
@@ -101,7 +102,7 @@ export async function writeDataset(key: string, data: unknown): Promise<void> {
 }
 
 // Datasets just loaded from the server (with the answer's hash where there is one).
-export function markFetched(keys: string[], hashes: Record<string, string> = {}, extra: Partial<Pick<CacheMeta, 'etag' | 'lastFullAt'>> = {}): void {
+export function markFetched(keys: string[], hashes: Record<string, string> = {}, extra: Partial<Pick<CacheMeta, 'etag' | 'etagWindow' | 'lastFullAt'>> = {}): void {
   const user = cacheUser;
   if (!user) return;
   const m = currentMeta();
@@ -125,6 +126,10 @@ export function getCachedHash(key: string): string | undefined {
 
 export function getCachedEtag(): string | null {
   return meta?.etag ?? null;
+}
+
+export function getCachedEtagWindow(): string {
+  return meta?.etagWindow ?? '';
 }
 
 export function getLastFullRefresh(): number {
