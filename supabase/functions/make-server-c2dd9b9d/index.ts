@@ -15,6 +15,7 @@ import { registerWorkplaceRoutes } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
 import { idempotencyMiddleware } from './idempotency.ts';
+import { registerBootstrapRoutes } from './bootstrap.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -3444,7 +3445,9 @@ const LATEST_APP_VERSION = '1.15.21';
 //                  /me/employee) and keeps hasAadharImages; GET /employees/:id/documents has them
 //   idempotency-v1 Idempotency-Key on any POST/PUT/PATCH/DELETE: a repeat replays the stored answer
 //                  (Idempotent-Replay: true) instead of saving twice (idempotency.ts)
-const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1', 'idempotency-v1'];
+//   bootstrap-v1   GET /bootstrap: the startup routes for the caller's role in one answer, with an
+//                  ETag / If-None-Match -> 304 (bootstrap.ts)
+const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1', 'idempotency-v1', 'bootstrap-v1'];
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
@@ -16842,6 +16845,8 @@ registerInsightsRoutes(app, {
 });
 // Password rotation: status, self-service change, owner force reset, daily reminders (passwords.ts).
 registerPasswordRoutes(app, { supabase, verifyUser, kv: kvWithRetry, notifyUser, forgetVerifiedTokens: () => verifiedTokens.clear() });
+// Everything the app loads at startup in one request, built from the routes above (bootstrap.ts).
+registerBootstrapRoutes(app, { verifyUser });
 
 console.log('✅ Server initialization complete - all routes registered successfully');
 console.log('🚀 Starting Deno server...');
