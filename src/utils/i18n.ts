@@ -957,6 +957,11 @@ const en = {
   'insights.eventProfit': 'Event profit',
   'insights.noEvents': 'No events in this period',
   'insights.noEventsBody': 'Pick another period to see event totals.',
+  'insights.vs.day': 'vs same day last week',
+  'insights.vs.week': 'vs last week',
+  'insights.vs.month': 'vs last month',
+  'insights.vs.monthBefore': 'vs month before',
+  'insights.vs.period': 'vs period before',
 } as const;
 
 export type I18nKey = keyof typeof en;
@@ -1852,6 +1857,11 @@ const bn: Dict = {
   'insights.eventProfit': 'ইভেন্টের লাভ',
   'insights.noEvents': 'এই সময়ে কোনো ইভেন্ট নেই',
   'insights.noEventsBody': 'ইভেন্টের হিসাব দেখতে অন্য সময় বাছুন।',
+  'insights.vs.day': 'গত সপ্তাহের একই দিনের তুলনায়',
+  'insights.vs.week': 'গত সপ্তাহের তুলনায়',
+  'insights.vs.month': 'গত মাসের তুলনায়',
+  'insights.vs.monthBefore': 'তার আগের মাসের তুলনায়',
+  'insights.vs.period': 'আগের সময়ের তুলনায়',
 };
 
 const hi: Dict = {
@@ -2674,6 +2684,11 @@ const hi: Dict = {
   'insights.eventProfit': 'इवेंट का मुनाफ़ा',
   'insights.noEvents': 'इस समय में कोई इवेंट नहीं',
   'insights.noEventsBody': 'इवेंट के आँकड़े देखने के लिए दूसरा समय चुनें।',
+  'insights.vs.day': 'पिछले हफ़्ते के उसी दिन से',
+  'insights.vs.week': 'पिछले हफ़्ते से',
+  'insights.vs.month': 'पिछले महीने से',
+  'insights.vs.monthBefore': 'उससे पहले के महीने से',
+  'insights.vs.period': 'पिछले समय से',
 };
 
 const DICTIONARIES: Record<Lang, Dict> = { en, bn, hi };

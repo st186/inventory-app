@@ -18,7 +18,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { useT } from '../../../utils/i18n';
 import { type AnalyticsData, isInWindow } from '../useAnalyticsData';
 import type { EventsSummaryState } from '../eventsSummary';
-import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, pct, pointsDelta, shortPrevLabel } from './shared';
+import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, pct, pointsDelta, shortPrevLabel, periodText } from './shared';
 
 const DataCapture = lazy(() => import('../../DataCapture').then((m) => ({ default: m.DataCapture })));
 
@@ -62,7 +62,7 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
   } = d;
   const [infoOpen, setInfoOpen] = useState(false);
   const comparison = useProfitComparison(d);
-  const prevLabel = shortPrevLabel(d);
+  const prevLabel = shortPrevLabel(d, lang);
 
   // The "All" view adds the events' own totals when there are any (events branch, /events/summary).
   const allStores = analyticsMode === 'store' && !effectiveStoreId;
@@ -114,7 +114,7 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
       {/* 1. Profit hero */}
       <StatTile
         hero
-        label={`${t('insights.netProfit')} · ${getPeriodLabel()}`}
+        label={`${t('insights.netProfit')} · ${periodText(d, lang)}`}
         headerChip={<IconButton size="sm" label={t('insights.howProfit')} icon={<Info />} onClick={() => setInfoOpen(true)} className="-my-2 -mr-2" />}
         value={inr(heroProfit)}
         delta={deltaOf(comparison.current, comparison.previous, prevLabel)}
@@ -204,7 +204,7 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
               data={profitChartDataWithPrev}
               series={chartSeries}
               height={220}
-              ariaLabel={`Daily sales and costs, ${getPeriodLabel()}: sales ${inr(metrics.totalRevenue)}, costs ${inr(metrics.totalExpenses)}`}
+              ariaLabel={`Daily sales and costs, ${periodText(d, lang)}: sales ${inr(metrics.totalRevenue)}, costs ${inr(metrics.totalExpenses)}`}
             />
           )}
         </ChartCard>

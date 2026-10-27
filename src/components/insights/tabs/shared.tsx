@@ -11,6 +11,8 @@ import { EmptyState } from '../../ui/empty-state';
 import { formatCompactINR, formatINR, formatNumberIN } from '../../ui/money';
 import type { StatDelta } from '../../ui/stat-tile';
 import { cn } from '../../ui/utils';
+import { RANGE_PRESETS, presetLabel, type RangePreset } from '../../ui/date-utils';
+import { translate, type Lang } from '../../../utils/i18n';
 import { type AnalyticsData } from '../useAnalyticsData';
 
 export { CHART_COLORS, CHART_SERIES };
@@ -32,22 +34,28 @@ export function pointsDelta(current: number, previous: number, label: string, go
   return { value: diff, label, goodWhen, text: `${rounded > 0 ? '+' : rounded < 0 ? '−' : ''}${Math.abs(rounded)} pts` };
 }
 
-/** Short "vs …" label for the selected period (e.g. "vs last month"). */
-export function shortPrevLabel(d: AnalyticsData): string {
+/** Short "vs …" label for the selected period (e.g. "vs last month"), in the App language. */
+export function shortPrevLabel(d: AnalyticsData, lang: Lang = 'en'): string {
   switch (d.timeFilter) {
     case 'today':
     case 'yesterday':
-      return 'vs same day last week';
+      return translate(lang, 'insights.vs.day');
     case 'thisWeek':
     case 'lastWeek':
-      return 'vs last week';
+      return translate(lang, 'insights.vs.week');
     case 'thisMonth':
-      return 'vs last month';
+      return translate(lang, 'insights.vs.month');
     case 'lastMonth':
-      return 'vs month before';
+      return translate(lang, 'insights.vs.monthBefore');
     default:
-      return 'vs period before';
+      return translate(lang, 'insights.vs.period');
   }
+}
+
+/** The period's name ("This month") in the App language; custom ranges as the hook writes them. */
+export function periodText(d: AnalyticsData, lang: Lang = 'en'): string {
+  const choice = d.timeFilterChoice;
+  return choice !== 'custom' && (RANGE_PRESETS as string[]).includes(choice) ? presetLabel(choice as RangePreset, lang) : d.getPeriodLabel();
 }
 
 // ---- Tooltips (recharts `content`) -------------------------------------------------------------

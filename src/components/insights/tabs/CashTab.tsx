@@ -6,12 +6,12 @@ import { ListGroup, ListRow } from '../../ui/list-row';
 import { StatGrid, StatTile } from '../../ui/stat-tile';
 import { useT } from '../../../utils/i18n';
 import { type AnalyticsData } from '../useAnalyticsData';
-import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, shortPrevLabel, type SeriesSpec } from './shared';
+import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, shortPrevLabel, periodText, type SeriesSpec } from './shared';
 
 export const CashTab = memo(function CashTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
   const { effectiveStoreId, getPeriodLabel, previousPeriodMetrics, cashReconciliationChartData, cashReconciliationByStore, totalCashDiscrepancy, realizedProfit, totalPosSalesDiscrepancy } = d;
-  const prevLabel = shortPrevLabel(d);
+  const prevLabel = shortPrevLabel(d, lang);
   const paytmShort = cashReconciliationChartData.reduce((s, r) => s + (r['Paytm Offset'] < 0 ? Math.abs(r['Paytm Offset']) : 0), 0);
   const series: SeriesSpec[] = [
     { key: 'Cash Offset', name: 'Cash', color: CHART_COLORS.secondary, kind: 'bar' },
@@ -22,7 +22,7 @@ export const CashTab = memo(function CashTab({ d }: { d: AnalyticsData }) {
       <StatTile
         hero
         tone={totalCashDiscrepancy > 0 ? 'danger' : 'default'}
-        label={`${t('insights.cashShort')} · ${getPeriodLabel()}`}
+        label={`${t('insights.cashShort')} · ${periodText(d, lang)}`}
         value={inr(totalCashDiscrepancy)}
         delta={deltaOf(totalCashDiscrepancy, previousPeriodMetrics.cashDiscrepancy, prevLabel, 'down')}
         caption="Approved cash shortages at day close"

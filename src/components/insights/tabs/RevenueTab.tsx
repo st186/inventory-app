@@ -9,7 +9,7 @@ import { StatTile } from '../../ui/stat-tile';
 import { useT } from '../../../utils/i18n';
 import { formatNumberIN } from '../../ui/money';
 import { type AnalyticsData, isInWindow } from '../useAnalyticsData';
-import { CHART_COLORS, ChartCard, ChartEmpty, FigureRow, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, type SeriesSpec } from './shared';
+import { CHART_COLORS, ChartCard, ChartEmpty, FigureRow, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, periodText, type SeriesSpec } from './shared';
 
 export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
@@ -19,7 +19,7 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
     serviceTypeChartData, avgOrderValueData, avgOrderValueChartData, discountPctData, discountPctChartData, paymentModeBreakdownData, cancellationTrendData,
     cancellationChartData, orderValueHistogramData,
   } = d;
-  const prevLabel = shortPrevLabel(d);
+  const prevLabel = shortPrevLabel(d, lang);
   const channel = useMemo(() => {
     const inWindow = storeOnlineSales.filter((s: any) => isInWindow(s.date, periodRange));
     const zomato = inWindow.reduce((sum: number, s: any) => sum + (s.zomatoSales || 0), 0);
@@ -80,7 +80,7 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
     <div className="flex flex-col gap-4 lg:gap-6" lang={lang}>
       <StatTile
         hero
-        label={`${t('insights.sales')} · ${getPeriodLabel()}`}
+        label={`${t('insights.sales')} · ${periodText(d, lang)}`}
         value={inr(metrics.totalRevenue)}
         delta={deltaOf(metrics.totalRevenue, previousPeriodMetrics.totalRevenue, prevLabel)}
         caption={`${t('insights.counter')} ${inr(metrics.offlineRevenue)} · ${t('insights.online')} ${inr(metrics.onlineRevenue)} (${pct(metrics.onlineRevenue, metrics.totalRevenue)})`}
@@ -88,7 +88,7 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
 
       <ChartCard title={t('insights.salesByChannel')} legend={legendFor(channelSeries)}>
         {channelMixChartData.length === 0 ? <ChartEmpty /> : (
-          <TrendChart data={channelMixChartData} series={channelSeries} height={240} ariaLabel={`Sales by channel per day, ${getPeriodLabel()}`} />
+          <TrendChart data={channelMixChartData} series={channelSeries} height={240} ariaLabel={`Sales by channel per day, ${periodText(d, lang)}`} />
         )}
       </ChartCard>
 

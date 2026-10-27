@@ -11,7 +11,7 @@ import { StatGrid, StatTile } from '../../ui/stat-tile';
 import { StatusChip } from '../../ui/status-chip';
 import { useT } from '../../../utils/i18n';
 import { type AnalyticsData } from '../useAnalyticsData';
-import { CHART_COLORS, CHART_SERIES, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, pct, pointsDelta, shortPrevLabel } from './shared';
+import { CHART_COLORS, CHART_SERIES, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, pct, pointsDelta, shortPrevLabel, periodText } from './shared';
 
 type CostType = 'inventory' | 'overhead' | 'fixed' | 'salary' | 'commission' | 'interest';
 const GROUPS: { types: CostType[]; title: string; icon: LucideIcon }[] = [
@@ -25,7 +25,7 @@ const GROUPS: { types: CostType[]; title: string; icon: LucideIcon }[] = [
 export const CostsTab = memo(function CostsTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
   const { setSelectedExpenseCategory, timeFilter, metrics, profitChartData, previousPeriodMetrics, expenseBreakdown, getPeriodLabel } = d;
-  const prevLabel = shortPrevLabel(d);
+  const prevLabel = shortPrevLabel(d, lang);
   const total = metrics.totalExpenses;
   const share = (v: number) => pct(v, total);
   const open = (item: any) => {
@@ -53,7 +53,7 @@ export const CostsTab = memo(function CostsTab({ d }: { d: AnalyticsData }) {
     <div className="flex flex-col gap-4 lg:gap-6" lang={lang}>
       <StatTile
         hero
-        label={`${t('insights.costs')} · ${getPeriodLabel()}`}
+        label={`${t('insights.costs')} · ${periodText(d, lang)}`}
         value={inr(total)}
         delta={deltaOf(total, previousPeriodMetrics.totalExpenses, prevLabel, 'down')}
         caption={`${pct(total, metrics.totalRevenue)} of sales`}

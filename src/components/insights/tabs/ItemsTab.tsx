@@ -11,14 +11,14 @@ import { StatGrid, StatTile } from '../../ui/stat-tile';
 import { StatusChip } from '../../ui/status-chip';
 import { useT } from '../../../utils/i18n';
 import { type AnalyticsData } from '../useAnalyticsData';
-import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, type SeriesSpec } from './shared';
+import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, periodText, type SeriesSpec } from './shared';
 
 const SalesDataComponent = lazy(() => import('../../SalesData').then((m) => ({ default: m.SalesData })));
 
 export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
   const { context, effectiveStoreId, salesSubView, setSalesSubView, getPeriodLabel, metrics, itemPerformanceData, decliningItems, salesChartData, profitChartData, previousPeriodMetrics, realizedProfit } = d;
-  const prevLabel = shortPrevLabel(d);
+  const prevLabel = shortPrevLabel(d, lang);
   const [sub, setSub] = useState<'category' | 'revenue'>(salesSubView);
   const choose = (v: 'category' | 'revenue') => {
     setSub(v);
@@ -52,7 +52,7 @@ export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
       {sub === 'category' ? (
         <>
           <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-            <ChartCard title={t('insights.topItems')} caption={`${getPeriodLabel()} · sales before commission`}>
+            <ChartCard title={t('insights.topItems')} caption={`${periodText(d, lang)} · sales before commission`}>
               {itemPerformanceData.top10.length === 0 ? <ChartEmpty title="No item sales in this period" /> : (
                 <TrendChart
                   data={itemPerformanceData.top10}
@@ -110,7 +110,7 @@ export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
 
           <ChartCard title={t('insights.dailySales')} caption={getPeriodLabel()} legend={legendFor(dailySeries)}>
             {salesChartData.length === 0 ? <ChartEmpty /> : (
-              <TrendChart data={salesChartData} series={dailySeries} height={240} ariaLabel={`Daily sales, ${getPeriodLabel()}`} />
+              <TrendChart data={salesChartData} series={dailySeries} height={240} ariaLabel={`Daily sales, ${periodText(d, lang)}`} />
             )}
           </ChartCard>
 
