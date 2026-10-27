@@ -1,179 +1,45 @@
-import { projectId, publicAnonKey } from './supabase/info';
 import { getSupabaseClient } from './supabase/client';
 import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData } from '../App';
 import type { DispatchInfo, DeliveryReceipt } from './batches';
 import type { StockOutEntry } from './stockOuts';
 import type { AccuracySummary, BacktestDay, CalendarEvent, DayRecord, EffectLearning, ForecastDay, ForecastSettings } from './forecast';
-import { currentAccessToken } from './accessToken';
-import { invalidateAllCaches, setCacheUser } from './dataCache';
+import { currentAccessToken, getAccessToken } from './accessToken';
+import { API_BASE, PASSWORD_EXPIRED_EVENT, authFetch, getLatestVersion, requestJson } from './http';
 
-export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
+export { API_BASE, PASSWORD_EXPIRED_EVENT };
 
-// Helper to create Supabase client for browser
+// The ~60 helpers below use this only for `auth.getSession()`, to check someone is signed in before
+// calling fetchWithAuth (which reads the current token itself). It answers from accessToken.ts:
+// from memory while the token is good, never waiting long on a renewal over a weak signal -
+// supabase-js's own getSession() can block for 30 s there, and did, on every one of these calls.
 function createBrowserSupabase() {
-  return getSupabaseClient();
-}
-
-// Helper to get current session with automatic token refresh
-export async function getSession() {
-  const supabase = createBrowserSupabase();
-  
-  // First check if there's an existing session
-  const { data: { session: existingSession } } = await supabase.auth.getSession();
-  
-  if (!existingSession) {
-    // No session at all
-    return null;
-  }
-  
-  // Try to refresh the session to get a fresh token
-  const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-  
-  if (refreshError || !refreshedSession) {
-    console.warn('Token refresh failed, using existing session:', refreshError?.message || 'No session returned');
-    // Fall back to existing session
-    return existingSession;
-  }
-  
-  return refreshedSession;
-}
-
-// Global flag to prevent multiple logout redirects
-let isHandlingUnauthorized = false;
-
-// Fired on window when the server answers 403 PASSWORD_EXPIRED (password past 90 days, or the
-// owner forced a reset - see passwords.ts on the server). App.tsx listens and shows the blocking
-// change-password screen; the event detail is the error body ({ error, code, reason }).
-export const PASSWORD_EXPIRED_EVENT = 'bunny:password-expired';
-
-// Supabase refresh tokens are single-use/rotating: if several requests 401 at once
-// (e.g. loadData's ~14 parallel fetches after the token expired while the app was
-// backgrounded) and each independently calls refreshSession(), only the first actually
-// succeeds - the rest get an "already used" error and used to force-logout the user
-// even though the session was perfectly fine. Sharing one in-flight refresh across all
-// concurrent callers fixes that false-logout race.
-let inFlightRefresh: ReturnType<typeof _doRefresh> | null = null;
-
-async function _doRefresh() {
-  const supabase = createBrowserSupabase();
-  return supabase.auth.refreshSession();
-}
-
-async function refreshAccessTokenShared() {
-  if (!inFlightRefresh) {
-    inFlightRefresh = _doRefresh().finally(() => {
-      inFlightRefresh = null;
-    });
-  }
-  return inFlightRefresh;
-}
-
-async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0, _refreshed = false): Promise<any> {
-  const MAX_RETRIES = 2;
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        ...options?.headers,
+  return {
+    auth: {
+      getSession: async () => {
+        const token = await getAccessToken();
+        return { data: { session: token ? { access_token: token } : null } };
       },
-    });
+    },
+  };
+}
 
-    if (!response.ok) {
-      let errorMessage = 'Request failed';
-      let isWarning = false;
-      let errorBody: any = null;
-      try {
-        const error = await response.json();
-        errorBody = error;
-        errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
-        // Check if this is a warning (non-critical error)
-        isWarning = !!error.warning;
-      } catch (e) {
-        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-      }
-      // Retry on 5xx server errors (cold start, temporary unavailability)
-      if (response.status >= 500 && _retryCount < MAX_RETRIES) {
-        console.warn(`Server error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}):`, errorMessage, '- retrying...');
-        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
-        return fetchWithAuth(url, accessToken, options, _retryCount + 1, _refreshed);
-      }
+// The current session for the few helpers that read it directly. It used to force a token renewal
+// on every call (a login-server round trip each time, and on a weak signal a 30 s wait); supabase-js
+// and accessToken.ts keep the session fresh instead.
+export async function getSession() {
+  const token = await getAccessToken();
+  if (!token) return null;
+  const { data: { session } } = await getSupabaseClient().auth.getSession().catch(() => ({ data: { session: null } }));
+  return session?.access_token === token ? session : { access_token: token };
+}
 
-      // A 401 here often just means the access token expired while the app was
-      // backgrounded (mobile) or idle in a tab - not that the session is truly gone.
-      // Try refreshing it once before concluding the user needs to log back in;
-      // this was force-logging people out on ordinary token expiry.
-      if (response.status === 401 && !_refreshed) {
-        console.warn(`[${url}] Got 401, attempting a token refresh before giving up...`);
-        const { data: { session: refreshedSession }, error: refreshError } = await refreshAccessTokenShared();
-        if (!refreshError && refreshedSession?.access_token) {
-          console.log('Token refresh succeeded, retrying request');
-          return fetchWithAuth(url, refreshedSession.access_token, options, _retryCount, true);
-        }
-        console.warn('Token refresh failed:', refreshError?.message || 'no session returned');
-      }
-
-      console.error(`API Error [${url}]:`, errorMessage);
-
-      if (response.status === 403 && errorBody?.code === 'PASSWORD_EXPIRED' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(PASSWORD_EXPIRED_EVENT, { detail: errorBody }));
-      }
-
-      // If unauthorized and a refresh was already tried (or isn't possible), force logout
-      // (but only once to prevent reload loops)
-      if (response.status === 401 && !isHandlingUnauthorized) {
-        isHandlingUnauthorized = true;
-        console.error('Session expired or invalid. Please log in again.');
-
-        // Clear the session, and the signed-out person's cached data so it isn't shown to
-        // whoever signs in next on this device
-        const supabase = createBrowserSupabase();
-        await supabase.auth.signOut();
-        invalidateAllCaches();
-        setCacheUser(null);
-
-        // Use a flag to ensure we only reload once
-        if (!sessionStorage.getItem('logout_redirect_in_progress')) {
-          sessionStorage.setItem('logout_redirect_in_progress', 'true');
-
-          // Small delay to allow other pending requests to fail gracefully
-          setTimeout(() => {
-            sessionStorage.removeItem('logout_redirect_in_progress');
-            window.location.reload();
-          }, 100);
-        }
-      }
-
-      // status and the error body ride along (e.g. the AI allowance's limit / retryAfterMinutes).
-      throw Object.assign(new Error(errorMessage), { status: response.status, details: errorBody });
-    }
-
-    const jsonData = await response.json();
-    
-    // Check for database unavailability warnings in successful responses
-    if (jsonData.warning) {
-      console.warn(`API Warning [${url}]:`, jsonData.warning);
-      // You could emit a toast notification here if needed
-    }
-    
-    return jsonData;
-  } catch (error) {
-    // Catch network errors like "Failed to fetch" and retry
-    if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      if (_retryCount < MAX_RETRIES) {
-        console.warn(`Network error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}) - retrying in ${(_retryCount + 1)}s...`);
-        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
-        return fetchWithAuth(url, accessToken, options, _retryCount + 1);
-      }
-      console.error(`Network Error [${url}]: Failed to fetch after ${MAX_RETRIES + 1} attempts`);
-      console.error('Request details:', { url, method: options?.method || 'GET' });
-      throw new Error('Network error: Unable to connect to server. Please check your internet connection.');
-    }
-    // Re-throw other errors
-    throw error;
-  }
+// Every request in this file comes through here (or through authFetch, for the helpers that read
+// the raw Response). The token argument is no longer used: the 246 call sites pass the copy taken
+// at login, which expired after an hour; http.ts sends the current one. See http.ts for the time
+// limits, retries (reads only, unless the server dedupes writes), sharing of identical reads and
+// the 401 handling - which no longer signs anyone out because a renewal couldn't reach the server.
+async function fetchWithAuth(url: string, _accessToken: string, options?: RequestInit): Promise<any> {
+  return requestJson(url, options);
 }
 
 export async function fetchInventory(accessToken: string): Promise<InventoryItem[]> {
@@ -1123,14 +989,11 @@ export async function markAllNotificationsAsRead(): Promise<void> {
 
 // No-login-required by design - see GET /app-version. Never throws; a stale/offline
 // build should just quietly skip the update nudge, not break anything else on load.
+// The same answer also carries the server's feature list, so it is fetched once per session
+// (http.ts loadServerFeatures) and shared.
 export async function getLatestAppVersion(): Promise<string | null> {
   try {
-    const response = await fetch(`${API_BASE}/app-version`, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` },
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.latestVersion || null;
+    return await getLatestVersion();
   } catch {
     return null;
   }
@@ -1395,6 +1258,14 @@ export async function getEmployees(): Promise<Employee[]> {
   return getAllEmployees();
 }
 
+// One employee's Aadhaar photos (owner, or the person themself). Servers with the 'lean-lists-v1'
+// feature can leave the photos out of the employee lists (about 0.2-0.5 MB per list call) for
+// clients that ask; this is where a screen would then read them. The app doesn't ask yet: the
+// screens that show the photos still read them from the list.
+export async function getEmployeeDocuments(employeeId: string): Promise<{ aadharFront?: string; aadharBack?: string; [key: string]: unknown }> {
+  return fetchWithAuth(`${API_BASE}/employees/${encodeURIComponent(employeeId)}/documents`, '');
+}
+
 export async function getArchivedEmployees(): Promise<Employee[]> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1415,7 +1286,7 @@ export async function createUnifiedEmployee(employeeData: any) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees`, {
+  const response = await authFetch(`${API_BASE}/unified-employees`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1440,7 +1311,7 @@ export async function deleteUnifiedEmployee(employeeId: string) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1461,7 +1332,7 @@ export async function restoreArchivedEmployee(employeeId: string): Promise<{ suc
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const response = await fetch(`${API_BASE}/archived-employees/${employeeId}/restore`, {
+  const response = await authFetch(`${API_BASE}/archived-employees/${employeeId}/restore`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1485,7 +1356,7 @@ export async function deleteEmployee(employeeId: string) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/employees/${employeeId}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1509,7 +1380,7 @@ export async function resetEmployeePassword(employeeId: string, newPassword: str
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}/reset-password`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}/reset-password`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1566,7 +1437,7 @@ export async function migrateEmployeeStores() {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/migrate-employee-stores`, {
+  const response = await authFetch(`${API_BASE}/migrate-employee-stores`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1587,7 +1458,7 @@ export async function assignManagerToEmployee(employeeId: string, managerId: str
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/assign-manager-to-employee`, {
+  const response = await authFetch(`${API_BASE}/assign-manager-to-employee`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1609,7 +1480,7 @@ export async function updateEmployeeRole(employeeId: string, newRole: 'employee'
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/role`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/role`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1631,7 +1502,7 @@ export async function updateEmployeeStore(employeeId: string, newStoreId: string
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/store`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/store`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1660,7 +1531,7 @@ export async function updateEmployeeAssignments(
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/assignments`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/assignments`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1686,7 +1557,7 @@ export async function updateEmployeeDesignation(
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/designation`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/designation`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1708,7 +1579,7 @@ export async function assignInchargeToEmployee(employeeId: string, inchargeId: s
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/assign-incharge`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/assign-incharge`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1730,7 +1601,7 @@ export async function getEmployeesByIncharge(inchargeId: string) {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employees/by-incharge/${inchargeId}`, {
+  const response = await authFetch(`${API_BASE}/employees/by-incharge/${inchargeId}`, {
     headers: {
       'Authorization': `Bearer ${session.access_token}`
     }
@@ -1753,7 +1624,7 @@ export async function syncDesignations() {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/sync-designations`, {
+  const response = await authFetch(`${API_BASE}/sync-designations`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1779,7 +1650,7 @@ export async function assignClusterHeadToManager(managerId: string, clusterHeadI
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const response = await fetch(`${API_BASE}/unified-employees/${managerId}/assign-cluster-head`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${managerId}/assign-cluster-head`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1800,7 +1671,7 @@ export async function updateUnifiedEmployee(employeeId: string, updates: any) {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -2238,7 +2109,7 @@ export async function fetchInventoryItems(
     if (entityId) params.append('entityId', entityId);
     if (category) params.append('category', category);
 
-    const response = await fetch(
+    const response = await authFetch(
       `${API_BASE}/inventory-items?${params.toString()}`,
       {
         headers: {
@@ -2266,7 +2137,7 @@ export async function fetchInventoryItems(
 export async function addInventoryItem(
   item: Omit<DynamicInventoryItem, 'id' | 'createdAt' | 'isActive'>
 ): Promise<DynamicInventoryItem> {
-  const response = await fetch(`${API_BASE}/inventory-items`, {
+  const response = await authFetch(`${API_BASE}/inventory-items`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -2298,7 +2169,7 @@ export async function updateInventoryItem(
   id: string,
   updates: Partial<DynamicInventoryItem>
 ): Promise<DynamicInventoryItem> {
-  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -2317,7 +2188,7 @@ export async function updateInventoryItem(
 }
 
 export async function deleteInventoryItem(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/${id}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${await currentAccessToken()}`
@@ -2331,7 +2202,7 @@ export async function deleteInventoryItem(id: string): Promise<void> {
 }
 
 export async function initializeDefaultInventoryItems(): Promise<DynamicInventoryItem[]> {
-  const response = await fetch(`${API_BASE}/inventory-items/initialize-defaults`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/initialize-defaults`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${await currentAccessToken()}`
@@ -2691,7 +2562,7 @@ export interface CustomItem {
 
 export async function getCustomItems(): Promise<CustomItem[]> {
   try {
-    const response = await fetch(`${API_BASE}/custom-items`, {
+    const response = await authFetch(`${API_BASE}/custom-items`, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${await currentAccessToken()}`
@@ -2773,7 +2644,7 @@ export interface CustomCategory {
 
 export async function getCustomCategories(): Promise<CustomCategory[]> {
   try {
-    const response = await fetch(`${API_BASE}/custom-categories`, {
+    const response = await authFetch(`${API_BASE}/custom-categories`, {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await currentAccessToken()}` },
     });
     if (!response.ok) return [];

@@ -1,6 +1,6 @@
 // Bhandar-IMS - Performance optimized with lazy loading
 import { isPhase1Live, type ProductionBatch } from './utils/batches';
-import { useState, useEffect, lazy, Suspense, memo, startTransition, useCallback } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, memo, startTransition, useCallback } from 'react';
 const InventoryView = lazy(() => import('./components/InventoryView').then(module => ({ default: module.InventoryView })));
 const InventoryManagement = lazy(() => import('./components/InventoryManagement').then(module => ({ default: module.InventoryManagement })));
 const SalesView = lazy(() => import('./components/SalesView').then(module => ({ default: module.SalesView })));
@@ -59,6 +59,7 @@ import * as api from './utils/api';
 import * as pushNotifications from './utils/pushNotifications';
 import * as nativePushNotifications from './utils/nativePushNotifications';
 import * as dataCache from './utils/dataCache';
+import { startAuthTracking, currentAccessToken } from './utils/accessToken';
 import { useRiderLocationSharing } from './utils/riderLocationSharing';
 import { getTodayIST } from './utils/timezone';
 
@@ -433,6 +434,34 @@ export default function App() {
 
  // Get singleton Supabase client
  const supabaseClient = getSupabaseClient();
+
+ // Login renewals and sign-outs that didn't come from the Logout button. user.accessToken is the
+ // copy taken at login and is passed around to ~250 call sites; every request now sends the current
+ // token anyway (utils/http.ts), but code that reads user.accessToken directly should see the
+ // current one too. It is updated in place on purpose: setUser here would re-render the whole app
+ // and re-run every effect that depends on `user` once an hour, for a value nothing renders.
+ const userRef = useRef(user);
+ userRef.current = user;
+ const manualLogoutRef = useRef(false);
+ useEffect(() => {
+ startAuthTracking();
+ const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((event, session) => {
+ if (event === 'TOKEN_REFRESHED' && session && userRef.current) {
+ userRef.current.accessToken = session.access_token;
+ }
+ // Only a definite refusal gets here (the login server rejected the renewal, or the server
+ // refused even a renewed token) - a renewal that failed on the network keeps the session.
+ // Saved data stays on the phone: it is per person, and the outbox may hold unsent entries.
+ if (event === 'SIGNED_OUT' && userRef.current && !manualLogoutRef.current) {
+ console.warn('Signed out by the login server - showing the sign-in page.');
+ setUser(null);
+ dataCache.setCacheUser(null);
+ setAuthError('Your login has ended. Please sign in again.');
+ }
+ });
+ return () => subscription.unsubscribe();
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, []);
 
 
  // Load stores for cluster heads
@@ -1165,7 +1194,15 @@ export default function App() {
  } catch (error) {
  console.log('Could not unsubscribe push on logout:', error);
  }
- await supabaseClient.auth.signOut();
+ manualLogoutRef.current = true;
+ try {
+ // Offline, the server-side sign-out fails and supabase-js then keeps the session (the next
+ // open would sign straight back in) - end it on this phone regardless.
+ const { error } = await supabaseClient.auth.signOut();
+ if (error) await supabaseClient.auth.signOut({ scope: 'local' });
+ } finally {
+ manualLogoutRef.current = false;
+ }
  setUser(null);
  setInventory([]);
  setOverheads([]);
@@ -1192,7 +1229,7 @@ export default function App() {
  {
  headers: {
  'Content-Type': 'application/json',
- 'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+ 'Authorization': `Bearer ${await currentAccessToken()}`
  }
  }
  );
@@ -1220,7 +1257,7 @@ export default function App() {
  {
  headers: {
  'Content-Type': 'application/json',
- 'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+ 'Authorization': `Bearer ${await currentAccessToken()}`
  }
  }
  );
@@ -1246,7 +1283,7 @@ export default function App() {
  {
  headers: {
  'Content-Type': 'application/json',
- 'Authorization': `Bearer ${user?.accessToken || publicAnonKey}`
+ 'Authorization': `Bearer ${await currentAccessToken()}`
  }
  }
  );
