@@ -1,156 +1,60 @@
 import { useState } from 'react';
-import { Store, Factory, Package, Settings, TrendingUp, Boxes } from 'lucide-react';
 import { EquipmentRegister } from './assets/EquipmentRegister';
-import { StoreManagement } from './StoreManagement';
-import { ProductionHouseManagement } from './ProductionHouseManagement';
-import { ClusterManagement } from './ClusterManagement';
 import { InvestmentsManagement } from './InvestmentsManagement';
+import { StoresSetup } from './setup/StoresSetup';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { SetupPage } from './setup/SetupPage';
+import { useT } from '../utils/i18n';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 
 type Props = {
- context: InventoryContextType;
- stores: api.Store[];
- employees: api.Employee[];
- onRefreshStores: () => void;
- /** The owner's tab to open on (the shell's More > Investments / Stores and production houses). */
- initialTab?: 'equipment' | 'assets' | 'investments';
+  context: InventoryContextType;
+  stores: api.Store[];
+  employees: api.Employee[];
+  onRefreshStores: () => void;
+  /** The owner's tab to open on (the shell's More > Investments / Stores and production houses). */
+  initialTab?: 'equipment' | 'assets' | 'investments';
 };
 
+// Equipment and assets: one screen for the owner and the incharges (design review d12). The owner
+// also gets an Investments tab. Store and production-house setup ("assets", from More > Stores and
+// production houses) is its own Setup screen now.
 export function AssetsManagement({ context, stores, employees, onRefreshStores, initialTab = 'equipment' }: Props) {
- const isClusterHead = context.user?.role === 'cluster_head';
- const [mainTab, setMainTab] = useState<'equipment' | 'assets' | 'investments'>(initialTab);
- const [activeTab, setActiveTab] = useState<'stores' | 'production-houses' | 'cluster-management'>(
- isClusterHead ? 'cluster-management' : 'stores'
- );
+  const { t } = useT();
+  const isClusterHead = context.user?.role === 'cluster_head';
+  const [tab, setTab] = useState<'equipment' | 'investments'>(initialTab === 'investments' ? 'investments' : 'equipment');
 
- // Managers and incharges reach this page only for the equipment register (their "Equipment"
- // menu entry); stores, production houses and investments stay with the owner.
- if (!isClusterHead) {
- return (
- <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
- <EquipmentRegister />
- </div>
- );
- }
+  // Managers and incharges reach this page only for the equipment register (their "Equipment"
+  // menu entry); stores, production houses and investments stay with the owner.
+  if (!isClusterHead) {
+    return (
+      <SetupPage wide>
+        <EquipmentRegister />
+      </SetupPage>
+    );
+  }
 
- return (
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
- {/* Header with gradient background */}
- <div className="mb-8">
- <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-8 shadow-xl">
- <div className="absolute inset-0 bg-white/10"></div>
- <div className="relative">
- <div className="flex items-center gap-4 mb-6">
- <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30">
- <Package className="w-8 h-8 text-white" />
- </div>
- <div>
- <h1 className="text-3xl text-white mb-1">Investments & Assets Management</h1>
- <p className="text-white/80 text-sm">Manage your investors, stores, and production houses</p>
- </div>
- </div>
- 
- {/* Main Tabs - Equipment register, Assets (stores / production houses), Investments */}
- <div className="flex flex-wrap gap-3 mb-4">
- <button
- onClick={() => setMainTab('equipment')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- mainTab === 'equipment'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Boxes className="w-5 h-5" />
- <span>Equipment & assets</span>
- </button>
- <button
- onClick={() => setMainTab('assets')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- mainTab === 'assets'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Package className="w-5 h-5" />
- <span>Stores & houses</span>
- </button>
- <button
- onClick={() => setMainTab('investments')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- mainTab === 'investments'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <TrendingUp className="w-5 h-5" />
- <span>Investments</span>
- </button>
- </div>
+  if (initialTab === 'assets') {
+    return <StoresSetup context={context} stores={stores} employees={employees} onRefreshStores={onRefreshStores} />;
+  }
 
- {/* Sub-tabs for Assets */}
- {mainTab === 'assets' && (
- <div className="flex gap-3">
- {isClusterHead && (
- <button
- onClick={() => setActiveTab('cluster-management')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- activeTab === 'cluster-management'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Settings className="w-5 h-5" />
- <span>Cluster Settings</span>
- </button>
- )}
- <button
- onClick={() => setActiveTab('stores')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- activeTab === 'stores'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Store className="w-5 h-5" />
- <span>Stores</span>
- </button>
- <button
- onClick={() => setActiveTab('production-houses')}
- className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
- activeTab === 'production-houses'
- ? 'bg-white text-orange-600 border-white shadow-lg'
- : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
- }`}
- >
- <Factory className="w-5 h-5" />
- <span>Production Houses</span>
- </button>
- </div>
- )}
- </div>
- </div>
- </div>
-
- {/* Tab Content */}
- <div>
- {mainTab === 'equipment' ? (
- <EquipmentRegister />
- ) : mainTab === 'investments' ? (
- <InvestmentsManagement context={context} />
- ) : activeTab === 'cluster-management' ? (
- <ClusterManagement context={context} />
- ) : activeTab === 'stores' ? (
- <StoreManagement onStoreCreated={onRefreshStores} userRole={context.user?.role} />
- ) : (
- <ProductionHouseManagement 
- context={context} 
- stores={stores} 
- employees={employees}
- onRefreshStores={onRefreshStores}
- />
- )}
- </div>
- </div>
- );
+  return (
+    <Tabs value={tab} onValueChange={(v) => setTab(v as 'equipment' | 'investments')}>
+      <TabsList aria-label={t('assets.title')} className="lg:px-8">
+        <TabsTrigger value="equipment">{t('assets.tab.equipment')}</TabsTrigger>
+        <TabsTrigger value="investments">{t('assets.tab.investments')}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="equipment">
+        <SetupPage wide>
+          <EquipmentRegister />
+        </SetupPage>
+      </TabsContent>
+      <TabsContent value="investments">
+        <SetupPage wide>
+          <InvestmentsManagement context={context} />
+        </SetupPage>
+      </TabsContent>
+    </Tabs>
+  );
 }

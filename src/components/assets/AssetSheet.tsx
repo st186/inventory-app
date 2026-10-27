@@ -1,53 +1,79 @@
 import { useState } from 'react';
-import { AlertTriangle, Camera, Check, Loader2, Minus, Plus, Receipt, Trash2, Undo2, X } from 'lucide-react';
+import { Camera, Receipt, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ASSET_CATEGORIES, ASSET_CONDITIONS, type AssetCategory, type AssetCondition } from '../../utils/assetRules';
+import { useT } from '../../utils/i18n';
+import { Button } from '../ui/button';
+import { IconButton } from '../ui/icon-button';
+import { Input } from '../ui/input';
+import { Textarea } from '../ui/textarea';
+import { Field } from '../ui/field';
+import { NativeSelect } from '../ui/select';
+import { ChoiceChips } from '../ui/chip';
+import { NumberStepper } from '../ui/number-stepper';
+import { MoneyInput } from '../ui/money';
+import { Callout } from '../ui/callout';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { confirm } from '../ui/confirm';
+import { assetCategoryIcon } from '../setup/setupIcons';
 import {
   compressPhoto, deleteAsset, dismissAsset, inr, locationKey, restoreAsset, shortDate, updateAsset, uploadAssetPhoto,
   type AssetLocation, type AssetRow,
 } from './assetsApi';
-import { ConditionBadge, CONDITION_STYLE } from './ConditionBadge';
+import { ConditionBadge } from './ConditionBadge';
+import { assetCategoryKey, conditionKey } from './assetLabels';
 
 // One register item: check-and-confirm for an item added from an expense ("review"), edit, or a
 // read-only look for staff who can only view their location's list.
 type Props = {
+  open: boolean;
   asset: AssetRow;
   mode: 'review' | 'edit' | 'view';
   locations: AssetLocation[];
   editableLocations: string[];
   canDelete: boolean;
   onClose: () => void;
+  /** After the close animation (the parent drops the sheet then). */
+  onClosed?: () => void;
   onSaved: (asset: AssetRow) => void;
   onRemoved: (id: string) => void;
 };
 
-export function AssetSheet({ asset, mode, locations, editableLocations, canDelete, onClose, onSaved, onRemoved }: Props) {
+export function AssetSheet({ open, asset, mode, locations, editableLocations, canDelete, onClose, onClosed, onSaved, onRemoved }: Props) {
+  const { t } = useT();
   const readOnly = mode === 'view';
+  const startLoc = asset.locationId ? locationKey(asset.locationKind, asset.locationId) : '';
   const [name, setName] = useState(asset.name);
   const [category, setCategory] = useState<AssetCategory>(asset.category);
   const [quantity, setQuantity] = useState(String(asset.quantity || 1));
   const [cost, setCost] = useState(asset.totalCost == null ? '' : String(asset.totalCost));
   const [purchaseDate, setPurchaseDate] = useState(asset.purchaseDate || '');
-  const [loc, setLoc] = useState(asset.locationId ? locationKey(asset.locationKind, asset.locationId) : '');
+  const [loc, setLoc] = useState(startLoc);
   const [condition, setCondition] = useState<AssetCondition>(asset.condition);
   const [notes, setNotes] = useState(asset.notes || '');
   const [preview, setPreview] = useState<string | null>(asset.photoUrl);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const dirty = !readOnly && (
+    name !== asset.name || category !== asset.category || quantity !== String(asset.quantity || 1)
+    || cost !== (asset.totalCost == null ? '' : String(asset.totalCost)) || purchaseDate !== (asset.purchaseDate || '')
+    || loc !== startLoc || condition !== asset.condition || notes !== (asset.notes || '')
+  );
+
   // Where it can be moved: the locations this person may edit, plus wherever it is now.
   const locOptions = locations.filter((l) => editableLocations.includes(locationKey(l.kind, l.id)) || locationKey(l.kind, l.id) === loc);
-  const locName = (key: string) => locations.find((l) => locationKey(l.kind, l.id) === key)?.name || 'No location yet';
+  const locName = (key: string) => locations.find((l) => locationKey(l.kind, l.id) === key)?.name || t('assets.noLocation');
 
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
-    try { await fn(); } catch (e: any) { toast.error(e?.message || 'Something went wrong'); } finally { setBusy(null); }
+    try { await fn(); } catch (e: any) { toast.error(e?.message || t('assets.err.generic')); } finally { setBusy(null); }
   };
 
-  const save = (confirm: boolean) => run(confirm ? 'confirm' : 'save', async () => {
+  const save = (confirmIt: boolean) => run(confirmIt ? 'confirm' : 'save', async () => {
     const q = parseInt(quantity, 10);
-    if (!name.trim()) throw new Error('Enter the item name');
-    if (!Number.isInteger(q) || q < 1) throw new Error('Quantity must be 1 or more');
-    if (!loc) throw new Error('Pick the store or production house');
+    if (!name.trim()) throw new Error(t('assets.err.name'));
+    if (!Number.isInteger(q) || q < 1) throw new Error(t('assets.err.qty'));
+    if (!loc) throw new Error(t('assets.pickLocation'));
     const [locationKind, ...rest] = loc.split(':');
     const saved = await updateAsset(asset.id, {
       name: name.trim(),
@@ -59,9 +85,9 @@ export function AssetSheet({ asset, mode, locations, editableLocations, canDelet
       notes,
       locationKind: locationKind as AssetRow['locationKind'],
       locationId: rest.join(':'),
-      confirm,
+      confirm: confirmIt,
     });
-    toast.success(confirm ? 'Confirmed · নিশ্চিত হয়েছে' : 'Saved · সেভ হয়েছে');
+    toast.success(confirmIt ? t('assets.confirmed') : t('assets.saved'));
     onSaved(saved);
     onClose();
   });
@@ -75,7 +101,7 @@ export function AssetSheet({ asset, mode, locations, editableLocations, canDelet
       setPreview(dataUrl);
       const saved = await uploadAssetPhoto(asset.id, dataUrl);
       onSaved(saved);
-      toast.success('Photo added');
+      toast.success(t('assets.photoAdded'));
     });
   };
 
@@ -87,7 +113,7 @@ export function AssetSheet({ asset, mode, locations, editableLocations, canDelet
 
   const notEquipment = () => run('dismiss', async () => {
     await dismissAsset(asset.id);
-    toast.success('Removed from the list');
+    toast.success(t('assets.removed'));
     onRemoved(asset.id);
     onClose();
   });
@@ -98,216 +124,185 @@ export function AssetSheet({ asset, mode, locations, editableLocations, canDelet
     onClose();
   });
 
-  const remove = () => {
-    if (!window.confirm(`Delete "${asset.name}" from the register? This can't be undone.`)) return;
+  const remove = async () => {
+    const ok = await confirm({ title: t('assets.deleteTitle', { name: asset.name }), body: t('assets.deleteBody'), confirmLabel: t('assets.deleteConfirm'), tone: 'danger' });
+    if (!ok) return;
     run('delete', async () => {
       await deleteAsset(asset.id);
-      toast.success('Deleted');
+      toast.success(t('assets.deleted'));
       onRemoved(asset.id);
       onClose();
     });
   };
 
-  const field = 'w-full mt-1 px-3 py-2.5 border border-gray-300 rounded-xl text-base bg-white disabled:bg-gray-50 disabled:text-gray-700';
-  const label = 'block text-xs font-medium text-gray-700';
   const change = asset.expenseChanged;
   const fromExpense = asset.source?.kind === 'expense';
+  const title = mode === 'review' ? t('assets.sheet.review') : readOnly ? asset.name : t('assets.sheet.edit');
+
+  const footer = readOnly ? undefined : mode === 'review' ? (
+    <>
+      <Button variant="secondary" size="lg" disabled={!!busy} loading={busy === 'dismiss'} onClick={notEquipment}>{t('assets.notEquipment')}</Button>
+      <Button size="lg" className="flex-1" disabled={!!busy} loading={busy === 'confirm'} onClick={() => save(true)}>{t('assets.confirm')}</Button>
+    </>
+  ) : (
+    <>
+      {canDelete && <IconButton variant="danger-ghost" label={t('assets.deleteConfirm')} icon={<Trash2 />} loading={busy === 'delete'} disabled={!!busy} onClick={remove} />}
+      <Button size="lg" className="flex-1" disabled={!!busy} loading={busy === 'save'} onClick={() => save(false)}>{t('common.save')}</Button>
+    </>
+  );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[92dvh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <div className="min-w-0">
-            <p className="font-bold text-gray-900 truncate">
-              {mode === 'review' ? 'Check & confirm · যাচাই করুন' : readOnly ? asset.name : 'Edit item · জিনিস বদলান'}
-            </p>
-            {readOnly && <p className="text-xs text-gray-500">{locName(loc)}</p>}
-          </div>
-          <button type="button" onClick={onClose} className="p-1.5 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>
-        </div>
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(next) => { if (!next) onClose(); }}
+      onClosed={onClosed}
+      title={title}
+      description={readOnly ? locName(loc) : undefined}
+      dirty={dirty && !busy}
+      footer={footer}
+    >
+      <div className="flex flex-col gap-4">
+        {fromExpense && (
+          <Callout tone="info" icon={Receipt} title={asset.purchaseDate ? t('assets.fromExpense', { date: shortDate(asset.purchaseDate) }) : t('assets.fromExpenseNoDate')}>
+            {asset.needsReview && !readOnly ? t('assets.reviewBody') : undefined}
+          </Callout>
+        )}
 
-        <div className="p-4 space-y-4 overflow-y-auto">
-          {fromExpense && (
-            <div className="flex items-start gap-2 rounded-xl bg-sky-50 border border-sky-200 p-3 text-xs text-sky-900">
-              <Receipt className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <p>
-                Added from an expense{asset.purchaseDate ? ` of ${shortDate(asset.purchaseDate)}` : ''}.
-                {asset.needsReview && !readOnly && ' Check the name, type, count and place, add a photo, then confirm.'}
-                {asset.needsReview && !readOnly && <span className="block text-sky-700 mt-0.5">খরচ থেকে যোগ হয়েছে - ঠিক আছে কিনা দেখে নিশ্চিত করুন</span>}
-              </p>
-            </div>
-          )}
-
-          {change && (
-            <div className="rounded-xl bg-amber-50 border border-amber-300 p-3 text-sm text-amber-900 space-y-2">
-              <p className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="w-4 h-4" />
-                {change.kind === 'changed' ? 'Expense changed · খরচ বদলেছে' : change.kind === 'deleted' ? 'Expense deleted · খরচ মুছে ফেলা হয়েছে' : 'Expense is no longer equipment'}
-              </p>
-              {change.kind === 'changed' && change.expense && (
-                <p className="text-xs">
-                  The expense now says: <strong>{change.expense.name}</strong> · {change.expense.quantity} pcs · {inr(change.expense.totalCost)} · {shortDate(change.expense.purchaseDate)}
-                  {change.expense.locationId && ` · ${locName(locationKey(change.expense.locationKind, change.expense.locationId))}`}
-                </p>
-              )}
-              {!readOnly && (
-                <div className="flex flex-wrap gap-2">
-                  {change.kind === 'changed' ? (
-                    <>
-                      <button type="button" disabled={!!busy} onClick={() => resolve('accept')} className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-60">Use the new values</button>
-                      <button type="button" disabled={!!busy} onClick={() => resolve('keep')} className="px-3 py-2 rounded-lg bg-white border border-amber-300 text-xs font-semibold disabled:opacity-60">Keep as it is</button>
-                    </>
-                  ) : (
-                    <>
-                      <button type="button" disabled={!!busy} onClick={() => resolve('keep')} className="px-3 py-2 rounded-lg bg-white border border-amber-300 text-xs font-semibold disabled:opacity-60">We still have it - keep</button>
-                      <button type="button" disabled={!!busy} onClick={notEquipment} className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-60">Remove from list</button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {asset.dismissed && (
-            <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 text-xs text-gray-700 flex items-center justify-between gap-2">
-              <span>Removed from the list as "not equipment".</span>
-              {!readOnly && (
-                <button type="button" disabled={!!busy} onClick={bringBack} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 font-semibold inline-flex items-center gap-1">
-                  <Undo2 className="w-3.5 h-3.5" /> Bring back
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Photo */}
-          <div>
-            <p className={label}>Photo · ছবি</p>
-            {readOnly ? (
-              preview ? <img src={preview} alt="" className="mt-1 w-full max-h-64 object-contain rounded-xl bg-gray-100" /> : <p className="mt-1 text-sm text-gray-500">No photo yet</p>
-            ) : (
-              <label className="mt-1 flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-orange-300 bg-orange-50/50 cursor-pointer">
-                {preview ? <img src={preview} alt="" className="w-20 h-14 object-cover rounded-md" /> : <Camera className="w-6 h-6 text-orange-600" />}
-                <span className="text-sm font-semibold text-orange-700 inline-flex items-center gap-2">
-                  {busy === 'photo' && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {preview ? 'Retake photo · আবার তুলুন' : 'Take photo · ছবি তুলুন'}
-                </span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" disabled={!!busy} onChange={pickPhoto} />
-              </label>
-            )}
-          </div>
-
-          <label className={label}>
-            Name · নাম
-            <input value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly} maxLength={80} className={field} />
-          </label>
-
-          <div>
-            <p className={label}>Type · ধরন</p>
-            <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {ASSET_CATEGORIES.map((c) => (
-                <button
-                  key={c.key}
-                  type="button"
-                  disabled={readOnly}
-                  onClick={() => setCategory(c.key)}
-                  className={`text-left px-2.5 py-2 rounded-lg border text-xs leading-tight ${category === c.key ? 'border-orange-500 bg-orange-50 text-orange-800 font-semibold' : 'border-gray-200 bg-white text-gray-700'} ${readOnly && category !== c.key ? 'hidden' : ''}`}
-                >
-                  {c.emoji} {c.label}<span className="block text-[10px] text-gray-500 font-normal">{c.bn}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className={label}>How many · কয়টি</p>
-              <div className="mt-1 flex items-center gap-1">
-                {!readOnly && (
-                  <button type="button" aria-label="One less" onClick={() => setQuantity(String(Math.max(1, (parseInt(quantity, 10) || 1) - 1)))} className="p-2.5 rounded-xl border border-gray-300"><Minus className="w-4 h-4" /></button>
-                )}
-                <input type="number" inputMode="numeric" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} disabled={readOnly} className={`${field} mt-0 text-center`} />
-                {!readOnly && (
-                  <button type="button" aria-label="One more" onClick={() => setQuantity(String((parseInt(quantity, 10) || 0) + 1))} className="p-2.5 rounded-xl border border-gray-300"><Plus className="w-4 h-4" /></button>
+        {change && (
+          <Callout
+            tone="warning"
+            title={change.kind === 'changed' ? t('assets.expenseChanged') : change.kind === 'deleted' ? t('assets.expenseDeleted') : t('assets.expenseNotEquipment')}
+            action={!readOnly ? (
+              <div className="flex flex-wrap gap-2">
+                {change.kind === 'changed' ? (
+                  <>
+                    <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'accept'} onClick={() => resolve('accept')}>{t('assets.useNew')}</Button>
+                    <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'keep'} onClick={() => resolve('keep')}>{t('assets.keepAsIs')}</Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'keep'} onClick={() => resolve('keep')}>{t('assets.stillHave')}</Button>
+                    <Button variant="danger-ghost" size="sm" disabled={!!busy} loading={busy === 'dismiss'} onClick={notEquipment}>{t('assets.removeFromList')}</Button>
+                  </>
                 )}
               </div>
-            </div>
-            <label className={label}>
-              Cost, all pieces (₹) · দাম
-              <input type="number" inputMode="decimal" min={0} value={cost} onChange={(e) => setCost(e.target.value)} disabled={readOnly} placeholder="Optional" className={field} />
+            ) : undefined}
+          >
+            {change.kind === 'changed' && change.expense ? (
+              <span className="num">
+                {t('assets.expenseNow', {
+                  text: [
+                    change.expense.name,
+                    t('assets.pcs', { n: change.expense.quantity }),
+                    inr(change.expense.totalCost),
+                    shortDate(change.expense.purchaseDate),
+                    ...(change.expense.locationId ? [locName(locationKey(change.expense.locationKind, change.expense.locationId))] : []),
+                  ].join(' · '),
+                })}
+              </span>
+            ) : undefined}
+          </Callout>
+        )}
+
+        {asset.dismissed && (
+          <Callout
+            tone="neutral"
+            title={t('assets.dismissedNote')}
+            action={!readOnly ? <Button variant="secondary" size="sm" leadingIcon={<Undo2 />} disabled={!!busy} loading={busy === 'restore'} onClick={bringBack}>{t('assets.bringBack')}</Button> : undefined}
+          />
+        )}
+
+        {/* Photo */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-body-sm font-medium text-text">{t('assets.photo')}</span>
+          {readOnly ? (
+            preview ? <img src={preview} alt="" className="max-h-64 w-full rounded-lg bg-surface-2 object-contain" /> : <p className="text-body-sm text-text-3">{t('assets.noPhoto')}</p>
+          ) : (
+            <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-border-strong bg-surface px-3 py-2 transition-colors hover:bg-surface-2 focus-within:ring-2 focus-within:ring-ring">
+              {preview ? <img src={preview} alt="" className="h-12 w-16 shrink-0 rounded-sm object-cover" /> : <Camera className="size-6 shrink-0 text-text-2" aria-hidden="true" />}
+              <span className="text-body-md font-semibold text-primary">{busy === 'photo' ? t('common.loading') : preview ? t('assets.retakePhoto') : t('assets.takePhoto')}</span>
+              <input type="file" accept="image/*" capture="environment" className="sr-only" disabled={!!busy} onChange={pickPhoto} />
             </label>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className={label}>
-              Bought on · কেনার দিন
-              <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} disabled={readOnly} className={field} />
-            </label>
-            <label className={label}>
-              Where · কোথায়
-              <select value={loc} onChange={(e) => setLoc(e.target.value)} disabled={readOnly || (locOptions.length < 2 && !!loc)} className={field}>
-                {!loc && <option value="">Pick location</option>}
-                {locOptions.map((l) => <option key={locationKey(l.kind, l.id)} value={locationKey(l.kind, l.id)}>{l.name}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <p className={label}>Condition · অবস্থা</p>
-            {readOnly ? (
-              <div className="mt-1"><ConditionBadge condition={condition} /></div>
-            ) : (
-              <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {ASSET_CONDITIONS.map((c) => (
-                  <button
-                    key={c.key}
-                    type="button"
-                    onClick={() => setCondition(c.key)}
-                    className={`px-2 py-2 rounded-lg border text-xs leading-tight ${condition === c.key ? `${CONDITION_STYLE[c.key]} font-semibold ring-2 ring-offset-1 ring-orange-300` : 'border-gray-200 bg-white text-gray-700'}`}
-                  >
-                    {c.label}<span className="block text-[10px] font-normal opacity-80">{c.bn}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <label className={label}>
-            Notes · নোট
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={readOnly} maxLength={500} rows={2} placeholder={readOnly ? '' : 'Brand, size, where it is kept…'} className={field} />
-          </label>
-
-          {(asset.confirmedBy || asset.updatedBy) && (
-            <p className="text-[11px] text-gray-500">
-              {asset.confirmedBy ? `Confirmed by ${asset.confirmedBy}. ` : ''}Last change {shortDate(asset.updatedAt)} by {asset.updatedBy}.
-            </p>
           )}
         </div>
 
-        {!readOnly && (
-          <div className="p-4 border-t border-gray-200 space-y-2">
-            {mode === 'review' ? (
-              <div className="flex gap-2">
-                <button type="button" onClick={notEquipment} disabled={!!busy} className="px-3 py-3 rounded-xl border border-gray-300 text-sm font-semibold text-gray-700 disabled:opacity-60">
-                  Not equipment
-                </button>
-                <button type="button" onClick={() => save(true)} disabled={!!busy} className="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
-                  {busy === 'confirm' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm · নিশ্চিত করুন
-                </button>
-              </div>
-            ) : (
-              <div className="flex gap-2">
-                {canDelete && (
-                  <button type="button" onClick={remove} disabled={!!busy} aria-label="Delete" className="px-3 py-3 rounded-xl border border-red-200 text-red-600 disabled:opacity-60">
-                    {busy === 'delete' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                  </button>
-                )}
-                <button type="button" onClick={() => save(false)} disabled={!!busy} className="flex-1 py-3 rounded-xl bg-orange-600 text-white font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
-                  {busy === 'save' && <Loader2 className="w-4 h-4 animate-spin" />} Save · সেভ করুন
-                </button>
-              </div>
-            )}
-          </div>
+        <Field label={t('assets.name')}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly} maxLength={80} />
+        </Field>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-body-sm font-medium text-text">{t('assets.type')}</span>
+          {readOnly ? (
+            <span className="inline-flex items-center gap-2 text-body-md text-text">
+              {(() => { const Icon = assetCategoryIcon(category); return <Icon className="size-5 text-text-2" aria-hidden="true" />; })()}
+              {t(assetCategoryKey(category))}
+            </span>
+          ) : (
+            <ChoiceChips
+              aria-label={t('assets.type')}
+              value={category}
+              onValueChange={(v) => setCategory(v)}
+              options={ASSET_CATEGORIES.map((c) => {
+                const Icon = assetCategoryIcon(c.key);
+                return { value: c.key, label: <span className="inline-flex items-center gap-1.5"><Icon className="size-4" aria-hidden="true" />{t(assetCategoryKey(c.key))}</span> };
+              })}
+            />
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label={t('assets.howMany')}>
+            <NumberStepper
+              label={t('assets.howMany')}
+              value={Math.max(1, parseInt(quantity, 10) || 1)}
+              onChange={(n) => setQuantity(String(n))}
+              min={1}
+              editable
+              disabled={readOnly}
+            />
+          </Field>
+          <Field label={t('assets.cost')} optional={!readOnly}>
+            <MoneyInput value={cost} onValueChange={(_, raw) => setCost(raw)} disabled={readOnly} />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label={t('assets.boughtOn')}>
+            <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} disabled={readOnly} />
+          </Field>
+          <Field label={t('assets.where')}>
+            <NativeSelect value={loc} onChange={(e) => setLoc(e.target.value)} disabled={readOnly || (locOptions.length < 2 && !!loc)}>
+              {!loc && <option value="">{t('assets.pickLocation')}</option>}
+              {locOptions.map((l) => <option key={locationKey(l.kind, l.id)} value={locationKey(l.kind, l.id)}>{l.name}</option>)}
+            </NativeSelect>
+          </Field>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-body-sm font-medium text-text">{t('assets.condition')}</span>
+          {readOnly ? (
+            <ConditionBadge condition={condition} />
+          ) : (
+            <ChoiceChips
+              aria-label={t('assets.condition')}
+              value={condition}
+              onValueChange={(v) => setCondition(v)}
+              options={ASSET_CONDITIONS.map((c) => ({ value: c.key, label: t(conditionKey(c.key)) }))}
+            />
+          )}
+        </div>
+
+        <Field label={t('assets.notes')} optional={!readOnly}>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={readOnly} maxLength={500} rows={2} placeholder={readOnly ? '' : t('assets.notesPlaceholder')} />
+        </Field>
+
+        {(asset.confirmedBy || asset.updatedBy) && (
+          <p className="text-caption text-text-3">
+            {asset.confirmedBy ? `${t('assets.confirmedBy', { name: asset.confirmedBy })} ` : ''}
+            {t('assets.lastChange', { date: shortDate(asset.updatedAt), name: asset.updatedBy })}
+          </p>
         )}
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }
