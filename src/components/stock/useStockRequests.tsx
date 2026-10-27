@@ -1,25 +1,23 @@
-// State, loading and actions of the stock requests screen (moved out of ProductionRequests.tsx
-// unchanged - the screen and its sections read everything from what this returns).
+// State, loading and actions of the stock requests screen: the store incharge's request, the
+// production queue (accept, pack, ship) and the oversight views. The screen and its sections read
+// everything from what this returns.
 import { useState, useEffect, useMemo } from 'react';
+import type * as React from 'react';
 import { InventoryContextType } from '../../App';
 import * as api from '../../utils/api';
-import { toast } from 'sonner@2.0.3';
-import { Package, Clock, CheckCircle, Truck, Calendar, User, Store, Send, ArrowRight, Filter, TrendingUp, ChevronDown, ChevronUp, Settings, AlertTriangle, X, Utensils, Droplet, Box, ArrowUp, ArrowDown, Minus, RefreshCw, FileText, Trash2, Sparkles, Loader2 } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { confirm } from '../ui/confirm';
 import { getSupabaseClient } from '../../utils/supabase/client';
-import { DatePicker } from '../DatePicker';
-import { MonthlyStockRecalibration } from '../MonthlyStockRecalibration';
-import { StockThresholdSettings } from '../StockThresholdSettings';
-import { RecalibrationReports } from '../RecalibrationReports';
-import { StockWastageModal } from '../StockWastageModal';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../../utils/entityAccess';
-import { EventMomoReturnsCard } from '../events/EventMomoReturnsCard';
-import { bagSize, bagsLabel, roundUpToBags, isPhase1Live } from '../../utils/batches';
+import { bagSize, roundUpToBags, isPhase1Live } from '../../utils/batches';
 import { getTodayIST } from '../../utils/timezone';
 import { suggestRequest, type ForecastDay, type MomoKey } from '../../utils/forecast';
-import { ShipDialogBags, PackingFields, DispatchDraft, emptyDispatchDraft, buildDispatchInfo } from '../dispatch/ShipDialogBags';
-import { DispatchSlipModal, DispatchDetails } from '../dispatch/DispatchSlip';
-import { ReceiveDeliveryDialog, ReceiptSummary } from '../dispatch/ReceiveDeliveryDialog';
+import { t } from '../../utils/i18n';
+import { getAppLanguage } from '../../utils/appLanguage';
+import { DispatchDraft, emptyDispatchDraft, buildDispatchInfo } from '../dispatch/ShipDialogBags';
 import { getStockFilterRange, type StockFilterPreset } from './requestPeriods';
+import type { QueueBucket } from './stockShared';
+import { dayLabel, requestStatusWord } from './stockShared';
 
 export interface StockRequestsProps {
   context: InventoryContextType;
@@ -31,6 +29,9 @@ export interface StockRequestsProps {
 export function useStockRequests({ context, highlightRequestId, selectedStoreId, onNavigateToManageItems }: StockRequestsProps) {
   const [requests, setRequests] = useState<api.ProductionRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Production queue filter (To pack / Packed / Sent).
+  const [queueFilter, setQueueFilter] = useState<QueueBucket>('toPack');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showDuplicateDateConfirm, setShowDuplicateDateConfirm] = useState(false);
@@ -331,7 +332,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       const ov = await api.getInsightsOverview(context.user.accessToken, sid);
       const day = ov.forecast.find((f) => f.date === requestDate);
       if (!day) {
-        toast.error('The forecast covers today and the next 6 days - pick a request date in that range');
+        toast.error(t('stock.req.forecastRange'));
         return;
       }
       const lastSent = myStoreRequests.find((r) => r.requestDate < requestDate && r.shippedQuantities && ['shipped', 'partially-shipped', 'delivered', 'partially-delivered'].includes(r.status));
@@ -352,9 +353,9 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
         return next;
       });
       setSuggestion({ day, rows, carryFrom: lastSent?.requestDate || null });
-      toast.success('Quantities filled from the forecast - check them before sending');
+      toast.success(t('stock.req.filledToast'));
     } catch (e: any) {
-      toast.error(e?.message || 'Could not load the forecast');
+      toast.error(e?.message || t('stock.req.forecastFailed'));
     } finally {
       setSuggesting(false);
     }
@@ -371,7 +372,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       if (newQuantities[camelKey] !== qty) rounded = true;
     });
     setMomoQuantities(newQuantities);
-    if (rounded) toast.info('Rounded up to whole bags (50 chicken, 20 of the others)');
+    if (rounded) toast.info(t('stock.req.roundedCopy'));
     setKitchenUtilities(lastRequest.kitchenUtilities || {});
     setSauces(lastRequest.sauces || {});
     setUtilities(lastRequest.utilities || {});
@@ -380,23 +381,13 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     if ((lastRequest.utilities && Object.keys(lastRequest.utilities).length > 0)) setShowUtilitiesSection(true);
   };
 
-  const requestStatusMeta: Record<string, { label: string; className: string }> = {
-    pending: { label: 'Pending', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-    accepted: { label: 'Accepted', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-    'in-preparation': { label: 'In Preparation', className: 'bg-teal-50 text-teal-700 border-teal-200' },
-    prepared: { label: 'Prepared', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-    shipped: { label: 'Shipped', className: 'bg-orange-50 text-orange-700 border-orange-200' },
-    'partially-shipped': { label: 'Partially Shipped', className: 'bg-orange-50 text-orange-700 border-orange-200' },
-    delivered: { label: 'Delivered', className: 'bg-green-50 text-green-700 border-green-200' },
-    'partially-delivered': { label: 'Partially Delivered', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  };
-
   // Helper function to get fresh access token
   const getFreshAccessToken = async (): Promise<string | null> => {
     try {
       const supabase = getSupabaseClient();
       const { data: { session } } = await supabase.auth.getSession();
-      return session?.access_token || null;
+      // The signed-in session's token (requests use the current token anyway - see utils/http.ts).
+      return session?.access_token || context.user?.accessToken || null;
     } catch (error) {
       console.error('Error getting fresh token:', error);
       return null;
@@ -489,9 +480,9 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
         
         if (!hasTomorrowRequest) {
           console.log('📅 3 PM Reminder: No stock request found for tomorrow');
-          toast.warning('⏰ Reminder: You haven\'t submitted a stock request for tomorrow yet!', {
+          toast.warning(t('stock.req.reminderTitle'), {
             duration: 10000,
-            description: 'Please submit your production request to ensure timely preparation.'
+            description: t('stock.req.reminderBody'),
           });
           
           // Update last reminder date
@@ -601,9 +592,11 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       });
       
       setRequests(filteredRequests);
+      setLoadError(null);
     } catch (error: any) {
       console.error('Error loading production requests:', error);
-      toast.error('Failed to load production requests');
+      setLoadError(error?.message || t('error.body'));
+      toast.error(t('stock.queue.loadFailed'));
     } finally {
       setLoading(false);
       setHasLoadedOnce(true);
@@ -750,8 +743,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     }
   };
 
-  const handleSubmitRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitRequest = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     
     // Prevent duplicate submissions
     if (submitting) {
@@ -780,7 +773,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
         hasStoreId: !!context.user?.storeId,
         user: context.user
       });
-      toast.error('Missing user information. Please ensure you are assigned to a store.');
+      toast.error(t('stock.req.noStore'));
       return;
     }
 
@@ -796,13 +789,13 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
         notWholeBags.forEach(([key, qty]) => { next[key] = roundUpToBags(qty, key); });
         return next;
       });
-      toast.error('Quantities rounded up to whole bags - check them and submit again');
+      toast.error(t('stock.req.rounded'));
       return;
     }
     
     if (totalQuantity === 0) {
       console.log('❌ No quantities specified');
-      toast.error('Please specify at least one item quantity');
+      toast.error(t('stock.req.addSomething'));
       return;
     }
 
@@ -823,8 +816,13 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       (req) => req.storeId === context.user?.storeId && req.requestDate === requestDate
     );
     if (existingSameDateRequest) {
-      setShowDuplicateDateConfirm(true);
-      return;
+      const date = dayLabel(getAppLanguage(), requestDate);
+      const ok = await confirm({
+        title: t('stock.req.duplicateTitle', { date }),
+        body: t('stock.req.duplicateBody'),
+        confirmLabel: t('stock.req.duplicateConfirm'),
+      });
+      if (!ok) return;
     }
 
     await performSubmitRequest();
@@ -853,7 +851,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       } as Omit<api.ProductionRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>);
 
       console.log('✅ Request submitted successfully');
-      toast.success('Production request submitted successfully');
+      toast.success(t('stock.req.sentToast'));
 
       // Reset form
       setMomoQuantities({});
@@ -862,13 +860,12 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       setUtilities({});
       setNotes('');
       setRequestDate(getDefaultRequestDate());
-      setShowDuplicateDateConfirm(false);
 
       // Reload requests
       await loadRequests();
     } catch (error: any) {
       console.error('❌ Error submitting production request:', error);
-      toast.error(error.message || 'Failed to submit request');
+      toast.error(error.message || t('stock.req.sendFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -887,11 +884,11 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
         context.user.employeeId
       );
 
-      toast.success(`Request marked as ${newStatus.replace('-', ' ')}`);
+      toast.success(t('stock.queue.statusSaved', { status: requestStatusWord(getAppLanguage(), newStatus) }));
       await loadRequests();
     } catch (error: any) {
       console.error('Error updating status:', error);
-      toast.error('Failed to update status');
+      toast.error(t('stock.queue.statusFailed'));
     } finally {
       setUpdatingRequestId(null);
     }
@@ -948,7 +945,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     
     // Validate responsibility checkbox
     if (!shippingResponsibility) {
-      toast.error('Please confirm your responsibility for shipping these items');
+      toast.error(t('stock.ship.confirmFirst'));
       return;
     }
     
@@ -978,7 +975,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     });
     
     if (missingNotes.length > 0) {
-      toast.error(`Please add notes for items with different quantities: ${missingNotes.join(', ')}`);
+      toast.error(t('stock.ship.reasonNeeded', { items: missingNotes.join(', ') }));
       return;
     }
 
@@ -990,14 +987,14 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       .filter(([sauce]) => !shippingNotes[`sauce_${sauce}`]?.trim())
       .map(([sauce]) => sauce);
     if (missingSauceReasons.length > 0) {
-      toast.error(`Please add a reason for the missing sauce(s): ${missingSauceReasons.join(', ')}`);
+      toast.error(t('stock.ship.sauceReasonNeeded', { items: missingSauceReasons.join(', ') }));
       return;
     }
 
     const momoKeys = finishedProducts.map((p) => p.camelKey).filter((k) => k in shippedQuantities);
     const shipsMomos = momoKeys.some((k) => (shippedQuantities[k] || 0) > 0);
     if (shipsMomos && isPhase1Live(getTodayIST()) && !(parseInt(dispatchDraft.boxes, 10) > 0)) {
-      toast.error('Enter how many boxes are going on this trip');
+      toast.error(t('stock.ship.boxesNeeded'));
       return;
     }
 
@@ -1014,41 +1011,15 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
 
       setShowShippingDialog(false);
       if (shipped?.dispatch) {
-        toast.success('Shipped - share the dispatch slip with the store');
+        toast.success(t('stock.ship.shippedSlip'));
         setSlipRequest(shipped);
       } else {
-        toast.success('Request marked as shipped with quantities recorded');
+        toast.success(t('stock.ship.shipped'));
       }
       await loadRequests();
     } catch (error: any) {
       console.error('Error shipping request:', error);
-      toast.error(error.message || 'Failed to ship request');
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'accepted': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'in-preparation': return 'bg-teal-100 text-teal-800 border-teal-300';
-      case 'prepared': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'shipped': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'partially-shipped': return 'bg-amber-100 text-amber-800 border-amber-300';
-      case 'delivered': return 'bg-green-100 text-green-800 border-green-300';
-      case 'partially-delivered': return 'bg-lime-100 text-lime-800 border-lime-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending': return <Clock className="w-4 h-4" />;
-      case 'accepted': return <CheckCircle className="w-4 h-4" />;
-      case 'in-preparation': return <Package className="w-4 h-4" />;
-      case 'prepared': return <CheckCircle className="w-4 h-4" />;
-      case 'shipped': return <Truck className="w-4 h-4" />;
-      case 'delivered': return <CheckCircle className="w-4 h-4" />;
-      default: return <Clock className="w-4 h-4" />;
+      toast.error(error.message || t('stock.ship.failed'));
     }
   };
 
@@ -1125,6 +1096,10 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     }
   }, [sortedDates, expandedDates]);
   return {
+    loadError,
+    setLoadError,
+    queueFilter,
+    setQueueFilter,
     context,
     highlightRequestId,
     selectedStoreId,
@@ -1266,7 +1241,6 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     setSuggesting,
     handleSuggest,
     handleRepeatLastRequest,
-    requestStatusMeta,
     getFreshAccessToken,
     loadStockThresholds,
     loadRequests,
@@ -1282,8 +1256,6 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     handleStatusUpdate,
     openShippingDialog,
     handleShipRequest,
-    getStatusColor,
-    getStatusIcon,
     filteredRequests,
     groupedByStatus,
     groupedByDate,
