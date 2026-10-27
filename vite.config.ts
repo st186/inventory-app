@@ -95,5 +95,8 @@
       host: '127.0.0.1',
       port: 5173,
       open: true,
+      // Agent worktrees live under .claude/worktrees inside the repo; without this every save
+      // there reloaded the main dev server's pages.
+      watch: { ignored: ['**/.claude/**', '**/dist/**', '**/android/**'] },
     },
   }));
