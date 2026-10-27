@@ -1,23 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Calendar, AlertTriangle, Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import * as api from '../utils/api';
 import { formatDateTimeIST } from '../utils/timezone';
 import { InventoryContextType } from '../App';
-import { RECEIVED_STATUSES, SENT_STATUSES, receivedAtIST, shippedAtIST, shippedPieces } from '../utils/requestStock';
-
-const MOMO_STOCK_KEYS = ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'];
-
-// Pieces per momo type that a set of stock requests moved: the shipped amounts, read under the
-// short keys requests use (with the old long keys as fallback). This read req.chickenMomos etc.,
-// which current requests don't have, so a store's "received" and a production house's "sent"
-// came out as 0.
-function sumShippedPieces(requests: any[]): Record<string, number> {
-  const totals: Record<string, number> = {};
-  MOMO_STOCK_KEYS.forEach(key => {
-    totals[key] = requests.reduce((sum, req) => sum + shippedPieces(req, key), 0);
-  });
-  return totals;
-}
+import { RECEIVED_STATUSES, receivedAtIST } from '../utils/requestStock';
+import { eventsApi } from '../utils/eventsApi';
+import { sumShippedPieces, productionMonthMovement, productionMovementSince, productionPreviousMonthClosing } from './stock/recalibrationMath';
 
 type RecalibrationItem = {
  itemId: string;
@@ -56,6 +44,7 @@ export function MonthlyStockRecalibration({
  const [lastRecalibration, setLastRecalibration] = useState<string | null>(null);
  const [error, setError] = useState<string | null>(null);
  const [success, setSuccess] = useState(false);
+ const eventReturnsRef = useRef<any[]>([]);
  
  const effectiveStoreId = selectedStoreId || context.user?.storeId;
  const store = context.stores?.find(s => s.id === effectiveStoreId);
@@ -143,6 +132,17 @@ export function MonthlyStockRecalibration({
  // Fallback to context data if fetch fails
  productionData = context.productionData || [];
  }
+ // Leftover momos production has counted back in from event stalls (events.ts) are back on
+ // the house's stock.
+ let eventReturns: any[] = [];
+ if (!isStoreFinishedProducts) {
+ try {
+ eventReturns = await eventsApi.momoReturns('received');
+ } catch {
+ eventReturns = [];
+ }
+ }
+ eventReturnsRef.current = eventReturns;
  
  // Get current month for filtering. .toISOString() converts to UTC first, which rolls
  // the month back for the ~5.5 hours after midnight IST on the 1st - use local components.
@@ -237,107 +237,19 @@ export function MonthlyStockRecalibration({
  paneer: 0, vegKurkure: 0, chickenKurkure: 0
  });
  } else {
- // FOR PRODUCTION HOUSES: Calculate production and deliveries
- // Filter production data for this production house and current month
- console.log('🔍 Production filtering for recalibration:', {
- currentMonth,
- productionHouseUUID,
- effectiveStoreId,
- totalProductionRecords: productionData.length,
- sampleProductionRecord: productionData[0],
- // NEW: Debug first 3 production dates
- firstProductionDates: productionData.slice(0, 3).map(p => ({ date: p.date, type: typeof p.date }))
+ // FOR PRODUCTION HOUSES: made this month (net of kurkure, which is folded from regular
+ // momos) and sent to stores and event stalls (shipped requests, by IST ship date), less event
+ // leftovers production counted back in (stock/recalibrationMath.ts).
+ const movement = productionMonthMovement({
+ productionData,
+ requests: context.productionRequests || [],
+ stores: context.stores || [],
+ returns: eventReturns,
+ ids: { productionHouseUUID, effectiveStoreId, originalStoreId },
+ month: currentMonth,
  });
- 
- const filteredProduction = productionData.filter(p => {
- // FIX: Check both the date string itself AND extract YYYY-MM format
- const productionDate = p.date || '';
- const dateMatch = productionDate.startsWith(currentMonth) || 
- productionDate.substring(0, 7) === currentMonth;
- 
- // Match on storeId OR productionHouseId
- // FIX: Also check against originalStoreId since production records use the store ID, not the UUID
- const matchesStoreId = p.storeId === productionHouseUUID || 
- p.storeId === effectiveStoreId ||
- p.storeId === originalStoreId;
- const matchesProductionHouseId = p.productionHouseId === productionHouseUUID ||
- p.productionHouseId === effectiveStoreId ||
- p.productionHouseId === originalStoreId;
- 
- const finalMatch = dateMatch && (matchesStoreId || matchesProductionHouseId);
- 
- // NEW: Log ALL checks, not just when dateMatch is true
- console.log('🔍 Checking production record:', {
- date: p.date,
- dateSubstring: productionDate.substring(0, 7),
- currentMonth,
- dateMatch,
- pStoreId: p.storeId,
- pProductionHouseId: p.productionHouseId,
- productionHouseUUID,
- effectiveStoreId,
- originalStoreId,
- matchesStoreId,
- matchesProductionHouseId,
- finalMatch
- });
- 
- return finalMatch;
- });
- 
- console.log('🔍 Filtered production count:', filteredProduction.length);
- console.log('🔍 Sample filtered production:', filteredProduction[0]);
- 
- // Calculate total produced for each momo type
- // IMPORTANT: Kurkure momos are made FROM regular momos
- // - Chicken Kurkure is made from Chicken Momo (subtract from chicken, add to chickenKurkure)
- // - Veg Kurkure is made from Veg Momo (subtract from veg, add to vegKurkure)
- const rawProduction = filteredProduction.reduce((acc, p) => ({
- chicken: acc.chicken + (p.chickenMomos?.final || 0),
- chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
- veg: acc.veg + (p.vegMomos?.final || 0),
- cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
- paneer: acc.paneer + (p.paneerMomos?.final || 0),
- vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
- chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
- }), {
- chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
- paneer: 0, vegKurkure: 0, chickenKurkure: 0
- });
- 
- // Apply parent-child relationship: Kurkure production consumes parent momos
- totalProduced = {
- chicken: rawProduction.chicken - rawProduction.chickenKurkure, // Subtract kurkure production
- chickenCheese: rawProduction.chickenCheese,
- veg: rawProduction.veg - rawProduction.vegKurkure, // Subtract kurkure production
- cheeseCorn: rawProduction.cheeseCorn,
- paneer: rawProduction.paneer,
- vegKurkure: rawProduction.vegKurkure, // Keep as-is
- chickenKurkure: rawProduction.chickenKurkure, // Keep as-is
- };
- 
- console.log('🔍 Raw production (before parent-child adjustment):', rawProduction);
- console.log('🔍 Total produced (after parent-child adjustment):', totalProduced);
- console.log(` 📊 Chicken Momo: ${rawProduction.chicken} produced - ${rawProduction.chickenKurkure} used for kurkure = ${totalProduced.chicken} net`);
- console.log(` 📊 Veg Momo: ${rawProduction.veg} produced - ${rawProduction.vegKurkure} used for kurkure = ${totalProduced.veg} net`);
- 
- // Calculate total sent to stores: shipped amounts of requests shipped this month (by IST
- // ship date) - momos in transit or part shipped have left the production house too
- const fulfilledRequests = (context.productionRequests || []).filter(req => {
- if (!SENT_STATUSES.includes(req.status)) return false;
-
- const shippedAt = shippedAtIST(req);
- if (!shippedAt || !shippedAt.startsWith(currentMonth)) return false;
-
- // Filter by production house - check both UUID and original ID
- // An event stall's request (events.ts) names its production house itself.
- if ((req as any).eventId) return (req as any).productionHouseId === productionHouseUUID || (req as any).productionHouseId === effectiveStoreId;
- const requestingStore = context.stores?.find(s => s.id === req.storeId);
- return requestingStore?.productionHouseId === productionHouseUUID ||
- requestingStore?.productionHouseId === effectiveStoreId;
- });
-
- totalSent = sumShippedPieces(fulfilledRequests);
+ totalProduced = movement.produced;
+ totalSent = movement.sent;
  }
  
  // Get previous month's closing stock or last recalibration as opening balance
@@ -402,63 +314,17 @@ export function MonthlyStockRecalibration({
  
  // If mid-month recalibration exists, recalculate production/deliveries from AFTER that date
  if (midMonthRecalStock && recalibrationDate && !isStoreFinishedProducts) {
- console.log('🔄 Recalculating with mid-month recalibration baseline...');
- 
- // Extract just the date part from the recalibration timestamp for comparison
- const recalDateOnly = recalibrationDate.substring(0, 10); // "2026-01-14"
- 
- // Recalculate production AFTER recalibration date
- // IMPORTANT: Exclude production from the same day as recalibration since we can't tell if it happened before/after
- const productionAfterRecal = productionData.filter(p => {
- const pDate = p.date || '';
- // Only include production from AFTER the recalibration date (not same day)
- const isAfterRecalDate = pDate > recalDateOnly;
- return isAfterRecalDate &&
- (p.storeId === productionHouseUUID || p.storeId === effectiveStoreId || p.storeId === originalStoreId ||
- p.productionHouseId === productionHouseUUID || p.productionHouseId === effectiveStoreId || p.productionHouseId === originalStoreId);
+ // Made and sent after the count, less event leftovers counted back in since (stock/recalibrationMath.ts).
+ const movement = productionMovementSince({
+ productionData,
+ requests: context.productionRequests || [],
+ stores: context.stores || [],
+ returns: eventReturns,
+ ids: { productionHouseUUID, effectiveStoreId, originalStoreId },
+ since: recalibrationDate,
  });
- 
- const rawProdAfter = productionAfterRecal.reduce((acc, p) => ({
- chicken: acc.chicken + (p.chickenMomos?.final || 0),
- chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
- veg: acc.veg + (p.vegMomos?.final || 0),
- cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
- paneer: acc.paneer + (p.paneerMomos?.final || 0),
- vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
- chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
- }), {
- chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
- paneer: 0, vegKurkure: 0, chickenKurkure: 0
- });
- 
- // Apply parent-child relationship
- totalProduced = {
- chicken: rawProdAfter.chicken - rawProdAfter.chickenKurkure,
- chickenCheese: rawProdAfter.chickenCheese,
- veg: rawProdAfter.veg - rawProdAfter.vegKurkure,
- cheeseCorn: rawProdAfter.cheeseCorn,
- paneer: rawProdAfter.paneer,
- vegKurkure: rawProdAfter.vegKurkure,
- chickenKurkure: rawProdAfter.chickenKurkure,
- };
- 
- // Recalculate shipments AFTER recalibration (both times in IST - the recalibration date is
- // stored as IST, the ship time as UTC)
- const requestsAfterRecal = (context.productionRequests || []).filter(req => {
- if (!SENT_STATUSES.includes(req.status)) return false;
- const shippedAt = shippedAtIST(req);
- if (!shippedAt || shippedAt < recalibrationDate) return false;
- // An event stall's request (events.ts) names its production house itself.
- if ((req as any).eventId) return (req as any).productionHouseId === productionHouseUUID || (req as any).productionHouseId === effectiveStoreId;
- const requestingStore = context.stores?.find(s => s.id === req.storeId);
- return requestingStore?.productionHouseId === productionHouseUUID ||
- requestingStore?.productionHouseId === effectiveStoreId;
- });
-
- totalSent = sumShippedPieces(requestsAfterRecal);
- 
- console.log(' Production AFTER recalibration:', totalProduced);
- console.log(' Deliveries AFTER recalibration:', totalSent);
+ totalProduced = movement.produced;
+ totalSent = movement.sent;
  }
  
  console.log('🔄 Recalibration - Location ID:', locationIdForRecalibration);
@@ -728,64 +594,17 @@ export function MonthlyStockRecalibration({
  console.log(' calculatePreviousMonthStock - Calculated Closing Stock:', closingStock);
  return closingStock;
  } else {
- // FOR PRODUCTION HOUSES: Calculate from previous month's production and deliveries
- const productionData = context.productionData || [];
- 
- // Get previous month's production
- const prevProduction = productionData
- .filter(p => {
- if (!p.date.startsWith(previousMonthStr)) return false;
- return p.storeId === locationUUID || p.productionHouseId === locationUUID;
- })
- .reduce((acc, p) => ({
- chicken: acc.chicken + (p.chickenMomos?.final || 0),
- chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
- veg: acc.veg + (p.vegMomos?.final || 0),
- cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
- paneer: acc.paneer + (p.paneerMomos?.final || 0),
- vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
- chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
- }), {
- chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
- paneer: 0, vegKurkure: 0, chickenKurkure: 0
+ // FOR PRODUCTION HOUSES: last month's production (net of kurkure) less what was shipped,
+ // less event leftovers production counted back in (stock/recalibrationMath.ts).
+ return productionPreviousMonthClosing({
+ productionData: context.productionData || [],
+ requests: context.productionRequests || [],
+ stores: context.stores || [],
+ returns: eventReturnsRef.current,
+ locationId: locationUUID,
+ effectiveStoreId,
+ previousMonth: previousMonthStr,
  });
- 
- // Get previous month's shipments (shipped amounts, by IST ship date)
- const prevDeliveries = sumShippedPieces((context.productionRequests || [])
- .filter(req => {
- if (!SENT_STATUSES.includes(req.status)) return false;
- const shippedAt = shippedAtIST(req);
- if (!shippedAt || !shippedAt.startsWith(previousMonthStr)) return false;
- // An event stall's request (events.ts) names its production house itself.
- if ((req as any).eventId) return (req as any).productionHouseId === locationUUID || (req as any).productionHouseId === effectiveStoreId;
- const requestingStore = context.stores?.find(s => s.id === req.storeId);
- // Check both UUID and original ID for production house matching
- return requestingStore?.productionHouseId === locationUUID ||
- requestingStore?.productionHouseId === effectiveStoreId;
- }));
- 
- // Apply parent-child relationship for production houses:
- // Kurkure production consumes parent momos
- const adjustedProduction = {
- chicken: prevProduction.chicken - prevProduction.chickenKurkure,
- chickenCheese: prevProduction.chickenCheese,
- veg: prevProduction.veg - prevProduction.vegKurkure,
- cheeseCorn: prevProduction.cheeseCorn,
- paneer: prevProduction.paneer,
- vegKurkure: prevProduction.vegKurkure,
- chickenKurkure: prevProduction.chickenKurkure,
- };
- 
- // Calculate closing stock = adjusted production - deliveries
- return {
- chicken: adjustedProduction.chicken - prevDeliveries.chicken,
- chickenCheese: adjustedProduction.chickenCheese - prevDeliveries.chickenCheese,
- veg: adjustedProduction.veg - prevDeliveries.veg,
- cheeseCorn: adjustedProduction.cheeseCorn - prevDeliveries.cheeseCorn,
- paneer: adjustedProduction.paneer - prevDeliveries.paneer,
- vegKurkure: adjustedProduction.vegKurkure - prevDeliveries.vegKurkure,
- chickenKurkure: adjustedProduction.chickenKurkure - prevDeliveries.chickenKurkure,
- };
  }
  }
 
