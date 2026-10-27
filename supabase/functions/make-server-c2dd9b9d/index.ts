@@ -14,6 +14,7 @@ import { registerAssetsRoutes } from './assets.ts';
 import { registerWorkplaceRoutes } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
+import { idempotencyMiddleware } from './idempotency.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -381,6 +382,10 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 console.log('✅ Supabase client initialized');
+
+// Safe retries for writes: Idempotency-Key (idempotency.ts). After the login gate, before every
+// route, so only signed-in requests are keyed (per person).
+app.use(`${API_PREFIX}/*`, idempotencyMiddleware({ supabase, verifyUser }));
 
 // ---- Date windows on the history lists (date-range-v1, speed work 28 Oct 2026) ----
 // The big history lists accept ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional, inclusive) and
@@ -3437,7 +3442,9 @@ const LATEST_APP_VERSION = '1.15.21';
 //   lean-lists-v1  X-Bunny-Client: 2 strips images from the employee lists (/employees,
 //                  /unified-employees[/manager|/cluster-head], /archived-employees, /cluster-heads,
 //                  /me/employee) and keeps hasAadharImages; GET /employees/:id/documents has them
-const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1'];
+//   idempotency-v1 Idempotency-Key on any POST/PUT/PATCH/DELETE: a repeat replays the stored answer
+//                  (Idempotent-Replay: true) instead of saving twice (idempotency.ts)
+const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1', 'idempotency-v1'];
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
