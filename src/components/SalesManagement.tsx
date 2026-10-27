@@ -545,8 +545,11 @@ export function SalesManagement({ context, selectedStoreId, initialTab = 'entry'
  const prevCash = parseFloat(formData.previousCashInHand) || 0;
  const cashReceived = parseFloat(formData.cashAmount) || 0;
  const paytmAmount = parseFloat(formData.usedOnlineMoney) || 0;
- return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount, totalContractPayout);
- }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney, totalContractPayout]);
+ // Event stalls (events.ts): cash an event handed back to this till comes in, a float sent to an
+ // event goes out (GET /sales puts eventCashIn / eventCashOut on the day's row).
+ const eventCash = ((salesForDate as any)?.eventCashIn || 0) - ((salesForDate as any)?.eventCashOut || 0);
+ return calculateCashInHand(prevCash, cashReceived, totalExpenses, paytmAmount, totalContractPayout) + eventCash;
+ }, [formData.previousCashInHand, formData.cashAmount, totalExpenses, formData.usedOnlineMoney, totalContractPayout, salesForDate]);
 
  // Calculate cash discrepancy
  const cashDiscrepancy = useMemo(() => {

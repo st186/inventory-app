@@ -335,7 +335,7 @@ function MoneyMoveSheet({ account, onClose, bundle, onDone }: { account: null | 
         </Field>
         {isCash && counterparty === 'store' && (
           <Callout tone="info" title="The store's cash changes too">
-            {direction === 'in' ? 'Cash taken from the store till.' : 'Cash given to the store till.'} The store incharge should count it in today's store day close.
+            {direction === 'in' ? 'Cash taken from the store till.' : 'Cash given to the store till.'} The store's day close counts it in by itself.
           </Callout>
         )}
         <Field label="Amount" required><MoneyInput value={amount} onValueChange={(n) => setAmount(n)} /></Field>
