@@ -61,8 +61,9 @@ self.addEventListener('push', (event) => {
 
 // Build the deep-link target for a notification based on its type/relatedId.
 // Keep this in sync with the "type" values used in the backend's notifyUser() calls.
-// Valid "view" values must match App.tsx's activeView union type; "tab" (where
-// present) must match the target component's own internal tab identifiers
+// "view" values are the old screen names; the app maps each one to where that screen lives
+// now (src/components/shell/router.ts LEGACY_ALIASES - scripts/router-test.mjs checks every
+// entry here resolves). "tab" (where present) is passed on to the screen's own tabs
 // (e.g. AttendancePortal.tsx's activeTab values).
 const NOTIFICATION_VIEW_MAP = {
   inventory_logged: { view: 'inventory' },
@@ -126,6 +127,19 @@ const NOTIFICATION_VIEW_MAP = {
   workplace_flag: { view: 'workplace', tab: 'review' },
   kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
   shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
+  // Server reminders that had no screen to open (WP0b): stock requests waiting for the production
+  // house, deliveries to confirm, the end-of-day data alert, production cash gaps, salary and backup.
+  acceptance_reminder: { view: 'analytics', tab: 'production-requests' },
+  morning_request_reminder: { view: 'analytics', tab: 'production-requests' },
+  delivery_confirmation_reminder: { view: 'analytics', tab: 'production-requests' },
+  shipped_delivery_check: { view: 'analytics', tab: 'production-requests' },
+  eod_data_alert: { view: 'sales' },
+  production_cash_discrepancy: { view: 'sales' },
+  production_cash_discrepancy_request: { view: 'sales' },
+  production_cash_discrepancy_approved: { view: 'sales' },
+  production_cash_discrepancy_rejected: { view: 'sales' },
+  salary_credited: { view: 'payroll' },
+  backup_failed: { view: 'backup' },
 };
 
 function getNavigationTarget(payload) {
