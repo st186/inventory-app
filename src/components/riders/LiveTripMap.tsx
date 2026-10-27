@@ -1,15 +1,21 @@
+// Live map for one ride: polls the server for the rider's latest position plus the stop pins, and
+// for the distance / ETA / traffic read-out. Polling (not push) is plenty for a single rider and
+// keeps this simple. The timers skip their work while the app is in the background and catch up
+// on return. The map library itself loads only when this is on screen.
 import { Suspense, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Gauge, Navigation, Timer } from 'lucide-react';
-import * as api from '../../utils/api';
+import { Gauge, Navigation, Timer } from 'lucide-react';
 import type { RiderTripEta, RiderTripLocation } from '../../utils/api';
 import { isAppVisible, onAppVisibilityChange } from '../../utils/appVisibility';
+import { Callout } from '../ui/callout';
+import { StatusChip } from '../ui/status-chip';
+import { cn } from '../ui/utils';
 import { MapPlaceholder, RiderMap } from './mapLazy';
-import { ageLabel } from './tripUtils';
+import { useRiderApi } from './riderApi';
+import { useRideWords } from './rideWords';
 
-// Live map for one ride: polls the server for the rider's latest position plus the production
-// and store pins, and for the distance / ETA / traffic read-out. Polling (not push) is plenty
-// for a single rider and keeps this simple.
-export function LiveTripMap({ tripId, pollMs, height = 280 }: { tripId: string; pollMs: number; height?: number }) {
+export function LiveTripMap({ tripId, pollMs, height = 280, className }: { tripId: string; pollMs: number; height?: number; className?: string }) {
+  const rapi = useRiderApi();
+  const w = useRideWords();
   const [data, setData] = useState<RiderTripLocation | null>(null);
   const [eta, setEta] = useState<RiderTripEta | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,78 +25,68 @@ export function LiveTripMap({ tripId, pollMs, height = 280 }: { tripId: string; 
     let cancelled = false;
     const fetchOnce = async () => {
       try {
-        const result = await api.getRiderTripLocation(tripId);
+        const result = await rapi.getRiderTripLocation(tripId);
         if (!cancelled) { setData(result); setError(null); }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load the map');
+        if (!cancelled) setError(e instanceof Error ? e.message : w.t('rider.map.loadFailed'));
       }
     };
     const fetchEta = async () => {
       try {
-        const result = await api.getRiderTripEta(tripId);
+        const result = await rapi.getRiderTripEta(tripId);
         if (!cancelled) setEta(result);
       } catch { /* the map still works without an estimate */ }
     };
     fetchOnce();
     fetchEta();
-    // The timers skip their work while the app is in the background, and catch up on return.
     const poll = setInterval(() => { if (isAppVisible()) fetchOnce(); }, pollMs);
     const etaPoll = setInterval(() => { if (isAppVisible()) fetchEta(); }, 15000); // the server caches an estimate for ~40s anyway
     const tick = setInterval(() => { if (isAppVisible()) setTick((n) => n + 1); }, 15000); // keeps "x s ago" honest between polls
     const offVisible = onAppVisibilityChange((visible) => { if (visible) { fetchOnce(); fetchEta(); } });
     return () => { cancelled = true; clearInterval(poll); clearInterval(etaPoll); clearInterval(tick); offVisible(); };
-  }, [tripId, pollMs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId, pollMs, rapi]);
 
   const loc = data?.location || null;
   const stale = !!loc && Date.now() - new Date(loc.updatedAt).getTime() > 90000;
   const hasEta = eta?.distanceMeters !== undefined && eta?.etaSeconds !== undefined;
   const etaMinutes = hasEta ? Math.max(1, Math.round((eta!.etaSeconds as number) / 60)) : 0;
   const km = hasEta ? ((eta!.distanceMeters as number) / 1000) : 0;
-  const trafficText = eta?.traffic?.level === 'heavy' ? 'Heavy traffic' : eta?.traffic?.level === 'moderate' ? 'Slow traffic' : eta?.traffic?.level === 'light' ? 'Traffic is clear' : null;
-  const trafficClass = eta?.traffic?.level === 'heavy' ? 'bg-red-100 text-red-800' : eta?.traffic?.level === 'moderate' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800';
+  const level = eta?.traffic?.level;
+  const trafficText = level === 'heavy' ? w.t('rider.map.heavy') : level === 'moderate' ? w.t('rider.map.moderate') : level === 'light' ? w.t('rider.map.light') : null;
+  const trafficTone = level === 'heavy' ? 'danger' : level === 'moderate' ? 'warning' : 'success';
+  const avgKmh = eta?.traffic?.observedKmh;
 
   return (
-    <div className="mt-4">
+    <div className={cn('flex flex-col gap-3', className)}>
       {hasEta && (
-        <div className="mb-3 space-y-2">
+        <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-900">
-              <Navigation className="w-4 h-4 text-blue-600" /> {km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`} to {eta!.targetName}
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-900">
-              <Timer className="w-4 h-4 text-orange-600" /> ETA {etaMinutes} min
-              <span className="font-normal text-gray-500">
-                ({new Date(eta!.etaAt as string).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })})
-              </span>
-            </span>
+            <StatusChip tone="neutral" icon={Navigation}>
+              <span className="num">{w.t('rider.map.toTarget', { distance: km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`, place: eta!.targetName || '' })}</span>
+            </StatusChip>
+            <StatusChip tone="neutral" icon={Timer}>
+              <span className="num">{w.t('rider.map.eta', { n: etaMinutes })} · {w.time(eta!.etaAt as string)}</span>
+            </StatusChip>
             {trafficText && (
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold ${trafficClass}`}>
-                <Gauge className="w-4 h-4" /> {trafficText}
-                {eta!.traffic?.observedKmh !== null && eta!.traffic?.observedKmh !== undefined && (
-                  <span className="font-normal">· averaging {eta!.traffic.observedKmh} km/h</span>
-                )}
-              </span>
+              <StatusChip tone={trafficTone} icon={Gauge}>
+                {trafficText}
+                {avgKmh !== null && avgKmh !== undefined && <span className="num font-normal">· {w.t('rider.map.avg', { n: avgKmh })}</span>}
+              </StatusChip>
             )}
           </div>
           {eta!.timing === 'late' && (
-            <p className="flex items-center gap-2 text-sm font-semibold text-red-800 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" /> Running about {Math.max(1, eta!.deltaMinutes || 0)} min late
-              <span className="font-normal text-red-700">- this leg usually takes about {eta!.expectedMinutes} min</span>
-            </p>
+            <Callout tone="danger" title={w.t('rider.map.late', { n: Math.max(1, eta!.deltaMinutes || 0) })}>
+              {w.t('rider.map.lateBody', { n: eta!.expectedMinutes ?? '' })}
+            </Callout>
           )}
-          {eta!.timing === 'early' && (
-            <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> Arriving about {Math.max(1, Math.abs(eta!.deltaMinutes || 0))} min early
-            </p>
-          )}
-          {eta!.timing === 'on_time' && (
-            <p className="text-xs text-emerald-700">On time for this leg.</p>
-          )}
-          {eta!.source === 'estimate' && <p className="text-[11px] text-gray-400">Approximate - the route service was unreachable, so this uses a straight-line estimate.</p>}
+          {eta!.timing === 'early' && <Callout tone="success" title={w.t('rider.map.early', { n: Math.max(1, Math.abs(eta!.deltaMinutes || 0)) })} />}
+          {eta!.timing === 'on_time' && <p className="text-label text-success">{w.t('rider.map.onTime')}</p>}
+          {eta!.source === 'estimate' && <p className="text-caption text-text-3">{w.t('rider.map.approx')}</p>}
         </div>
       )}
       {eta?.unavailable === 'destination_not_pinned' && (
-        <p className="mb-3 text-xs text-gray-500">Pin {eta.targetName} under "Map pins" to see the distance and ETA.</p>
+        <p className="text-label text-text-3">{w.t('rider.map.pinMissing', { place: eta.targetName || '' })}</p>
       )}
       <Suspense fallback={<MapPlaceholder height={height} />}>
         <RiderMap
@@ -98,21 +94,21 @@ export function LiveTripMap({ tripId, pollMs, height = 280 }: { tripId: string; 
           places={data?.places || []}
           track={loc?.track || []}
           height={height}
+          labels={{ rider: w.t('rider.map.riderPin'), production: w.t('rider.place.production'), stop: w.t('rider.map.stopPin') }}
         />
       </Suspense>
-      <div className="mt-2 text-xs flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-label" role="status">
         {error ? (
-          <span className="text-red-600">{error}</span>
+          <span className="text-danger">{error}</span>
         ) : !loc ? (
-          <span className="text-gray-500">Waiting for the rider's location... it appears once their phone starts sharing.</span>
+          <span className="text-text-3">{w.t('rider.map.waiting')}</span>
         ) : (
-          <span className={stale ? 'text-amber-700' : 'text-emerald-700'}>
-            {stale ? 'Location not updating - last seen ' : 'Live - updated '}
-            {ageLabel(loc.updatedAt)}
-          </span>
+          <StatusChip tone={stale ? 'warning' : 'success'} dot>
+            {stale ? w.t('rider.map.stale', { age: w.age(loc.updatedAt) }) : w.t('rider.map.live', { age: w.age(loc.updatedAt) })}
+          </StatusChip>
         )}
         {data && data.missingPins && data.missingPins.length > 0 && (
-          <span className="text-gray-500">{data.missingPins.join(' and ')}: pin not set yet</span>
+          <span className="text-text-3">{w.t('rider.map.noPin', { places: data.missingPins.join(' · ') })}</span>
         )}
       </div>
     </div>

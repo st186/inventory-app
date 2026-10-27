@@ -1,40 +1,51 @@
+// A ride's steps with the time each happened, as a short vertical list. Done steps carry a check
+// in a success dot; steps still to come are a hollow circle.
 import { Check } from 'lucide-react';
 import type { RiderTrip } from '../../utils/api';
-import { dropName, fmtTime, legCount, legOf, pickupName } from './tripUtils';
+import { cn } from '../ui/utils';
+import { useRideWords } from './rideWords';
+import { legCount, legOf } from './tripUtils';
 
 export function Timeline({ trip }: { trip: RiderTrip }) {
+  const w = useRideWords();
   const steps: { label: string; at: string | null }[] = [
-    { label: 'Called', at: trip.calledAt },
-    { label: 'On the way', at: trip.onTheWayAt },
-    { label: 'Arrived', at: trip.arrivedAt },
-    { label: 'Ready for pickup', at: trip.readyAt },
-    { label: 'Picked up', at: trip.pickedUpAt },
-    { label: 'Delivered', at: trip.deliveredAt },
+    { label: w.t('rider.tl.called'), at: trip.calledAt },
+    { label: w.t('rider.tl.onTheWay'), at: trip.onTheWayAt },
+    { label: w.t('rider.tl.arrived'), at: trip.arrivedAt },
+    { label: w.t('rider.tl.ready'), at: trip.readyAt },
+    { label: w.t('rider.tl.pickedUp'), at: trip.pickedUpAt },
+    { label: w.t('rider.tl.delivered'), at: trip.deliveredAt },
   ];
   return (
-    <>
-    {legCount(trip) > 1 && (
-      <p className="mt-3 text-xs font-semibold text-gray-600">
-        Leg {legOf(trip) + 1} of {legCount(trip)}: {pickupName(trip)} → {dropName(trip)}
-      </p>
-    )}
-    <ol className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-3">
-      {steps.map((step) => (
-        <li key={step.label} className="flex items-center gap-2 text-sm">
-          <span
-            className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
-              step.at ? 'bg-emerald-500 text-white' : 'bg-gray-100 text-gray-300'
-            }`}
-          >
-            <Check className="w-3 h-3" />
-          </span>
-          <span className={step.at ? 'text-gray-900' : 'text-gray-400'}>
-            {step.label}
-            {step.at && <span className="text-gray-500 tabular-nums"> · {fmtTime(step.at)}</span>}
-          </span>
-        </li>
-      ))}
-    </ol>
-    </>
+    <section className="flex flex-col gap-2" aria-label={w.t('rider.tl.title')}>
+      <h3 className="text-label font-medium text-text-2">{w.t('rider.tl.title')}</h3>
+      {legCount(trip) > 1 && (
+        <p className="text-label font-medium text-text">
+          {w.t('rider.tl.leg', { n: legOf(trip) + 1, total: legCount(trip), from: w.pickup(trip), to: w.drop(trip) })}
+        </p>
+      )}
+      <ol className="flex flex-col">
+        {steps.map((step, i) => (
+          <li key={step.label} className="relative flex min-h-9 items-center gap-3">
+            {i < steps.length - 1 && (
+              <span aria-hidden="true" className={cn('absolute top-7 left-[11px] h-[calc(100%-20px)] w-0.5', step.at && steps[i + 1].at ? 'bg-success-border' : 'bg-border')} />
+            )}
+            <span
+              aria-hidden="true"
+              className={cn(
+                'flex size-6 shrink-0 items-center justify-center rounded-full border',
+                step.at ? 'border-success bg-success text-on-primary' : 'border-border-strong bg-surface',
+              )}
+            >
+              {step.at && <Check className="size-3.5" strokeWidth={3} />}
+            </span>
+            <span className={cn('flex min-w-0 flex-1 items-baseline justify-between gap-3 text-body-sm', step.at ? 'text-text' : 'text-text-3')}>
+              <span>{step.label}</span>
+              {step.at && <span className="num shrink-0 text-label text-text-2">{w.time(step.at)}</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

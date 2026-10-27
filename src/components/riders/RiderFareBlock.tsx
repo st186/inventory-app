@@ -1,54 +1,61 @@
-import { useState } from 'react';
+// Rider: the fare for a ride. The default comes from the rider profile; before accepting, the
+// rider can ask for a different rate, and production has to approve it before the ride can start.
+import { useState, type ReactNode } from 'react';
 import { IndianRupee } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '../ui/sonner';
 import type { RiderTrip } from '../../utils/api';
-import { rupees } from './tripUtils';
+import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
+import { Field } from '../ui/field';
+import { Money, MoneyInput, formatINR } from '../ui/money';
+import { useRideWords } from './rideWords';
+import { wholeRupees } from './tripUtils';
 
-// Rider: the fare for a ride waiting for them. The default comes from My Profile; they can ask for
-// a different rate before accepting, and production has to approve it before the ride can start.
 export function RiderFareBlock({ trip, onPropose, busy }: { trip: RiderTrip; onPropose: (amount: number) => void; busy: boolean }) {
+  const w = useRideWords();
   const [editing, setEditing] = useState(trip.fareStatus === 'needs_rate');
   const [amount, setAmount] = useState(trip.fare > 0 ? String(trip.fare) : '');
 
-  if (trip.status !== 'called') {
-    return <p className="mt-3 text-sm text-gray-700 flex items-center gap-1.5"><IndianRupee className="w-4 h-4 text-emerald-600" /> Fare <b>{rupees(trip.fare)}</b></p>;
-  }
+  const fareRow = (label: string, action?: ReactNode) => (
+    <div className="flex min-h-11 items-center gap-3">
+      <IndianRupee className="size-5 shrink-0 text-text-2" aria-hidden="true" />
+      <span className="flex-1 text-body-sm text-text-2">{label}</span>
+      {(trip.status !== 'called' || trip.fareStatus !== 'needs_rate') && <Money value={wholeRupees(trip.fare)} className="text-subtitle font-semibold text-text" />}
+      {action}
+    </div>
+  );
+
+  if (trip.status !== 'called') return fareRow(w.t('rider.fare'));
   if (trip.fareStatus === 'proposed') {
     return (
-      <p className="mt-3 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-        You asked for <b>{rupees(trip.proposedFare)}</b>{trip.fare > 0 ? ` (instead of ${rupees(trip.fare)})` : ''}. Waiting for production to approve it - you'll be notified.
-      </p>
+      <Callout tone="warning" title={trip.fare > 0
+        ? w.t('rider.fare.askedInstead', { amount: formatINR(wholeRupees(trip.proposedFare)), fare: formatINR(wholeRupees(trip.fare)) })
+        : w.t('rider.fare.asked', { amount: formatINR(wholeRupees(trip.proposedFare)) })}>
+        {w.t('rider.fare.waiting')}
+      </Callout>
     );
   }
   return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-gray-700 flex items-center gap-1.5">
-          <IndianRupee className="w-4 h-4 text-emerald-600" />
-          {trip.fareStatus === 'needs_rate' ? 'Enter your rate for this ride' : <>Fare for this ride <b>{rupees(trip.fare)}</b></>}
-        </p>
-        {trip.fareStatus === 'agreed' && !editing && (
-          <button onClick={() => setEditing(true)} className="text-xs font-semibold text-orange-700 underline">Change rate</button>
-        )}
-      </div>
+    <div className="flex flex-col gap-2">
+      {trip.fareStatus === 'needs_rate'
+        ? fareRow(w.t('rider.fare.enter'))
+        : fareRow(w.t('rider.fare.this'), !editing && (
+          <Button variant="link" size="sm" className="min-h-11" onClick={() => setEditing(true)}>{w.t('rider.fare.change')}</Button>
+        ))}
       {(editing || trip.fareStatus === 'needs_rate') && (
-        <div className="mt-2 flex items-center gap-2">
-          <input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Rate in ₹"
-            className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg bg-white"
-          />
-          <button
-            onClick={() => { const n = Number(amount); if (n > 0) onPropose(n); else toast.error('Enter a rate in rupees'); }}
-            disabled={busy}
-            className="px-3 py-2 rounded-lg text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50 flex-shrink-0"
+        <div className="flex items-end gap-2">
+          <Field label={w.t('rider.fare.rateLabel')} className="min-w-0 flex-1">
+            <MoneyInput value={amount} decimals={0} onValueChange={(_n, raw) => setAmount(raw)} />
+          </Field>
+          <Button
+            variant="secondary"
+            size="md"
+            className="h-12"
+            loading={busy}
+            onClick={() => { const n = Number(amount); if (n > 0) onPropose(n); else toast.error(w.t('rider.fare.needAmount')); }}
           >
-            Send to production
-          </button>
+            {w.t('rider.fare.send')}
+          </Button>
         </div>
       )}
     </div>
