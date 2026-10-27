@@ -13,11 +13,13 @@ type Props = {
  stores: api.Store[];
  employees: api.Employee[];
  onRefreshStores: () => void;
+ /** The owner's tab to open on (the shell's More > Investments / Stores and production houses). */
+ initialTab?: 'equipment' | 'assets' | 'investments';
 };
 
-export function AssetsManagement({ context, stores, employees, onRefreshStores }: Props) {
+export function AssetsManagement({ context, stores, employees, onRefreshStores, initialTab = 'equipment' }: Props) {
  const isClusterHead = context.user?.role === 'cluster_head';
- const [mainTab, setMainTab] = useState<'equipment' | 'assets' | 'investments'>('equipment');
+ const [mainTab, setMainTab] = useState<'equipment' | 'assets' | 'investments'>(initialTab);
  const [activeTab, setActiveTab] = useState<'stores' | 'production-houses' | 'cluster-management'>(
  isClusterHead ? 'cluster-management' : 'stores'
  );

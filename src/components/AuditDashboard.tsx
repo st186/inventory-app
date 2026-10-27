@@ -27,6 +27,9 @@ type Props = {
  // Opens App's change-password sheet (components/PasswordSecurity.tsx).
  onChangePassword?: () => void;
  onDataUpdate: (accessToken: string) => Promise<void>;
+ // The app shell drives the view from its own tabs and draws its own top bar (WP0b).
+ view?: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll';
+ hideNav?: boolean;
 };
 
 export function AuditDashboard({
@@ -45,9 +48,12 @@ export function AuditDashboard({
  inventoryItems,
  onLogout,
  onChangePassword,
- onDataUpdate
+ onDataUpdate,
+ view,
+ hideNav = false
 }: Props) {
- const [activeView, setActiveView] = useState<'analytics' | 'inventory' | 'sales' | 'production' | 'payroll'>('analytics');
+ const [ownView, setActiveView] = useState<'analytics' | 'inventory' | 'sales' | 'production' | 'payroll'>('analytics');
+ const activeView = view ?? ownView;
  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
  const [selectedDate, setSelectedDate] = useState<string>(getTodayIST());
  const [salesRowsShown, setSalesRowsShown] = useState(50);
@@ -151,6 +157,7 @@ export function AuditDashboard({
  return (
  <div className="min-h-screen bg-gray-50">
  {/* Navigation */}
+ {!hideNav && (
  <nav className="bg-gradient-to-r from-slate-600 via-slate-700 to-slate-800 shadow-xl sticky top-0 z-50">
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
  <div className="flex items-center justify-between h-16">
@@ -213,6 +220,7 @@ export function AuditDashboard({
  </div>
  </div>
  </nav>
+ )}
 
  {/* Read-Only Notice */}
  <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">

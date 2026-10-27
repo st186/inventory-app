@@ -20,6 +20,8 @@ import { toast } from 'sonner';
 type Props = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
+  /** The tab to open on (the shell's Money > Payouts / Loans). */
+  initialTab?: 'entry' | 'payout' | 'loans';
 };
 
 const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
@@ -41,7 +43,7 @@ const getSalesAmountTotal = (sale: SalesData) =>
 const getOnlineEntryTotal = (sale: api.OnlineSalesEntry) =>
   (sale.zomatoSales || 0) + (sale.swiggySales || 0);
 
-export function SalesView({ context, selectedStoreId }: Props) {
+export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
     getTodayIST()
   );
@@ -70,7 +72,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
   const [bulkSyncProgress, setBulkSyncProgress] = useState<{ done: number; total: number } | null>(null);
   const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
   const [isLoadingLoans, setIsLoadingLoans] = useState(false);
-  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>('entry');
+  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>(initialTab);
 
   const isOperationsManager =
     context.user?.role === 'manager' && context.user?.designation !== 'store_incharge' && context.user?.designation !== 'production_incharge';

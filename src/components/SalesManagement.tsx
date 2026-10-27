@@ -23,6 +23,8 @@ import { isPendingId } from '../utils/outbox';
 type Props = {
  context: InventoryContextType;
  selectedStoreId?: string | null;
+ /** The tab to open on (the shell's Money > Payouts / Loans). */
+ initialTab?: 'entry' | 'payout' | 'loans';
 };
 
 const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
@@ -38,7 +40,7 @@ const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
 // captured split, so it isn't retroactively re-split.
 const PRODUCTION_CASH_GO_LIVE_DATE = '2026-08-21';
 
-export function SalesManagement({ context, selectedStoreId }: Props) {
+export function SalesManagement({ context, selectedStoreId, initialTab = 'entry' }: Props) {
  const [selectedDate, setSelectedDate] = useState<string>(
  getTodayIST()
  );
@@ -100,7 +102,7 @@ export function SalesManagement({ context, selectedStoreId }: Props) {
  const [topupAmount, setTopupAmount] = useState('');
  const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
  const [isSyncingPos, setIsSyncingPos] = useState(false);
- const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>('entry');
+ const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>(initialTab);
  
  const isClusterHead = context.user?.role === 'cluster_head';
  const isManager = context.user?.role === 'manager';

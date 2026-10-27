@@ -25,6 +25,8 @@ interface ExportDataProps {
   // Optional so existing call sites keep working without threading it through
   // immediately - the Business Audit Report tab simply won't render without it.
   context?: InventoryContextType;
+  /** The view to open on (the shell's More > Check the numbers opens the audit report). */
+  initialView?: 'export' | 'audit';
 }
 
 type PeriodKind = 'month' | 'quarter' | 'fy' | 'custom';
@@ -72,8 +74,8 @@ const SCOPES: { value: PnlScope; label: string; hint: string }[] = [
   { value: 'production', label: 'Production', hint: 'Production house costs only' },
 ];
 
-export function ExportData({ userRole, selectedStoreId, currentUserId, context }: ExportDataProps) {
-  const [mainView, setMainView] = useState<'export' | 'audit'>('export');
+export function ExportData({ userRole, selectedStoreId, currentUserId, context, initialView = 'export' }: ExportDataProps) {
+  const [mainView, setMainView] = useState<'export' | 'audit'>(initialView);
   const today = getTodayIST();
   const thisFy = fyStartYearOf(today);
   const [kind, setKind] = useState<PeriodKind>('month');

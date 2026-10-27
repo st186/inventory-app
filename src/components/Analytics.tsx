@@ -513,7 +513,7 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
  // page redesign).
  type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : 'overview'
+ highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : initialTab === 'cash-reconciliation' ? 'cash-reconciliation' : 'overview'
  );
  
  // Expense breakdown modal state
