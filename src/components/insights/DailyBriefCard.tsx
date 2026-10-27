@@ -1,93 +1,161 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, Loader2, RefreshCw } from 'lucide-react';
+import { RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import * as api from '../../utils/api';
+import type * as api from '../../utils/api';
+import { useT } from '../../utils/i18n';
+import { Button } from '../ui/button';
+import { IconButton } from '../ui/icon-button';
+import { ErrorState } from '../ui/error-state';
+import { SkeletonText } from '../ui/skeleton';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { cn } from '../ui/utils';
+import { useHomeData } from '../home/homeData';
 
 const HEADINGS = ['yesterday', 'this week', 'do today', 'watch'];
 
-// Renders the brief's plain-text headings and bullet lines.
+type BriefLine = { kind: 'heading' | 'bullet' | 'text'; text: string };
+
+/** The brief's plain-text headings and bullet lines. */
+function parseBrief(text: string): BriefLine[] {
+  const out: BriefLine[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\*\*/g, '').trim();
+    if (!line) continue;
+    const bare = line.replace(/^#+\s*/, '').replace(/:$/, '');
+    if (HEADINGS.includes(bare.toLowerCase())) { out.push({ kind: 'heading', text: bare }); continue; }
+    const bullet = line.match(/^[-•*]\s+(.*)$/);
+    out.push(bullet ? { kind: 'bullet', text: bullet[1] } : { kind: 'text', text: line });
+  }
+  return out;
+}
+
+/** Up to three bullets from "Do today" (else the first bullets of the brief). */
+export function briefHighlights(text: string, max = 3): string[] {
+  const lines = parseBrief(text);
+  const start = lines.findIndex((l) => l.kind === 'heading' && l.text.toLowerCase() === 'do today');
+  if (start >= 0) {
+    const picked: string[] = [];
+    for (const l of lines.slice(start + 1)) {
+      if (l.kind === 'heading') break;
+      if (l.kind === 'bullet') picked.push(l.text);
+    }
+    if (picked.length) return picked.slice(0, max);
+  }
+  const bullets = lines.filter((l) => l.kind === 'bullet').map((l) => l.text);
+  return (bullets.length ? bullets : lines.filter((l) => l.kind === 'text').map((l) => l.text)).slice(0, max);
+}
+
 function BriefText({ text }: { text: string }) {
   return (
-    <div className="space-y-1 text-sm text-gray-800">
-      {text.split('\n').map((raw, i) => {
-        const line = raw.replace(/\*\*/g, '').trim();
-        if (!line) return null;
-        const bare = line.replace(/^#+\s*/, '').replace(/:$/, '');
-        if (HEADINGS.includes(bare.toLowerCase())) return <p key={i} className="pt-2 first:pt-0 text-xs font-bold uppercase tracking-wide text-violet-700">{bare}</p>;
-        const bullet = line.match(/^[-•*]\s+(.*)$/);
-        return bullet
-          ? <p key={i} className="pl-4 relative before:content-['•'] before:absolute before:left-1 before:text-violet-400">{bullet[1]}</p>
-          : <p key={i}>{line}</p>;
-      })}
+    <div className="flex flex-col gap-1.5 text-body-sm text-text">
+      {parseBrief(text).map((line, i) =>
+        line.kind === 'heading' ? (
+          <p key={i} className="overline-label pt-3 first:pt-0">{line.text}</p>
+        ) : line.kind === 'bullet' ? (
+          <p key={i} className="relative pl-4 before:absolute before:left-1 before:text-text-3 before:content-['•']">{line.text}</p>
+        ) : (
+          <p key={i}>{line.text}</p>
+        ),
+      )}
     </div>
   );
 }
 
+const timeOfBrief = (iso: string) =>
+  new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+
 // Today's brief, written by Claude once a day from the forecast, yesterday's result, the
-// festival calendar, wastage and stock-outs.
-export function DailyBriefCard({ accessToken, storeId, canManage }: { accessToken: string; storeId: string | null; canManage: boolean }) {
+// festival calendar, wastage and stock-outs. `compact` (Home): three bullets from "Do today",
+// "Read full brief" and "Ask Bunny"; otherwise the whole brief (Insights).
+export function DailyBriefCard({ accessToken, storeId, canManage, compact = false, onAskBunny }: {
+  accessToken: string;
+  storeId: string | null;
+  canManage: boolean;
+  compact?: boolean;
+  onAskBunny?: () => void;
+}) {
+  const { t } = useT();
+  const data = useHomeData();
   const [brief, setBrief] = useState<api.AiBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fullOpen, setFullOpen] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    api.getAiBrief(accessToken, storeId, false)
+    data.getAiBrief(accessToken, storeId, false)
       .then((r) => { if (!cancelled) setBrief(r.brief); })
-      .catch((e) => { if (!cancelled) setError(e?.message || 'Could not load the brief'); })
+      .catch((e) => { if (!cancelled) setError(e?.message || t('home.brief.loadFailed')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [accessToken, storeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, storeId, data, attempt]);
 
   const write = async (refresh: boolean) => {
     setWriting(true);
     setError(null);
     try {
-      const r = await api.getAiBrief(accessToken, storeId, refresh);
+      const r = await data.getAiBrief(accessToken, storeId, refresh);
       setBrief(r.brief);
       if (r.note) toast.info(r.note);
     } catch (e: any) {
-      setError(e?.message || 'Could not write the brief');
+      setError(e?.message || t('home.brief.loadFailed'));
     } finally {
       setWriting(false);
     }
   };
 
+  const highlights = brief ? briefHighlights(brief.text) : [];
+  let body: React.ReactNode;
+  if (loading) body = <SkeletonText lines={3} />;
+  else if (error) body = <ErrorState body={error} onRetry={() => setAttempt((n) => n + 1)} />;
+  else if (writing) body = (
+    <div className="flex flex-col gap-2" aria-busy="true">
+      <SkeletonText lines={3} />
+      <p className="text-label text-text-3">{t('home.brief.writing')}</p>
+    </div>
+  );
+  else if (brief) body = compact ? (
+    <ul className="flex flex-col gap-1.5 pl-5 text-body-md text-text marker:text-text-3 [list-style:disc]">
+      {highlights.map((line, i) => <li key={i}>{line}</li>)}
+    </ul>
+  ) : <BriefText text={brief.text} />;
+  else if (canManage) body = (
+    <Button variant="secondary" fullWidth leadingIcon={<Sparkles />} onClick={() => write(false)}>{t('home.brief.write')}</Button>
+  );
+  else body = <p className="text-body-sm text-text-2">{t('home.brief.notYet')}</p>;
+
   return (
-    <div className="bg-white rounded-xl border border-violet-200 shadow-sm p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0"><Sparkles className="w-5 h-5" /></div>
-          <div>
-            <h3 className="font-bold text-gray-900">Today's brief</h3>
-            <p className="text-xs text-gray-500">{brief ? `Written ${new Date(brief.generatedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} by AI from your numbers` : 'What happened, what is coming, what to do'}</p>
-          </div>
+    <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-labelledby="brief-title">
+      <div className="flex items-center gap-2">
+        <Sparkles className="size-5 shrink-0 text-text-2" aria-hidden="true" />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <h2 id="brief-title" className="text-subtitle font-semibold text-text">{t('home.brief.title')}</h2>
+          {!compact && !brief && <span className="text-caption text-text-3">{t('home.brief.hint')}</span>}
         </div>
+        {brief && <span className="num shrink-0 text-caption text-text-3">{t('home.brief.by', { time: timeOfBrief(brief.generatedAt) })}</span>}
         {brief && canManage && (
-          <button onClick={() => write(true)} disabled={writing} className="p-2 rounded-lg border border-gray-200 text-gray-600 disabled:opacity-50" aria-label="Write a fresh brief" title="Write a fresh brief">
-            <RefreshCw className={`w-4 h-4 ${writing ? 'animate-spin' : ''}`} />
-          </button>
+          <IconButton label={t('home.brief.refresh')} icon={<RefreshCw className={cn(writing && 'animate-spin')} />} onClick={() => write(true)} disabled={writing} />
         )}
       </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center gap-2 py-6 text-sm text-gray-500"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
-      ) : error ? (
-        <p className="text-sm text-rose-700 bg-rose-50 rounded-lg p-3">{error}</p>
-      ) : writing ? (
-        <div className="flex items-center justify-center gap-2 py-6 text-sm text-violet-700"><Loader2 className="w-4 h-4 animate-spin" /> Reading the numbers and writing today's brief...</div>
-      ) : brief ? (
-        <BriefText text={brief.text} />
-      ) : canManage ? (
-        <button onClick={() => write(false)} className="w-full px-4 py-3 rounded-lg bg-violet-600 text-white font-semibold inline-flex items-center justify-center gap-2">
-          <Sparkles className="w-4 h-4" /> Write today's brief
-        </button>
-      ) : (
-        <p className="text-sm text-gray-500">Today's brief hasn't been written yet.</p>
+      <div>{body}</div>
+      {compact && brief && !loading && !error && !writing && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setFullOpen(true)}>{t('home.brief.readFull')}</Button>
+          {onAskBunny && (
+            <Button variant="ghost" size="sm" leadingIcon={<img src="/bunny-logo.png" alt="" className="size-5 object-contain" />} onClick={onAskBunny}>{t('nav.askBunny')}</Button>
+          )}
+        </div>
       )}
-    </div>
+      {compact && brief && (
+        <ResponsiveModal open={fullOpen} onOpenChange={setFullOpen} title={t('home.brief.title')} description={t('home.brief.by', { time: timeOfBrief(brief.generatedAt) })} size="detail">
+          <BriefText text={brief.text} />
+        </ResponsiveModal>
+      )}
+    </section>
   );
 }

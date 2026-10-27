@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import * as api from '../../utils/api';
+import type * as api from '../../utils/api';
+import { useHomeData } from '../home/homeData';
 
 // History, 7-day forecast, yesterday vs expected and past festival effects for one store
 // (null = all stores), from the server's insights overview.
 export function useInsightsOverview(accessToken: string | undefined, storeId: string | null) {
+  const { getInsightsOverview } = useHomeData();
   const [data, setData] = useState<api.InsightsOverview | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Loading from the first frame when there is something to load (no empty state flashing first).
+  const [loading, setLoading] = useState(!!accessToken);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -13,13 +16,13 @@ export function useInsightsOverview(accessToken: string | undefined, storeId: st
     setLoading(true);
     setError(null);
     try {
-      setData(await api.getInsightsOverview(accessToken, storeId));
+      setData(await getInsightsOverview(accessToken, storeId));
     } catch (err: any) {
       setError(err?.message || 'Could not load the forecast');
     } finally {
       setLoading(false);
     }
-  }, [accessToken, storeId]);
+  }, [accessToken, storeId, getInsightsOverview]);
 
   useEffect(() => { load(); }, [load]);
 

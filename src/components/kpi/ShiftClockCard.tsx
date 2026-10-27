@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
-import { CheckCircle2, Clock, Loader2, LogIn, LogOut, MapPin, MapPinOff, Radar, Users } from 'lucide-react';
+import { CheckCircle2, LogIn, LogOut, MapPin, MapPinOff, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import * as kpi from './kpiApi';
+import type * as kpi from './kpiApi';
+import { clock12, hhmm12, FLAG_TEXT } from './kpiApi';
 import { ShiftConsent } from './ShiftConsent';
 import { onAppVisibilityChange, useForegroundInterval } from '../../utils/appVisibility';
+import { useT } from '../../utils/i18n';
+import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
+import { StatusChip } from '../ui/status-chip';
+import { useHomeData } from '../home/homeData';
 import {
-  clearLocalEvent, ensureShiftTracking, localEvents, onShiftTrackerChange, promptText, subscribeShiftTracker, type TrackerStatus,
+  clearLocalEvent, ensureShiftTracking, localEvents, onShiftTrackerChange, subscribeShiftTracker, type TrackerStatus,
 } from './shiftTracker';
 
-// Home screen card for staff and managers (not the owner or audit): today's shift, check-in and
-// check-out, hours, any arrival/leaving the phone noticed that still needs confirming, and - for
-// managers - their team's check-ins waiting for confirmation. Marked data-ai-private: it shows
-// people's times and names, which the Bunny chat must not send to the AI.
+// The shift card (pinned at the top of staff Home, and on My KPIs): today's shift, a full-width
+// Start / End shift button, check-in and check-out times with where they were made, any arrival /
+// leaving the phone noticed that still needs confirming, and - for managers - their team's
+// check-ins waiting for confirmation. "Why location?" opens the consent text. Marked
+// data-ai-private: it shows people's times and names, which the Bunny chat must not send to the AI.
 
 async function currentPosition(): Promise<{ lat: number; lng: number; accuracyM: number } | null> {
   try {
@@ -32,34 +39,15 @@ async function currentPosition(): Promise<{ lat: number; lng: number; accuracyM:
   }
 }
 
-function EventLine({ label, ev, placeWord }: { label: string; ev?: kpi.PunchEvent | null; placeWord: string }) {
-  if (!ev) return <div><p className="text-xs text-gray-500">{label}</p><p className="text-lg font-semibold text-gray-300">--</p></div>;
-  const where = ev.exempt ? 'Rider' : ev.noGps ? 'No GPS' : ev.verified ? `At ${placeWord}` : ev.outside ? `${ev.distanceM ?? '?'} m away` : 'Not checked';
-  const tone = ev.verified || ev.exempt ? 'text-emerald-700' : ev.outside ? 'text-red-700' : 'text-amber-700';
-  return (
-    <div>
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className="text-lg font-semibold text-gray-900 tabular-nums">{kpi.clock12(ev.at)}</p>
-      <p className={`text-[11px] ${tone} flex items-center gap-1`}>
-        {ev.verified || ev.exempt ? <MapPin className="w-3 h-3" /> : <MapPinOff className="w-3 h-3" />}
-        {where} · {ev.source === 'geofence' ? 'auto' : 'button'}
-        {ev.flags?.length ? ` · ${ev.flags.map((f) => kpi.FLAG_TEXT[f] || f).join(', ')}` : ''}
-      </p>
-    </div>
-  );
-}
+const lowerTime = (iso?: string | null) => clock12(iso).toLowerCase();
 
-const TRACKER_TEXT: Record<TrackerStatus, string> = {
-  web: '',
-  off: 'Automatic check-in is not watching now.',
-  'needs-consent': '',
-  waiting: 'Automatic check-in will start an hour before your shift.',
-  watching: 'Automatic check-in is on - it will offer to check you in when you reach work.',
-  denied: 'Location permission is off - use the buttons, or allow location in Settings.',
-  error: 'Location is not available right now - use the buttons.',
-};
-
-export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
+/**
+ * `framed` (default) keeps the old page padding around the card for screens that drop it in as is
+ * (My KPIs); Home places it in its own column and passes framed={false}.
+ */
+export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boolean; framed?: boolean }) {
+  const { t, lang } = useT();
+  const data = useHomeData();
   const [today, setToday] = useState<kpi.ShiftToday | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [tracker, setTracker] = useState<{ status: TrackerStatus; inside: boolean | null }>({ status: 'off', inside: null });
@@ -69,14 +57,14 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
 
   const load = useCallback(async () => {
     try {
-      const t = await kpi.getShiftToday();
-      setToday(t);
+      const next = await data.getShiftToday();
+      setToday(next);
       // Start / keep / stop the phone's watch for this shift (it lives on across screens).
-      if (t.required && t.employeeId) ensureShiftTracking(t, t.employeeId);
+      if (next.required && next.employeeId) ensureShiftTracking(next, next.employeeId);
     } catch {
       /* older server or offline: no card */
     }
-  }, []);
+  }, [data]);
 
   useEffect(() => {
     load();
@@ -88,7 +76,7 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
   // Keeps "hours so far" fresh - only while the app is in front (it catches up on return).
   useForegroundInterval(() => setTick((n) => n + 1), 60000, { resumeAfterMs: 0 });
 
-  const refreshTeam = useCallback(() => { kpi.getTeamPending().then((r) => setTeam(r.pending || [])).catch(() => {}); }, []);
+  const refreshTeam = useCallback(() => { data.getTeamPending().then((r) => setTeam(r.pending || [])).catch(() => {}); }, [data]);
   useEffect(() => {
     if (isLead) refreshTeam();
   }, [isLead, refreshTeam]);
@@ -97,8 +85,9 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
   if (!today?.required) return null;
   const employeeId = today.employeeId;
   const p = today.punch;
-  const placeWord = today.workplace === 'production' ? 'production house' : today.workplace === 'store' ? 'store' : 'work';
+  const place = t(today.workplace === 'production' ? 'shift.place.production' : today.workplace === 'store' ? 'shift.place.store' : 'shift.place.work');
   const local = employeeId ? localEvents(employeeId, today.date) : {};
+  const native = Capacitor.isNativePlatform();
 
   // What still needs confirming: the server's suggestion, or one the phone saw but couldn't send.
   const pendingArrival = !p?.in ? (p?.pending?.arrival ? { at: p.pending.arrival.detectedAt, local: null } : local.arrival ? { at: new Date(local.arrival.detectedAt).toISOString(), local: local.arrival } : null) : null;
@@ -115,29 +104,29 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
     setBusy(action);
     try {
       const pos = await currentPosition();
-      const res = await kpi.punch(action, pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : { gpsError: true });
+      const res = await data.punch(action, pos ? { lat: pos.lat, lng: pos.lng, accuracyM: pos.accuracyM } : { gpsError: true });
       apply(res.punch);
       const ev = action === 'in' ? res.punch.in : res.punch.out;
-      if (!pos) toast.warning('Saved without GPS - it will show as not verified.');
-      else if (ev?.outside) toast.warning(`Saved, but GPS shows you ${ev.distanceM} m from the ${placeWord}.`);
-      else toast.success(action === 'in' ? 'Shift started' : 'Shift ended');
+      if (!pos) toast.warning(t('shift.toastNoGps'));
+      else if (ev?.outside) toast.warning(t('shift.toastFar', { m: ev.distanceM ?? '?', place }));
+      else toast.success(action === 'in' ? t('shift.toastStarted') : t('shift.toastEnded'));
     } catch (e: any) {
-      toast.error(e?.message || 'Could not save - try again');
+      toast.error(e?.message || t('shift.toastFailed'));
       if (e?.details?.punch) setToday({ ...today, punch: e.details.punch });
     } finally {
       setBusy(null);
     }
   };
 
-  const confirm = async (kind: 'arrival' | 'exit', localEv: kpi.DetectedEvent | null) => {
+  const confirmEvent = async (kind: 'arrival' | 'exit', localEv: kpi.DetectedEvent | null) => {
     setBusy(`confirm-${kind}`);
     try {
-      const res = await kpi.confirmDetected(kind, localEv ? { event: localEv } : {});
+      const res = await data.confirmDetected(kind, localEv ? { event: localEv } : {});
       clearLocalEvent(employeeId, today.date, kind);
       apply(res.punch);
-      toast.success(kind === 'arrival' ? 'Checked in' : 'Checked out');
+      toast.success(kind === 'arrival' ? t('shift.toastCheckedIn') : t('shift.toastCheckedOut'));
     } catch (e: any) {
-      toast.error(e?.message || 'Could not confirm');
+      toast.error(e?.message || t('shift.toastFailed'));
     } finally {
       setBusy(null);
     }
@@ -146,11 +135,11 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
   const dismiss = async (kind: 'arrival' | 'exit') => {
     setBusy(`dismiss-${kind}`);
     try {
-      const res = await kpi.dismissDetected(kind);
+      const res = await data.dismissDetected(kind);
       clearLocalEvent(employeeId, today.date, kind);
       apply(res.punch);
     } catch (e: any) {
-      toast.error(e?.message || 'Could not do that');
+      toast.error(e?.message || t('shift.toastFailed'));
     } finally {
       setBusy(null);
     }
@@ -159,118 +148,194 @@ export function ShiftClockCard({ isLead = false }: { isLead?: boolean }) {
   const confirmForTeam = async (row: kpi.TeamPending, kind: 'arrival' | 'exit') => {
     setBusy(`team-${row.employeeId}-${kind}`);
     try {
-      await kpi.confirmDetected(kind, { employeeId: row.employeeId, date: row.date });
+      await data.confirmDetected(kind, { employeeId: row.employeeId, date: row.date });
       setTeam((list) => list.map((r) => (r.employeeId === row.employeeId ? { ...r, [kind]: null } : r)).filter((r) => r.arrival || r.exit));
-      toast.success('Confirmed');
+      toast.success(t('shift.toastConfirmed'));
     } catch (e: any) {
-      toast.error(e?.message || 'Could not confirm');
+      toast.error(e?.message || t('shift.toastFailed'));
     } finally {
       setBusy(null);
     }
   };
 
   const liveHours = p?.in && !p.out ? (Date.now() - Date.parse(p.in.at)) / 3600000 : p?.hours ?? null;
-  const status = !today.workingDay && !p?.in ? 'Weekly off' : !p?.in ? 'Not started' : !p.out ? 'On shift' : 'Done';
-  const statusTone = status === 'On shift' ? 'bg-emerald-100 text-emerald-800' : status === 'Done' ? 'bg-gray-100 text-gray-700' : status === 'Weekly off' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800';
+  const hoursText = liveHours !== null && liveHours > 0 ? `${Math.floor(liveHours)}h ${Math.round((liveHours % 1) * 60)}m` : '--';
+  const status = !today.workingDay && !p?.in ? 'off' : !p?.in ? 'notStarted' : !p.out ? 'onShift' : 'done';
+  const statusChip = status === 'onShift'
+    ? <StatusChip tone="success" dot>{t('status.onShift')}</StatusChip>
+    : status === 'done' ? <StatusChip tone="neutral" icon={CheckCircle2}>{t('status.shiftDone')}</StatusChip>
+      : status === 'off' ? <StatusChip tone="info">{t('status.weeklyOff')}</StatusChip>
+        : <StatusChip tone="neutral">{t('status.notStarted')}</StatusChip>;
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4" data-ai-private>
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="font-semibold text-gray-900 flex items-center gap-2"><Clock className="w-4 h-4 text-orange-600" /> Today's shift · আজকের শিফট</p>
-            <p className="text-sm text-gray-500">{kpi.hhmm12(today.settings.shiftStart)} - {kpi.hhmm12(today.settings.shiftEnd)}{today.exempt ? ' · riders: no location check' : ''}</p>
-          </div>
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusTone}`}>{status}</span>
+  // Where a check-in / check-out was made.
+  const whereChip = (ev: kpi.PunchEvent) => {
+    if (ev.exempt) return <StatusChip tone="neutral" size="sm">{t('shift.riderNoCheck')}</StatusChip>;
+    if (ev.noGps) return <StatusChip tone="warning" size="sm" icon={MapPinOff}>{t('shift.noGps')}</StatusChip>;
+    if (ev.verified) return <StatusChip tone="success" size="sm" icon={MapPin}>{t('shift.atPlace', { place })}</StatusChip>;
+    if (ev.outside) return <StatusChip tone="danger" size="sm" icon={MapPinOff}>{t('shift.metersAway', { m: ev.distanceM ?? '?' })}</StatusChip>;
+    return <StatusChip tone="warning" size="sm" icon={MapPinOff}>{t('shift.notChecked')}</StatusChip>;
+  };
+  const eventMeta = (ev: kpi.PunchEvent) => [
+    ev.source === 'geofence' ? t('shift.auto') : t('shift.button'),
+    ...(ev.flags?.length ? ev.flags.map((f) => FLAG_TEXT[f] || f) : []),
+  ].join(' · ');
+
+  // The line under the button: what the phone knows about location right now.
+  const askConsent = native && !today.exempt && (tracker.status === 'needs-consent' || (!today.consent && tracker.status === 'off'));
+  let locationLine: string;
+  if (today.exempt) locationLine = t('shift.riderNoCheck');
+  else if (!native) locationLine = t('shift.locationOnStart');
+  else if (askConsent) locationLine = t('shift.locationOnStart');
+  else if (!today.pins.length) locationLine = t('shift.noPin');
+  else if (tracker.status === 'watching' && tracker.inside !== null) locationLine = tracker.inside ? t('shift.locationAtWork', { place }) : t('shift.locationNotYet');
+  else if (tracker.status === 'waiting') locationLine = t('shift.trackerWaiting');
+  else if (tracker.status === 'watching') locationLine = t('shift.trackerWatching');
+  else if (tracker.status === 'denied') locationLine = t('shift.trackerDenied');
+  else if (tracker.status === 'error') locationLine = t('shift.trackerError');
+  else locationLine = t('shift.trackerOff');
+  const atWork = native && tracker.status === 'watching' && tracker.inside === true;
+
+  const card = (
+    <section className="flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-4" data-ai-private lang={lang} aria-labelledby="shift-card-title">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col">
+          <h2 id="shift-card-title" className="text-subtitle font-semibold text-text">{t('shift.yours')}</h2>
+          <span className="num text-label text-text-3">
+            {hhmm12(today.settings.shiftStart).toLowerCase()}–{hhmm12(today.settings.shiftEnd).toLowerCase()}
+          </span>
         </div>
+        {statusChip}
+      </div>
 
-        {pendingArrival && (
-          <div className="mt-3 rounded-xl bg-orange-50 border border-orange-200 p-3">
-            <p className="text-sm text-orange-900">{promptText('arrival', Date.parse(pendingArrival.at), today.workplace)}</p>
-            <div className="mt-2 flex gap-2">
-              <button disabled={!!busy} onClick={() => confirm('arrival', pendingArrival.local)} className="px-3 py-2 rounded-lg bg-orange-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1.5">
-                {busy === 'confirm-arrival' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Check in at {kpi.clock12(pendingArrival.at)}
-              </button>
-              {!pendingArrival.local && <button disabled={!!busy} onClick={() => dismiss('arrival')} className="px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm text-gray-700 disabled:opacity-50">Not me</button>}
+      {pendingArrival && (
+        <Callout
+          tone="warning"
+          icon={MapPin}
+          title={t('shift.checkInAt', { time: lowerTime(pendingArrival.at) })}
+          action={(
+            <>
+              <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'confirm-arrival'} leadingIcon={<CheckCircle2 />} onClick={() => confirmEvent('arrival', pendingArrival.local)}>
+                {t('shift.checkInAt', { time: lowerTime(pendingArrival.at) })}
+              </Button>
+              {!pendingArrival.local && <Button variant="ghost" size="sm" disabled={!!busy} onClick={() => dismiss('arrival')}>{t('shift.notMe')}</Button>}
+            </>
+          )}
+        >
+          {t('shift.arrived', { place, time: lowerTime(pendingArrival.at) })}
+        </Callout>
+      )}
+      {pendingExit && (
+        <Callout
+          tone="warning"
+          icon={MapPinOff}
+          title={t('shift.checkOutAt', { time: lowerTime(pendingExit.at) })}
+          action={(
+            <>
+              <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'confirm-exit'} leadingIcon={<CheckCircle2 />} onClick={() => confirmEvent('exit', pendingExit.local)}>
+                {t('shift.checkOutAt', { time: lowerTime(pendingExit.at) })}
+              </Button>
+              {!pendingExit.local && <Button variant="ghost" size="sm" disabled={!!busy} onClick={() => dismiss('exit')}>{t('shift.notNow')}</Button>}
+            </>
+          )}
+        >
+          {t('shift.left', { time: lowerTime(pendingExit.at) })}
+        </Callout>
+      )}
+
+      {p?.in && (
+        <dl className="grid grid-cols-3 gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <dt className="text-label text-text-3">{t('shift.started')}</dt>
+            <dd className="num text-title font-semibold text-text">{lowerTime(p.in.at)}</dd>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <dt className="text-label text-text-3">{t('shift.worked')}</dt>
+            <dd className="num text-title font-semibold text-text">{hoursText}</dd>
+            {!p.out && <dd className="text-caption text-text-3">{t('shift.soFar')}</dd>}
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <dt className="text-label text-text-3">{p.out ? t('shift.ended') : t('shift.ends')}</dt>
+            <dd className="num text-title font-semibold text-text">{p.out ? lowerTime(p.out.at) : hhmm12(today.settings.shiftEnd).toLowerCase()}</dd>
+          </div>
+        </dl>
+      )}
+
+      {!p?.in ? (
+        <Button size="lg" fullWidth disabled={!!busy} loading={busy === 'in'} leadingIcon={<LogIn />} onClick={() => doPunch('in')}>
+          {t('shift.start')}
+        </Button>
+      ) : (
+        <Button variant="secondary" size="lg" fullWidth disabled={!!busy} loading={busy === 'out'} leadingIcon={<LogOut />} onClick={() => doPunch('out')}>
+          {p.out ? t('shift.updateEnd') : t('shift.end')}
+        </Button>
+      )}
+      {p?.in && p.out && <p className="-mt-2 text-caption text-text-3">{t('shift.updateEndHint')}</p>}
+
+      {p?.in && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {whereChip(p.in)}
+            <span className="text-caption text-text-3">{t('shift.started')} · {eventMeta(p.in)}</span>
+          </div>
+          {p.out && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {whereChip(p.out)}
+              <span className="text-caption text-text-3">{t('shift.ended')} · {eventMeta(p.out)}</span>
             </div>
-          </div>
-        )}
-        {pendingExit && (
-          <div className="mt-3 rounded-xl bg-orange-50 border border-orange-200 p-3">
-            <p className="text-sm text-orange-900">{promptText('exit', Date.parse(pendingExit.at))}</p>
-            <div className="mt-2 flex gap-2">
-              <button disabled={!!busy} onClick={() => confirm('exit', pendingExit.local)} className="px-3 py-2 rounded-lg bg-orange-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1.5">
-                {busy === 'confirm-exit' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Check out at {kpi.clock12(pendingExit.at)}
-              </button>
-              {!pendingExit.local && <button disabled={!!busy} onClick={() => dismiss('exit')} className="px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm text-gray-700 disabled:opacity-50">Not now</button>}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-3 grid grid-cols-3 gap-3">
-          <EventLine label="Checked in" ev={p?.in} placeWord={placeWord} />
-          <EventLine label="Checked out" ev={p?.out} placeWord={placeWord} />
-          <div>
-            <p className="text-xs text-gray-500">Hours</p>
-            <p className="text-lg font-semibold text-gray-900 tabular-nums">{liveHours !== null && liveHours > 0 ? `${Math.floor(liveHours)}h ${Math.round((liveHours % 1) * 60)}m` : '--'}</p>
-            {p?.in && !p.out && <p className="text-[11px] text-gray-500">so far</p>}
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          {!p?.in ? (
-            <button disabled={!!busy} onClick={() => doPunch('in')} className="flex-1 min-w-[140px] px-4 py-3 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
-              {busy === 'in' ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Start shift · শিফট শুরু
-            </button>
-          ) : (
-            <button disabled={!!busy} onClick={() => doPunch('out')} className="flex-1 min-w-[140px] px-4 py-3 rounded-xl bg-gray-900 text-white font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
-              {busy === 'out' ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} {p.out ? 'Update end of shift' : 'End shift · শিফট শেষ'}
-            </button>
           )}
         </div>
-        {p?.in && p.out && <p className="text-[11px] text-gray-400 mt-1">Tapping again moves your end time to now.</p>}
+      )}
 
-        {!today.exempt && Capacitor.isNativePlatform() && (
-          <div className="mt-3 text-xs text-gray-600 flex items-start gap-2">
-            <Radar className="w-4 h-4 text-orange-600 flex-shrink-0" />
-            {tracker.status === 'needs-consent' || (!today.consent && tracker.status === 'off') ? (
-              <span>Let the app check you in when you reach work. <button onClick={() => setConsentOpen(true)} className="font-semibold text-orange-700 underline">Turn on automatic check-in</button></span>
-            ) : !today.pins.length ? (
-              <span>Your workplace isn't pinned on the map yet - ask the production incharge to pin it (Riders → Map pins).</span>
-            ) : (
-              <span>{TRACKER_TEXT[tracker.status]}{tracker.status === 'watching' && tracker.inside !== null ? (tracker.inside ? ' You are at work.' : ' You are not at work yet.') : ''}</span>
-            )}
-          </div>
-        )}
-
-        {team.length > 0 && (
-          <div className="mt-4 border-t border-gray-100 pt-3">
-            <p className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Users className="w-4 h-4 text-orange-600" /> Team check-ins to confirm</p>
-            <div className="mt-2 space-y-2">
-              {team.map((row) => (
-                <div key={row.employeeId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-gray-50 px-3 py-2">
-                  <span className="text-sm text-gray-800">{row.name}</span>
-                  <div className="flex gap-2">
-                    {row.arrival && (
-                      <button disabled={!!busy} onClick={() => confirmForTeam(row, 'arrival')} className="px-2.5 py-1.5 rounded-lg bg-orange-600 text-white text-xs font-semibold disabled:opacity-50">
-                        In {kpi.clock12(row.arrival.detectedAt)}{row.arrival.simulated ? ' (mock!)' : ''}
-                      </button>
-                    )}
-                    {row.exit && (
-                      <button disabled={!!busy} onClick={() => confirmForTeam(row, 'exit')} className="px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-semibold disabled:opacity-50">
-                        Out {kpi.clock12(row.exit.detectedAt)}{row.exit.simulated ? ' (mock!)' : ''}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="flex items-center gap-2">
+        {atWork ? <MapPin className="size-4 shrink-0 text-success" aria-hidden="true" /> : <MapPin className="size-4 shrink-0 text-text-3" aria-hidden="true" />}
+        <span className="min-w-0 flex-1 text-label text-text-2">
+          {locationLine}
+          {askConsent && (
+            <>
+              {' '}
+              <button type="button" onClick={() => setConsentOpen(true)} className="hit-44 relative font-semibold text-primary underline-offset-4 hover:underline">{t('shift.turnOnAuto')}</button>
+            </>
+          )}
+        </span>
+        {employeeId && !today.exempt && (
+          <Button variant="link" size="sm" className="hit-44 relative shrink-0" onClick={() => setConsentOpen(true)}>{t('shift.whyLocation')}</Button>
         )}
       </div>
-      {consentOpen && employeeId && (
-        <ShiftConsent employeeId={employeeId} onClose={() => { setConsentOpen(false); load(); }} />
+
+      {team.length > 0 && (
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <p className="flex items-center gap-2 text-body-sm font-semibold text-text"><Users className="size-4 text-text-2" aria-hidden="true" /> {t('shift.teamToConfirm')}</p>
+          <div className="flex flex-col gap-2">
+            {team.map((row) => (
+              <div key={row.employeeId} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-2 px-3 py-2">
+                <span className="text-body-sm text-text">{row.name}</span>
+                <div className="flex gap-2">
+                  {row.arrival && (
+                    <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => confirmForTeam(row, 'arrival')}>
+                      {t('shift.in', { time: lowerTime(row.arrival.detectedAt) })}{row.arrival.simulated ? ` ${t('shift.mock')}` : ''}
+                    </Button>
+                  )}
+                  {row.exit && (
+                    <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => confirmForTeam(row, 'exit')}>
+                      {t('shift.out', { time: lowerTime(row.exit.detectedAt) })}{row.exit.simulated ? ` ${t('shift.mock')}` : ''}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
-    </div>
+
+      {employeeId && (
+        <ShiftConsent
+          open={consentOpen}
+          onOpenChange={(open) => { setConsentOpen(open); if (!open) load(); }}
+          employeeId={employeeId}
+          canAsk={askConsent}
+        />
+      )}
+    </section>
   );
+  return framed ? <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">{card}</div> : card;
 }

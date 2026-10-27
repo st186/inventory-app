@@ -1,17 +1,26 @@
-import { useEffect, useState } from 'react';
-import { BadgeCheck, Camera, IdCard, Loader2, Mail, Phone, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { BadgeCheck, Camera, IdCard, Mail, Phone } from 'lucide-react';
 import { toast } from 'sonner';
-import * as api from '../utils/api';
+import type * as api from '../utils/api';
+import { useT, type I18nKey } from '../utils/i18n';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { useHomeData } from './home/homeData';
 
-// Home screen card for anyone who hasn't uploaded their Aadhaar card (both sides) or added their
-// phone and personal email (owner, 27 Oct 2026). Shown until it's all done; the form saves to
-// the person's own record only (server profile.ts). Not shown to the owner or the audit login.
+// "Complete your profile" for anyone who hasn't uploaded their Aadhaar card (both sides) or added
+// their phone and personal email (owner, 27 Oct 2026). On Home it is a checklist row that opens
+// the sheet below; the form saves to the person's own record only (server profile.ts). Not shown
+// to the owner or the audit login (the server says `required: false` for them).
 
-const LABEL: Record<api.MyProfileStatus['missing'][number], string> = {
-  aadharFront: 'Aadhaar card - front · আধার কার্ডের সামনে',
-  aadharBack: 'Aadhaar card - back · আধার কার্ডের পিছনে',
-  phone: 'Mobile number · মোবাইল নম্বর',
-  contactEmail: 'Personal email · নিজের ইমেল',
+type Missing = api.MyProfileStatus['missing'][number];
+const LABEL: Record<Missing, I18nKey> = {
+  aadharFront: 'profile.aadharFront',
+  aadharBack: 'profile.aadharBack',
+  phone: 'profile.phone',
+  contactEmail: 'profile.email',
 };
 
 // Phone photos are several MB: shrink to 1600 px JPEG (~300 KB) before sending.
@@ -28,38 +37,75 @@ function compressImage(file: File): Promise<string> {
       URL.revokeObjectURL(url);
       resolve(canvas.toDataURL('image/jpeg', 0.8));
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo - try again')); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable')); };
     img.src = url;
   });
 }
 
-export function ProfileCompletionCard({ accessToken }: { accessToken: string }) {
+/** The person's profile status (one request), whether it still needs details, and the sheet. */
+export function useProfileCompletion(accessToken: string) {
+  const data = useHomeData();
   const [status, setStatus] = useState<api.MyProfileStatus | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
-  const [front, setFront] = useState('');
-  const [back, setBack] = useState('');
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!accessToken) { setLoaded(true); return; }
     let cancelled = false;
-    api.getMyProfile(accessToken)
-      .then((s) => { if (!cancelled) { setStatus(s); setPhone(s.phone || ''); setEmail(s.contactEmail || ''); } })
-      .catch(() => { /* older server or offline: no card */ });
+    data.getMyProfile(accessToken)
+      .then((s) => { if (!cancelled) setStatus(s); })
+      .catch(() => { /* older server or offline: nothing to ask for */ })
+      .finally(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [accessToken]);
+  }, [accessToken, data]);
 
-  if (!status?.required || status.complete) return null;
-  const needs = (f: api.MyProfileStatus['missing'][number]) => status.missing.includes(f);
+  const needed = !!status?.required && !status.complete;
+  const openSheet = useCallback(() => setOpen(true), []);
+  const sheet = status && needed ? (
+    <ProfileSheet open={open} onOpenChange={setOpen} accessToken={accessToken} status={status} onSaved={setStatus} />
+  ) : null;
+  return { status, loaded, needed, openSheet, sheet };
+}
 
-  const pick = async (e: React.ChangeEvent<HTMLInputElement>, set: (v: string) => void) => {
+function PhotoPick({ label, value, onPick }: { label: string; value: string; onPick: (dataUrl: string) => void }) {
+  const { t } = useT();
+  const pick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try { set(await compressImage(file)); } catch (err: any) { toast.error(err?.message || 'Could not read that photo'); }
+    try { onPick(await compressImage(file)); } catch { toast.error(t('profile.photoFailed')); }
   };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-body-sm font-medium text-text">{label}</span>
+      <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-dashed border-border-strong bg-surface-2 px-3 py-2 outline-none focus-within:ring-2 focus-within:ring-ring">
+        {value
+          ? <img src={value} alt="" className="h-11 w-16 rounded-sm object-cover" />
+          : <Camera className="size-6 text-text-2" aria-hidden="true" />}
+        <span className="text-body-md font-semibold text-primary">{value ? t('profile.retake') : t('profile.takePhoto')}</span>
+        <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={pick} />
+      </label>
+    </div>
+  );
+}
+
+/** The form: phone, personal email and the Aadhaar photos still missing. */
+export function ProfileSheet({ open, onOpenChange, accessToken, status, onSaved }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  accessToken: string;
+  status: api.MyProfileStatus;
+  onSaved: (next: api.MyProfileStatus) => void;
+}) {
+  const { t, lang } = useT();
+  const data = useHomeData();
+  const [phone, setPhone] = useState(status.phone || '');
+  const [email, setEmail] = useState(status.contactEmail || '');
+  const [front, setFront] = useState('');
+  const [back, setBack] = useState('');
+  const [saving, setSaving] = useState(false);
+  const needs = (f: Missing) => status.missing.includes(f);
+  const dirty = !!front || !!back || phone.trim() !== (status.phone || '') || email.trim() !== (status.contactEmail || '');
 
   const save = async () => {
     const updates: Parameters<typeof api.updateMyProfile>[1] = {};
@@ -67,88 +113,69 @@ export function ProfileCompletionCard({ accessToken }: { accessToken: string }) 
     if (email.trim() && email.trim() !== status.contactEmail) updates.contactEmail = email.trim();
     if (front) updates.aadharFront = front;
     if (back) updates.aadharBack = back;
-    if (!Object.keys(updates).length) return toast.error('Add the missing details first');
+    if (!Object.keys(updates).length) { toast.error(t('profile.addMissing')); return; }
     setSaving(true);
     try {
-      const next = await api.updateMyProfile(accessToken, updates);
-      setStatus({ ...status, ...next });
+      const next = await data.updateMyProfile(accessToken, updates);
+      onSaved({ ...status, ...next });
       setFront('');
       setBack('');
       if (next.complete) {
-        toast.success('Profile complete - thank you!');
-        setOpen(false);
+        toast.success(t('profile.complete'));
+        onOpenChange(false);
       } else {
-        toast.success('Saved. Still needed: ' + next.missing.map((m) => LABEL[m].split(' · ')[0]).join(', '));
+        toast.success(t('profile.savedStill', { list: next.missing.map((m) => t(LABEL[m])).join(', ') }));
       }
     } catch (e: any) {
-      toast.error(e?.message || 'Could not save');
+      toast.error(e?.message || t('profile.saveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
-  const field = 'w-full mt-1 px-3 py-2.5 border border-gray-300 rounded-xl text-base bg-white';
-  const PhotoPick = ({ label, value, set }: { label: string; value: string; set: (v: string) => void }) => (
-    <div>
-      <p className="text-xs font-medium text-gray-700">{label}</p>
-      <label className="mt-1 flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-orange-300 bg-orange-50/50 cursor-pointer">
-        {value ? <img src={value} alt="" className="w-16 h-11 object-cover rounded-md" /> : <Camera className="w-6 h-6 text-orange-600" />}
-        <span className="text-sm font-semibold text-orange-700">{value ? 'Retake photo' : 'Take photo / choose'}</span>
-        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => pick(e, set)} />
-      </label>
-    </div>
-  );
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-      <div className="rounded-2xl border-2 border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50 p-4 sm:p-5 shadow-sm" role="alert">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center flex-shrink-0"><IdCard className="w-5 h-5" /></div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-gray-900">Complete your profile now · প্রোফাইল এখনই সম্পূর্ণ করুন</p>
-            <p className="text-sm text-gray-700 mt-0.5">Still needed:</p>
-            <ul className="text-sm text-gray-800 mt-1 space-y-0.5">
-              {status.missing.map((m) => <li key={m}>• {LABEL[m]}</li>)}
-            </ul>
-            <button type="button" onClick={() => setOpen(true)} className="mt-3 px-4 py-2.5 rounded-xl bg-orange-600 text-white text-sm font-semibold">
-              Upload now · এখনই আপলোড করুন
-            </button>
-          </div>
-        </div>
+    <ResponsiveModal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t('profile.title')}
+      description={t('profile.stillNeeded', { list: status.missing.map((m) => t(LABEL[m])).join(', ') })}
+      dirty={dirty && !saving}
+      footer={<Button size="lg" fullWidth loading={saving} onClick={save}>{t('common.save')}</Button>}
+    >
+      <div className="flex flex-col gap-4" data-ai-private lang={lang}>
+        <Field label={<span className="inline-flex items-center gap-1.5"><Phone className="size-4" aria-hidden="true" />{t('profile.phone')}</span>}>
+          <Input type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="98xxxxxxxx" />
+        </Field>
+        <Field label={<span className="inline-flex items-center gap-1.5"><Mail className="size-4" aria-hidden="true" />{t('profile.email')}</span>} helper={t('profile.emailHint')}>
+          <Input type="email" inputMode="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@gmail.com" />
+        </Field>
+        {(needs('aadharFront') || front) && <PhotoPick label={t('profile.aadharFront')} value={front} onPick={setFront} />}
+        {(needs('aadharBack') || back) && <PhotoPick label={t('profile.aadharBack')} value={back} onPick={setBack} />}
+        {!needs('aadharFront') && !needs('aadharBack') && (
+          <p className="inline-flex items-center gap-1.5 text-body-sm text-success"><BadgeCheck className="size-4" aria-hidden="true" /> {t('profile.aadharDone')}</p>
+        )}
+        <p className="text-caption text-text-3">{t('profile.ownerOnly')}</p>
       </div>
+    </ResponsiveModal>
+  );
+}
 
-      {open && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center" data-ai-private>
-          <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl max-h-[92dvh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <p className="font-bold text-gray-900">Your profile · আপনার প্রোফাইল</p>
-              <button type="button" onClick={() => setOpen(false)} className="p-1.5 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-4 space-y-4 overflow-y-auto">
-              <label className="block text-xs font-medium text-gray-700">
-                <span className="inline-flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> Mobile number · মোবাইল নম্বর</span>
-                <input type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="98xxxxxxxx" className={field} />
-              </label>
-              <label className="block text-xs font-medium text-gray-700">
-                <span className="inline-flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> Personal email · নিজের ইমেল</span>
-                <input type="email" inputMode="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@gmail.com" className={field} />
-                <span className="block mt-1 text-[11px] text-gray-500 font-normal">Your login stays the same.</span>
-              </label>
-              {(needs('aadharFront') || front) && <PhotoPick label={LABEL.aadharFront} value={front} set={setFront} />}
-              {(needs('aadharBack') || back) && <PhotoPick label={LABEL.aadharBack} value={back} set={setBack} />}
-              {!needs('aadharFront') && !needs('aadharBack') && (
-                <p className="text-xs text-emerald-700 inline-flex items-center gap-1"><BadgeCheck className="w-4 h-4" /> Aadhaar card already uploaded</p>
-              )}
-              <p className="text-[11px] text-gray-500">Only the owner can see your Aadhaar card.</p>
-            </div>
-            <div className="p-4 border-t border-gray-200">
-              <button type="button" onClick={save} disabled={saving} className="w-full py-3 rounded-xl bg-orange-600 text-white font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save · সেভ করুন
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+/** A callout that opens the sheet (screens that want the old card rather than a checklist row). */
+export function ProfileCompletionCard({ accessToken }: { accessToken: string }) {
+  const { t } = useT();
+  const profile = useProfileCompletion(accessToken);
+  if (!profile.needed || !profile.status) return null;
+  return (
+    <>
+      <Callout
+        tone="warning"
+        icon={IdCard}
+        title={t('home.task.profile')}
+        onClick={profile.openSheet}
+      >
+        {t('profile.stillNeeded', { list: profile.status.missing.map((m) => t(LABEL[m])).join(', ') })}
+      </Callout>
+      {profile.sheet}
+    </>
   );
 }

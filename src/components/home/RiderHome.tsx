@@ -1,33 +1,50 @@
-// Stub (WP0b) for the rider's Home: what their old landing page (My rides) showed - the profile
-// card, the shift card and the rides screen in rider mode (current ride, next-step button,
-// availability, earnings).
-// WP1 / WP7 own this file and build the rider "Today" (current trip first, big action button).
-import { Suspense, lazy } from 'react';
+// Home of the rider: the profile row while details are missing, the shift card, and the rides
+// screen in rider mode, which already leads with the current ride, its next-step button and the
+// live-location status (RiderTrips belongs to the riders package; see the WP1 report for the
+// changes that would put the current ride above everything else).
+import { Suspense, lazy, useEffect } from 'react';
+import { IdCard } from 'lucide-react';
 import { useShell } from '../shell/ShellContext';
+import { ListRow } from '../ui/list-row';
+import { StatusChip } from '../ui/status-chip';
+import { useT } from '../../utils/i18n';
+import { ShiftClockCard } from '../kpi/ShiftClockCard';
+import { useProfileCompletion } from '../ProfileCompletionCard';
+import { HomePage } from './HomeParts';
+import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
 
-const ProfileCompletionCard = lazy(() => import('../ProfileCompletionCard').then((m) => ({ default: m.ProfileCompletionCard })));
-const ShiftClockCard = lazy(() => import('../kpi/ShiftClockCard').then((m) => ({ default: m.ShiftClockCard })));
 const RiderTrips = lazy(() => import('../RiderTrips').then((m) => ({ default: m.RiderTrips })));
 
 export function RiderHome() {
   const { user, context, stores, nav } = useShell();
-  const profileRef = useFocusProfile();
+  const { t } = useT();
+  const data = useHomeData();
+  const profile = useProfileCompletion(user.accessToken || '');
+  const focusProfile = useFocusProfile();
+  useEffect(() => { if (focusProfile && profile.needed) profile.openSheet(); }, [focusProfile, profile.needed, profile.openSheet]);
+  const tripsProps = {
+    stockRequests: context.productionRequests,
+    canDispatch: nav.perms.canDispatchRiders,
+    stores: (stores || []).map((st) => ({ id: st.id, name: st.name })),
+    defaultStoreId: user.storeId || null,
+  };
   return (
-    <div className="pb-6">
-      <div ref={profileRef}>
-        <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>
-      </div>
-      <Suspense fallback={null}><ShiftClockCard isLead={false} /></Suspense>
-      <Suspense fallback={null}>
-        <RiderTrips
-          mode="rider"
-          stockRequests={context.productionRequests}
-          canDispatch={nav.perms.canDispatchRiders}
-          stores={(stores || []).map((st) => ({ id: st.id, name: st.name }))}
-          defaultStoreId={user.storeId || null}
-        />
-      </Suspense>
-    </div>
+    <>
+      <HomePage className="pb-0">
+        {profile.needed && (
+          <div className="overflow-hidden rounded-lg border border-border bg-surface">
+            <ListRow icon={IdCard} iconTone="warning" title={t('home.task.profile')} subtitle={t('home.task.profileMeta')} trailing={<StatusChip status="task.due" />} chevron onClick={profile.openSheet} />
+          </div>
+        )}
+        <ShiftClockCard isLead={false} framed={false} />
+      </HomePage>
+      {data.renderRiderTrips ? data.renderRiderTrips(tripsProps) : (
+        <Suspense fallback={null}>
+          <RiderTrips mode="rider" {...tripsProps} />
+        </Suspense>
+      )}
+      {profile.sheet}
+    </>
   );
 }

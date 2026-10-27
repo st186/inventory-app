@@ -1,43 +1,212 @@
-// Stub (WP0b) for the owner's Home: the cards that used to sit above Analytics (workplace photos
-// due; the profile card hides itself for the owner), today's AI brief and the 7-day forecast from
-// the top of Analytics > Overview, and shortcuts. Analytics itself is the Insights tab now.
-// WP1 owns this file and builds the real "Today" (profit that accrues rent and salaries through
-// the month first, then needs-attention, brief, forecast, team strip).
-import { Suspense, lazy } from 'react';
+// Home for the owner and - as the "ops" variant - the operations manager (design review d2, d3;
+// wireframe Main): sales today, the four tiles (profit with rent and salaries spread through the
+// month first), what needs them, today's brief, the next days' forecast and the team.
+import { useEffect, useMemo } from 'react';
+import {
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, Scale, Truck, Users, Wallet,
+} from 'lucide-react';
 import { useShell } from '../shell/ShellContext';
-import { WorkplaceDueCard } from '../workplace/WorkplaceDueCard';
+import { ListRow } from '../ui/list-row';
+import { formatINR } from '../ui/money';
+import { useT } from '../../utils/i18n';
 import { useInsightsOverview } from '../insights/useInsightsOverview';
-import { HomeShortcuts, useFocusProfile } from './HomeShortcuts';
+import { DailyBriefCard } from '../insights/DailyBriefCard';
+import { ForecastCard } from '../insights/ForecastCard';
+import { useProfileCompletion } from '../ProfileCompletionCard';
+import { AttentionInbox, type AttentionItem } from './AttentionInbox';
+import { SalesTodayHero } from './SalesTodayHero';
+import { OwnerKpis } from './OwnerKpis';
+import { HomePage, timeOf, useClock, useDateWords, useOpen } from './HomeParts';
+import { useOwnerHome } from './useOwnerHome';
+import { useFocusProfile } from './HomeShortcuts';
+import { lastDayOfMonth, peopleOnLeave, productionApprovalsPending, salesApprovalsPending } from './homeFigures';
 
-const ProfileCompletionCard = lazy(() => import('../ProfileCompletionCard').then((m) => ({ default: m.ProfileCompletionCard })));
-const DailyBriefCard = lazy(() => import('../insights/DailyBriefCard').then((m) => ({ default: m.DailyBriefCard })));
-const ForecastCard = lazy(() => import('../insights/ForecastCard').then((m) => ({ default: m.ForecastCard })));
+export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) {
+  const { user, context, stores, employees, selectedStoreId, nav, openBunny } = useShell();
+  const { t } = useT();
+  const words = useDateWords();
+  const clock = useClock();
+  const { open, has } = useOpen();
+  const token = user.accessToken || '';
+  const home = useOwnerHome(clock.today);
+  const profile = useProfileCompletion(token);
+  const focusProfile = useFocusProfile();
+  useEffect(() => { if (focusProfile && profile.needed) profile.openSheet(); }, [focusProfile, profile.needed, profile.openSheet]);
 
-export function OwnerHome() {
-  const { user, stores, selectedStoreId, nav, router } = useShell();
-  const profileRef = useFocusProfile();
-  // The same store Analytics used for its brief and forecast.
+  // The same store Insights uses for its brief and forecast ("All stores": the main store).
   const insightsStoreId: string | null = selectedStoreId
     || (user.storeId && String(user.storeId).startsWith('STORE-') ? user.storeId : null)
     || stores.find((s) => s.productionHouseId)?.id || stores[0]?.id || null;
-  const overview = useInsightsOverview(user.accessToken, insightsStoreId);
-  const canManage = nav.perms.isClusterHead || nav.perms.isOperationsManager;
-  const checksPath = nav.destinations['team/checks'] ? 'team/checks' : 'my-checks';
+  const overview = useInsightsOverview(insightsStoreId ? token : undefined, insightsStoreId);
+  const canManageInsights = nav.perms.isClusterHead || nav.perms.isOperationsManager;
+  // The forecast is for one store; it only describes the sales figure when that's the same store.
+  const forecastApplies = !!insightsStoreId && (home.scope
+    ? home.scope.length === 1 && home.scope[0] === insightsStoreId
+    : stores.length === 1 && stores[0].id === insightsStoreId);
+
+  const storeName = (id?: string | null) => stores.find((s) => s.id === id)?.name || '';
+  const x = home.extras;
+
+  const attention = useMemo(() => {
+    const items: AttentionItem[] = [];
+    const approver = nav.perms.isClusterHead || nav.perms.isOperationsManager;
+    if (approver) {
+      const waiting = salesApprovalsPending(context.salesData || []).sort((a, b) => b.date.localeCompare(a.date));
+      if (waiting.length) {
+        const first = waiting[0] as any;
+        const offset = first.requestedOffset ?? first.cashOffset ?? 0;
+        items.push({
+          key: 'day-close',
+          icon: Wallet,
+          tone: 'danger',
+          rank: 0,
+          title: waiting.length === 1 && offset ? t(offset < 0 ? 'home.att.cashShort' : 'home.att.cashOver', { amount: formatINR(Math.abs(Math.round(offset))) }) : t('home.att.dayClose'),
+          meta: [storeName(first.storeId), words.short(first.date)].filter(Boolean).join(' · '),
+          count: waiting.length,
+          onOpen: () => open('money/sales'),
+        });
+      }
+    }
+    if (x.stockOuts.length) {
+      const first = [...x.stockOuts].sort((a, b) => a.startAt.localeCompare(b.startAt))[0];
+      items.push({
+        key: 'stock-outs',
+        icon: AlertTriangle,
+        tone: 'danger',
+        rank: 1,
+        title: t('home.att.stockOut'),
+        meta: x.stockOuts.length === 1
+          ? t('home.att.stockOutMeta', { item: first.item, time: timeOf(first.startAt) })
+          : t('home.att.stockOutMore', { item: first.item, n: x.stockOuts.length - 1 }),
+        count: x.stockOuts.length > 1 ? x.stockOuts.length : undefined,
+        onOpen: () => open(has('stock/out-of-stock') ? 'stock/out-of-stock' : 'stock/requests'),
+      });
+    }
+    if (approver && has('stock/production')) {
+      const n = productionApprovalsPending(context.productionData || []).length;
+      if (n) items.push({ key: 'production', icon: Factory, rank: 2, title: t('home.att.production'), count: n, onOpen: () => open('stock/production') });
+    }
+    if (variant === 'ops') {
+      const todays = (context.productionRequests || []).filter((r) => r.requestDate === clock.today && (!home.scope || home.scope.includes(r.storeId)));
+      const packedLike = ['prepared', 'shipped', 'partially-shipped', 'delivered', 'partially-delivered'];
+      const waitingRider = (context.productionRequests || []).filter((r) => r.status === 'prepared' && (!home.scope || home.scope.includes(r.storeId)));
+      if (waitingRider.length && has('stock/riders')) {
+        items.push({ key: 'riders', icon: Truck, tone: 'warning', rank: 3, title: t('home.att.riders'), count: waitingRider.length, onOpen: () => open('stock/riders') });
+      }
+      if (todays.length && has('stock/requests')) {
+        items.push({
+          key: 'pipeline',
+          icon: PackageCheck,
+          rank: 4,
+          title: t('home.att.pipeline'),
+          meta: t('home.att.pipelineMeta', {
+            asked: todays.length,
+            packed: todays.filter((r) => packedLike.includes(r.status)).length,
+            delivered: todays.filter((r) => r.status === 'delivered' || r.status === 'partially-delivered').length,
+          }),
+          onOpen: () => open('stock/requests'),
+        });
+      }
+    }
+    if (x.recalibrations) items.push({ key: 'recal', icon: Scale, rank: 5, title: t('home.att.recalibration'), count: x.recalibrations, onOpen: () => open('insights') });
+    const leavesWaiting = (x.leaves || []).filter((l) => l.status === 'pending').length;
+    if (leavesWaiting && has('team/attendance')) {
+      items.push({ key: 'leaves', icon: CalendarCheck, rank: 6, title: t('home.att.leaves'), meta: t('home.att.waiting'), count: leavesWaiting, onOpen: () => open('team/attendance') });
+    }
+    if (x.variablePay?.count) {
+      items.push({
+        key: 'variable-pay', icon: ClipboardCheck, rank: 7, title: t('home.att.variablePay'),
+        meta: t('home.att.variablePayMeta', { month: words.month(`${x.variablePay.month}-01`) }),
+        count: x.variablePay.count, onOpen: () => open('team/kpis'),
+      });
+    }
+    if (x.photosToReview.length) {
+      items.push({ key: 'photos', icon: Camera, rank: 8, title: t('home.att.photos'), meta: t('home.att.photosMeta'), count: x.photosToReview.length, onOpen: () => open('team/checks') });
+    }
+    if (profile.needed) {
+      items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
+    }
+    return items;
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words]);
+
+  const leaveToday = x.leaves ? peopleOnLeave(x.leaves, clock.today, clock.today) : null;
+  const leaveMonth = x.leaves ? peopleOnLeave(x.leaves, clock.today, lastDayOfMonth(clock.today)) : null;
+  const people = employees.filter((e) => e.status !== 'inactive').length;
+  const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
+
   return (
-    <div className="pb-6">
-      <div ref={profileRef}>
-        <Suspense fallback={null}><ProfileCompletionCard accessToken={user.accessToken || ''} /></Suspense>
-      </div>
-      <WorkplaceDueCard onOpen={() => router.push(checksPath)} />
-      {insightsStoreId && (
-        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 pt-4 sm:px-6 lg:grid-cols-2 lg:px-8">
-          <Suspense fallback={null}>
-            <DailyBriefCard accessToken={user.accessToken || ''} storeId={insightsStoreId} canManage={canManage} />
-            <ForecastCard data={overview.data} loading={overview.loading} error={overview.error} />
-          </Suspense>
+    <HomePage wide>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-8">
+          <SalesTodayHero
+            today={clock.today}
+            nowMinutes={clock.minutes}
+            sales={home.salesToday}
+            yesterdaySales={home.salesYesterday}
+            overview={overview.data}
+            forecastApplies={forecastApplies}
+            onOpen={has('money/sales') ? () => open('money/sales') : undefined}
+          />
         </div>
-      )}
-      <HomeShortcuts extra={['stock/requests']} />
-    </div>
+        <div className="lg:col-span-4">
+          <OwnerKpis
+            today={clock.today}
+            profit={home.profit}
+            onRetryProfit={home.retry}
+            spent={home.spentToday}
+            cash={home.cash}
+            paytm={home.paytm}
+            canOpenInsights={has('insights')}
+            onOpen={(what) => {
+              if (what === 'insights') open('insights');
+              else if (what === 'expenses') open('money/expenses');
+              else if (what === 'paytm') open(has('money/cash') ? 'money/cash' : 'money/sales');
+              else open('money/sales');
+            }}
+          />
+        </div>
+
+        <div className="lg:col-span-6">
+          <AttentionInbox items={attention} loading={x.loading && attention.length === 0} />
+        </div>
+        <div className="flex flex-col gap-6 lg:col-span-6">
+          {insightsStoreId && (
+            <DailyBriefCard
+              accessToken={token}
+              storeId={insightsStoreId}
+              canManage={canManageInsights}
+              compact
+              onAskBunny={nav.chrome.askBunny ? openBunny : undefined}
+            />
+          )}
+        </div>
+
+        {insightsStoreId && (
+          <div className="lg:col-span-12">
+            <ForecastCard
+              compact
+              data={overview.data}
+              loading={overview.loading}
+              error={overview.error}
+              onRetry={overview.reload}
+              onSeeAll={has('insights') ? () => open('insights', { tab: 'trends' }) : undefined}
+            />
+          </div>
+        )}
+        {teamPath && (
+          <div className="lg:col-span-12">
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <ListRow
+                icon={Users}
+                title={t('home.team.people', { n: people })}
+                subtitle={leaveToday !== null && leaveMonth !== null ? t('home.team.leave', { today: leaveToday, month: leaveMonth }) : undefined}
+                onClick={() => open(teamPath)}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+      {profile.sheet}
+    </HomePage>
   );
 }
