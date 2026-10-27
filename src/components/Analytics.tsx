@@ -185,7 +185,7 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
               value={mode}
               onValueChange={changeMode}
               options={modeOptions}
-              className="min-w-0 flex-1 basis-48 sm:max-w-sm"
+              className={modeOptions.length > 2 ? 'w-full sm:w-auto sm:min-w-80' : 'min-w-0 flex-1 basis-48 sm:max-w-sm'}
             />
           )}
           {mode === 'production' ? (

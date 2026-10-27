@@ -110,9 +110,9 @@ export function buildInsightsMock(today: string, start = '2026-03-01'): Insights
       categorySales.push({ id: nid('CS'), date, storeId: store.id, data } as unknown as api.SalesDataRecord);
 
       // Purchases: food every other day, packaging weekly, supplies now and then.
-      for (let p = 0; p < 3; p++) {
+      for (let p = 0; p < 2; p++) {
         const cat = (['meat', 'fresh_produce', 'staples', 'dairy'] as const)[Math.floor(r() * 4)];
-        const qty = Math.round((6 + r() * 10) * scale);
+        const qty = Math.round((4 + r() * 6) * scale);
         const cpu = cat === 'meat' ? 260 : cat === 'dairy' ? 380 : 70 + Math.round(r() * 40);
         inventory.push({ id: nid('I'), date, category: cat, itemName: cat === 'meat' ? 'Chicken' : cat === 'dairy' ? 'Paneer' : cat === 'staples' ? 'Flour' : 'Cabbage', quantity: qty, unit: 'kg', costPerUnit: cpu, totalCost: qty * cpu, storeId: store.id, entityType: 'store' });
       }
@@ -138,7 +138,7 @@ export function buildInsightsMock(today: string, start = '2026-03-01'): Insights
       }
     }
     // Kitchen purchases and the day's production.
-    inventory.push({ id: nid('I'), date, category: 'meat', itemName: 'Chicken mince', quantity: 12, unit: 'kg', costPerUnit: 250, totalCost: 3000, entityType: 'production_house', productionHouseId: 'PH-1' });
+    if (r() < 0.5) inventory.push({ id: nid('I'), date, category: 'meat', itemName: 'Chicken mince', quantity: 12, unit: 'kg', costPerUnit: 250, totalCost: 3000, entityType: 'production_house', productionHouseId: 'PH-1' });
     if (date.endsWith('-06')) fixedCosts.push({ id: nid('F'), date, category: 'rent', description: 'Kitchen rent', amount: 9000, userId: 'demo', entityType: 'production_house', productionHouseId: 'PH-1' });
     if (date === '2026-07-14') inventory.push({ id: nid('I'), date, category: 'equipment_smallwares', itemName: 'Steamer', quantity: 1, unit: 'pcs', costPerUnit: 18000, totalCost: 18000, storeId: 'STORE-1', entityType: 'store' });
     const m = (base: number) => ({ dough: +(base * 0.03).toFixed(1), stuffing: +(base * 0.035).toFixed(1), final: Math.round(base) });

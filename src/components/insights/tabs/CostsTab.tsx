@@ -89,11 +89,11 @@ export const CostsTab = memo(function CostsTab({ d }: { d: AnalyticsData }) {
       })}
 
       <StatGrid columns={3}>
-        <StatTile label="Food and packaging" value={inr(metrics.inventoryExpenses)} caption={`${share(metrics.inventoryExpenses)} of costs`} delta={deltaOf(metrics.inventoryExpenses, previousPeriodMetrics.inventoryExpenses, prevLabel, 'down')} />
-        <StatTile label="Running costs" value={inr(metrics.overheadExpenses)} caption={`${share(metrics.overheadExpenses)} of costs`} delta={deltaOf(metrics.overheadExpenses, previousPeriodMetrics.overheadExpenses, prevLabel, 'down')} />
-        <StatTile label="Commission and ads" value={inr(metrics.commissionExpenses + metrics.adSpend)} caption={`${share(metrics.commissionExpenses + metrics.adSpend)} of costs${metrics.adSpend > 0.5 ? ` · ads ${inr(metrics.adSpend)}` : ''}`} delta={deltaOf(metrics.commissionExpenses + metrics.adSpend, previousPeriodMetrics.commissionExpenses + previousPeriodMetrics.adSpend, prevLabel, 'down')} />
-        <StatTile label="Fixed costs and equipment" value={inr(fixedAndEquipment)} caption={`${share(fixedAndEquipment)} of costs${(metrics.spreadExpenses || 0) > 0 ? ` · incl. ${inr(metrics.spreadExpenses)} equipment spread over its life` : ''}`} delta={deltaOf(fixedAndEquipment, previousPeriodMetrics.fixedCostsTotal, prevLabel, 'down')} />
-        <StatTile label="Salaries" value={inr(metrics.salaryExpenses)} caption={`${share(metrics.salaryExpenses)} of costs`} delta={deltaOf(metrics.salaryExpenses, previousPeriodMetrics.salaryExpenses, prevLabel, 'down')} />
+        <StatTile label="Food and packaging" value={inr(metrics.inventoryExpenses)} caption={`${share(metrics.inventoryExpenses)} of costs`} delta={deltaOf(metrics.inventoryExpenses, previousPeriodMetrics.inventoryExpenses, '', 'down')} />
+        <StatTile label="Running costs" value={inr(metrics.overheadExpenses)} caption={`${share(metrics.overheadExpenses)} of costs`} delta={deltaOf(metrics.overheadExpenses, previousPeriodMetrics.overheadExpenses, '', 'down')} />
+        <StatTile label="Commission and ads" value={inr(metrics.commissionExpenses + metrics.adSpend)} caption={`${share(metrics.commissionExpenses + metrics.adSpend)} of costs${metrics.adSpend > 0.5 ? ` · ads ${inr(metrics.adSpend)}` : ''}`} delta={deltaOf(metrics.commissionExpenses + metrics.adSpend, previousPeriodMetrics.commissionExpenses + previousPeriodMetrics.adSpend, '', 'down')} />
+        <StatTile label="Fixed costs and equipment" value={inr(fixedAndEquipment)} caption={`${share(fixedAndEquipment)} of costs${(metrics.spreadExpenses || 0) > 0 ? ` · incl. ${inr(metrics.spreadExpenses)} equipment spread over its life` : ''}`} delta={deltaOf(fixedAndEquipment, previousPeriodMetrics.fixedCostsTotal, '', 'down')} />
+        <StatTile label="Salaries" value={inr(metrics.salaryExpenses)} caption={`${share(metrics.salaryExpenses)} of costs`} delta={deltaOf(metrics.salaryExpenses, previousPeriodMetrics.salaryExpenses, '', 'down')} />
         <StatTile label="Loan interest" value={inr(metrics.interestExpenses || 0)} caption={`${share(metrics.interestExpenses || 0)} of costs`} />
       </StatGrid>
 

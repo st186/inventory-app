@@ -102,10 +102,10 @@ export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
       ) : (
         <>
           <StatGrid columns={4}>
-            <StatTile label={t('insights.sales')} value={inr(metrics.totalRevenue)} delta={deltaOf(metrics.totalRevenue, previousPeriodMetrics.totalRevenue, prevLabel)} />
-            <StatTile label={t('insights.online')} value={inr(metrics.onlineRevenue)} caption={`${pct(metrics.onlineRevenue, metrics.totalRevenue)} of sales`} delta={deltaOf(metrics.onlineRevenue, previousPeriodMetrics.onlineRevenue, prevLabel)} />
-            <StatTile label={t('insights.counter')} value={inr(metrics.offlineRevenue)} caption={`${pct(metrics.offlineRevenue, metrics.totalRevenue)} of sales`} delta={deltaOf(metrics.offlineRevenue, previousPeriodMetrics.offlineRevenue, prevLabel)} />
-            <StatTile label="Net profit as paid" value={inr(realizedProfit)} caption={`${pct(realizedProfit, metrics.totalRevenue)} margin`} delta={deltaOf(realizedProfit, previousPeriodMetrics.netProfit, prevLabel)} />
+            <StatTile label={t('insights.sales')} value={inr(metrics.totalRevenue)} delta={deltaOf(metrics.totalRevenue, previousPeriodMetrics.totalRevenue, '')} />
+            <StatTile label={t('insights.online')} value={inr(metrics.onlineRevenue)} caption={`${pct(metrics.onlineRevenue, metrics.totalRevenue)} of sales`} delta={deltaOf(metrics.onlineRevenue, previousPeriodMetrics.onlineRevenue, '')} />
+            <StatTile label={t('insights.counter')} value={inr(metrics.offlineRevenue)} caption={`${pct(metrics.offlineRevenue, metrics.totalRevenue)} of sales`} delta={deltaOf(metrics.offlineRevenue, previousPeriodMetrics.offlineRevenue, '')} />
+            <StatTile label="Net profit as paid" value={inr(realizedProfit)} caption={`${pct(realizedProfit, metrics.totalRevenue)} margin`} delta={deltaOf(realizedProfit, previousPeriodMetrics.netProfit, '')} />
           </StatGrid>
 
           <ChartCard title={t('insights.dailySales')} caption={getPeriodLabel()} legend={legendFor(dailySeries)}>

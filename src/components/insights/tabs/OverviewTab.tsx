@@ -126,28 +126,28 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
         <StatTile
           label={t('insights.sales')}
           value={inr(sales)}
-          delta={deltaOf(metrics.totalRevenue, previousPeriodMetrics.totalRevenue, prevLabel)}
+          delta={deltaOf(metrics.totalRevenue, previousPeriodMetrics.totalRevenue, '')}
           caption={ev ? t('insights.inclEvents', { amount: inr(ev.sales) }) : undefined}
           onClick={onOpenTab ? () => onOpenTab('profit') : undefined}
         />
         <StatTile
           label={t('insights.foodCost')}
           value={foodPct === null ? '–' : `${foodPct.toFixed(1)}%`}
-          delta={foodPct !== null && prevFoodPct !== null ? pointsDelta(foodPct, prevFoodPct, prevLabel, 'down') : undefined}
+          delta={foodPct !== null && prevFoodPct !== null ? pointsDelta(foodPct, prevFoodPct, '', 'down') : undefined}
           caption={t('insights.foodTarget')}
           onClick={onOpenTab ? () => onOpenTab('expense') : undefined}
         />
         <StatTile
           label={t('insights.commission')}
           value={inr(metrics.commissionExpenses)}
-          delta={commissionPct !== null && prevCommissionPct !== null ? pointsDelta(commissionPct, prevCommissionPct, prevLabel, 'down') : undefined}
+          delta={commissionPct !== null && prevCommissionPct !== null ? pointsDelta(commissionPct, prevCommissionPct, '', 'down') : undefined}
           caption={commissionPct !== null ? t('insights.commissionCaption', { pct: commissionPct.toFixed(1) }) : t('insights.adCaption')}
           onClick={() => setSelectedExpenseCategory({ category: 'Aggregator Commission', items: [], amount: metrics.commissionExpenses + metrics.adSpend, type: 'commission' })}
         />
         <StatTile
           label={t('insights.adSpend')}
           value={inr(metrics.adSpend)}
-          delta={deltaOf(metrics.adSpend, previousPeriodMetrics.adSpend, prevLabel, 'down')}
+          delta={deltaOf(metrics.adSpend, previousPeriodMetrics.adSpend, '', 'down')}
           caption={t('insights.adCaption')}
         />
         {totalCashDiscrepancy > 0 && (
@@ -155,7 +155,7 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
             tone="danger"
             label={<span className="inline-flex items-center gap-1"><AlertTriangle className="size-4" aria-hidden="true" />{t('insights.cashShort')}</span>}
             value={inr(totalCashDiscrepancy)}
-            delta={deltaOf(totalCashDiscrepancy, previousPeriodMetrics.cashDiscrepancy, prevLabel, 'down')}
+            delta={deltaOf(totalCashDiscrepancy, previousPeriodMetrics.cashDiscrepancy, '', 'down')}
             caption={t('insights.cashShortCaption', { n: shortageDays })}
           />
         )}
@@ -164,7 +164,7 @@ export const OverviewTab = memo(function OverviewTab({ d, events, onOpenTab }: {
             tone="danger"
             label={<span className="inline-flex items-center gap-1"><AlertTriangle className="size-4" aria-hidden="true" />{t('insights.posGap')}</span>}
             value={inr(totalPosSalesDiscrepancy)}
-            delta={deltaOf(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy, prevLabel, 'down')}
+            delta={deltaOf(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy, '', 'down')}
             caption={t('insights.posGapCaption')}
           />
         )}

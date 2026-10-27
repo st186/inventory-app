@@ -28,9 +28,9 @@ export const CashTab = memo(function CashTab({ d }: { d: AnalyticsData }) {
         caption="Approved cash shortages at day close"
       />
       <StatGrid columns={3}>
-        <StatTile tone={paytmShort > 0 ? 'danger' : 'default'} label="Paytm short" value={inr(paytmShort)} delta={deltaOf(paytmShort, previousPeriodMetrics.paytmDiscrepancy, prevLabel, 'down')} caption="Shortfalls in the period" />
-        <StatTile tone={totalPosSalesDiscrepancy > 0 ? 'danger' : 'default'} label={t('insights.posGap')} value={inr(totalPosSalesDiscrepancy)} delta={deltaOf(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy, prevLabel, 'down')} caption={t('insights.posGapCaption')} />
-        <StatTile label="Net profit as paid" value={inr(realizedProfit)} delta={deltaOf(realizedProfit, previousPeriodMetrics.netProfit, prevLabel)} caption="After the shortages" />
+        <StatTile tone={paytmShort > 0 ? 'danger' : 'default'} label="Paytm short" value={inr(paytmShort)} delta={deltaOf(paytmShort, previousPeriodMetrics.paytmDiscrepancy, '', 'down')} caption="Shortfalls in the period" />
+        <StatTile tone={totalPosSalesDiscrepancy > 0 ? 'danger' : 'default'} label={t('insights.posGap')} value={inr(totalPosSalesDiscrepancy)} delta={deltaOf(totalPosSalesDiscrepancy, previousPeriodMetrics.posSalesDiscrepancy, '', 'down')} caption={t('insights.posGapCaption')} />
+        <StatTile label="Net profit as paid" value={inr(realizedProfit)} delta={deltaOf(realizedProfit, previousPeriodMetrics.netProfit, '')} caption="After the shortages" />
       </StatGrid>
 
       <ChartCard title="Cash and Paytm, over or short" caption={`Above zero = extra, below = short · ${effectiveStoreId ? 'this store' : 'all stores'}`} legend={legendFor(series)}>
