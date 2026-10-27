@@ -1,7 +1,7 @@
 // Expenses (Money > Expenses, wireframe Expenses): Store / Production / All, the day's spend,
 // price checks, the day's entries by type, and the Add expense button. Totals come from
 // money/expenseMath.ts; new entries go through the outbox (App.tsx saveViaOutbox).
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
 import { Employee } from '../utils/api';
 import * as api from '../utils/api';
@@ -75,6 +75,15 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  const [activeTab, setActiveTab] = useState<'store' | 'production' | 'combined'>(
  defaultsToProduction ? 'production' : 'store'
  );
+ // The signed-in person's designation can arrive a moment after this screen opens (start-up from
+ // the saved copy): lead with Production once it does, unless they have already moved off Store.
+ useEffect(() => {
+ if (defaultsToProduction) setActiveTab((tab) => (tab === 'store' ? 'production' : tab));
+ }, [defaultsToProduction]);
+ // Add expense starts on the person's own side (owner, 27 Oct 2026): Production for the production
+ // incharge and the operations head (Aniket), Store for the store incharge (Rohan); everyone else
+ // follows the tab they are on.
+ const personDefaultEntity: 'store' | 'production_house' | null = defaultsToProduction ? 'production_house' : isStoreIncharge ? 'store' : null;
  // Items saved before this split lack entityType - treated as store expenses (money/expenseMath.ts).
 
 
@@ -394,7 +403,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  <InvoiceScanner
  context={context}
  selectedDate={selectedDate}
- defaultEntity={activeTab === 'production' ? 'production_house' : 'store'}
+ defaultEntity={personDefaultEntity ?? (activeTab === 'production' ? 'production_house' : 'store')}
  storeId={effectiveStoreId || defaultStoreForAdds}
  productionHouseId={targetProductionHouseId}
  storeOptions={!effectiveStoreId ? clusterStoreOptions : undefined}
@@ -409,7 +418,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  {showQuickAdd && (
  <QuickAddExpense
  selectedDate={selectedDate}
- defaultEntity={activeTab === 'production' ? 'production_house' : 'store'}
+ defaultEntity={personDefaultEntity ?? (activeTab === 'production' ? 'production_house' : 'store')}
  effectiveStoreId={effectiveStoreId || defaultStoreForAdds}
  targetProductionHouseId={targetProductionHouseId}
  canCreateNewItems={context.user?.role === 'cluster_head'}
