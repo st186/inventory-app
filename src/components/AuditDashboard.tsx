@@ -1,5 +1,13 @@
+import * as React from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { LogOut, BarChart3, DollarSign, Package, Users, TrendingUp, Factory, Eye, ShieldCheck, KeyRound } from 'lucide-react';
+import { LogOut, BarChart3, DollarSign, Package, Users, Factory, Eye, ShieldCheck, KeyRound } from 'lucide-react';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { EmptyState } from './ui/empty-state';
+import { IconButton } from './ui/icon-button';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import type { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData, InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { Analytics } from './Analytics';
@@ -147,93 +155,58 @@ export function AuditDashboard({
  };
 
  const navItems = [
- { id: 'analytics' as const, label: 'Analytics', icon: BarChart3 },
- { id: 'inventory' as const, label: 'Inventory', icon: Package },
+ { id: 'analytics' as const, label: 'Insights', icon: BarChart3 },
+ { id: 'inventory' as const, label: 'Expenses', icon: Package },
  { id: 'sales' as const, label: 'Sales', icon: DollarSign },
  { id: 'production' as const, label: 'Production', icon: Factory },
- { id: 'payroll' as const, label: 'Payroll', icon: Users },
+ { id: 'payroll' as const, label: 'Pay', icon: Users },
  ];
+ const salesShown = sortedSales.slice(0, salesRowsShown);
+ const readOnly = <StatusChip tone="neutral" icon={Eye}>Read-only</StatusChip>;
+ // One template for the read-only views: a title with the read-only chip, then the screen.
+ const section = (title: string, sub: string, children: React.ReactNode) => (
+ <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 lg:px-8 lg:py-6">
+ <div className="flex flex-wrap items-center justify-between gap-2">
+ <div className="min-w-0">
+ <h2 className="text-title font-semibold text-text">{title}</h2>
+ <p className="text-body-sm text-text-2">{sub}</p>
+ </div>
+ {readOnly}
+ </div>
+ {children}
+ </div>
+ );
 
  return (
- <div className="min-h-screen bg-surface-2">
- {/* Navigation */}
+ <div className="min-h-full bg-bg">
+ {/* Its own top bar only outside the app shell (the shell draws the bar and the tabs). */}
  {!hideNav && (
- <nav className="sticky top-0 z-50 bg-surface border border-border">
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
- <div className="flex items-center justify-between h-16">
- {/* Left - Brand */}
- <div className="flex items-center gap-3">
- <div className="flex items-center justify-center w-10 h-10 bg-surface-2 rounded-lg">
- <ShieldCheck className="w-6 h-6 text-text-2" />
+ <header className="sticky top-0 z-(--z-sticky) border-b border-border bg-surface">
+ <div className="mx-auto flex min-h-14 max-w-7xl items-center gap-3 px-4 lg:px-8">
+ <ShieldCheck className="size-6 shrink-0 text-text-2" aria-hidden="true" />
+ <div className="min-w-0 flex-1">
+ <h1 className="truncate text-title font-semibold text-text">Bunny Momos · Audit</h1>
+ <p className="truncate text-caption text-text-3">{user.name} · read-only</p>
  </div>
- <div>
- <h1 className="text-text-2 text-lg font-bold">Bhandar-IMS</h1>
- <p className="text-xs text-text-3">Audit Dashboard</p>
+ {onChangePassword && <IconButton label="Change password" icon={<KeyRound />} onClick={onChangePassword} />}
+ <IconButton label="Log out" icon={<LogOut />} variant="danger-ghost" onClick={onLogout} />
  </div>
- </div>
-
- {/* Right - User Info & Logout */}
- <div className="flex items-center gap-4">
- <div className="text-right hidden sm:block">
- <p className="text-sm font-medium text-text-2">{user.name}</p>
- <p className="text-xs text-text-3 flex items-center justify-end gap-1">
- <Eye className="w-3 h-3" />
- Read-Only Access
- </p>
- </div>
- {onChangePassword && (
- <button
- onClick={onChangePassword}
- className="flex items-center gap-2 px-3 py-2 bg-surface-2 hover:bg-surface-2 text-text-2 rounded-lg transition-all"
- title="Change password"
- >
- <KeyRound className="w-4 h-4" />
- <span className="hidden sm:inline">Password</span>
- </button>
- )}
- <button
- onClick={onLogout}
- className="flex items-center gap-2 px-4 py-2 bg-surface-2 hover:bg-surface-2 text-text-2 rounded-lg transition-all"
- >
- <LogOut className="w-4 h-4" />
- <span className="hidden sm:inline">Logout</span>
- </button>
- </div>
- </div>
-
- {/* Navigation Tabs */}
- <div className="flex gap-2 pb-3 overflow-x-auto">
+ <Tabs value={activeView} onValueChange={(v) => setActiveView(v as typeof ownView)}>
+ <div className="mx-auto max-w-7xl lg:px-4">
+ <TabsList aria-label="Audit sections" className="border-b-0">
  {navItems.map((item) => (
- <button
- key={item.id}
- onClick={() => setActiveView(item.id)}
- className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
- activeView === item.id
- ? 'bg-surface text-text'
- : 'text-text-2 hover:bg-surface-2'
- }`}
- >
- <item.icon className="w-4 h-4" />
- <span className="text-sm font-medium">{item.label}</span>
- </button>
+ <TabsTrigger key={item.id} value={item.id}><item.icon aria-hidden="true" />{item.label}</TabsTrigger>
  ))}
+ </TabsList>
  </div>
- </div>
- </nav>
+ </Tabs>
+ </header>
  )}
 
- {/* Read-Only Notice */}
- <div className="bg-warning-soft border-b border-warning-border px-4 py-3">
- <div className="max-w-7xl mx-auto flex items-center gap-2 text-warning">
- <Eye className="w-5 h-5 flex-shrink-0" />
- <p className="text-sm">
- <strong>Audit Mode:</strong> You have read-only access to all data. You cannot create, edit, or delete any records.
- </p>
- </div>
+ <div className="mx-auto max-w-7xl px-4 pt-4 lg:px-8">
+ <Callout tone="info" icon={Eye} title="Audit mode: read-only">You can see all the records here, but not add, change or delete any.</Callout>
  </div>
 
- {/* Main Content */}
- <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
  {activeView === 'analytics' && (
  <Analytics
  context={contextValue}
@@ -241,98 +214,63 @@ export function AuditDashboard({
  />
  )}
 
- {activeView === 'inventory' && (
- <div className="bg-surface rounded-lg border border-border p-6">
- <div className="flex items-center justify-between mb-6">
- <div>
- <h2 className="text-2xl font-bold text-text">Inventory View</h2>
- <p className="text-sm text-text-2 mt-1">View-only access to inventory data</p>
- </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
- <Eye className="w-4 h-4 text-text-2" />
- <span className="text-sm text-text-2 font-medium">Read-Only</span>
- </div>
- </div>
+ {activeView === 'inventory' && section('Expenses', 'Purchases, running and fixed costs', (
  <InventoryView
  context={contextValue}
  selectedStoreId={selectedStoreId}
  />
- </div>
- )}
+ ))}
 
- {activeView === 'sales' && (
- <div className="bg-surface rounded-lg border border-border p-6">
- <div className="flex items-center justify-between mb-6">
- <div>
- <h2 className="text-2xl font-bold text-text">Sales Data</h2>
- <p className="text-sm text-text-2 mt-1">View-only access to sales records</p>
- </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
- <Eye className="w-4 h-4 text-text-2" />
- <span className="text-sm text-text-2 font-medium">Read-Only</span>
- </div>
- </div>
- {/* Sales table will be rendered here - simplified read-only view */}
- <div className="overflow-x-auto">
+ {activeView === 'sales' && section('Sales', `${sortedSales.length} day closes, newest first`, (
+ <>
+ {/* Phones: a list; from 1024 px: the table */}
+ <ListGroup className="lg:hidden" empty={<EmptyState compact icon={DollarSign} title="No sales yet" />}>
+ {salesShown.map((sale) => {
+ const store = stores.find(s => s.id === sale.storeId);
+ const online = onlineByStoreDay.get(`${sale.storeId}|${sale.date}`) ?? (sale.posOnlineSales || 0);
+ return (
+ <ListRow
+ key={sale.id}
+ title={`${formatDateIST(sale.date)} · ${store?.name || 'Unknown store'}`}
+ subtitle={`Counter ₹${(sale.offlineSales || 0).toLocaleString('en-IN')} · Online ₹${online.toLocaleString('en-IN')} · Cash ₹${(sale.cashAmount || 0).toLocaleString('en-IN')} · Paytm ₹${(sale.paytmAmount || 0).toLocaleString('en-IN')}`}
+ trailing={<StatusChip tone={!hasRealCashCount(sale) ? 'neutral' : sale.approvalStatus === 'approved' ? 'success' : 'warning'}>{salesDayStatus(sale)}</StatusChip>}
+ />
+ );
+ })}
+ </ListGroup>
+ <div className="hidden overflow-hidden rounded-lg border border-border bg-surface lg:block">
  <table className="w-full">
- <thead className="bg-surface-2 border-b border-border">
+ <thead className="border-b border-border bg-surface-2">
  <tr>
- <th className="text-left py-3 px-4 text-sm font-semibold text-text-2">Date</th>
- <th className="text-left py-3 px-4 text-sm font-semibold text-text-2">Store</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Offline Sales</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Online Sales</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Cash</th>
- <th className="text-right py-3 px-4 text-sm font-semibold text-text-2">Paytm</th>
- <th className="text-center py-3 px-4 text-sm font-semibold text-text-2">Status</th>
+ <th className="px-4 py-3 text-left text-label font-semibold text-text-2">Date</th>
+ <th className="px-4 py-3 text-left text-label font-semibold text-text-2">Store</th>
+ <th className="px-4 py-3 text-right text-label font-semibold text-text-2">Counter sales</th>
+ <th className="px-4 py-3 text-right text-label font-semibold text-text-2">Online sales</th>
+ <th className="px-4 py-3 text-right text-label font-semibold text-text-2">Cash</th>
+ <th className="px-4 py-3 text-right text-label font-semibold text-text-2">Paytm</th>
+ <th className="px-4 py-3 text-center text-label font-semibold text-text-2">Status</th>
  </tr>
  </thead>
  <tbody>
  {salesData.length === 0 ? (
  <tr>
- <td colSpan={7} className="text-center py-12 text-text-3">
- No sales data available
- </td>
+ <td colSpan={7}><EmptyState compact icon={DollarSign} title="No sales yet" /></td>
  </tr>
  ) : (
- sortedSales
- .slice(0, salesRowsShown)
- .map((sale) => {
+ salesShown.map((sale) => {
  const store = stores.find(s => s.id === sale.storeId);
  // Online sales live in their own table now (the record's own onlineSales is always 0).
  const online = onlineByStoreDay.get(`${sale.storeId}|${sale.date}`) ?? (sale.posOnlineSales || 0);
- const status = salesDayStatus(sale);
  return (
- <tr key={sale.id} className="border-b border-border hover:bg-surface-2">
- <td className="py-3 px-4 text-sm text-text whitespace-nowrap">
- {formatDateIST(sale.date)}
- </td>
- <td className="py-3 px-4 text-sm text-text-2">
- {store?.name || 'Unknown Store'}
- </td>
- <td className="py-3 px-4 text-sm text-text text-right">
- ₹{(sale.offlineSales || 0).toLocaleString('en-IN')}
- </td>
- <td className="py-3 px-4 text-sm text-text text-right">
- ₹{online.toLocaleString('en-IN')}
- </td>
- <td className="py-3 px-4 text-sm text-text text-right">
- ₹{(sale.cashAmount || 0).toLocaleString('en-IN')}
- </td>
- <td className="py-3 px-4 text-sm text-text text-right">
- ₹{(sale.paytmAmount || 0).toLocaleString('en-IN')}
- </td>
- <td className="py-3 px-4 text-center">
- <span
- className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
- !hasRealCashCount(sale)
- ? 'bg-surface-2 text-text-2'
- : sale.approvalStatus === 'approved'
- ? 'bg-success-soft text-success'
- : 'bg-warning-soft text-warning'
- }`}
- >
- {status}
- </span>
+ <tr key={sale.id} className="border-b border-border last:border-b-0">
+ <td className="whitespace-nowrap px-4 py-3 text-body-sm text-text">{formatDateIST(sale.date)}</td>
+ <td className="px-4 py-3 text-body-sm text-text-2">{store?.name || 'Unknown store'}</td>
+ <td className="num px-4 py-3 text-right text-body-sm text-text">₹{(sale.offlineSales || 0).toLocaleString('en-IN')}</td>
+ <td className="num px-4 py-3 text-right text-body-sm text-text">₹{online.toLocaleString('en-IN')}</td>
+ <td className="num px-4 py-3 text-right text-body-sm text-text">₹{(sale.cashAmount || 0).toLocaleString('en-IN')}</td>
+ <td className="num px-4 py-3 text-right text-body-sm text-text">₹{(sale.paytmAmount || 0).toLocaleString('en-IN')}</td>
+ <td className="px-4 py-3 text-center">
+ <StatusChip tone={!hasRealCashCount(sale) ? 'neutral' : sale.approvalStatus === 'approved' ? 'success' : 'warning'}>{salesDayStatus(sale)}</StatusChip>
  </td>
  </tr>
  );
@@ -342,58 +280,28 @@ export function AuditDashboard({
  </table>
  </div>
  {sortedSales.length > salesRowsShown && (
- <div className="flex items-center justify-between gap-3 mt-4 text-sm text-text-2">
+ <div className="flex items-center justify-between gap-3 text-body-sm text-text-2">
  <span>Showing {salesRowsShown} of {sortedSales.length} days</span>
- <button
- onClick={() => setSalesRowsShown((n) => n + 50)}
- className="px-4 py-2 rounded-lg border border-border-strong bg-surface hover:bg-surface-2 text-text"
- >
- Show 50 more
- </button>
+ <Button variant="secondary" onClick={() => setSalesRowsShown((n) => n + 50)}>Show 50 more</Button>
  </div>
  )}
- </div>
- )}
+ </>
+ ))}
 
- {activeView === 'production' && (
- <div className="bg-surface rounded-lg border border-border p-6">
- <div className="flex items-center justify-between mb-6">
- <div>
- <h2 className="text-2xl font-bold text-text">Production Data</h2>
- <p className="text-sm text-text-2 mt-1">View-only access to production records</p>
- </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
- <Eye className="w-4 h-4 text-text-2" />
- <span className="text-sm text-text-2 font-medium">Read-Only</span>
- </div>
- </div>
+ {activeView === 'production' && section('Production', 'Batches and approvals', (
  <ProductionManagement
  context={contextValue}
  selectedStoreId={selectedStoreId}
  />
- </div>
- )}
+ ))}
 
- {activeView === 'payroll' && (
- <div className="bg-surface rounded-lg border border-border p-6">
- <div className="flex items-center justify-between mb-6">
- <div>
- <h2 className="text-2xl font-bold text-text">Payroll Data</h2>
- <p className="text-sm text-text-2 mt-1">View-only access to payroll records</p>
- </div>
- <div className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg">
- <Eye className="w-4 h-4 text-text-2" />
- <span className="text-sm text-text-2 font-medium">Read-Only</span>
- </div>
- </div>
+ {activeView === 'payroll' && section('Pay', 'Payouts and payslips', (
  <PayrollManagement
  userRole="audit"
  selectedDate={selectedDate}
  userName={user.name}
  />
- </div>
- )}
- </div>
+ ))}
  </div>
  );
 }
