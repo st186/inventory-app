@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import { TrendingUp, TrendingDown, Package, AlertCircle, Calendar, Filter, Download, DollarSign, ShoppingCart, ClipboardCheck, UserX, Users, Factory, Trash2, Edit, Check, X, ClipboardList, FileSpreadsheet, CheckCircle, Settings, RefreshCw, FileText, Soup, ArrowUp, ArrowDown, Minus, BarChart3, Wallet, ChevronDown, ChevronUp, ChevronRight, Clock, CalendarDays, Smartphone, Briefcase, Receipt, Zap, Home, Target, AlertTriangle, XCircle, Percent } from 'lucide-react';
 import type { TooltipProps } from 'recharts';
 // Charts come through lazyRecharts so the overview's numbers paint before the ~430 KB chart
@@ -336,7 +336,25 @@ function TimeFilterBar({ value, onChange, range, onRangeChange }: {
  );
 }
 
-export function Analytics({ context, selectedStoreId, highlightRequestId, initialTab, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
+// App re-renders often (menus, sync status, toasts) and hands over fresh inline callbacks each
+// time. The screen below is memoised on its data props, and the two navigation callbacks go
+// through stable wrappers that always call App's latest ones - so once App keeps its context
+// object stable, an unrelated App update no longer re-runs this whole page.
+export function Analytics(props: AnalyticsProps) {
+ const latestProps = useRef(props);
+ latestProps.current = props;
+ const toManageItems = useCallback(() => latestProps.current.onNavigateToManageItems?.(), []);
+ const toProductionManagement = useCallback(() => latestProps.current.onNavigateToProductionManagement?.(), []);
+ return (
+ <AnalyticsScreen
+ {...props}
+ onNavigateToManageItems={props.onNavigateToManageItems ? toManageItems : undefined}
+ onNavigateToProductionManagement={props.onNavigateToProductionManagement ? toProductionManagement : undefined}
+ />
+ );
+}
+
+const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId, highlightRequestId, initialTab, onNavigateToManageItems, onNavigateToProductionManagement }: AnalyticsProps) {
  // Online sales/payout/settlement data now lives in context (see the Analytics page
  // redesign) - Analytics.tsx, OnlineSalesTab.tsx, and SalesData.tsx all read the same
  // fetch instead of each independently re-fetching it.
@@ -1484,7 +1502,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  };
 
  loadWeekLeaves();
- }, [context.user]);
+ // Keyed on who is signed in, not the user object itself: App can replace that object (e.g.
+ // with a refreshed access token), which would refetch the leave list and every employee.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [context.user?.email, context.user?.role]);
 
  // This week's leave list grouped by day (Monday first), plus a full/half-day split for
  // the compact summary bar - the list itself is flat (one row per approved leave), so
@@ -1916,7 +1937,10 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  // ---- Data behind the Salaries / Commission / Interest breakdown modals. Built from the
  // same filtered sources calculateMetrics uses, so each modal's rows add up to the headline
  // figure on the card it was opened from. ----
+ // Only built while the Salaries pop-up is open - nothing else reads it.
+ const salaryModalOpen = selectedExpenseCategory?.type === 'salary';
  const salaryBreakdownData = useMemo(() => {
+ if (!salaryModalOpen) return null;
  const isMonthly = timeFilter === 'thisMonth' || timeFilter === 'lastMonth' || timeFilter === 'custom';
  return buildSalaryBreakdown({
  // Daily/weekly filters carry no payouts by design - salaries are monthly events.
@@ -1928,7 +1952,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  todayIST: getTodayIST(),
  inScope: (emp: any) => !effectiveStoreId || employeeBelongsToStore(emp, effectiveStoreId, context.stores || []),
  });
- }, [filteredPayoutsData, payoutsData, employeesData, filteredOverheadData, timeFilter, effectiveStoreId, context.stores]);
+ }, [salaryModalOpen, filteredPayoutsData, payoutsData, employeesData, filteredOverheadData, timeFilter, effectiveStoreId, context.stores]);
 
  const commissionBreakdownSettlements = useMemo(
  () => (aggregatorSettlements || []).filter((st: any) =>
@@ -3222,7 +3246,12 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  return breakdown.sort((a, b) => b.value - a.value);
  };
 
- const expenseBreakdown = prepareExpenseBreakdown();
+ // Only the Costs & Margins tab shows it; worked out once per data change, not on every render.
+ const expenseBreakdown = useMemo(
+ () => (activeView === 'expense' ? prepareExpenseBreakdown() : []),
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ [activeView, filteredInventoryData, filteredOverheadData, filteredFixedCostsData, metrics]
+ );
 
  // ---- Unit Economics: what's inside each cost line on the ladder. Same buckets and sources as
  // calculateMetrics, so each detail sheet adds up to the line it was opened from. ----
@@ -3321,7 +3350,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  return totalLoss;
  };
 
- const totalCashDiscrepancy = calculateCashDiscrepancy();
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ const totalCashDiscrepancy = useMemo(() => calculateCashDiscrepancy(), [filteredSalesData]);
  const unrealizedProfit = metrics.netProfit;
  // carryForward.amount is zero or negative: a loss brought forward lowers this month's realized profit.
  const realizedProfit = unrealizedProfit - totalCashDiscrepancy;
@@ -3353,7 +3383,8 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  }, 0);
  };
 
- const totalPosSalesDiscrepancy = calculatePosSalesDiscrepancy();
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ const totalPosSalesDiscrepancy = useMemo(() => calculatePosSalesDiscrepancy(), [filteredSalesData]);
 
  if (loading) {
  return (
@@ -8821,7 +8852,7 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  {/* Expense Breakdown Modal (only one of these is ever open, so they share one loading
  fallback while the chosen pop-up's code arrives) */}
  <Suspense fallback={<ModalSkeleton />}>
- {selectedExpenseCategory && selectedExpenseCategory.type === 'salary' && (
+ {selectedExpenseCategory && selectedExpenseCategory.type === 'salary' && salaryBreakdownData && (
  <SalaryBreakdownModal
  totalAmount={selectedExpenseCategory.amount}
  data={salaryBreakdownData}
@@ -8873,4 +8904,4 @@ export function Analytics({ context, selectedStoreId, highlightRequestId, initia
  </Suspense>
  </div>
  );
-}
+});
