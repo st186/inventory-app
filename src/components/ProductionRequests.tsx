@@ -10,6 +10,7 @@ import { StockThresholdSettings } from './StockThresholdSettings';
 import { RecalibrationReports } from './RecalibrationReports';
 import { StockWastageModal } from './StockWastageModal';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
+import { EventMomoReturnsCard } from './events/EventMomoReturnsCard';
 import { bagSize, bagsLabel, roundUpToBags, isPhase1Live } from '../utils/batches';
 import { getTodayIST } from '../utils/timezone';
 import { suggestRequest, type ForecastDay, type MomoKey } from '../utils/forecast';
@@ -1202,6 +1203,9 @@ export function ProductionRequests({ context, highlightRequestId, selectedStoreI
           </div>
         </div>
       </div>
+
+      {/* Leftover momos coming back from event stalls (events.ts): production counts them in. */}
+      {(isProductionHead || isOperationsHead || isClusterHead) && <EventMomoReturnsCard />}
 
       {/* Stock Wastage - logs today's momo wastage, in pieces, one number per momo type
           (including both kurkure varieties). Tracked from launch (2026-08-30) forward

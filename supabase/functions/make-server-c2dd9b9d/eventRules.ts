@@ -316,6 +316,7 @@ export type EventCostSettings = {
 export type EventPnlInput = EventMoneyInput & {
   requests: Row[];   // production requests for this event
   transfers: Row[];  // event_transfer rows (items moved from / back to the store)
+  returns?: Row[];   // event_momo_return rows (leftover momos back to production, and wasted)
   settings: EventCostSettings;
   today: string;
   from?: string;     // optional window (the business summary)
@@ -324,12 +325,14 @@ export type EventPnlInput = EventMoneyInput & {
 
 export type EventPnlDay = {
   date: string; sales: number; cash: number; digital: number; online: number; source: DaySales['source'];
-  momoCost: number; itemsCost: number; expenses: number; rent: number; commission: number; costs: number; profit: number; cumulativeProfit: number;
+  momoCost: number; wastage: number; itemsCost: number; expenses: number; rent: number; commission: number; costs: number; profit: number; cumulativeProfit: number;
 };
 export type EventPnl = {
   eventId: string;
   sales: number; cash: number; digital: number; online: number;
-  momoCost: number; momoPieces: number; itemsCost: number; expenses: number; rent: number; rentPaid: number; commission: number;
+  // momoCost: momos sent less those back at production and those wasted; wastage: the wasted ones.
+  momoCost: number; momoPieces: number; returnedPieces: number; wastage: number; wastagePieces: number;
+  itemsCost: number; expenses: number; rent: number; rentPaid: number; commission: number;
   costs: number; profit: number; marginPct: number | null;
   expensesByCategory: Record<string, number>;
   momoByType: Partial<Record<EventMomoKey, { pieces: number; cost: number }>>;
@@ -357,7 +360,7 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
 
   const rows = new Map<string, EventPnlDay>(allDays.map((d) => [d, {
     date: d, sales: 0, cash: 0, digital: 0, online: 0, source: 'none' as DaySales['source'],
-    momoCost: 0, itemsCost: 0, expenses: 0, rent: 0, commission: 0, costs: 0, profit: 0, cumulativeProfit: 0,
+    momoCost: 0, wastage: 0, itemsCost: 0, expenses: 0, rent: 0, commission: 0, costs: 0, profit: 0, cumulativeProfit: 0,
   }]));
 
   for (const d of input.days || []) {
@@ -386,6 +389,26 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
     }
   }
   if (missingCost.size) warnings.push(`Momo cost per piece isn't set for ${[...missingCost].join(', ')} - those momos are counted at ₹0.`);
+
+  // Leftover momos: those back at the production house come off the momo cost (what production
+  // counted back in once it has, else what was sent back); wasted ones move from the momo cost to
+  // wastage, both at the momo cost per piece.
+  let returnedPieces = 0;
+  let wastagePieces = 0;
+  for (const r of (input.returns || []).filter(live)) {
+    const row = rows.get(clamp(r.date));
+    for (const key of EVENT_MOMO_KEYS) {
+      const unit = num(cost[key]);
+      const back = Math.max(0, num(r.status === 'received' && r.receivedQuantities ? r.receivedQuantities[key] : r.returned?.[key]));
+      const wasted = Math.max(0, num(r.wasted?.[key]));
+      returnedPieces += back;
+      wastagePieces += wasted;
+      if (row) {
+        row.momoCost = round2(row.momoCost - (back + wasted) * unit);
+        row.wastage = round2(row.wastage + wasted * unit);
+      }
+    }
+  }
 
   for (const t of (input.transfers || []).filter(live)) {
     const row = rows.get(clamp(t.date));
@@ -425,7 +448,7 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
   const days: EventPnlDay[] = [];
   for (const d of allDays) {
     const row = rows.get(d)!;
-    row.costs = round2(row.momoCost + row.itemsCost + row.expenses + row.rent + row.commission);
+    row.costs = round2(row.momoCost + row.wastage + row.itemsCost + row.expenses + row.rent + row.commission);
     row.profit = round2(row.sales - row.costs);
     if (!inWindow(d)) continue;
     cumulative = round2(cumulative + row.profit);
@@ -444,7 +467,8 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
   return {
     eventId: ev.id,
     sales, cash: sum('cash'), digital: sum('digital'), online: sum('online'),
-    momoCost: sum('momoCost'), momoPieces, itemsCost: sum('itemsCost'), expenses: sum('expenses'), rent: sum('rent'), rentPaid: round2(rentPaid),
+    momoCost: sum('momoCost'), momoPieces, returnedPieces, wastage: sum('wastage'), wastagePieces,
+    itemsCost: sum('itemsCost'), expenses: sum('expenses'), rent: sum('rent'), rentPaid: round2(rentPaid),
     commission: sum('commission'), costs, profit, marginPct: sales > 0 ? Math.round((profit / sales) * 1000) / 10 : null,
     expensesByCategory, momoByType, days, warnings,
   };
@@ -455,13 +479,13 @@ export function computeEventPnl(input: EventPnlInput): EventPnl {
 export type EventSummary = {
   from: string | null; to: string | null;
   sales: number; costs: number; profit: number;
-  momoCost: number; itemsCost: number; expenses: number; rent: number; commission: number;
+  momoCost: number; wastage: number; itemsCost: number; expenses: number; rent: number; commission: number;
   events: { id: string; name: string; status: EventStatus; startDate: string; endDate: string; sales: number; costs: number; profit: number }[];
   byDate: { date: string; sales: number; costs: number; profit: number }[];
 };
 export function summarizeEvents(items: { event: Row; pnl: EventPnl; status: EventStatus }[], from?: string, to?: string): EventSummary {
   const byDate = new Map<string, { date: string; sales: number; costs: number; profit: number }>();
-  const tot = { sales: 0, costs: 0, profit: 0, momoCost: 0, itemsCost: 0, expenses: 0, rent: 0, commission: 0 };
+  const tot = { sales: 0, costs: 0, profit: 0, momoCost: 0, wastage: 0, itemsCost: 0, expenses: 0, rent: 0, commission: 0 };
   const events: EventSummary['events'] = [];
   for (const { event, pnl, status } of items) {
     if (!pnl.days.length) continue;
@@ -482,19 +506,27 @@ export function summarizeEvents(items: { event: Row; pnl: EventPnl; status: Even
 // ── Stock at the stall ──
 
 // Momos at the stall: counted in from production, less plates sold (pieces a plate from the
-// plate config), less what was written off. Never below zero.
-export function eventMomoStock(requests: Row[], days: Row[], piecesPerPlate: Partial<Record<EventMomoKey, number>>, wastage: Row[] = []): Record<EventMomoKey, { received: number; inTransit: number; sold: number; wasted: number; left: number }> {
-  const out = {} as Record<EventMomoKey, { received: number; inTransit: number; sold: number; wasted: number; left: number }>;
+// plate config), less leftovers sent back to production and pieces wasted (event_momo_return
+// rows: { returned: {key: n}, wasted: {key: n} }). Never below zero.
+export type EventMomoStockLine = { received: number; inTransit: number; sold: number; returned: number; wasted: number; left: number };
+export function eventMomoStock(requests: Row[], days: Row[], piecesPerPlate: Partial<Record<EventMomoKey, number>>, returns: Row[] = []): Record<EventMomoKey, EventMomoStockLine> {
+  const out = {} as Record<EventMomoKey, EventMomoStockLine>;
   for (const key of EVENT_MOMO_KEYS) {
     const received = (requests || []).filter((r) => EVENT_RECEIVED_STATUSES.includes(r.status)).reduce((s, r) => s + receivedRequestPieces(r, key), 0);
     const inTransit = (requests || []).filter((r) => r.status === 'shipped' || r.status === 'partially-shipped').reduce((s, r) => s + shippedRequestPieces(r, key), 0);
     const per = num(piecesPerPlate?.[key]) || DEFAULT_PIECES_PER_PLATE;
     const sold = (days || []).reduce((s, d) => s + num(daySales(d).plates?.[key]) * per, 0);
-    const wasted = (wastage || []).filter(live).reduce((s, w) => s + num(w?.pieces?.[key]), 0);
-    out[key] = { received, inTransit, sold, wasted, left: Math.max(0, received - sold - wasted) };
+    const back = (returns || []).filter(live);
+    const returned = back.reduce((s, r) => s + Math.max(0, num(r?.returned?.[key])), 0);
+    const wasted = back.reduce((s, r) => s + Math.max(0, num(r?.wasted?.[key])), 0);
+    out[key] = { received, inTransit, sold, returned, wasted, left: Math.max(0, received - sold - returned - wasted) };
   }
   return out;
 }
+
+// Pieces still at the stall across all momo types (closing warns while this isn't zero).
+export const momosLeftAtStall = (stock: Record<string, { left: number }>): number =>
+  Object.values(stock || {}).reduce((s, l) => s + (num(l?.left) || 0), 0);
 
 // Items moved from the store (and back), net per item name.
 export function eventItemsOnHand(transfers: Row[]): { itemName: string; unit: string; quantity: number; value: number }[] {

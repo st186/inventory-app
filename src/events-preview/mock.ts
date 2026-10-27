@@ -73,6 +73,13 @@ const state = {
       receipt: { lines: { chicken: { shipped: 700, received: 700, damaged: 12 } } } },
     { id: 'r3', eventId: fair.id, requestDate: '2026-11-30', status: 'shipped', chicken: 600, chickenCheese: 240, veg: 150, chickenKurkure: 150, shippedQuantities: { chicken: 600, chickenCheese: 240, veg: 150, chickenKurkure: 150 }, shippedAt: '2026-11-30T09:10:00Z', requestedByName: 'Rahul Das' },
   ] as any[],
+  returns: [
+    { id: 'mr1', eventId: fair.id, eventName: fair.name, productionHouseId: 'PH-1', date: '2026-11-29', returned: { chicken: 60, veg: 30 }, wasted: { chickenCheese: 12 },
+      returnedPieces: 90, wastedPieces: 12, wasteReason: 'Thawed / spoiled', status: 'received', receivedQuantities: { chicken: 60, veg: 28 }, receivedAt: '2026-11-29T15:00:00Z',
+      receivedByName: 'Vijay', createdByName: 'Rahul Das', createdAt: '2026-11-29T13:00:00Z' },
+    { id: 'mr2', eventId: fair.id, eventName: fair.name, productionHouseId: 'PH-1', date: '2026-11-30', returned: { paneer: 20 }, wasted: {},
+      returnedPieces: 20, wastedPieces: 0, wasteReason: null, status: 'sent', createdByName: 'Rahul Das', createdAt: '2026-11-30T12:00:00Z' },
+  ] as any[],
   topups: [
     { id: 'c1', eventId: fair.id, reason: 'event_cash', date: '2026-11-28', requestedAmount: 3000, status: 'approved', fundingSource: 'production_cash', note: 'Change for the counter', requestedByName: 'Rahul Das', requestDate: '2026-11-28T10:00:00' },
     { id: 'c2', eventId: fair.id, reason: 'event_cash', date: '2026-11-30', requestedAmount: 2000, status: 'pending', note: 'Second gas cylinder', requestedByName: 'Rahul Das', requestDate: '2026-11-30T12:00:00' },
@@ -94,7 +101,7 @@ function eventFor(id: string) {
 }
 function bundleFor(ev: EventRecord): EventBundle {
   const isFair = ev.id === fair.id;
-  const data = isFair ? state : { days: [], expenses: [], transfers: [], moves: [], assets: [], requests: [], topups: [] };
+  const data = isFair ? state : { days: [], expenses: [], transfers: [], moves: [], assets: [], requests: [], topups: [], returns: [] };
   const m = { event: ev, days: data.days, expenses: data.expenses, moves: data.moves, topups: data.topups };
   const status = eventStatus(ev, PREVIEW_TODAY);
   const owner = role === 'owner';
@@ -119,11 +126,12 @@ function bundleFor(ev: EventRecord): EventBundle {
     assets: data.assets,
     requests: [...data.requests].reverse(),
     topups: [...data.topups].reverse(),
+    returns: [...data.returns].reverse(),
     cash: { inHand: eventCashInHand(m, PREVIEW_TODAY), lines: eventCashLines(m) },
     digital: { account: digitalAccountOf(ev), balance: eventDigitalBalance(m, PREVIEW_TODAY), lines: eventDigitalLines(m) },
-    stock: { momos: eventMomoStock(data.requests, data.days, settings.piecesPerPlate), items: eventItemsOnHand(data.transfers) },
+    stock: { momos: eventMomoStock(data.requests, data.days, settings.piecesPerPlate, data.returns), items: eventItemsOnHand(data.transfers) },
     staff: isFair ? staff : staff.slice(1, 2).map((s) => ({ ...s, isIncharge: true })),
-    pnl: computeEventPnl({ ...m, requests: data.requests, transfers: data.transfers, settings, today: PREVIEW_TODAY }),
+    pnl: computeEventPnl({ ...m, requests: data.requests, transfers: data.transfers, returns: data.returns, settings, today: PREVIEW_TODAY }),
     settings,
   } as EventBundle;
 }
@@ -177,6 +185,20 @@ export const mockApi: EventsApi & { __mock: true } = {
     return wait({ transfer: t as any });
   },
   addMoney: (_id, input) => { const m = { id: `m${Date.now()}`, eventId: fair.id, ...input }; state.moves.push(m); return wait({ move: m as any }); },
+  returnMomos: (_id, input) => {
+    const back = Object.values(input.returned || {}).reduce((s: number, n) => s + (n || 0), 0);
+    const lost = Object.values(input.wasted || {}).reduce((s: number, n) => s + (n || 0), 0);
+    const r = { id: `mr${Date.now()}`, eventId: fair.id, eventName: fair.name, productionHouseId: 'PH-1', date: PREVIEW_TODAY, returned: input.returned, wasted: input.wasted,
+      returnedPieces: back, wastedPieces: lost, wasteReason: input.wasteReason || null, status: back ? 'sent' : 'wasted_only', createdByName: 'You', createdAt: new Date().toISOString() };
+    state.returns.push(r);
+    return wait({ momoReturn: r as any });
+  },
+  momoReturns: (status) => wait(state.returns.filter((r) => !status || r.status === status)),
+  receiveMomoReturn: (_eventId, returnId, received) => {
+    const r = state.returns.find((x) => x.id === returnId);
+    if (r) Object.assign(r, { status: 'received', receivedQuantities: received, receivedAt: new Date().toISOString(), receivedByName: 'You' });
+    return wait({ momoReturn: r });
+  },
   checkoutAsset: (_id, input) => { const a = { id: `a${Date.now()}`, eventId: fair.id, assetId: input.assetId, assetName: 'Chairs', quantity: input.quantity, returnedQty: 0, outAt: new Date().toISOString(), outBy: 'You' }; state.assets.push(a); return wait({ checkout: a as any }); },
   returnAsset: (_id, checkoutId, input) => { const a = state.assets.find((x) => x.id === checkoutId); if (a) a.returnedQty += input.quantity; return wait({ checkout: a }); },
   staffToday: () => wait({ date: PREVIEW_TODAY, staff: [

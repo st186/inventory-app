@@ -6,7 +6,8 @@ import { Card } from './ui/card';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { QuickAddInventoryItem } from './QuickAddInventoryItem';
 import { getTodayIST, addDays, formatDateIST } from '../utils/timezone';
-import { SENT_STATUSES, shippedAtIST, shippedPieces } from '../utils/requestStock';
+import { SENT_STATUSES, shippedAtIST, shippedPieces, toISTTimestamp } from '../utils/requestStock';
+import { eventsApi, type EventMomoReturn } from '../utils/eventsApi';
 
 type Props = {
   context: InventoryContextType;
@@ -42,6 +43,13 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
   const [selectedDate, setSelectedDate] = useState(getTodayIST());
   const [selectedProductionHouse, setSelectedProductionHouse] = useState<string | null>(null);
   const [productionRequests, setProductionRequests] = useState<api.ProductionRequest[]>([]);
+  // Leftover momos production has counted back in from event stalls (events.ts): back on its stock.
+  const [eventReturns, setEventReturns] = useState<EventMomoReturn[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    eventsApi.momoReturns('received').then((rows) => { if (!cancelled) setEventReturns(rows); }).catch(() => { /* none counted */ });
+    return () => { cancelled = true; };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [stockCounts, setStockCounts] = useState<Record<string, StockCount>>({});
   const [requestsFrom, setRequestsFrom] = useState<string | null>(null);
@@ -201,11 +209,18 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         return !fromCount || shippedAt >= count.date;
       });
 
+      // Counted back in on or before the selected day (and after the count it starts from).
+      const backInWindow = eventReturns.filter(r => {
+        const at = r.receivedAt ? toISTTimestamp(r.receivedAt) : null;
+        return r.productionHouseId === house.id && !!at && at.substring(0, 10) <= selectedDate && (!fromCount || at >= count.date);
+      });
+
       const stock = {} as Record<StockKey, ProductStock>;
       STOCK_KEYS.forEach(key => {
         const opening = fromCount ? count.items[key] || 0 : 0;
         const produced = productionInWindow.reduce((sum, prod) => sum + ((prod as any)[`${key}Momos`]?.final || 0), 0);
-        const sent = shippedInWindow.reduce((sum, req) => sum + shippedPieces(req, key), 0);
+        const sent = shippedInWindow.reduce((sum, req) => sum + shippedPieces(req, key), 0)
+          - backInWindow.reduce((sum, r) => sum + (Number((r.receivedQuantities as any)?.[key]) || 0), 0);
         const available = Math.max(0, opening + produced - sent);
         const total = opening + produced;
         stock[key] = { opening, produced, sent, available, percentage: total > 0 ? (available / total) * 100 : 0 };
@@ -251,7 +266,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     });
 
     return stocks;
-  }, [loading, context.productionData, context.stores, productionRequests, productionHouses, selectedDate, stockCounts]);
+  }, [loading, context.productionData, context.stores, productionRequests, productionHouses, selectedDate, stockCounts, eventReturns]);
 
   const filteredStocks = selectedProductionHouse
     ? productionHouseStocks.filter(s => s.productionHouseId === selectedProductionHouse)

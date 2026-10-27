@@ -63,6 +63,8 @@ export function EventDetail({ eventId, onBack, initialTab }: { eventId: string; 
           d.assetsOut?.length ? `${d.assetsOut.length} equipment item(s) not returned: ${d.assetsOut.map((a: any) => a.assetName).join(', ')}` : '',
           d.unsubmittedDays?.length ? `${d.unsubmittedDays.length} day close(s) not sent` : '',
           d.inTransit ? `${d.inTransit} delivery still on the way` : '',
+          d.momosLeft ? `${d.momosLeft} momos still at the stall - send them back or write them off (Stock, Leftover momos)` : '',
+          d.returnsOnTheWay ? `${d.returnsOnTheWay} leftover return(s) not yet counted in by production` : '',
         ].filter(Boolean).join('. ');
         const force = await confirm({ title: 'There are open items', body: `${lines}. Close anyway?`, confirmLabel: 'Close anyway', tone: 'danger' });
         if (!force) return;

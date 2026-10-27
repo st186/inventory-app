@@ -27,11 +27,13 @@
 //   event_transfer:{eventId}:{id}      items moved from the parent store (or back), at cost
 //   event_money:{eventId}:{id}         cash/digital moved in or out (float, handover, transfer out)
 //   event_asset:{eventId}:{id}         an asset checked out to the event, and its return
+//   event_momo_return:{eventId}:{id}   leftover momos sent back to the production house (confirmed
+//                                      there when they arrive) and momos wasted, with the reason
 //   event-settings                     momo cost per piece, online commission % (owner)
 // Nothing is ever deleted: an expense or money row can be voided (kept, marked voided).
 
 import {
-  EVENT_MOMO_KEYS, addDaysISO, assetsStillOut, canEnterForEvent, canManageEvent, canRunEventStock, canSeeEvent,
+  EVENT_MOMO_KEYS, addDaysISO, assetsStillOut, momosLeftAtStall, canEnterForEvent, canManageEvent, canRunEventStock, canSeeEvent,
   canSubmitEventDay, computeEventPnl, datesBetween, daySales, digitalAccountOf, eventCashInHand, eventCashLines,
   eventDays, eventDigitalBalance, eventDigitalLines, eventItemsOnHand, eventMomoStock, eventStatus, expectedEventCash,
   isAssigned, isEventIncharge, isISODate, storeCashMoves, storePaytmRollup, summarizeEvents,
@@ -84,16 +86,16 @@ export async function loadEvents(kv: Kv): Promise<any[]> {
   return ((await kv.getByPrefix<any>('event:')) || []).filter((e) => e?.id && isEventId(e.id));
 }
 
-type Bundle = { days: any[]; expenses: any[]; transfers: any[]; moves: any[]; assets: any[]; requests: any[]; topups: any[] };
+type Bundle = { days: any[]; expenses: any[]; transfers: any[]; moves: any[]; assets: any[]; requests: any[]; topups: any[]; returns: any[] };
 
 async function loadAllEventData(deps: EventsDeps): Promise<Bundle> {
-  const [days, expenses, transfers, moves, assets, requests, topups] = await Promise.all([
+  const [days, expenses, transfers, moves, assets, requests, topups, returns] = await Promise.all([
     deps.getAllByPrefix('event_day:'), deps.getAllByPrefix('event_expense:'), deps.getAllByPrefix('event_transfer:'),
     deps.getAllByPrefix('event_money:'), deps.getAllByPrefix('event_asset:'),
-    deps.getAllByPrefix('production_request_'), deps.getAllByPrefix('cash-topup:'),
+    deps.getAllByPrefix('production_request_'), deps.getAllByPrefix('cash-topup:'), deps.getAllByPrefix('event_momo_return:'),
   ]);
   return {
-    days: days || [], expenses: expenses || [], transfers: transfers || [], moves: moves || [], assets: assets || [],
+    days: days || [], expenses: expenses || [], transfers: transfers || [], moves: moves || [], assets: assets || [], returns: returns || [],
     requests: (requests || []).filter((r: any) => r?.eventId), topups: (topups || []).filter((t: any) => t?.reason === 'event_cash' && t?.eventId),
   };
 }
@@ -105,15 +107,17 @@ const forEvent = (b: Bundle, eventId: string): Bundle => ({
   assets: b.assets.filter((x) => x.eventId === eventId),
   requests: b.requests.filter((x) => x.eventId === eventId),
   topups: b.topups.filter((x) => x.eventId === eventId),
+  returns: b.returns.filter((x) => x.eventId === eventId),
 });
 async function loadOneEventData(deps: EventsDeps, eventId: string): Promise<Bundle> {
-  const [days, expenses, transfers, moves, assets, requests, topups] = await Promise.all([
+  const [days, expenses, transfers, moves, assets, requests, topups, returns] = await Promise.all([
     deps.kv.getByPrefix<any>(`event_day:${eventId}:`), deps.kv.getByPrefix<any>(`event_expense:${eventId}:`),
     deps.kv.getByPrefix<any>(`event_transfer:${eventId}:`), deps.kv.getByPrefix<any>(`event_money:${eventId}:`),
     deps.kv.getByPrefix<any>(`event_asset:${eventId}:`), deps.getAllByPrefix('production_request_'), deps.getAllByPrefix('cash-topup:'),
+    deps.kv.getByPrefix<any>(`event_momo_return:${eventId}:`),
   ]);
   return {
-    days: days || [], expenses: expenses || [], transfers: transfers || [], moves: moves || [], assets: assets || [],
+    days: days || [], expenses: expenses || [], transfers: transfers || [], moves: moves || [], assets: assets || [], returns: returns || [],
     requests: (requests || []).filter((r: any) => r?.eventId === eventId),
     topups: (topups || []).filter((t: any) => t?.reason === 'event_cash' && t?.eventId === eventId),
   };
@@ -137,7 +141,7 @@ export async function loadEventSettings(kv: Kv): Promise<EventCostSettings & { p
 function pnlFor(ev: any, data: Bundle, settings: EventCostSettings, today: string, from?: string, to?: string) {
   return computeEventPnl({
     event: ev, days: data.days, expenses: data.expenses, moves: data.moves, topups: data.topups,
-    requests: data.requests, transfers: data.transfers,
+    requests: data.requests, transfers: data.transfers, returns: data.returns,
     // The event's own momo cost overrides (if the cluster head set any) win over the business ones.
     settings: { ...settings, momoCostPerPiece: { ...(settings.momoCostPerPiece || {}), ...(ev.momoCostPerPiece || {}) } },
     today, from, to,
@@ -379,6 +383,13 @@ export function registerEventsRoutes(app: any, deps: EventsDeps) {
     isIncharge: isEventIncharge(ev, a.employeeId),
     isAssigned: isAssigned(ev, a.employeeId),
   });
+  // A production incharge of this house (one with no houses listed is treated as covering all,
+  // as the production queue does for older records).
+  const producesFor = (a: Actor, houseId: string | null | undefined) => {
+    if (a.designation !== 'production_incharge' || !houseId) return false;
+    const houses: string[] = Array.isArray(a.emp?.assignedProductionHouseIds) ? a.emp.assignedProductionHouseIds.map(String) : [];
+    return houses.length === 0 || houses.includes(String(houseId));
+  };
   const employeesById = async () => new Map(((await kv.getByPrefix<any>('unified-employee:')) || []).filter((e) => e?.employeeId).map((e) => [String(e.employeeId), e]));
   const notifyPeople = async (people: any[], type: string, title: string, message: string, relatedId?: string, date?: string) => {
     const seen = new Set<string>();
@@ -517,6 +528,28 @@ export function registerEventsRoutes(app: any, deps: EventsDeps) {
     } catch (err) { return fail(c, err, 'work out the event totals'); }
   });
 
+  // Leftover momos coming back from events, for the production side to confirm (and everyone
+  // who manages events). ?status=sent|received, ?productionHouseId=.
+  app.get(`${P}/events/momo-returns`, async (c: any) => {
+    const r = await actorOf(c);
+    if (r.error) return r.error;
+    const a = r.actor!;
+    const isProduction = a.designation === 'production_incharge';
+    if (!(canRunEventStock(a) || a.role === 'audit' || isProduction)) return c.json({ returns: [] });
+    try {
+      const status = c.req.query('status');
+      const house = c.req.query('productionHouseId');
+      const [rows, events] = await Promise.all([deps.getAllByPrefix('event_momo_return:'), loadEvents(kv)]);
+      const names = new Map(events.map((e) => [e.id, e.name]));
+      const list = (rows || [])
+        .filter((x: any) => x && !x.voided && x.status !== 'wasted_only' && (!status || x.status === status) && (!house || x.productionHouseId === house))
+        .filter((x: any) => !isProduction || canRunEventStock(a) || producesFor(a, x.productionHouseId))
+        .map((x: any) => ({ ...x, eventName: names.get(x.eventId) || x.eventName || 'Event' }))
+        .sort((x: any, y: any) => String(y.createdAt || '').localeCompare(String(x.createdAt || '')));
+      return c.json({ returns: list });
+    } catch (err) { return fail(c, err, 'load the momo returns'); }
+  });
+
   app.get(`${P}/events/settings`, async (c: any) => {
     const r = await actorOf(c);
     if (r.error) return r.error;
@@ -604,14 +637,16 @@ export function registerEventsRoutes(app: any, deps: EventsDeps) {
     const today = deps.getTodayIST();
     if (eventStatus(ev, today) === 'closed') return c.json({ event: { ...ev, status: 'closed' } });
     const body = await c.req.json().catch(() => ({}));
-    const data = await loadOneEventData(deps, ev.id);
+    const [data, settings] = await Promise.all([loadOneEventData(deps, ev.id), loadEventSettings(kv)]);
     const out = assetsStillOut(data.assets);
     const unsubmitted = eventDays(ev).filter((d) => d <= today && !data.days.find((x) => x.date === d && x.submitted));
     const inTransit = data.requests.filter((q) => q.status === 'shipped' || q.status === 'partially-shipped').length;
-    if (!body?.force && (out.length || unsubmitted.length || inTransit)) {
-      return c.json({ error: 'There are open items', code: 'EVENT_OPEN_ITEMS', assetsOut: out.map((x) => ({ id: x.id, assetName: x.assetName, left: x.quantity - (x.returnedQty || 0) })), unsubmittedDays: unsubmitted, inTransit }, 409);
+    // Momos still at the stall: send them back to production or write them off first.
+    const momosLeft = momosLeftAtStall(eventMomoStock(data.requests, data.days, settings.piecesPerPlate, data.returns));
+    const returnsOnTheWay = data.returns.filter((r) => r.status === 'sent').length;
+    if (!body?.force && (out.length || unsubmitted.length || inTransit || momosLeft || returnsOnTheWay)) {
+      return c.json({ error: 'There are open items', code: 'EVENT_OPEN_ITEMS', assetsOut: out.map((x) => ({ id: x.id, assetName: x.assetName, left: x.quantity - (x.returnedQty || 0) })), unsubmittedDays: unsubmitted, inTransit, momosLeft, returnsOnTheWay }, 409);
     }
-    const settings = await loadEventSettings(kv);
     const closed = { ...ev, status: 'closed', closedAt: new Date().toISOString(), closedBy: a.name };
     // The final P&L is kept on the record as it stood at closing.
     closed.finalPnl = pnlFor(closed, data, settings, today);
@@ -671,9 +706,10 @@ export function registerEventsRoutes(app: any, deps: EventsDeps) {
         assets: data.assets.sort((x, y) => (y.outAt || '').localeCompare(x.outAt || '')),
         requests: data.requests.sort((x, y) => String(y.requestDate || '').localeCompare(String(x.requestDate || ''))),
         topups: data.topups.sort((x, y) => String(y.requestDate || '').localeCompare(String(x.requestDate || ''))),
+        returns: data.returns.sort((x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || ''))),
         cash: { inHand: eventCashInHand(m, today), lines: eventCashLines(m) },
         digital: { account: digitalAccountOf(ev), balance: eventDigitalBalance(m, today), lines: eventDigitalLines(m) },
-        stock: { momos: eventMomoStock(data.requests, data.days, settings.piecesPerPlate), items: eventItemsOnHand(data.transfers) },
+        stock: { momos: eventMomoStock(data.requests, data.days, settings.piecesPerPlate, data.returns), items: eventItemsOnHand(data.transfers) },
         staff,
         pnl,
         settings,
@@ -1066,6 +1102,118 @@ export function registerEventsRoutes(app: any, deps: EventsDeps) {
       }
       return c.json({ checkout: next });
     } catch (err) { return fail(c, err, 'record the return'); }
+  });
+
+  // Leftover momos: pieces sent back to the production house and pieces wasted (with a reason).
+  // At the end of the event, or any day for a partial return. Both come off the stall's stock at
+  // once; production confirms the returned pieces when they arrive, which puts them back on its
+  // stock. Wasted pieces show as wastage in the event P&L.
+  app.post(`${P}/events/:id/momo-returns`, async (c: any) => {
+    const r = await actorOf(c);
+    if (r.error) return r.error;
+    const a = r.actor!;
+    const e = await eventFor(c, a);
+    if (e.error) return e.error;
+    const ev = e.ev;
+    const today = deps.getTodayIST();
+    if (eventStatus(ev, today) === 'closed') return closedError(c);
+    if (!(canRunEventStock(a) || (isEventIncharge(ev, a.employeeId) && canEnterForEvent(a, ev, today)))) {
+      return c.json({ error: 'Only the event incharge or a manager can record leftover momos' }, 403);
+    }
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const id = safeId(body.clientEntryId) || newId();
+      const key = `event_momo_return:${ev.id}:${id}`;
+      const existing = await kv.get<any>(key);
+      if (existing) return c.json({ momoReturn: existing, replay: true });
+      const [data, settings] = await Promise.all([loadOneEventData(deps, ev.id), loadEventSettings(kv)]);
+      const stock = eventMomoStock(data.requests, data.days, settings.piecesPerPlate, data.returns);
+      const returned: Record<string, number> = {};
+      const wasted: Record<string, number> = {};
+      let back = 0;
+      let lost = 0;
+      for (const k of EVENT_MOMO_KEYS) {
+        const rb = Math.round(Number(body?.returned?.[k]) || 0);
+        const wb = Math.round(Number(body?.wasted?.[k]) || 0);
+        if (rb < 0 || wb < 0) return c.json({ error: 'Check the counts' }, 400);
+        if (rb + wb > (stock[k]?.left || 0)) return c.json({ error: `Only ${stock[k]?.left || 0} ${k} pieces are at the stall`, code: 'MORE_THAN_LEFT' }, 400);
+        if (rb) { returned[k] = rb; back += rb; }
+        if (wb) { wasted[k] = wb; lost += wb; }
+      }
+      if (!back && !lost) return c.json({ error: 'Enter the pieces going back or wasted' }, 400);
+      const wasteReason = text(body.wasteReason, 40);
+      if (lost && !wasteReason) return c.json({ error: 'Say why the momos were wasted' }, 400);
+      if (back && !ev.productionHouseId) return c.json({ error: 'This event has no production house to send momos back to' }, 400);
+      const date = isISODate(body.date) ? body.date : today;
+      if (date > today) return c.json({ error: 'That day has not come yet' }, 400);
+      const row = {
+        id, eventId: ev.id, eventName: ev.name, productionHouseId: ev.productionHouseId || null, date,
+        returned, wasted, wasteReason: lost ? wasteReason : null, note: text(body.note, 300),
+        returnedPieces: back, wastedPieces: lost,
+        // 'sent' until production counts the pieces back in; only wasted pieces need no one else.
+        status: back ? 'sent' : 'wasted_only',
+        createdBy: a.employeeId || a.userId, createdByName: a.name, createdAt: new Date().toISOString(),
+      };
+      await kv.set(key, row);
+      if (back) {
+        await deps.afterResponse('Momo return notifications', async () => {
+          const all = (await kv.getByPrefix<any>('unified-employee:')) || [];
+          const production = all.filter((p) => p.designation === 'production_incharge' && p.status !== 'inactive' &&
+            (!(p.assignedProductionHouseIds || []).length || (p.assignedProductionHouseIds || []).includes(ev.productionHouseId)));
+          await notifyPeople(production, 'event_momo_return', 'Momos coming back from an event',
+            `${ev.name} is sending back ${back} momos. Count them in when they arrive.`, ev.id, date);
+        });
+      }
+      return c.json({ momoReturn: row });
+    } catch (err) { return fail(c, err, 'record the leftover momos'); }
+  });
+
+  // Production counts the returned momos in: they go back on the production house's stock.
+  app.post(`${P}/events/:id/momo-returns/:returnId/receive`, async (c: any) => {
+    const r = await actorOf(c);
+    if (r.error) return r.error;
+    const a = r.actor!;
+    const id = c.req.param('id');
+    if (!id || !isEventId(id)) return c.json({ error: 'Event not found' }, 404);
+    const ev = await kv.get<any>(`event:${id}`);
+    if (!ev) return c.json({ error: 'Event not found' }, 404);
+    try {
+      const key = `event_momo_return:${ev.id}:${c.req.param('returnId')}`;
+      const row = await kv.get<any>(key);
+      if (!row) return c.json({ error: 'Not found' }, 404);
+      if (!(canRunEventStock(a) || producesFor(a, row.productionHouseId))) return c.json({ error: 'Only the production house it went to can count it in' }, 403);
+      if (row.status !== 'sent') return c.json({ error: 'This return has already been counted in' }, 409);
+      const body = await c.req.json().catch(() => ({}));
+      const received: Record<string, number> = {};
+      for (const k of EVENT_MOMO_KEYS) {
+        const sent = Number(row.returned?.[k]) || 0;
+        if (!sent) continue;
+        const got = body?.received?.[k] === undefined ? sent : Math.round(Number(body.received[k]) || 0);
+        if (got < 0 || got > sent) return c.json({ error: `Between 0 and ${sent} ${k} pieces` }, 400);
+        received[k] = got;
+      }
+      const now = new Date().toISOString();
+      const next = {
+        ...row, status: 'received', receivedQuantities: received, receivedAt: now,
+        receivedBy: a.employeeId || a.userId, receivedByName: a.name, receiveNote: text(body.note, 300),
+      };
+      await kv.set(key, next);
+      // Back on the production house's own stock count (the same one a delivery takes them off).
+      const houseKey = `production_house_${row.productionHouseId}`;
+      const house = await kv.get<any>(houseKey);
+      if (house) {
+        const inventory = { ...(house.inventory || {}) };
+        for (const [k, n] of Object.entries(received)) inventory[k] = (Number(inventory[k]) || 0) + n;
+        await kv.set(houseKey, { ...house, inventory, updatedAt: now });
+      }
+      await deps.afterResponse('Momo return received notification', async () => {
+        const byId = await employeesById();
+        const short = Object.entries(row.returned || {}).reduce((s, [k, n]) => s + Math.max(0, Number(n) - (received[k] || 0)), 0);
+        await notifyPeople([byId.get(ev.inchargeId)], 'event_momo_return_received', 'Production got the momos back',
+          `${a.name} counted in the momos from ${ev.name}${short ? ` - ${short} short` : ', all correct'}.`, ev.id, row.date);
+      });
+      return c.json({ momoReturn: next });
+    } catch (err) { return fail(c, err, 'count in the momos'); }
   });
 
   // Who is working today: assigned people, their check-in (shift clock) and photo checks.

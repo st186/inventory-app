@@ -102,6 +102,16 @@ export interface EventTopup {
   requestedByName?: string; requestDate?: string; fundingSource?: 'store_paytm' | 'production_cash'; approvedBy?: string | null;
   rejectedBy?: string | null; rejectionReason?: string | null;
 }
+// Leftover momos sent back to the production house ('sent' until production counts them in) and
+// pieces wasted. Only wasted pieces: 'wasted_only'.
+export interface EventMomoReturn {
+  id: string; eventId: string; eventName?: string; productionHouseId: string | null; date: string;
+  returned: Partial<Record<EventMomoKey, number>>; wasted: Partial<Record<EventMomoKey, number>>;
+  returnedPieces: number; wastedPieces: number; wasteReason: string | null; note?: string;
+  status: 'sent' | 'received' | 'wasted_only';
+  receivedQuantities?: Partial<Record<EventMomoKey, number>>; receivedAt?: string; receivedByName?: string;
+  createdByName?: string; createdAt?: string;
+}
 export interface EventPermissions {
   canManage: boolean; canRunStock: boolean; canEnter: boolean; canSubmitDay: boolean; canMoveMoney: boolean; isIncharge: boolean; isAssigned: boolean;
 }
@@ -122,10 +132,11 @@ export interface EventBundle {
   assets: EventAssetCheckout[];
   requests: EventStockRequest[];
   topups: EventTopup[];
+  returns: EventMomoReturn[];
   cash: { inHand: number; lines: CashLine[] };
   digital: { account: DigitalAccount; balance: number; lines: CashLine[] };
   stock: {
-    momos: Record<EventMomoKey, { received: number; inTransit: number; sold: number; wasted: number; left: number }>;
+    momos: Record<EventMomoKey, { received: number; inTransit: number; sold: number; returned: number; wasted: number; left: number }>;
     items: { itemName: string; unit: string; quantity: number; value: number }[];
   };
   staff: EventStaffMember[];
@@ -189,6 +200,12 @@ export const eventsApi = {
     call<{ transfer: EventTransfer }>(`/events/${enc(id)}/transfers`, 'POST', input, input.clientEntryId),
   addMoney: (id: string, input: { account: 'cash' | 'digital'; direction: 'in' | 'out'; counterparty: EventMoneyMove['counterparty']; amount: number; date: string; note?: string; clientEntryId?: string }) =>
     call<{ move: EventMoneyMove }>(`/events/${enc(id)}/money`, 'POST', input, input.clientEntryId),
+  returnMomos: (id: string, input: { returned: Partial<Record<EventMomoKey, number>>; wasted: Partial<Record<EventMomoKey, number>>; wasteReason?: string; note?: string; date?: string; clientEntryId?: string }) =>
+    call<{ momoReturn: EventMomoReturn }>(`/events/${enc(id)}/momo-returns`, 'POST', input, input.clientEntryId),
+  // The production side: returns waiting to be counted in (status 'sent'), or all.
+  momoReturns: (status?: 'sent' | 'received') => call<{ returns: EventMomoReturn[] }>(`/events/momo-returns${status ? `?status=${status}` : ''}`).then((r) => r.returns || []),
+  receiveMomoReturn: (eventId: string, returnId: string, received: Partial<Record<EventMomoKey, number>>, note?: string) =>
+    call<{ momoReturn: EventMomoReturn }>(`/events/${enc(eventId)}/momo-returns/${enc(returnId)}/receive`, 'POST', { received, note }),
   checkoutAsset: (id: string, input: { assetId: string; quantity: number; note?: string }) => call<{ checkout: EventAssetCheckout }>(`/events/${enc(id)}/assets`, 'POST', input),
   returnAsset: (id: string, checkoutId: string, input: { quantity: number; condition: string; note?: string }) =>
     call<{ checkout: EventAssetCheckout }>(`/events/${enc(id)}/assets/${enc(checkoutId)}/return`, 'POST', input),

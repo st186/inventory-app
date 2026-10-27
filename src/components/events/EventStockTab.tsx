@@ -1,7 +1,7 @@
 // Stock at the stall: momos from the production house (requested like a store's, shipped by
 // production, counted in here), items moved from the parent store (or back), and what's left.
 import * as React from 'react';
-import { ArrowLeftRight, PackageCheck, Plus, Store, Trash2, Truck } from 'lucide-react';
+import { ArrowLeftRight, CheckCircle2, PackageCheck, Plus, Store, Trash2, Truck, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ListGroup, ListRow } from '../ui/list-row';
 import { StatusChip } from '../ui/status-chip';
@@ -22,6 +22,7 @@ import type { EventBundle, EventStockRequest } from '../../utils/eventsApi';
 import { addDaysISO, receivedRequestPieces, shippedRequestPieces, requestPieces, type EventMomoKey } from '../../utils/eventRules';
 import { currentAccessToken } from '../../utils/accessToken';
 import { MOMO_KEYS, momoLabel, shortDate, useEventsApi } from './eventsShared';
+import { EventLeftoverSheet } from './EventLeftoverSheet';
 
 const ReceiveDeliveryDialog = React.lazy(() => import('../dispatch/ReceiveDeliveryDialog').then((m) => ({ default: m.ReceiveDeliveryDialog })));
 
@@ -41,6 +42,7 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
   const canRequest = ev.status !== 'closed' && (p.canRunStock || (p.isIncharge && p.canEnter));
   const [requestOpen, setRequestOpen] = React.useState(false);
   const [moveOpen, setMoveOpen] = React.useState(false);
+  const [leftoverOpen, setLeftoverOpen] = React.useState(false);
   const [receiving, setReceiving] = React.useState<EventStockRequest | null>(null);
   const [token, setToken] = React.useState('');
   const products = MOMO_KEYS.map((k) => ({ camelKey: k, label: momoLabel(k, 'en') }));
@@ -60,9 +62,12 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
     <div className="flex flex-col gap-5" lang={lang}>
       {canRequest && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Button size="lg" variant={incoming ? 'secondary' : 'primary'} leadingIcon={<Plus />} onClick={() => setRequestOpen(true)}>{t('event.requestMomos')}</Button>
+          <Button size="lg" variant={incoming || (bundle.today >= ev.endDate && totalLeft > 0) ? 'secondary' : 'primary'} leadingIcon={<Plus />} onClick={() => setRequestOpen(true)}>{t('event.requestMomos')}</Button>
           <Button size="lg" variant="secondary" leadingIcon={<Store />} onClick={() => setMoveOpen(true)}>Move items from the store</Button>
         </div>
+      )}
+      {canRequest && totalLeft > 0 && (
+        <Button size="lg" variant={!incoming && bundle.today >= ev.endDate ? 'primary' : 'secondary'} leadingIcon={<Undo2 />} onClick={() => setLeftoverOpen(true)}>{t('event.leftover')}</Button>
       )}
 
       <ListGroup title={t('event.left')} meta={<span className="num text-label text-text-2">{totalLeft.toLocaleString('en-IN')} {t('event.pieces')}</span>}>
@@ -71,8 +76,8 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
             key={k}
             density="compact"
             title={momoLabel(k, lang)}
-            subtitle={`${t('event.received')} ${momos[k].received} · ${t('event.sold')} ${momos[k].sold}${momos[k].inTransit ? ` · ${momos[k].inTransit} on the way` : ''}`}
-            trailing={momos[k].sold + momos[k].wasted > momos[k].received
+            subtitle={`${t('event.received')} ${momos[k].received} · ${t('event.sold')} ${momos[k].sold}${momos[k].returned ? ` · ${t('event.backToProduction')} ${momos[k].returned}` : ''}${momos[k].wasted ? ` · ${t('event.wastedPieces')} ${momos[k].wasted}` : ''}${momos[k].inTransit ? ` · ${momos[k].inTransit} on the way` : ''}`}
+            trailing={momos[k].sold + momos[k].returned + momos[k].wasted > momos[k].received
               ? <StatusChip tone="warning" size="sm">Check counts</StatusChip>
               : <span className="num text-body-md font-semibold">{momos[k].left}</span>}
           />
@@ -100,6 +105,21 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
         })}
       </ListGroup>
 
+      {bundle.returns.length > 0 && (
+        <ListGroup title={t('event.leftover')}>
+          {bundle.returns.map((r) => (
+            <ListRow
+              key={r.id}
+              icon={r.status === 'received' ? CheckCircle2 : Undo2}
+              iconTone={r.status === 'received' ? 'success' : r.status === 'sent' ? 'info' : 'neutral'}
+              title={`${shortDate(r.date, lang)} · ${[r.returnedPieces ? `${t('event.backToProduction')} ${r.returnedPieces}` : '', r.wastedPieces ? `${t('event.wastedPieces')} ${r.wastedPieces}` : ''].filter(Boolean).join(' · ')}`}
+              subtitle={[r.wasteReason, r.status === 'received' ? `${t('event.returnReceived')}${r.receivedByName ? ` (${r.receivedByName})` : ''}` : r.status === 'sent' ? t('event.returnOnTheWay') : null, r.createdByName].filter(Boolean).join(' · ')}
+              trailing={r.status === 'sent' ? <StatusChip status="request.onTheWay" size="sm" /> : r.status === 'received' ? <StatusChip status="request.received" size="sm" /> : undefined}
+            />
+          ))}
+        </ListGroup>
+      )}
+
       <ListGroup title="Items from the store" meta={<span className="num text-label text-text-2">{`₹${bundle.stock.items.reduce((s, i) => s + i.value, 0).toLocaleString('en-IN')}`}</span>}>
         {bundle.stock.items.length === 0 && <ListRow density="compact" title={t('event.nothingYet')} subtitle="Sauces, packaging and supplies taken from the store" />}
         {bundle.stock.items.map((i) => (
@@ -123,6 +143,7 @@ export function EventStockTab({ bundle, onChanged }: { bundle: EventBundle; onCh
 
       <RequestMomosSheet open={requestOpen} onOpenChange={setRequestOpen} bundle={bundle} onDone={onChanged} />
       <MoveItemsSheet open={moveOpen} onOpenChange={setMoveOpen} bundle={bundle} onDone={onChanged} />
+      <EventLeftoverSheet open={leftoverOpen} onOpenChange={setLeftoverOpen} bundle={bundle} onDone={onChanged} />
       {receiving && (
         <React.Suspense fallback={null}>
           <ReceiveDeliveryDialog

@@ -1,7 +1,7 @@
 // Overview: the event's P&L so far (server-computed), a day-by-day chart, the stall's cash and
 // digital account, and what still needs doing.
 import * as React from 'react';
-import { AlertTriangle, Banknote, Boxes, Package, Receipt, Smartphone, Store, Truck } from 'lucide-react';
+import { AlertTriangle, Banknote, Boxes, Package, Receipt, Smartphone, Store, Trash2, Truck, Undo2 } from 'lucide-react';
 import { StatGrid, StatSplit, StatTile } from '../ui/stat-tile';
 import { Money, formatCompactINR } from '../ui/money';
 import { ListGroup, ListRow } from '../ui/list-row';
@@ -29,6 +29,9 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
   const out = assetsStillOut(bundle.assets);
   const inTransit = bundle.requests.filter((r) => r.status === 'shipped' || r.status === 'partially-shipped').length;
   const pendingTopups = bundle.topups.filter((x) => x.status === 'pending').length;
+  const momosLeft = Object.values(bundle.stock.momos).reduce((s, l) => s + (l?.left || 0), 0);
+  const returnsOnTheWay = bundle.returns.filter((r) => r.status === 'sent').length;
+  const showLeft = (ev.status === 'ended' || ev.status === 'closed' || bundle.today >= ev.endDate) && momosLeft > 0;
   // Days so far (all of them once the event is over).
   const chartData = pnl.days.filter((d) => ev.status !== 'live' || d.date <= bundle.today).map((d) => ({ label: shortDate(d.date, lang), Sales: d.sales, Costs: d.costs, Profit: d.cumulativeProfit }));
   const separate = bundle.digitalAccount.mode === 'separate';
@@ -36,9 +39,9 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
   return (
     <div className="flex flex-col gap-5">
       {pnl.warnings.map((w) => <Callout key={w} tone="warning" title={w} />)}
-      {(ev.status === 'ended' && (out.length > 0 || inTransit > 0)) && (
+      {(ev.status === 'ended' && (out.length > 0 || inTransit > 0 || momosLeft > 0)) && (
         <Callout tone="warning" title="Before closing">
-          {[out.length ? `${out.length} equipment item${out.length === 1 ? '' : 's'} still out` : '', inTransit ? `${inTransit} delivery still on the way` : ''].filter(Boolean).join(' · ')}
+          {[out.length ? `${out.length} equipment item${out.length === 1 ? '' : 's'} still out` : '', inTransit ? `${inTransit} delivery still on the way` : '', momosLeft ? `${momosLeft} momos still at the stall` : ''].filter(Boolean).join(' · ')}
         </Callout>
       )}
 
@@ -98,6 +101,9 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
 
       <ListGroup title="Where the money went">
         <ListRow density="compact" icon={Package} title="Momos from production" subtitle={Object.entries(pnl.momoByType).map(([k, v]) => `${momoLabel(k as any, lang)} ${v?.pieces}`).join(' · ') || 'None sent yet'} amount={pnl.momoCost} />
+        {(pnl.wastage > 0 || pnl.returnedPieces > 0) && (
+          <ListRow density="compact" icon={Trash2} title={t('event.wastedPieces')} subtitle={`${pnl.wastagePieces} ${t('event.pieces')} wasted · ${pnl.returnedPieces} back to production (off the momo cost)`} amount={pnl.wastage} />
+        )}
         <ListRow density="compact" icon={Store} title="Items from the store" subtitle="Sauces, packaging, supplies at cost" amount={pnl.itemsCost} />
         {Object.entries(pnl.expensesByCategory).map(([k, v]) => (
           <ListRow key={k} density="compact" icon={Receipt} title={CATEGORY_LABEL[k] || k} amount={v} />
@@ -107,8 +113,10 @@ export function EventOverviewTab({ bundle }: { bundle: EventBundle }) {
         <ListRow density="compact" title="Total costs" trailing={<Money value={pnl.costs} className="text-body-md font-semibold" />} />
       </ListGroup>
 
-      {(out.length > 0 || inTransit > 0 || pendingTopups > 0) && (
+      {(out.length > 0 || inTransit > 0 || pendingTopups > 0 || showLeft || returnsOnTheWay > 0) && (
         <ListGroup title="Open items">
+          {showLeft && <ListRow density="compact" icon={Undo2} title={t('event.atStallNow', { n: momosLeft })} subtitle={t('event.leftoverHint')} />}
+          {returnsOnTheWay > 0 && <ListRow density="compact" icon={Undo2} title={t('event.returnOnTheWay')} subtitle="Waiting for production to count them in" />}
           {out.length > 0 && <ListRow density="compact" icon={Boxes} title={`${out.length} equipment item${out.length === 1 ? '' : 's'} at the event`} subtitle={out.map((a) => a.assetName).join(', ')} />}
           {inTransit > 0 && <ListRow density="compact" icon={Truck} title={t('event.incoming', { n: inTransit })} />}
           {pendingTopups > 0 && <ListRow density="compact" icon={Banknote} title={`${pendingTopups} cash request${pendingTopups === 1 ? '' : 's'} waiting`} />}
