@@ -2,65 +2,99 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { getTodayIST } from '../../utils/timezone';
 import { useForegroundInterval } from '../../utils/appVisibility';
-import { getMyChecks, type MyChecks } from './workplaceApi';
-import { bnBy, bnDigits, fmt12, liveStatus, nowMinutesIST, toMin } from './workplaceUtils';
+import { useT } from '../../utils/i18n';
+import { Callout } from '../ui/callout';
+import { Button } from '../ui/button';
+import { useHomeData } from '../home/homeData';
+import type { MyChecks } from './workplaceApi';
+import { fmt12, liveStatus, nowMinutesIST, toMin } from './workplaceUtils';
 
-// How long before a window opens the home screen starts reminding.
+// How long before a window opens Home starts reminding.
 const SHOW_BEFORE_MINUTES = 60;
 
-// Home screen card while someone's workplace photos are due (from an hour before the window until
-// they're all sent or the day ends): "Photos due by 4 PM · ৪টের মধ্যে ছবি দিন".
-export function WorkplaceDueCard({ onOpen }: { onOpen: () => void }) {
+export type WorkplaceDue = {
+  /** Today's photo spots for this person (0 = no checks today: no checklist row). */
+  total: number;
+  sent: number;
+  /** Spots still to photograph whose window is open or about to (an hour before). */
+  pending: number;
+  late: boolean;
+  /** Overall state for the checklist row. */
+  status: 'due' | 'late' | 'done' | 'later' | null;
+  /** Window of the next spot to photograph ("15:00", "16:00"), or of the last one when all are sent. */
+  from: string;
+  to: string;
+  loaded: boolean;
+};
+
+/**
+ * Today's workplace photos for the signed-in person (GET /workplace/my), re-read every ten minutes
+ * and re-judged every minute while the app is in front - the same rules the old Home card used.
+ */
+export function useWorkplaceDue(): WorkplaceDue {
+  const homeData = useHomeData();
   const [data, setData] = useState<MyChecks | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [, setTick] = useState(0);
   const mountedRef = useRef(true);
 
   const load = useCallback(() => {
-    getMyChecks().then((d) => { if (mountedRef.current) setData(d); }).catch(() => { /* offline or older server: no card */ });
-  }, []);
+    homeData.getMyChecks()
+      .then((d) => { if (mountedRef.current) setData(d); })
+      .catch(() => { /* offline or older server: no row */ })
+      .finally(() => { if (mountedRef.current) setLoaded(true); });
+  }, [homeData]);
   useEffect(() => {
     mountedRef.current = true;
     load();
     return () => { mountedRef.current = false; };
   }, [load]);
-  // Re-check now and then so the card appears as the window nears, and the clock moves statuses -
-  // only while the app is in front (both catch up straight away when it comes back).
   useForegroundInterval(load, 10 * 60000);
   useForegroundInterval(() => setTick((n) => n + 1), 60000, { resumeAfterMs: 0 });
 
-  if (!data?.items.length) return null;
+  const empty: WorkplaceDue = { total: 0, sent: 0, pending: 0, late: false, status: null, from: '', to: '', loaded };
   const today = getTodayIST();
-  if (data.date !== today) return null;
+  if (!data?.items.length || data.date !== today) return empty;
   const nowMin = nowMinutesIST();
-  const pending = data.items
-    .filter((i) => !i.hasPhoto && i.start && nowMin >= toMin(i.start) - SHOW_BEFORE_MINUTES)
+  const items = data.items.filter((i) => i.start);
+  const sent = items.filter((i) => i.hasPhoto).length;
+  const open = items
+    .filter((i) => !i.hasPhoto)
     .map((i) => ({ ...i, status: liveStatus(today, today, nowMin, i.start, i.end, false) }))
     .sort((a, b) => a.end.localeCompare(b.end));
-  if (!pending.length) return null;
-  const late = pending.filter((i) => i.status === 'late');
-  const end = (late[0] || pending[0]).end;
-  const count = pending.length;
+  const pending = open.filter((i) => nowMin >= toMin(i.start) - SHOW_BEFORE_MINUTES);
+  const late = pending.filter((i) => i.status === 'late' || i.status === 'missed');
+  if (!open.length) {
+    const last = [...items].sort((a, b) => a.end.localeCompare(b.end)).pop();
+    return { total: items.length, sent, pending: 0, late: false, status: 'done', from: last?.start || '', to: last?.end || '', loaded };
+  }
+  const next = late[0] || pending[0] || open[0];
+  return {
+    total: items.length,
+    sent,
+    pending: pending.length,
+    late: late.length > 0,
+    status: late.length ? 'late' : pending.length ? 'due' : 'later',
+    from: next.start,
+    to: next.end,
+    loaded,
+  };
+}
 
+// The old Home card ("Photos due by 4 PM"), now a callout. Home itself shows a checklist row
+// built from useWorkplaceDue instead; this stays for any screen that wants the reminder.
+export function WorkplaceDueCard({ onOpen }: { onOpen: () => void }) {
+  const { t } = useT();
+  const due = useWorkplaceDue();
+  if (due.status !== 'due' && due.status !== 'late') return null;
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-      <div className={`rounded-2xl border-2 p-4 shadow-sm ${late.length ? 'border-red-300 bg-red-50' : 'border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50'}`} role="alert">
-        <div className="flex items-start gap-3">
-          <div className={`w-10 h-10 rounded-xl text-white flex items-center justify-center flex-shrink-0 ${late.length ? 'bg-red-600' : 'bg-orange-500'}`}><Camera className="w-5 h-5" /></div>
-          <div className="flex-1 min-w-0">
-            {late.length ? (
-              <p className="font-bold text-gray-900">Photos were due by {fmt12(end)} · {bnBy(end)} ছবি দেওয়ার কথা ছিল</p>
-            ) : (
-              <p className="font-bold text-gray-900">Photos due by {fmt12(end)} · {bnBy(end)} ছবি দিন</p>
-            )}
-            <p className="text-sm text-gray-700 mt-0.5">
-              {count} workplace photo{count === 1 ? '' : 's'} to send · {bnDigits(String(count))}টা ছবি বাকি
-            </p>
-            <button type="button" onClick={onOpen} className={`mt-3 px-4 py-2.5 rounded-xl text-white text-sm font-semibold ${late.length ? 'bg-red-600' : 'bg-orange-600'}`}>
-              Take photos · ছবি তুলুন
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Callout
+      tone={due.late ? 'danger' : 'warning'}
+      icon={Camera}
+      title={due.late ? t('workplace.wereDue', { time: fmt12(due.to) }) : t('workplace.dueBy', { time: fmt12(due.to) })}
+      action={<Button variant="secondary" size="sm" leadingIcon={<Camera />} onClick={onOpen}>{t('workplace.take')}</Button>}
+    >
+      {t('workplace.left', { n: due.pending })}
+    </Callout>
   );
 }
