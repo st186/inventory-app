@@ -1,24 +1,42 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Clock, Loader2, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { AlertTriangle, Camera, CheckCircle2, Clock, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
+import { toast } from '../ui/sonner';
+import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
+import { EmptyState } from '../ui/empty-state';
+import { Field } from '../ui/field';
+import { FilterChips } from '../ui/chip';
+import { IconButton } from '../ui/icon-button';
+import { Input } from '../ui/input';
+import { ListGroup, ListRow } from '../ui/list-row';
+import { ResponsiveModal } from '../ui/responsive-modal';
+import { NativeSelect } from '../ui/select';
+import { SkeletonListRows } from '../ui/skeleton';
+import { StatTile } from '../ui/stat-tile';
+import { StatusChip } from '../ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { Textarea } from '../ui/textarea';
+import { cn } from '../ui/utils';
+import { useT } from '../../utils/i18n';
 import { addDays, getTodayIST } from '../../utils/timezone';
-import {
-  getReview, getSummary, rescorePhoto, setFlag, uploadPhoto,
-  type ReviewItem, type SummaryResponse, type WorkplaceLocation,
-} from './workplaceApi';
+import type { ReviewItem, SummaryResponse, WorkplaceLocation } from './workplaceApi';
 import { AuthedPhoto } from './AuthedPhoto';
-import { compressPhoto, fmt12, liveStatus, nowMinutesIST, scoreCls, statusMeta, timeOfIso } from './workplaceUtils';
+import { compressPhoto, fmt12, liveStatus, nowMinutesIST, timeOfIso } from './workplaceUtils';
+import { teamWorkplaceApi } from '../team/teamApi';
+import { formatDay } from '../team/shared';
+import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, scoreTone } from '../team/checks/checkParts';
 
 type Props = { locations: WorkplaceLocation[]; threshold: number; initialLocation?: string | null };
+type Range = '1' | '7' | '14' | '30' | 'custom';
 
 const locKey = (l: { kind: string; id: string }) => `${l.kind}:${l.id}`;
-const dayLabel = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
-const RANGES = [{ days: 1, label: 'Today' }, { days: 7, label: '7 days' }, { days: 14, label: '14 days' }, { days: 30, label: '30 days' }];
+const BAR_TONE = { success: 'bg-success', warning: 'bg-warning', danger: 'bg-danger', neutral: 'bg-surface-3', brand: 'bg-brand-saffron', info: 'bg-info' } as const;
 
 // Review / gallery for the owner, operations managers and each place's incharge: every check at a
-// place over a date range with its photo, AI score, status and the reviewer's OK / needs-cleaning.
-// Photos and people's names are marked data-ai-private so the Bunny chat never reads them.
+// place over a date range with its photo, AI hygiene score, status and the reviewer's OK / needs
+// cleaning. Photos and people's names are marked data-ai-private so the Bunny chat never reads them.
 export function WorkplaceReview({ locations, threshold, initialLocation }: Props) {
+  const { t, lang } = useT();
   const today = getTodayIST();
   const [loc, setLoc] = useState(() => (initialLocation && locations.some((l) => locKey(l) === initialLocation) ? initialLocation : locations[0] ? locKey(locations[0]) : ''));
   const [from, setFrom] = useState(today);
@@ -30,6 +48,7 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<ReviewItem | null>(null);
 
   useEffect(() => {
@@ -41,19 +60,28 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
   const load = async () => {
     if (!place) return;
     setLoading(true);
+    setError(null);
     try {
-      const [r, s] = await Promise.all([getReview(place.kind, place.id, from, to), getSummary(place.kind, place.id).catch(() => null)]);
+      const [r, s] = await Promise.all([teamWorkplaceApi.getReview(place.kind, place.id, from, to), teamWorkplaceApi.getSummary(place.kind, place.id).catch(() => null)]);
       setItems(r.items);
       setSummary(s);
-    } catch (e: any) {
-      toast.error(e?.message || 'Could not load the checks');
+    } catch (e) {
+      setError((e as Error)?.message || t('team.check.loadFailed'));
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [loc, from, to]);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loc, from, to]);
 
-  const setRange = (days: number) => { setTo(today); setFrom(addDays(today, -(days - 1))); };
+  const range: Range = to === today && ['1', '7', '14', '30'].find((d) => from === addDays(today, -(Number(d) - 1))) ? (['1', '7', '14', '30'].find((d) => from === addDays(today, -(Number(d) - 1))) as Range) : 'custom';
+  const setRange = (r: Range) => {
+    if (r === 'custom') return;
+    setTo(today);
+    setFrom(addDays(today, -(Number(r) - 1)));
+  };
   const changeFrom = (v: string) => {
     if (!v) return;
     setFrom(v);
@@ -62,21 +90,23 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
   };
   const changeTo = (v: string) => {
     if (!v) return;
-    const t = v > today ? today : v;
-    setTo(t);
-    if (t < from) setFrom(t);
-    else if (addDays(t, -30) > from) setFrom(addDays(t, -30));
+    const x = v > today ? today : v;
+    setTo(x);
+    if (x < from) setFrom(x);
+    else if (addDays(x, -30) > from) setFrom(addDays(x, -30));
   };
 
   const nowMin = nowMinutesIST();
   const live = useMemo(() => items.map((it) => ({ ...it, status: liveStatus(it.date, today, nowMin, it.start, it.end, it.hasPhoto, it.late) })), [items, today, nowMin]);
   const people = useMemo(() => [...new Map(live.map((i) => [i.employeeId, i.personName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [live]);
-  const checks = useMemo(() => [...new Map(live.map((i) => [i.itemId, i.name])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [live]);
-  const shown = live.filter((i) =>
-    (!person || i.employeeId === person) &&
-    (!itemFilter || i.itemId === itemFilter) &&
-    (!lowOnly || (typeof i.aiScore === 'number' && i.aiScore < threshold && i.aiVerdict !== 'unclear_photo')) &&
-    (!statusFilter || (statusFilter === 'missed' ? i.status === 'missed' : statusFilter === 'late' ? i.status === 'late' || i.status === 'done_late' : i.flag?.status === 'needs_cleaning')));
+  const checks = useMemo(() => [...new Map(live.map((i) => [i.itemId, checkName(i, lang)])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [live, lang]);
+  const shown = live.filter(
+    (i) =>
+      (!person || i.employeeId === person) &&
+      (!itemFilter || i.itemId === itemFilter) &&
+      (!lowOnly || (typeof i.aiScore === 'number' && i.aiScore < threshold && i.aiVerdict !== 'unclear_photo')) &&
+      (!statusFilter || (statusFilter === 'missed' ? i.status === 'missed' : statusFilter === 'late' ? i.status === 'late' || i.status === 'done_late' : i.flag?.status === 'needs_cleaning')),
+  );
   const byDate = useMemo(() => {
     const m = new Map<string, typeof shown>();
     for (const i of shown) m.set(i.date, [...(m.get(i.date) || []), i]);
@@ -98,72 +128,110 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
     setOpen((o) => (o && same(o) ? { ...o, ...p } : o));
   };
 
-  const field = 'w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white';
+  if (!locations.length) return <EmptyState icon={Camera} title={t('team.check.noPlaces')} />;
 
-  if (!locations.length) return <p className="text-gray-600">No places to review.</p>;
+  const toggle = (on: boolean, onClick: () => void, label: React.ReactNode, key: string) => (
+    <button
+      key={key}
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={cn(
+        'hit-44 inline-flex h-9 min-h-9 shrink-0 items-center gap-1 rounded-full border px-3.5 text-label font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+        on ? 'border-text bg-text font-semibold text-surface' : 'border-border-strong bg-surface text-text hover:bg-surface-2',
+      )}
+    >
+      {label}
+    </button>
+  );
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-gray-200 bg-white p-3 space-y-3">
-        <div className="flex gap-2">
-          <select value={loc} onChange={(e) => setLoc(e.target.value)} className={field} aria-label="Place">
-            {locations.map((l) => <option key={locKey(l)} value={locKey(l)}>{l.name}{l.kind === 'production' ? ' (production)' : ''}</option>)}
-          </select>
-          <button onClick={load} disabled={loading} className="p-2.5 rounded-lg border border-gray-200 bg-white flex-shrink-0" aria-label="Refresh">
-            <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+    <div className="flex flex-col gap-4">
+      <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+        <div className="flex items-end gap-2">
+          <Field label={t('team.check.place')} className="flex-1">
+            <NativeSelect value={loc} onChange={(e) => setLoc(e.target.value)}>
+              {locations.map((l) => (
+                <option key={locKey(l)} value={locKey(l)}>
+                  {l.name}
+                  {l.kind === 'production' ? ` (${t('shell.productionHouse')})` : ''}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <IconButton label={t('shell.refresh')} icon={<RefreshCw />} variant="secondary" loading={loading} onClick={load} />
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {RANGES.map((r) => {
-            const active = to === today && from === addDays(today, -(r.days - 1));
-            return <button key={r.days} onClick={() => setRange(r.days)} className={`px-3 py-1.5 rounded-full text-sm border ${active ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-gray-700 border-gray-300'}`}>{r.label}</button>;
-          })}
-        </div>
+        <FilterChips
+          aria-label={t('date.rangeTitle')}
+          value={range}
+          onValueChange={setRange}
+          options={([
+            { value: '1', label: t('date.today') },
+            { value: '7', label: t('team.check.days', { n: 7 }) },
+            { value: '14', label: t('team.check.days', { n: 14 }) },
+            { value: '30', label: t('team.check.days', { n: 30 }) },
+            { value: 'custom', label: t('date.custom'), disabled: true },
+          ] as { value: Range; label: string; disabled?: boolean }[]).filter((o) => o.value !== 'custom' || range === 'custom')}
+        />
         <div className="grid grid-cols-2 gap-2">
-          <label className="text-xs text-gray-600">From<input type="date" value={from} max={today} onChange={(e) => changeFrom(e.target.value)} className={`${field} mt-0.5`} /></label>
-          <label className="text-xs text-gray-600">To<input type="date" value={to} max={today} onChange={(e) => changeTo(e.target.value)} className={`${field} mt-0.5`} /></label>
+          <Field label={t('date.from')}>
+            <Input type="date" value={from} max={today} onChange={(e) => changeFrom(e.target.value)} />
+          </Field>
+          <Field label={t('date.to')}>
+            <Input type="date" value={to} max={today} onChange={(e) => changeTo(e.target.value)} />
+          </Field>
         </div>
-        <div className="grid grid-cols-2 gap-2" data-ai-private>
-          <select value={person} onChange={(e) => setPerson(e.target.value)} className={field} aria-label="Person">
-            <option value="">Everyone</option>
-            {people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
-          <select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className={field} aria-label="Check">
-            <option value="">All checks</option>
-            {checks.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
+        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2" data-ai-private>
+          <Field label={t('team.check.person')}>
+            <NativeSelect value={person} onChange={(e) => setPerson(e.target.value)}>
+              <option value="">{t('team.check.everyone')}</option>
+              {people.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label={t('team.check.check')}>
+            <NativeSelect value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}>
+              <option value="">{t('team.check.allChecks')}</option>
+              {checks.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </NativeSelect>
+          </Field>
         </div>
-        <div className="flex flex-wrap gap-1.5 items-center">
-          <button onClick={() => setLowOnly((v) => !v)} className={`px-3 py-1.5 rounded-full text-sm border inline-flex items-center gap-1 ${lowOnly ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300'}`}>
-            <Sparkles className="w-3.5 h-3.5" /> Score below {threshold}
-          </button>
-          {(['missed', 'late', 'flagged'] as const).map((s) => (
-            <button key={s} onClick={() => setStatusFilter((v) => (v === s ? '' : s))} className={`px-3 py-1.5 rounded-full text-sm border ${statusFilter === s ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300'}`}>
-              {s === 'missed' ? 'Missed' : s === 'late' ? 'Late' : 'Needs cleaning'}
-            </button>
-          ))}
+        <div className="no-scrollbar -mx-3 flex gap-2 overflow-x-auto px-3 py-1">
+          {toggle(lowOnly, () => setLowOnly((v) => !v), <><Sparkles aria-hidden="true" /> {t('team.check.scoreBelow', { n: threshold })}</>, 'low')}
+          {(['missed', 'late', 'flagged'] as const).map((s) =>
+            toggle(statusFilter === s, () => setStatusFilter((v) => (v === s ? '' : s)), s === 'missed' ? t('team.check.missed') : s === 'late' ? t('team.check.lateShort') : t('team.check.needsCleaning'), s),
+          )}
         </div>
+      </section>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatTile label={t('team.check.onTime')} value={<span className="num">{counts.onTime}</span>} />
+        <StatTile label={t('team.check.lateShort')} value={<span className="num">{counts.late}</span>} />
+        <StatTile label={t('team.check.missed')} value={<span className="num">{counts.missed}</span>} tone={counts.missed > 0 ? 'danger' : 'default'} />
+        <StatTile label={t('team.check.needsCleaning')} value={<span className="num">{counts.flagged}</span>} tone={counts.flagged > 0 ? 'danger' : 'default'} />
+        <StatTile label={t('team.check.avgScore')} value={<span className="num">{avg === null ? '–' : `${avg}/10`}</span>} className="col-span-2 sm:col-span-1" />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
-        <Stat label="On time" value={counts.onTime} cls="text-emerald-700" />
-        <Stat label="Late" value={counts.late} cls="text-amber-700" />
-        <Stat label="Missed" value={counts.missed} cls="text-red-700" />
-        <Stat label="Needs cleaning" value={counts.flagged} cls="text-red-700" />
-        <Stat label="Avg AI score" value={avg === null ? '-' : `${avg}/10`} cls="text-gray-900" />
-      </div>
-
-      {loading && !items.length ? (
-        <div className="py-12 flex justify-center text-gray-400"><Loader2 className="w-6 h-6 animate-spin" /></div>
+      {error && !items.length ? (
+        <Callout tone="danger" title={t('error.title')} action={<Button variant="secondary" size="sm" leadingIcon={<RotateCcw />} onClick={load}>{t('common.retry')}</Button>}>{error}</Callout>
+      ) : loading && !items.length ? (
+        <SkeletonListRows count={4} />
       ) : !shown.length ? (
-        <p className="text-center text-gray-500 py-8">{items.length ? 'Nothing matches these filters.' : 'No checks for these dates. Set up the checklist and pick people in Setup.'}</p>
+        <div className="rounded-lg border border-border bg-surface">
+          <EmptyState icon={Camera} title={items.length ? t('team.check.noMatch') : t('team.check.noChecks')} body={items.length ? undefined : t('team.check.noChecksBody')} />
+        </div>
       ) : (
-        <div className="space-y-5" data-ai-private>
+        <div className="flex flex-col gap-5" data-ai-private>
           {byDate.map(([date, list]) => (
-            <section key={date}>
-              {byDate.length > 1 || date !== today ? <h3 className="text-sm font-semibold text-gray-700 mb-2">{dayLabel(date)}</h3> : null}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {list.map((it) => <Card key={`${it.date}|${it.employeeId}|${it.itemId}`} it={it} threshold={threshold} onOpen={() => setOpen(it)} />)}
+            <section key={date} className="flex flex-col gap-2">
+              {(byDate.length > 1 || date !== today) && <h3 className="text-body-sm font-semibold text-text-2">{formatDay(date, lang, { weekday: true })}</h3>}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {list.map((it) => (
+                  <Card key={`${it.date}|${it.employeeId}|${it.itemId}`} it={it} threshold={threshold} onOpen={() => setOpen(it)} />
+                ))}
               </div>
             </section>
           ))}
@@ -171,27 +239,52 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
       )}
 
       {summary && summary.people.length > 0 && (
-        <section className="rounded-xl border border-gray-200 bg-white p-3">
-          <h3 className="font-semibold text-gray-900">This week · এই সপ্তাহ</h3>
-          <p className="text-xs text-gray-500 mb-2">{dayLabel(summary.from)} to today - on time = photo sent before the window closed.</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-gray-500"><th className="py-1 pr-2">Person</th><th className="py-1 px-2 text-right">On time</th><th className="py-1 px-2 text-right">Done</th><th className="py-1 px-2 text-right">Needs cleaning</th><th className="py-1 pl-2 text-right">AI avg</th></tr></thead>
-              <tbody>
+        <section className="flex flex-col gap-2" data-ai-private>
+          <div className="flex flex-col">
+            <h3 className="text-subtitle font-semibold text-text">{t('team.check.thisWeek')}</h3>
+            <p className="text-label text-text-3">{t('team.check.thisWeekHint', { date: formatDay(summary.from, lang, { short: true }) })}</p>
+          </div>
+          <div className="lg:hidden">
+            <ListGroup>
+              {summary.people.map((p) => {
+                const pct = p.required ? Math.round((p.onTime / p.required) * 100) : 0;
+                return (
+                  <ListRow
+                    key={p.employeeId}
+                    title={p.name}
+                    subtitle={t('team.check.summaryLine', { done: p.done, required: p.required, dirty: p.needsCleaning, avg: p.avgScore === null ? '–' : p.avgScore })}
+                    trailing={<StatusChip tone={pct >= 90 ? 'success' : pct >= 70 ? 'warning' : 'danger'}><span className="num">{t('team.check.onTimePct', { n: pct })}</span></StatusChip>}
+                  />
+                );
+              })}
+            </ListGroup>
+          </div>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('team.check.person')}</TableHead>
+                  <TableHead numeric>{t('team.check.onTime')}</TableHead>
+                  <TableHead numeric>{t('team.check.done')}</TableHead>
+                  <TableHead numeric>{t('team.check.needsCleaning')}</TableHead>
+                  <TableHead numeric>{t('team.check.avgScore')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {summary.people.map((p) => {
                   const pct = p.required ? Math.round((p.onTime / p.required) * 100) : 0;
                   return (
-                    <tr key={p.employeeId} className="border-t border-gray-100">
-                      <td className="py-1.5 pr-2" data-ai-private>{p.name}</td>
-                      <td className={`py-1.5 px-2 text-right font-semibold ${pct >= 90 ? 'text-emerald-700' : pct >= 70 ? 'text-amber-700' : 'text-red-700'}`}>{pct}%</td>
-                      <td className="py-1.5 px-2 text-right text-gray-600">{p.done}/{p.required}</td>
-                      <td className="py-1.5 px-2 text-right text-gray-600">{p.needsCleaning}</td>
-                      <td className="py-1.5 pl-2 text-right text-gray-600">{p.avgScore === null ? '-' : p.avgScore}</td>
-                    </tr>
+                    <TableRow key={p.employeeId}>
+                      <TableCell>{p.name}</TableCell>
+                      <TableCell numeric className={cn('font-semibold', pct >= 90 ? 'text-success' : pct >= 70 ? 'text-warning' : 'text-danger')}>{pct}%</TableCell>
+                      <TableCell numeric>{p.done}/{p.required}</TableCell>
+                      <TableCell numeric>{p.needsCleaning}</TableCell>
+                      <TableCell numeric>{p.avgScore === null ? '–' : p.avgScore}</TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </section>
       )}
@@ -201,45 +294,43 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
   );
 }
 
-function Stat({ label, value, cls }: { label: string; value: number | string; cls: string }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white py-2">
-      <p className={`text-lg font-bold ${cls}`}>{value}</p>
-      <p className="text-[11px] text-gray-500">{label}</p>
-    </div>
-  );
-}
-
 function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; onOpen: () => void }) {
-  const meta = statusMeta(it.status, it.start, it.end);
+  const { lang } = useT();
   const flagged = it.flag?.status === 'needs_cleaning';
+  const missing = it.status === 'missed' || it.status === 'late';
   return (
-    <button onClick={onOpen} className={`text-left rounded-xl border bg-white overflow-hidden shadow-sm ${flagged ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'}`}>
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'flex flex-col overflow-hidden rounded-lg border bg-surface text-left outline-none transition-colors hover:bg-surface-2/60 focus-visible:ring-2 focus-visible:ring-ring',
+        flagged ? 'border-danger-border' : 'border-border',
+      )}
+    >
       <div className="relative">
         {it.hasPhoto ? (
-          <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} thumb version={it.uploadedAt} className="w-full aspect-square" />
+          <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} thumb version={it.uploadedAt} className="aspect-square w-full" alt={checkName(it, lang)} />
         ) : (
-          <div className={`w-full aspect-square flex flex-col items-center justify-center ${it.status === 'missed' || it.status === 'late' ? 'bg-red-50 text-red-400' : 'bg-gray-50 text-gray-300'}`}>
-            {it.status === 'missed' || it.status === 'late' ? <AlertTriangle className="w-8 h-8" /> : <Clock className="w-8 h-8" />}
+          <div className={cn('flex aspect-square w-full items-center justify-center', missing ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-text-3')} aria-hidden="true">
+            {missing ? <AlertTriangle className="size-8" /> : <Clock className="size-8" />}
           </div>
         )}
-        {it.aiStatus === 'scored' && typeof it.aiScore === 'number' && (
-          <span className={`absolute top-1.5 left-1.5 text-xs font-bold px-1.5 py-0.5 rounded-md ${it.aiVerdict === 'unclear_photo' ? 'bg-gray-700 text-white' : scoreCls(it.aiScore, threshold)}`}>
-            {it.aiVerdict === 'unclear_photo' ? 'Unclear' : `${it.aiScore}/10`}
-          </span>
-        )}
-        {it.aiStatus === 'failed' && <span className="absolute top-1.5 left-1.5 text-[10px] px-1.5 py-0.5 rounded-md bg-gray-200 text-gray-700">Not scored</span>}
+        <span className="absolute top-1.5 left-1.5">
+          <HygieneChip photo={it} threshold={threshold} />
+        </span>
         {it.flag && (
-          <span className={`absolute top-1.5 right-1.5 rounded-full p-0.5 ${flagged ? 'bg-red-600' : 'bg-emerald-600'}`}>
-            {flagged ? <AlertTriangle className="w-3.5 h-3.5 text-white" /> : <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+          <span className={cn('absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-full text-on-primary', flagged ? 'bg-danger' : 'bg-success')} aria-hidden="true">
+            {flagged ? <AlertTriangle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
           </span>
         )}
       </div>
-      <div className="p-2">
-        <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{it.name}</p>
-        <p className="text-xs text-gray-600 truncate">{it.personName}</p>
-        <span className={`inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full border ${meta.cls}`}>{meta.label.split(' · ')[0]}</span>
-        {it.hasPhoto && it.uploadedAt && <span className="ml-1 text-[10px] text-gray-500">{timeOfIso(it.uploadedAt)}</span>}
+      <div className="flex flex-col gap-1 p-2.5">
+        <p className="truncate text-body-sm font-semibold text-text">{checkName(it, lang)}</p>
+        <p className="truncate text-label text-text-2">{it.personName}</p>
+        <div className="flex flex-wrap items-center gap-1">
+          <CheckStatusChip status={it.status} start={it.start} end={it.end} short />
+          {it.hasPhoto && it.uploadedAt && <span className="text-caption text-text-3">{timeOfIso(it.uploadedAt)}</span>}
+        </div>
       </div>
     </button>
   );
@@ -248,6 +339,7 @@ function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; on
 function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
   it: ReviewItem; place: WorkplaceLocation; threshold: number; onClose: () => void; onPatch: (p: Partial<ReviewItem>) => void; onReload: () => void;
 }) {
+  const { t, lang } = useT();
   const today = getTodayIST();
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -258,22 +350,26 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
   useEffect(() => {
     let cancelled = false;
     setTrend(null);
-    getReview(place.kind, place.id, addDays(it.date, -13), it.date)
+    teamWorkplaceApi
+      .getReview(place.kind, place.id, addDays(it.date, -13), it.date)
       .then((r) => { if (!cancelled) setTrend(r.items.filter((x) => x.itemId === it.itemId).sort((a, b) => a.date.localeCompare(b.date))); })
       .catch(() => { if (!cancelled) setTrend([]); });
     return () => { cancelled = true; };
   }, [place.kind, place.id, it.date, it.itemId]);
 
   const decide = async (status: 'ok' | 'needs_cleaning') => {
-    if (status === 'needs_cleaning' && !note.trim()) return toast.error('Write what needs cleaning');
+    if (status === 'needs_cleaning' && !note.trim()) {
+      toast.error(t('team.check.writeWhat'));
+      return;
+    }
     setSaving(true);
     try {
-      const r = await setFlag({ date: it.date, employeeId: it.employeeId, itemId: it.itemId, status, note: note.trim() });
+      const r = await teamWorkplaceApi.setFlag({ date: it.date, employeeId: it.employeeId, itemId: it.itemId, status, note: note.trim() });
       onPatch({ flag: r.flag });
       setNote('');
-      toast.success(status === 'ok' ? 'Marked OK' : 'Sent back for cleaning');
-    } catch (e: any) {
-      toast.error(e?.message || 'Could not save');
+      toast.success(status === 'ok' ? t('team.check.markedOk') : t('team.check.sentBack'));
+    } catch (e) {
+      toast.error((e as Error)?.message || t('team.check.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -282,12 +378,13 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
   const rescore = async () => {
     setSaving(true);
     try {
-      const r = await rescorePhoto({ date: it.date, employeeId: it.employeeId, itemId: it.itemId });
+      const r = await teamWorkplaceApi.rescorePhoto({ date: it.date, employeeId: it.employeeId, itemId: it.itemId });
       const { success, flagged: newlyFlagged, ...view } = r;
       onPatch(view);
-      toast[success ? 'success' : 'error'](success ? (newlyFlagged ? 'Scored - marked needs cleaning' : 'Scored') : 'Could not score it - try later');
-    } catch (e: any) {
-      toast.error(e?.message || 'Could not score the photo');
+      if (success) toast.success(newlyFlagged ? t('team.check.scoredFlagged') : t('team.check.scored'));
+      else toast.error(t('team.check.stillNotScored'));
+    } catch (e) {
+      toast.error((e as Error)?.message || t('team.check.scoreFailed'));
     } finally {
       setSaving(false);
     }
@@ -300,120 +397,134 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
     setSaving(true);
     try {
       const { image, thumb } = await compressPhoto(file);
-      const r = await uploadPhoto({ itemId: it.itemId, image, thumb, forEmployeeId: it.employeeId });
+      const r = await teamWorkplaceApi.uploadPhoto({ itemId: it.itemId, image, thumb, forEmployeeId: it.employeeId });
       onPatch({ ...r.item, itemId: it.itemId, status: r.item.status });
-      toast.success('Photo saved, marked as taken by you');
+      toast.success(t('team.check.takenByYou'));
       onReload();
-    } catch (err: any) {
-      toast.error(err?.message || 'Could not send the photo');
+    } catch (err) {
+      toast.error((err as Error)?.message || t('team.check.sendFailed'));
     } finally {
       setSaving(false);
     }
   };
 
-  const meta = statusMeta(it.status, it.start, it.end);
   const canTakeForThem = !it.hasPhoto && it.date === today && (it.status === 'due' || it.status === 'late');
+  const issues = issuesFor(it, lang);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center" data-ai-private>
-      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[94dvh] flex flex-col">
-        <div className="flex items-start justify-between gap-3 p-4 border-b border-gray-200">
-          <div className="min-w-0">
-            <p className="font-bold text-gray-900">{it.name}{it.nameBn ? ` · ${it.nameBn}` : ''}</p>
-            <p className="text-sm text-gray-600">{it.personName} · {dayLabel(it.date)}{it.start ? ` · ${fmt12(it.start)}-${fmt12(it.end)}` : ''}</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>
+    <ResponsiveModal
+      open
+      onOpenChange={(o) => !o && onClose()}
+      size="detail"
+      title={checkName(it, lang)}
+      description={[it.personName, formatDay(it.date, lang, { weekday: true, short: true }), it.start ? `${fmt12(it.start)}–${fmt12(it.end)}` : ''].filter(Boolean).join(' · ')}
+      dirty={!!note.trim()}
+      footer={
+        it.hasPhoto ? (
+          <>
+            <Button variant="danger-ghost" size="lg" className="flex-1" loading={saving} onClick={() => decide('needs_cleaning')}>
+              {t('team.check.needsCleaning')}
+            </Button>
+            <Button size="lg" className="flex-1" leadingIcon={<CheckCircle2 />} disabled={saving} onClick={() => decide('ok')}>
+              {t('team.check.ok')}
+            </Button>
+          </>
+        ) : undefined
+      }
+    >
+      <div className="flex flex-col gap-4" data-ai-private>
+        {it.hasPhoto ? (
+          <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} thumb={false} version={it.uploadedAt} fit="contain" className="aspect-[4/3] w-full rounded-lg" alt={checkName(it, lang)} />
+        ) : (
+          <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-surface-2 text-body-sm text-text-2">{t('team.check.noPhoto')}</div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <CheckStatusChip status={it.status} start={it.start} end={it.end} />
+          {it.uploadedAt && <span className="text-label text-text-2">{t('team.check.sentAt', { time: timeOfIso(it.uploadedAt) })}</span>}
+          {!!it.retakes && <span className="text-label text-text-3">{t('team.check.retakes', { n: it.retakes })}</span>}
+          {it.onBehalf && <StatusChip tone="info">{t('team.check.onBehalf', { name: it.uploadedByName || t('team.check.aManager') })}</StatusChip>}
         </div>
-        <div className="p-4 space-y-4 overflow-y-auto">
-          {it.hasPhoto ? (
-            <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} thumb={false} version={it.uploadedAt} fit="contain" className="w-full aspect-[4/3] rounded-xl bg-black" />
-          ) : (
-            <div className="w-full aspect-[4/3] rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">No photo</div>
-          )}
 
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className={`text-xs px-2 py-0.5 rounded-full border ${meta.cls}`}>{meta.label}</span>
-            {it.uploadedAt && <span className="text-gray-600">Sent {timeOfIso(it.uploadedAt)}</span>}
-            {!!it.retakes && <span className="text-gray-500">{it.retakes} retake{it.retakes === 1 ? '' : 's'}</span>}
-            {it.onBehalf && <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">Taken by {it.uploadedByName || 'a manager'} for them</span>}
-          </div>
-
-          {it.hasPhoto && (
-            <div className="rounded-xl border border-gray-200 p-3 space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold text-gray-900 inline-flex items-center gap-1"><Sparkles className="w-4 h-4 text-orange-500" /> AI hygiene check</p>
-                {it.aiStatus === 'scored' && typeof it.aiScore === 'number' && (
-                  <span className={`text-sm font-bold px-2 py-0.5 rounded-md ${it.aiVerdict === 'unclear_photo' ? 'bg-gray-700 text-white' : scoreCls(it.aiScore, threshold)}`}>
-                    {it.aiVerdict === 'unclear_photo' ? 'Unclear photo' : `${it.aiScore}/10`}
-                  </span>
+        {it.hasPhoto && (
+          <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="inline-flex items-center gap-1.5 text-body-sm font-semibold text-text">
+                <Sparkles className="size-4 text-text-2" aria-hidden="true" /> {t('team.check.aiCheck')}
+              </p>
+              <HygieneChip photo={it} threshold={threshold} />
+            </div>
+            {it.aiStatus === 'scored' ? (
+              <>
+                <p className="text-body-sm text-text-2">
+                  {it.aiVerdict ? t(VERDICT_KEYS[it.aiVerdict]) : ''}
+                  {it.aiShown ? ` · ${it.aiShown}` : ''}
+                </p>
+                {issues.length > 0 && (
+                  <ul className="flex list-disc flex-col gap-0.5 pl-5 text-body-sm text-text">
+                    {issues.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
                 )}
-              </div>
-              {it.aiStatus === 'scored' ? (
-                <>
-                  <p className="text-sm text-gray-700">{it.aiVerdict === 'clean' ? 'Clean' : it.aiVerdict === 'needs_cleaning' ? 'Needs cleaning' : 'Photo unclear - ask for a retake'}{it.aiShown ? ` - ${it.aiShown}` : ''}</p>
-                  {it.aiIssues?.length ? <ul className="text-sm text-gray-800 list-disc pl-5">{it.aiIssues.map((s, i) => <li key={i}>{s}{it.aiIssuesBengali?.[i] ? <span className="text-gray-500"> · {it.aiIssuesBengali[i]}</span> : null}</li>)}</ul> : null}
-                </>
-              ) : (
-                <p className="text-sm text-gray-600">{it.aiStatus === 'failed' ? 'Not scored - the AI check failed.' : it.aiStatus === 'pending' ? 'Being scored…' : 'AI checks are off.'}</p>
-              )}
-              {(it.aiStatus === 'failed' || it.aiStatus === 'scored') && (
-                <button onClick={rescore} disabled={saving} className="text-sm text-orange-700 font-semibold inline-flex items-center gap-1 disabled:opacity-50">
-                  <RotateCcw className="w-4 h-4" /> {it.aiStatus === 'failed' ? 'Retry scoring' : 'Score again'}
-                </button>
-              )}
-            </div>
-          )}
+              </>
+            ) : (
+              <p className="text-body-sm text-text-2">{it.aiStatus === 'failed' ? t('team.check.aiFailed') : it.aiStatus === 'pending' ? t('team.check.aiPending') : t('team.check.aiOff')}</p>
+            )}
+            {(it.aiStatus === 'failed' || it.aiStatus === 'scored') && (
+              <Button variant="link" size="sm" leadingIcon={<RotateCcw />} disabled={saving} onClick={rescore} className="self-start">
+                {it.aiStatus === 'failed' ? t('team.check.retryScore') : t('team.check.scoreAgain')}
+              </Button>
+            )}
+          </section>
+        )}
 
-          {trend && trend.length > 1 && (
-            <div className="rounded-xl border border-gray-200 p-3">
-              <p className="text-sm font-semibold text-gray-900 mb-2">Last 14 days</p>
-              <div className="flex items-end gap-1 h-20">
-                {trend.map((t) => {
-                  const s = typeof t.aiScore === 'number' && t.aiVerdict !== 'unclear_photo' ? t.aiScore : null;
-                  const missed = !t.hasPhoto && t.status === 'missed';
-                  return (
-                    <div key={t.date + t.employeeId} className="flex-1 flex flex-col items-center justify-end h-full" title={`${dayLabel(t.date)}: ${s !== null ? `${s}/10` : missed ? 'missed' : 'no score'}`}>
-                      {s !== null ? (
-                        <div className={`w-full rounded-t ${scoreCls(s, threshold)}`} style={{ height: `${Math.max(8, s * 10)}%` }} />
-                      ) : (
-                        <div className={`w-full text-center text-[10px] ${missed ? 'text-red-500' : 'text-gray-300'}`}>{missed ? '✕' : '·'}</div>
-                      )}
-                      <span className={`text-[9px] mt-0.5 ${t.date === it.date ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{Number(t.date.slice(8))}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-[11px] text-gray-500 mt-1">Bar = AI score, ✕ = missed.</p>
+        {trend && trend.length > 1 && (
+          <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+            <p className="text-body-sm font-semibold text-text">{t('team.check.last14')}</p>
+            <div className="flex h-20 items-end gap-1" role="img" aria-label={t('team.check.trendLabel')}>
+              {trend.map((x) => {
+                const s = typeof x.aiScore === 'number' && x.aiVerdict !== 'unclear_photo' ? x.aiScore : null;
+                const missed = !x.hasPhoto && x.status === 'missed';
+                return (
+                  <div key={x.date + x.employeeId} className="flex h-full flex-1 flex-col items-center justify-end" title={`${formatDay(x.date, lang, { short: true })}: ${s !== null ? `${s}/10` : missed ? t('team.check.missed') : '–'}`}>
+                    {s !== null ? (
+                      <div className={cn('w-full rounded-t-xs', BAR_TONE[scoreTone(s, threshold)])} style={{ height: `${Math.max(8, s * 10)}%` }} />
+                    ) : (
+                      <div className={cn('h-1 w-full rounded-full', missed ? 'bg-danger' : 'bg-surface-3')} />
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          )}
-
-          {it.flag && (
-            <div className={`rounded-xl p-3 text-sm ${flagged ? 'bg-red-50 text-red-900' : 'bg-emerald-50 text-emerald-900'}`}>
-              <p className="font-semibold">{flagged ? 'Needs cleaning' : 'Checked OK'} - {it.flag.auto ? 'set by the AI check' : `by ${it.flag.by}`}, {timeOfIso(it.flag.at)}</p>
-              {it.flag.note && <p className="mt-0.5">{it.flag.note}</p>}
-              {flagged && it.flag.fixedAt && <p className="text-xs mt-1">New photo sent at {timeOfIso(it.flag.fixedAt)} - check it and mark OK if it's clean.</p>}
+            <div className="flex gap-1">
+              {trend.map((x) => (
+                <span key={x.date + x.employeeId} className={cn('num flex-1 text-center text-caption', x.date === it.date ? 'font-semibold text-text' : 'text-text-3')}>
+                  {Number(x.date.slice(8))}
+                </span>
+              ))}
             </div>
-          )}
+            <p className="text-caption text-text-3">{t('team.check.trendKey')}</p>
+          </section>
+        )}
 
-          {it.hasPhoto && (
-            <div className="space-y-2">
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={300} placeholder="Note for them (needed for 'Needs cleaning')" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-base" />
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => decide('ok')} disabled={saving} className="py-3 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-1"><CheckCircle2 className="w-4 h-4" /> OK</button>
-                <button onClick={() => decide('needs_cleaning')} disabled={saving} className="py-3 rounded-xl bg-red-600 text-white font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-1"><AlertTriangle className="w-4 h-4" /> Needs cleaning</button>
-              </div>
-              <p className="text-[11px] text-gray-500">"Needs cleaning" sends them a notification with your note. OK overrides the AI.</p>
-            </div>
-          )}
+        {it.flag && (
+          <Callout tone={flagged ? 'danger' : 'success'} title={`${flagged ? t('team.check.needsCleaning') : t('team.check.checkedOk')} · ${it.flag.auto ? t('team.check.byAi') : t('team.att.by', { name: it.flag.by })}, ${timeOfIso(it.flag.at)}`}>
+            {[it.flag.note, flagged && it.flag.fixedAt ? t('team.check.fixedAt', { time: timeOfIso(it.flag.fixedAt) }) : ''].filter(Boolean).join(' · ') || undefined}
+          </Callout>
+        )}
 
-          {canTakeForThem && (
-            <label className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-violet-300 text-violet-800 text-sm font-semibold ${saving ? 'opacity-50' : 'cursor-pointer'}`}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take the photo for them (recorded as taken by you)
-              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={saving} onChange={takeForThem} />
-            </label>
-          )}
-        </div>
+        {it.hasPhoto && (
+          <Field label={t('team.check.noteLabel')} helper={t('team.check.noteHelp')}>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={300} />
+          </Field>
+        )}
+
+        {canTakeForThem && (
+          <label className={cn('flex min-h-12 items-center justify-center gap-2 rounded-md border border-border-strong bg-surface px-4 text-body-sm font-semibold text-text outline-none focus-within:ring-2 focus-within:ring-ring', saving ? 'opacity-50' : 'cursor-pointer hover:bg-surface-2')}>
+            {saving ? <RefreshCw className="size-5 animate-spin" aria-hidden="true" /> : <Camera className="size-5" aria-hidden="true" />} {t('team.check.takeForThem')}
+            <input type="file" accept="image/*" capture="environment" className="sr-only" disabled={saving} onChange={takeForThem} />
+          </label>
+        )}
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }

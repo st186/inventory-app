@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImageOff, Loader2 } from 'lucide-react';
-import { loadPhotoUrl, photoPath } from './workplaceApi';
+import { ImageOff } from 'lucide-react';
+import { Skeleton } from '../ui/skeleton';
+import { cn } from '../ui/utils';
+import { photoPath } from './workplaceApi';
+import { teamWorkplaceApi } from '../team/teamApi';
 
 // A workplace photo loaded through the server with the sign-in token, fetched only once it
 // scrolls into view so a month-long gallery doesn't pull hundreds of photos at once.
@@ -26,22 +29,23 @@ export function AuthedPhoto({ date, employeeId, itemId, thumb, version, classNam
     let cancelled = false;
     setUrl(null);
     setFailed(null);
-    loadPhotoUrl(photoPath(date, employeeId, itemId, thumb), version || '')
-      .then((u) => { if (!cancelled) setUrl(u); })
-      .catch((e) => { if (!cancelled) setFailed(e?.message || 'Could not load'); });
+    teamWorkplaceApi.loadPhotoUrl(photoPath(date, employeeId, itemId, thumb), version || '')
+      .then((u: string) => { if (!cancelled) setUrl(u); })
+      .catch((e: Error) => { if (!cancelled) setFailed(e?.message || 'Could not load'); });
     return () => { cancelled = true; };
   }, [visible, date, employeeId, itemId, thumb, version]);
 
   return (
-    <div ref={ref} className={`relative overflow-hidden bg-gray-100 ${className || ''}`}>
+    <div ref={ref} className={cn('relative overflow-hidden bg-surface-2', className)}>
       {url ? (
-        <img src={url} alt={alt} className={`w-full h-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`} />
+        <img src={url} alt={alt} className={cn('h-full w-full', fit === 'contain' ? 'object-contain' : 'object-cover')} />
       ) : failed ? (
-        <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 text-[11px] text-center p-1">
-          <ImageOff className="w-5 h-5 mb-1" />{failed}
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-1 text-center text-caption text-text-2" title={failed}>
+          <ImageOff className="size-5" aria-hidden="true" />
+          <span className="line-clamp-2">{failed}</span>
         </div>
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-gray-300"><Loader2 className="w-5 h-5 animate-spin" /></div>
+        <Skeleton className="h-full w-full rounded-none" />
       )}
     </div>
   );

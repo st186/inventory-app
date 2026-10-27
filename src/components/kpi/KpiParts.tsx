@@ -1,56 +1,81 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { IconButton } from '../ui/icon-button';
+import { Callout } from '../ui/callout';
+import { cn } from '../ui/utils';
+import { useT } from '../../utils/i18n';
+import { formatMonth } from '../team/shared';
 import * as kpi from './kpiApi';
 
-// Pieces shared by Team KPIs and My KPIs.
+// Pieces shared by Team KPIs and My KPIs. A score is green from 80, amber from 60, red below,
+// and always printed as a number next to the bar (colour never carries it alone).
+
+export type ScoreTone = 'success' | 'warning' | 'danger' | 'neutral';
+export const scoreToneOf = (s: number | null): ScoreTone => (s === null ? 'neutral' : s >= 80 ? 'success' : s >= 60 ? 'warning' : 'danger');
+const TEXT: Record<ScoreTone, string> = { success: 'text-success', warning: 'text-warning', danger: 'text-danger', neutral: 'text-text-3' };
+const BAR: Record<ScoreTone, string> = { success: 'bg-success', warning: 'bg-warning', danger: 'bg-danger', neutral: 'bg-surface-3' };
 
 export function MonthPicker({ month, onChange }: { month: string; onChange: (m: string) => void }) {
+  const { t, lang } = useT();
   const current = kpi.istMonth();
-  const next = (() => { const [y, m] = month.split('-').map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; })();
+  const next = (() => {
+    const [y, m] = month.split('-').map(Number);
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+  })();
   return (
-    <div className="inline-flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
-      <button onClick={() => onChange(kpi.prevMonth(month))} className="p-1.5 rounded-lg hover:bg-gray-100" aria-label="Previous month"><ChevronLeft className="w-4 h-4" /></button>
-      <span className="px-2 text-sm font-semibold text-gray-900 min-w-[120px] text-center">{kpi.monthName(month)}</span>
-      <button onClick={() => onChange(next)} disabled={next > current} className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30" aria-label="Next month"><ChevronRight className="w-4 h-4" /></button>
+    <div className="inline-flex items-center rounded-full border border-border-strong bg-surface">
+      <IconButton label={t('date.prevMonth')} icon={<ChevronLeft />} onClick={() => onChange(kpi.prevMonth(month))} />
+      <span className="min-w-[124px] px-1 text-center text-body-sm font-semibold text-text">{formatMonth(month, lang)}</span>
+      <IconButton label={t('date.nextMonth')} icon={<ChevronRight />} onClick={() => onChange(next)} disabled={next > current} />
     </div>
   );
 }
 
 export function TotalBadge({ total }: { total: number | null }) {
+  const { t } = useT();
   return (
-    <div className="text-right">
-      <p className={`text-2xl font-bold tabular-nums ${kpi.scoreText(total)}`}>{total === null ? '--' : Math.round(total)}</p>
-      <p className="text-[11px] text-gray-500">out of 100</p>
+    <div className="flex shrink-0 flex-col items-end">
+      <p className={cn('num text-title-lg font-semibold', TEXT[scoreToneOf(total)])}>{total === null ? '–' : Math.round(total)}</p>
+      <p className="text-caption text-text-3">{t('team.kpi.outOf100')}</p>
     </div>
   );
 }
 
 // One bar per KPI with its score, weight and the plain explanation of the numbers.
 export function KpiBars({ kpis, showTips = false, compact = false }: { kpis: kpi.KpiResult[]; showTips?: boolean; compact?: boolean }) {
+  const { t } = useT();
   return (
-    <div className="space-y-3">
-      {kpis.filter((k) => k.weight > 0 || k.score !== null).map((k) => (
-        <div key={k.id}>
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-sm font-medium text-gray-900">{k.label} <span className="text-[11px] text-gray-400 font-normal">· weight {k.weight}</span></p>
-            <p className={`text-sm font-semibold tabular-nums ${kpi.scoreText(k.score)}`}>{k.score === null ? 'no data' : Math.round(k.score)}</p>
-          </div>
-          <div className="h-2 rounded-full bg-gray-100 mt-1 overflow-hidden">
-            <div className={`h-full rounded-full ${kpi.scoreTone(k.score)}`} style={{ width: `${k.score ?? 0}%` }} />
-          </div>
-          {!compact && <p className="text-xs text-gray-600 mt-1">{k.explanation}</p>}
-          {showTips && k.score !== null && k.score < 90 && <p className="text-xs text-orange-700 mt-0.5">To improve: {k.tip}</p>}
-        </div>
-      ))}
+    <div className="flex flex-col gap-3.5">
+      {kpis
+        .filter((k) => k.weight > 0 || k.score !== null)
+        .map((k) => {
+          const tone = scoreToneOf(k.score);
+          return (
+            <div key={k.id} className="flex flex-col gap-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-body-sm font-medium text-text">
+                  {k.label} <span className="text-caption font-normal text-text-3">· {t('team.kpi.weight', { n: k.weight })}</span>
+                </p>
+                <p className={cn('num text-body-sm font-semibold', TEXT[tone])}>{k.score === null ? t('team.kpi.noData') : Math.round(k.score)}</p>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-surface-2" role="img" aria-label={`${k.label}: ${k.score === null ? t('team.kpi.noData') : Math.round(k.score)}`}>
+                <div className={cn('h-full rounded-full', BAR[tone])} style={{ width: `${k.score ?? 0}%` }} />
+              </div>
+              {!compact && <p className="text-label text-text-2">{k.explanation}</p>}
+              {showTips && k.score !== null && k.score < 90 && <p className="text-label text-text">{t('team.kpi.toImprove', { tip: k.tip })}</p>}
+            </div>
+          );
+        })}
     </div>
   );
 }
 
 export function FlagList({ flags }: { flags: Record<string, number> }) {
+  const { t } = useT();
   const list = Object.entries(flags || {}).filter(([, n]) => n > 0);
   if (!list.length) return null;
   return (
-    <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
-      Check-ins to look at: {list.map(([f, n]) => `${n} × ${kpi.FLAG_TEXT[f] || f}`).join(' · ')}
-    </div>
+    <Callout tone="warning" title={t('team.kpi.checkIns')}>
+      {list.map(([f, n]) => `${n} × ${kpi.FLAG_TEXT[f] || f}`).join(' · ')}
+    </Callout>
   );
 }
