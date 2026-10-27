@@ -1,7 +1,7 @@
 // Renders the destination the router is on: Home for the role, a tab's wrapper, a More / Me page,
 // the Inbox. Each screen loads on first use behind a skeleton, and a screen that crashes shows an
 // error card in place instead of taking the whole app down.
-import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, memo, type ErrorInfo, type ReactNode } from 'react';
 import type { Destination } from '../navConfig';
 import { describeSpec } from '../navConfig';
 import { useShell } from '../ShellContext';
@@ -88,7 +88,7 @@ function PreviewHome({ home }: { home: string }) {
 }
 const PreviewShortcuts = lazy(() => import('../../home/HomeShortcuts').then((m) => ({ default: () => <m.HomeShortcuts extra={['stock/requests', 'team/attendance']} /> })));
 
-export function DestinationView({ dest, params, renderShellPage }: { dest: Destination; params: Record<string, string>; renderShellPage: (dest: Destination) => ReactNode }) {
+export const DestinationView = memo(function DestinationView({ dest, params, renderShellPage }: { dest: Destination; params: Record<string, string>; renderShellPage: (dest: Destination) => ReactNode }) {
   const shell = useShell();
   const spec = dest.spec;
   let content: ReactNode;
@@ -146,4 +146,4 @@ export function DestinationView({ dest, params, renderShellPage }: { dest: Desti
       <Suspense fallback={screenFallback}>{content}</Suspense>
     </ScreenBoundary>
   );
-}
+});

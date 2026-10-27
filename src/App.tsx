@@ -1763,6 +1763,12 @@ export default function App() {
  // (components/PasswordSecurity.tsx). A hook, so it sits above the conditional returns too.
  const passwordPolicy = usePasswordPolicy(user);
 
+ // Stable across renders, so the shell's context (and the screens under it) only changes with the
+ // data. loadStores only calls the api and setStores.
+ const loadStoresRef = useRef(loadStores);
+ loadStoresRef.current = loadStores;
+ const refreshStores = useCallback(() => loadStoresRef.current(), []);
+
  // Checking the saved session: the same plain screen as index.html's start-up splash (the
  // session is read from the phone, so this lasts a moment).
  if (isCheckingAuth) {
@@ -1831,7 +1837,7 @@ export default function App() {
     employees={employees}
     selectedStoreId={nav.chrome.storeSwitcher ? selectedStoreId : null}
     onStoreChange={setSelectedStoreId}
-    refreshStores={loadStores}
+    refreshStores={refreshStores}
     banners={
      <>
       <UpdateAvailableBanner />

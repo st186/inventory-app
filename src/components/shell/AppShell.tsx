@@ -1,7 +1,7 @@
 // The app shell (design review d1): top bar, bottom nav on phones, rail on tablets, sidebar on
 // desktop, the Account sheet, Ask Bunny and the Inbox, around whichever destination the router
 // is on. App.tsx keeps the data and sign-in; this decides what is on screen.
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from 'react';
 import type { InventoryContextType } from '../../App';
 import type * as api from '../../utils/api';
 import { setScreenPage } from '../../utils/screenContext';
@@ -60,6 +60,12 @@ export function AppShell(props: AppShellProps) {
   );
 }
 
+/** The top bar with the bell's unread count: the only part that re-renders when the inbox polls. */
+function TopBarWithInbox(props: Omit<ComponentProps<typeof TopBar>, 'unread'>) {
+  const feed = useNotifications();
+  return <TopBar {...props} unread={feed.unreadCount} />;
+}
+
 function todayCaption(t: (key: I18nKey) => string) {
   const d = new Date();
   return `${t(`date.wd.${d.getDay()}` as I18nKey)} ${d.getDate()} ${t(`date.ms.${d.getMonth()}` as I18nKey)}`;
@@ -68,7 +74,6 @@ function todayCaption(t: (key: I18nKey) => string) {
 function ShellFrame(props: AppShellProps) {
   const { nav, user, stores, selectedStoreId, preview } = props;
   const { t, lang } = useT();
-  const feed = useNotifications();
   const [accountOpen, setAccountOpen] = useState(!!preview?.accountOpen);
   const [accountMounted, setAccountMounted] = useState(!!preview?.accountOpen);
   const [bunnyOpen, setBunnyOpen] = useState(false);
@@ -155,31 +160,36 @@ function ShellFrame(props: AppShellProps) {
     router.go(path);
   };
 
-  const shellValue: ShellContextValue = {
+  // Memoised so the screens re-render when the data or the route changes, not on every App render
+  // (the old Analytics landing page relied on React.memo the same way).
+  const { context, employees, onStoreChange, refreshStores, renderAudit } = props;
+  const isPreview = !!preview;
+  const shellValue: ShellContextValue = useMemo(() => ({
     nav,
     router,
     user,
-    context: props.context,
+    context,
     stores,
-    employees: props.employees,
+    employees,
     selectedStoreId,
-    setSelectedStoreId: props.onStoreChange,
-    refreshStores: props.refreshStores,
+    setSelectedStoreId: onStoreChange,
+    refreshStores,
     openAccount,
     openBunny,
-    preview: !!preview,
-    renderAudit: props.renderAudit,
-  };
+    preview: isPreview,
+    renderAudit,
+  }), [nav, router, user, context, stores, employees, selectedStoreId, onStoreChange, refreshStores, openAccount, openBunny, isPreview, renderAudit]);
 
-  const renderShellPage = (d: Destination) => (
+  const isMe = route.path === 'me';
+  const renderShellPage = useCallback((d: Destination) => (
     <Suspense fallback={screenFallback}>
       {d.spec.screen === 'Inbox' ? (
         <InboxPage onOpenTarget={(target) => router.openLegacyTarget(target)} />
       ) : (
-        <MorePage nav={nav} isMe={route.path === 'me'} name={user.name} roleLine={roleLine} onOpen={(p) => router.push(p)} onAccount={openAccount} />
+        <MorePage nav={nav} isMe={isMe} name={user.name} roleLine={roleLine} onOpen={(p) => router.push(p)} onAccount={openAccount} />
       )}
     </Suspense>
-  );
+  ), [router, nav, isMe, user.name, roleLine, openAccount]);
 
   return (
     <ShellProvider value={shellValue}>
@@ -199,7 +209,7 @@ function ShellFrame(props: AppShellProps) {
         <NavRail tabs={nav.tabs} activeTab={activeTab} badges={props.badges} onSelect={selectTab} userName={user.name} onAccount={openAccount} />
 
         <div className="flex min-h-dvh flex-col md:pl-20 lg:pl-[248px]">
-          <TopBar
+          <TopBarWithInbox
             title={title}
             caption={isHome ? homeCaption : undefined}
             isHome={brandHome}
@@ -210,7 +220,6 @@ function ShellFrame(props: AppShellProps) {
             chips={storeChip}
             showAskBunny={nav.chrome.askBunny}
             onAskBunny={openBunny}
-            unread={feed.unreadCount}
             onInbox={() => router.push('inbox')}
             showBell={route.path !== 'inbox'}
             userName={user.name}
