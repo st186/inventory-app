@@ -67,17 +67,11 @@ export const approvedAfterCount = (t: Row, recal: Row): boolean => {
 // ── What moves the balance ──
 
 // Aggregator commission is stored as an overhead ('service_charge' with this description, or
-// the old 'commission' category). Only its online part ever left Paytm.
+// the old 'commission' category). It never moves Paytm: Swiggy/Zomato deduct it before paying
+// out, and the settlement's net payout is what arrives (owner, 27 Oct 2026).
 export const isCommissionEntry = (item: Row): boolean =>
   (item?.category === 'service_charge' && typeof item?.description === 'string' && item.description.includes('Aggregator Commission')) ||
   item?.category === 'commission';
-
-const commissionOnlinePart = (o: Row): number => {
-  const method = o.paymentMethod || 'online';
-  if (method === 'online') return o.amount || 0;
-  if (method === 'both') return o.onlineAmount || 0;
-  return 0;
-};
 
 // A salary/payout leaves Paytm unless it was paid from the bank or cash. A missing paidFrom is
 // a record from before the field existed, when every payout came out of Paytm.
@@ -109,7 +103,7 @@ export interface PaytmSources {
   payouts: Row[];        // payout: rows (salaries)
   topups: Row[];         // cash-topup: requests
   loans: Row[];          // online-loan: rows
-  overheads: Row[];      // only the aggregator-commission entries matter
+  overheads: Row[];      // kept for callers; commission no longer moves Paytm
   recalibrations: Row[]; // online-cash-recalibration: rows (physical counts)
   // Hand-typed Swiggy/Zomato payouts (online_payout:) from before settlement uploads replaced
   // them. Nothing new is written there; only the store incharge's form still passes them.
@@ -140,7 +134,7 @@ export interface PaytmMovement {
   loansReceived: number;
   usedOnlineMoney: number;   // cash top-ups into the store's till (stored on the day's sales row)
   productionTopups: number;  // cash top-ups handed to the production house instead
-  commission: number;
+  commission: number;        // always 0: payouts arrive net of commission (kept for older callers)
   loanRepayments: number;
   salaryPayouts: number;     // salaries/payouts paid from Paytm
   net: number;
@@ -172,7 +166,7 @@ export function paytmMovement(src: PaytmSources, afterDate: string, throughDate:
   // Store-reason top-ups are already in usedOnlineMoney; production-reason ones never go on a
   // sales row (they mustn't add to the store's own cash), but they drain the same Paytm.
   const productionTopups = sumOf(src.topups.filter((t) => t.status === 'approved' && t.reason === 'production_inventory' && inRange(t.date)), (t) => t.requestedAmount);
-  const commission = sumOf(src.overheads.filter((o) => isCommissionEntry(o) && inRange(o.date)), commissionOnlinePart);
+  const commission = 0;
   const loanRepaid = sumOf(repayments.filter((r) => inRange(r.date)), (r) => r.amount);
   const salaryPayouts = sumOf(src.payouts.filter((p) => payoutHitsPaytm(p) && inRange(p.date)), (p) => p.amount);
 
@@ -180,7 +174,7 @@ export function paytmMovement(src: PaytmSources, afterDate: string, throughDate:
     paytmReceived, aggregatorPayouts, legacyPayouts, loansReceived, usedOnlineMoney, productionTopups, commission,
     loanRepayments: loanRepaid, salaryPayouts,
     net: paytmReceived + aggregatorPayouts + legacyPayouts + loansReceived
-      - usedOnlineMoney - productionTopups - commission - loanRepaid - salaryPayouts,
+      - usedOnlineMoney - productionTopups - loanRepaid - salaryPayouts,
   };
 }
 
@@ -194,7 +188,7 @@ export const recalibrationOn = (src: PaytmSources, date: string): Row | null =>
 // count. A count is a point in time, often taken early, and the day's own Paytm takings,
 // aggregator payouts and Paytm-paid salaries have no time to compare it against, so they're
 // added in full. Cash top-ups do have one: only those approved after the count still come off.
-// The day's loans, repayments and commission are taken to be inside the count.
+// The day's loans and repayments are taken to be inside the count.
 // Settlements go strictly by settlementDate (the real bank-credit date per the aggregator's
 // UTR), never by when the file was uploaded: one dated before the recalibration is already in
 // the count however late its file arrives (confirmed with the owner).
