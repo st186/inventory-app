@@ -1,13 +1,17 @@
 // The weekly production goal (a piece target per momo type for a Monday-start week, set by the
 // cluster head or an operations manager) with progress from real production, and its edit sheet.
+// "Suggest with Bunny" fills the sheet from the week's forecast, festival days and event stalls
+// (POST /ai/weekly-goal); nothing is saved until Save goal.
 import { useState, useMemo, useEffect } from 'react';
 import type { InventoryContextType } from '../../App';
-import { Target, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Target, Pencil, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
 import { EmptyState } from '../ui/empty-state';
 import { Field } from '../ui/field';
 import { IconButton } from '../ui/icon-button';
 import { Input } from '../ui/input';
+import { IconWell } from '../ui/list-row';
 import { Progress } from '../ui/progress';
 import { ResponsiveModal } from '../ui/responsive-modal';
 import { SkeletonText } from '../ui/skeleton';
@@ -17,6 +21,7 @@ import * as api from '../../utils/api';
 import { toast } from '../ui/sonner';
 import { getTodayIST } from '../../utils/timezone';
 import { MOMO_TYPES } from '../../constants/momoTypes';
+import { getBunnyLanguage } from '../../utils/bunnyLanguage';
 
 type Props = {
   context: InventoryContextType;
@@ -38,6 +43,8 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
   const [showEditGoal, setShowEditGoal] = useState(false);
   const [goalDraft, setGoalDraft] = useState<Record<string, string>>({});
   const [goalSaving, setGoalSaving] = useState(false);
+  const [suggestion, setSuggestion] = useState<api.WeeklyGoalSuggestion | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
 
   const canSetWeeklyGoal = isClusterHead || isOperationsManager;
 
@@ -103,7 +110,27 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
     const draft: Record<string, string> = {};
     MOMO_TYPES.forEach((t) => { draft[t.key] = weeklyGoal?.goals?.[t.key] ? String(weeklyGoal.goals[t.key]) : ''; });
     setGoalDraft(draft);
+    setSuggestion(null);
     setShowEditGoal(true);
+  };
+
+  // Bunny's suggestion goes into the sheet's boxes, to check and change before saving.
+  const suggestGoal = async () => {
+    if (!resolvedProductionHouseId || !context.user?.accessToken) return;
+    if (!showEditGoal) openEditGoal();
+    setSuggesting(true);
+    try {
+      const s = await api.suggestWeeklyGoal(context.user.accessToken, resolvedProductionHouseId, goalWeekStart, getBunnyLanguage());
+      const draft: Record<string, string> = {};
+      MOMO_TYPES.forEach((t) => { draft[t.key] = s.goals[t.inventoryKey] ? String(s.goals[t.inventoryKey]) : ''; });
+      setGoalDraft(draft);
+      setSuggestion(s);
+    } catch (error) {
+      console.error('Error suggesting the weekly goal:', error);
+      toast.error(`Bunny couldn't suggest a goal: ${error instanceof Error ? error.message : 'try again'}`);
+    } finally {
+      setSuggesting(false);
+    }
   };
 
   const handleSaveGoal = async () => {
@@ -134,7 +161,7 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
 
   return (
     <CollapsibleCard
-      icon={<span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-2 [&_svg]:size-5" aria-hidden="true"><Target /></span>}
+      icon={<IconWell icon={Target} />}
       title={title}
       subtitle={range}
     >
@@ -152,7 +179,13 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
         {weeklyGoalLoading ? (
           <SkeletonText lines={3} />
         ) : goalTypes.length === 0 ? (
-          <EmptyState compact icon={Target} title="No goal for this week" body={canSetWeeklyGoal ? undefined : 'The cluster head or an operations manager sets it.'} />
+          <EmptyState
+            compact
+            icon={Target}
+            title="No goal for this week"
+            body={canSetWeeklyGoal ? (isGoalWeekCurrent || isGoalWeekFuture ? 'Bunny can suggest one from the forecast, festivals and event stalls.' : undefined) : 'The cluster head or an operations manager sets it.'}
+            action={canSetWeeklyGoal && (isGoalWeekCurrent || isGoalWeekFuture) ? <Button variant="secondary" size="sm" leadingIcon={<Sparkles />} loading={suggesting} onClick={suggestGoal}>Suggest with Bunny</Button> : undefined}
+          />
         ) : (
           goalTypes.map((m) => {
             const goal = weeklyGoal?.goals?.[m.key] || 0;
@@ -179,6 +212,19 @@ export function WeeklyGoalCard({ context, resolvedProductionHouseId, isClusterHe
         footer={<Button size="lg" className="flex-1" loading={goalSaving} onClick={handleSaveGoal}>Save goal</Button>}
       >
         <div className="flex flex-col gap-3">
+          {(isGoalWeekCurrent || isGoalWeekFuture) && (
+            <Button variant="secondary" leadingIcon={<Sparkles />} loading={suggesting} onClick={suggestGoal}>
+              {suggestion ? 'Suggest again' : 'Suggest with Bunny'}
+            </Button>
+          )}
+          {suggestion && (
+            <Callout tone="neutral" icon={<Sparkles />} title={suggestion.ai ? 'Bunny suggested these - change any box before saving' : 'From the forecast - change any box before saving'}>
+              <ul className="flex list-disc flex-col gap-1 pl-4">
+                {suggestion.reasons.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+              {suggestion.note && <p className="mt-1 text-text-3">{suggestion.note}</p>}
+            </Callout>
+          )}
           {MOMO_TYPES.map((m) => (
             <Field key={m.key} label={momoName(lang, m.inventoryKey, m.label)}>
               <Input type="text" inputMode="numeric" className="num" placeholder="0" value={goalDraft[m.key] || ''} onChange={(e) => setGoalDraft((prev) => ({ ...prev, [m.key]: e.target.value.replace(/[^\d]/g, '') }))} />

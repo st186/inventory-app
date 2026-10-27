@@ -494,6 +494,22 @@ export async function getAiBrief(accessToken: string, storeId: string | null, re
   return fetchWithAuth(`${API_BASE}/ai/brief`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, refresh }) });
 }
 
+// The week's production goal suggested from the forecast, festivals and event stalls. Goals are
+// keyed by forecast momo type ('chicken', 'veg', ...) - MOMO_TYPES' inventoryKey.
+export interface WeeklyGoalSuggestion {
+  weekStart: string;
+  goals: Record<string, number>;
+  base: Record<string, number>;
+  expected: Record<string, number>;
+  reasons: string[];
+  ai: boolean;
+  note?: string;
+}
+
+export async function suggestWeeklyGoal(accessToken: string, productionHouseId: string, weekStart: string, language: 'en' | 'bn' | 'hi'): Promise<WeeklyGoalSuggestion> {
+  return fetchWithAuth(`${API_BASE}/ai/weekly-goal`, accessToken, { method: 'POST', body: JSON.stringify({ productionHouseId, weekStart, language }) });
+}
+
 export interface GrowthIdea {
   id: string;
   storeId: string;

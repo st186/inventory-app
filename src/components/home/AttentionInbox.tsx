@@ -25,7 +25,8 @@ export type AttentionItem = {
   onOpen: () => void;
 };
 
-const WELL: Record<NonNullable<AttentionItem['tone']>, IconWellTone> = { neutral: 'neutral', danger: 'danger', warning: 'warning' };
+// Neutral rows take their icon's pastel (ui/tints.ts); danger and warning keep the status colour.
+const WELL: Record<NonNullable<AttentionItem['tone']>, IconWellTone | undefined> = { neutral: undefined, danger: 'danger', warning: 'warning' };
 const CHIP: Record<NonNullable<AttentionItem['tone']>, StatusTone> = { neutral: 'neutral', danger: 'danger', warning: 'warning' };
 const MAX_ROWS = 5;
 

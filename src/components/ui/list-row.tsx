@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react@0.487.0";
 import { cn } from "./utils";
 import { Money } from "./money";
 import { isIndicText } from "../../utils/i18n";
+import { tintClasses, tintForIcon } from "./tints";
 
 // The default way to show records on phones (instead of tables or a card per record).
 //
@@ -28,10 +29,12 @@ const wellTones = {
 
 export type IconWellTone = keyof typeof wellTones;
 
-/** 36 px rounded square holding an icon in text-2. Coloured only when the icon is the status. */
+/** 36 px rounded square holding an icon. A status tone colours it by the status; with no tone
+ *  it takes the pastel of what the icon means (tints.ts), the same for that icon everywhere.
+ *  "neutral" keeps it grey. */
 function IconWell({
   icon: Icon,
-  tone = "neutral",
+  tone,
   size = 36,
   className,
   children,
@@ -48,7 +51,7 @@ function IconWell({
       className={cn(
         "flex shrink-0 items-center justify-center rounded-md [&_svg]:size-5",
         size === 36 ? "size-9" : "size-10",
-        wellTones[tone],
+        tone ? wellTones[tone] : tintClasses[tintForIcon((Icon as { displayName?: string } | undefined)?.displayName)].well,
         className,
       )}
     >
@@ -94,7 +97,7 @@ function ListRow({
   title,
   subtitle,
   icon,
-  iconTone = "neutral",
+  iconTone,
   leading,
   chip,
   amount,

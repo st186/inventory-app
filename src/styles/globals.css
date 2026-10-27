@@ -56,6 +56,27 @@
   --danger-hover: #991B1B;           /* pressed/hover on a filled danger button */
   --on-danger: #FFFFFF;
 
+  /* Pastel tints: one soft colour per kind of figure (ui/tints.ts). Label and ink are the same
+     hue's dark stops, 4.5:1 or better on the tint. */
+  --tint-mint: #E1F5EE;              /* sales, profit */
+  --tint-mint-label: #0F6E56;
+  --tint-mint-ink: #085041;
+  --tint-peach: #FAECE7;             /* cash, spending */
+  --tint-peach-label: #993C1D;
+  --tint-peach-ink: #712B13;
+  --tint-sky: #E6F1FB;               /* Paytm, online */
+  --tint-sky-label: #185FA5;
+  --tint-sky-ink: #0C447C;
+  --tint-lavender: #EEEDFE;          /* approvals, requests */
+  --tint-lavender-label: #534AB7;
+  --tint-lavender-ink: #3C3489;
+  --tint-butter: #FAEEDA;            /* stock, momos, production */
+  --tint-butter-label: #854F0B;
+  --tint-butter-ink: #633806;
+  --tint-rose: #FBEAF0;              /* team, pay */
+  --tint-rose-label: #993556;
+  --tint-rose-ink: #72243E;
+
   /* Data viz */
   --chart-1: #C2410C;                /* primary series */
   --chart-2: #0F766E;                /* teal, second series */
@@ -252,6 +273,26 @@
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
   --color-info-border: var(--info-border);
+
+  /* Pastel tints */
+  --color-tint-mint: var(--tint-mint);
+  --color-tint-mint-label: var(--tint-mint-label);
+  --color-tint-mint-ink: var(--tint-mint-ink);
+  --color-tint-peach: var(--tint-peach);
+  --color-tint-peach-label: var(--tint-peach-label);
+  --color-tint-peach-ink: var(--tint-peach-ink);
+  --color-tint-sky: var(--tint-sky);
+  --color-tint-sky-label: var(--tint-sky-label);
+  --color-tint-sky-ink: var(--tint-sky-ink);
+  --color-tint-lavender: var(--tint-lavender);
+  --color-tint-lavender-label: var(--tint-lavender-label);
+  --color-tint-lavender-ink: var(--tint-lavender-ink);
+  --color-tint-butter: var(--tint-butter);
+  --color-tint-butter-label: var(--tint-butter-label);
+  --color-tint-butter-ink: var(--tint-butter-ink);
+  --color-tint-rose: var(--tint-rose);
+  --color-tint-rose-label: var(--tint-rose-label);
+  --color-tint-rose-ink: var(--tint-rose-ink);
 
   /* Charts */
   --color-chart-1: var(--chart-1);

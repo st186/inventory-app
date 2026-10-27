@@ -4,8 +4,11 @@ import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react@0.487.0";
 import { cn } from "./utils";
 import { Skeleton } from "./skeleton";
 import { StatusChip } from "./status-chip";
+import { tintClasses, tintForLabel, type Tint } from "./tints";
 
-// A number with its label. Neutral card; tinted (danger) only when the figure is bad.
+// A number with its label, on the pastel of its kind (sales mint, cash peach, Paytm sky, ...;
+// see tints.ts), worked out from the label unless `tint` says otherwise. Red (danger) when the
+// figure is bad.
 //
 //   <StatGrid>
 //     <StatTile label="Net profit · Oct" value={<Money value={48200} />} delta={{ value: 6, label: "vs Sep" }} />
@@ -42,6 +45,8 @@ export type StatTileProps = {
   caption?: React.ReactNode;
   /** Tint the tile when the figure is bad. Pair with an icon and a word. */
   tone?: "default" | "danger";
+  /** Pastel for this kind of figure; by default from the label. "none" keeps it white. */
+  tint?: Tint | "none";
   /** Optional 40 px trend line under the value (chart-1, no fill). */
   sparkline?: number[];
   href?: string;
@@ -97,6 +102,7 @@ function StatTile({
   headerChip,
   caption,
   tone = "default",
+  tint,
   sparkline,
   href,
   onClick,
@@ -107,12 +113,15 @@ function StatTile({
 }: StatTileProps) {
   const interactive = Boolean(href || onClick);
   const danger = tone === "danger";
+  const tintKey = danger || tint === "none" ? null : tint ?? tintForLabel(label);
+  const tinted = tintKey ? tintClasses[tintKey] : null;
   const classes = cn(
     "flex min-w-0 flex-col rounded-lg border text-left text-text no-underline",
     hero ? "gap-3 p-4" : "gap-1.5 p-3.5",
-    danger ? "border-danger-border bg-danger-soft" : "border-border bg-surface",
+    danger ? "border-danger-border bg-danger-soft" : tinted ? tinted.tile : "border-border bg-surface",
     interactive &&
-      "cursor-pointer outline-none transition-colors duration-(--dur-fast) hover:bg-surface-2/60 active:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+      "cursor-pointer outline-none transition-[filter,background-color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+    interactive && (tinted || danger ? "hover:brightness-[0.97] active:brightness-[0.94]" : "hover:bg-surface-2/60 active:bg-surface-2"),
     className,
   );
 
@@ -125,11 +134,11 @@ function StatTile({
   ) : (
     <>
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className={cn("text-label font-medium", danger ? "text-danger" : "text-text-2")}>{label}</span>
+        <span className={cn("text-label font-medium", danger ? "text-danger" : tinted ? tinted.label : "text-text-2")}>{label}</span>
         {headerChip}
         {interactive && !headerChip && <ChevronRight className="size-4 shrink-0 text-text-disabled" aria-hidden="true" />}
       </div>
-      <div className={cn("num font-semibold", hero ? "text-display" : "text-title-lg", danger && "text-danger")}>{value}</div>
+      <div className={cn("num font-semibold", hero ? "text-display" : "text-title-lg", danger ? "text-danger" : tinted?.value)}>{value}</div>
       {sparkline && <Sparkline points={sparkline} />}
       {(delta || chip) && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -137,8 +146,8 @@ function StatTile({
           {chip}
         </div>
       )}
-      {caption && <span className="text-label text-text-3">{caption}</span>}
-      {children && <div className="border-t border-border pt-3">{children}</div>}
+      {caption && <span className={cn("text-label", tinted ? tinted.label : "text-text-3")}>{caption}</span>}
+      {children && <div className={cn("border-t pt-3", tinted ? "border-black/10" : "border-border")}>{children}</div>}
     </>
   );
 

@@ -13,7 +13,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk';
 import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
-  backtest, summarizeAccuracy, tuneSettings,
+  backtest, summarizeAccuracy, tuneSettings, roundUpToBag,
   type CalendarEvent, type DayEffect, type DayRecord, type MomoKey, type ForecastSettings,
 } from './forecast.ts';
 
@@ -724,6 +724,114 @@ ${JSON.stringify(data)}`,
       const brief = { text: textOf(res), generatedAt: new Date().toISOString(), model: res.model, storeId, date: today, refreshes: cached ? (cached.refreshes || 0) + 1 : 0 };
       await deps.kv.set(key, brief);
       return c.json({ brief });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Weekly production goal, suggested. The base is the week's forecast per momo type (weekday
+  // pattern, recent level, the calendar's festival days) plus a 10% margin, in whole bags. Bunny
+  // reads the same figures with what the forecast can't see - festival days only suggested so
+  // far, event stalls that week, recent stock-outs - and may move a type within limits, saying
+  // why. Without AI (no key, budget used up) the base comes back on its own.
+  app.post(`${P}/ai/weekly-goal`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const productionHouseId = String(body.productionHouseId || '');
+      const today = deps.getTodayIST();
+      const thisMonday = mondayOf(today);
+      const weekStart = /^\d{4}-\d{2}-\d{2}$/.test(body.weekStart || '') ? mondayOf(body.weekStart) : thisMonday;
+      if (weekStart < thisMonday) return c.json({ error: 'Pick this week or a later one' }, 400);
+      const language = LANGUAGES[body.language as keyof typeof LANGUAGES] ? body.language as keyof typeof LANGUAGES : 'en';
+      const weekEnd = addDaysISO(weekStart, 6);
+
+      const stores = ((await deps.kv.getByPrefix<any>('store:')) || []).filter((s) => s?.id && (!productionHouseId || s.productionHouseId === productionHouseId));
+      const storeId = stores.length === 1 ? stores[0].id : null;
+      const [days, events, suggestions, stalls] = await Promise.all([
+        loadDays(deps.kv, storeId, addDaysISO(today, -HISTORY_DAYS), addDaysISO(today, -1)),
+        loadEvents(deps.kv),
+        pendingSuggestions(deps.kv, today),
+        deps.kv.getByPrefix<any>('event:'),
+      ]);
+      const accuracy = await forecastCheck(deps, storeId, days, events, today);
+      const forecast = forecastDays(days, events, weekStart, 7, today, accuracy.settings);
+      const base: Record<string, number> = {};
+      const expected: Record<string, number> = {};
+      for (const t of FORECAST_TYPES) {
+        expected[t.key] = Math.round(forecast.reduce((s, d) => s + (d.pieces[t.key] || 0), 0));
+        base[t.key] = roundUpToBag(expected[t.key] * 1.1, t.bag);
+      }
+      const weekStalls = (stalls || [])
+        .filter((e) => e?.startDate && e?.endDate && e.startDate <= weekEnd && e.endDate >= weekStart && e.status !== 'cancelled' && !e.deletedAt)
+        .map((e) => ({ name: e.name, from: e.startDate, to: e.endDate, location: e.location || e.venue || undefined, daysThisWeek: forecast.filter((d) => d.date >= e.startDate && d.date <= e.endDate).length }));
+      const pastStalls = (stalls || []).filter((e) => e?.endDate && e.endDate < today && !e.deletedAt).length;
+      const maybeFestivals = suggestions.filter((s) => s.date >= weekStart && s.date <= weekEnd).map((s) => ({ date: s.date, name: s.name, effect: s.effect, reason: s.reason }));
+      const recentStockOuts = days.filter((d) => d.date >= addDaysISO(today, -14) && d.stockedOut?.length).map((d) => ({ date: d.date, types: d.stockedOut }));
+      const dayLines = forecast.map((d) => ({ date: d.date, weekday: d.weekday, festival: d.event ? `${d.event.name} (${d.event.effect})` : undefined, revenue: Math.round(d.revenue), pieces: d.pieces }));
+
+      const fallbackReasons = [
+        `Forecast for ${dayLines[0].weekday} ${weekStart} to ${dayLines[6].weekday} ${weekEnd}: ${FORECAST_TYPES.map((t) => `${t.label} ${expected[t.key]}`).join(', ')} pieces, plus 10% and rounded up to whole bags.`,
+        ...forecast.filter((d) => d.event).map((d) => `${d.weekday} ${d.date}: ${d.event!.name} is in the calendar and already counted.`),
+        ...(weekStalls.length ? [`Event stall this week (${weekStalls.map((s) => s.name).join(', ')}): add the stall's momos - not in this goal.`] : []),
+      ];
+      const forecastOnly = (note: string) => c.json({ weekStart, goals: base, base, expected, reasons: fallbackReasons, ai: false, note });
+      if (!aiConfigured()) return forecastOnly('Bunny is not set up, so this is the forecast alone.');
+
+      const types = FORECAST_TYPES.map((t) => t.key);
+      let data: any = null;
+      try {
+        const res = await callClaude(deps, {
+          purpose: 'weekly-goal',
+          user: aiUser(g.actor!),
+          effort: 'low',
+          maxTokens: 2500,
+          format: {
+            type: 'json_schema',
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                goals: { type: 'object', additionalProperties: false, properties: Object.fromEntries(types.map((k) => [k, { type: 'integer' }])), required: types },
+                reasons: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['goals', 'reasons'],
+            },
+          },
+          messages: [{
+            role: 'user',
+            content: `Set the production house's momo goal for the week ${weekStart} (Mon) to ${weekEnd} (Sun). Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}.
+
+"base" is the forecast's expected pieces for the week plus 10%, in whole bags (chicken bags of 50, every other type 20). The forecast already counts the weekday pattern, the recent sales level and the festival days marked in the calendar ("festival" on a day).
+
+Start from base for each type. Change a type only for something the forecast can't see:
+- an event stall this week ("stalls"): add that stall's momos. ${pastStalls ? `There have been ${pastStalls} stalls before.` : 'There is no stall history yet, so say plainly that the stall figure is your estimate.'}
+- a festival day only suggested so far ("maybeFestivals"), not yet in the calendar;
+- a type that ran out on several recent days ("recentStockOuts").
+Otherwise keep base. Every goal must be a whole number of bags.
+
+Reply with "goals" (pieces per type) and "reasons": at most 4 short lines in ${LANGUAGES[language]}, each with numbers, first the week's total against the forecast, then each change and why. Name days like "Sat 31 Oct".
+
+${JSON.stringify({ base, expected, days: dayLines, stalls: weekStalls, maybeFestivals, recentStockOuts })}`,
+          }],
+        });
+        try { data = JSON.parse(textOf(res)); } catch { data = null; }
+      } catch (err) {
+        if (!(err instanceof AiError)) throw err;
+        return forecastOnly(err.message);
+      }
+      if (!data?.goals) return forecastOnly('Bunny did not answer, so this is the forecast alone.');
+
+      // Bunny's numbers stay within reach of the forecast: no lower than 60% of base, and no
+      // higher than 160% (three times with a stall that week), in whole bags.
+      const goals: Record<string, number> = {};
+      for (const t of FORECAST_TYPES) {
+        const b = base[t.key];
+        const asked = Math.max(0, Math.round(Number(data.goals[t.key]) || 0));
+        const lo = Math.floor((b * 0.6) / t.bag) * t.bag;
+        const hi = roundUpToBag(Math.max(b, t.bag) * (weekStalls.length ? 3 : 1.6), t.bag);
+        goals[t.key] = Math.min(hi, Math.max(lo, roundUpToBag(asked, t.bag)));
+      }
+      const reasons = (Array.isArray(data.reasons) ? data.reasons : []).map((r: any) => String(r)).filter(Boolean).slice(0, 4);
+      return c.json({ weekStart, goals, base, expected, reasons: reasons.length ? reasons : fallbackReasons, ai: true });
     } catch (err) { return fail(c, err); }
   });
 
