@@ -1,6 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { RefreshCw, WifiOff, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, WifiOff, ChevronDown, ChevronUp, CloudOff } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from './ui/button';
+import { confirm } from './ui/confirm';
+import { cn } from './ui/utils';
 import { hasFeature, isOnline, onConnectivity } from '../utils/http';
 import * as outbox from '../utils/outbox';
 
@@ -71,11 +74,11 @@ async function sendNow(entry: outbox.OutboxEntry) {
   const serverReplays = hasFeature('idempotency-v1') && entry.uncertainty !== 'server';
   if (entry.state === 'unsure' && entry.kind !== 'sales' && !serverReplays) {
     const question = entry.notOnServer
-      ? `Send "${entry.label}" again? The latest download from the server doesn't have it.`
+      ? `The latest download from the server doesn't have "${entry.label}".`
       : entry.uncertainty === 'server'
-      ? `The server failed while saving "${entry.label}", so it may be partly saved. Check the expense list first. Send it again anyway?`
-      : `The signal dropped while "${entry.label}" was being sent, so it may already be saved. Check the expense list first. Send it again anyway?`;
-    if (!confirm(question)) return;
+      ? `The server failed while saving "${entry.label}", so it may be partly saved. Check the expense list first.`
+      : `The signal dropped while "${entry.label}" was being sent, so it may already be saved. Check the expense list first.`;
+    if (!(await confirm({ title: 'Send it again?', body: question, confirmLabel: 'Send again' }))) return;
   }
   const outcome = await outbox.sendManually(entry.id);
   if (outcome.status === 'sent') toast.success(`Sent: ${entry.label}`);
@@ -84,13 +87,16 @@ async function sendNow(entry: outbox.OutboxEntry) {
 }
 
 async function removeEntry(entry: outbox.OutboxEntry) {
-  if (!confirm(`Remove "${entry.label}" from this phone? It will not be sent.`)) return;
+  if (!(await confirm({ title: `Remove "${entry.label}" from this phone?`, body: 'It will not be sent.', confirmLabel: 'Remove', tone: 'danger' }))) return;
   try {
     await outbox.removeEntry(entry.id);
   } catch (error: any) {
     toast.error(error?.message || 'Could not remove it');
   }
 }
+
+// Small text buttons inside the 12 px status line: the touch area is still 44 x 44 (hit-44).
+const lineButton = 'hit-44 inline-flex items-center gap-1 rounded-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 export function SyncStatus({ lastUpdatedAt, refreshing, failed, offline, hasData, onRetry, quiet = false }: Props) {
   const online = useOnline();
@@ -118,46 +124,49 @@ export function SyncStatus({ lastUpdatedAt, refreshing, failed, offline, hasData
   const amber = problem || needsAttention;
 
   return (
-    <div className={`border-b px-4 py-1.5 text-xs ${amber ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-white border-gray-200 text-gray-500'}`} role="status">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center gap-2">
-          {isOffline ? <WifiOff className="w-3.5 h-3.5 flex-shrink-0" /> : refreshing ? <RefreshCw className="w-3.5 h-3.5 flex-shrink-0 animate-spin" /> : null}
+    <div
+      className={cn('border-b px-4 py-1.5 text-caption', amber ? 'border-warning-border bg-warning-soft text-warning' : 'border-border bg-surface text-text-3')}
+      role="status"
+    >
+      <div className="mx-auto max-w-7xl">
+        <div className="flex min-h-6 items-center gap-2">
+          {isOffline ? <WifiOff className="size-3.5 shrink-0" aria-hidden="true" /> : refreshing ? <RefreshCw className="size-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
           {!(quiet && !problem) && <span className="truncate">{text}</span>}
-          <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-4">
             {waiting.length > 0 && (
-              <button onClick={() => setOpen(!open)} className="flex items-center gap-1 font-medium text-amber-800">
+              <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className={cn(lineButton, 'text-warning')}>
                 {waiting.length} waiting to send
-                {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {open ? <ChevronUp className="size-3.5" aria-hidden="true" /> : <ChevronDown className="size-3.5" aria-hidden="true" />}
               </button>
             )}
             {problem && !refreshing && (
-              <button onClick={onRetry} className="underline hover:text-amber-900">
+              <button type="button" onClick={onRetry} className={cn(lineButton, 'underline underline-offset-2')}>
                 Retry
               </button>
             )}
           </div>
         </div>
         {open && waiting.length > 0 && (
-          <ul className="mt-1.5 mb-1 space-y-1.5">
+          <ul className="mt-1.5 mb-1 overflow-hidden rounded-md border border-warning-border bg-surface text-text [&>*+*]:border-t [&>*+*]:border-border">
             {waiting.map((entry) => (
-              <li key={entry.id} className="flex items-start gap-2 bg-white border border-amber-200 rounded-lg px-2.5 py-1.5 text-gray-700">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-gray-900 truncate">{entry.label}</p>
-                  <p className="text-[11px] text-gray-500">
+              <li key={entry.id} className="flex items-center gap-3 px-3 py-2">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <p className="truncate text-body-sm font-medium text-text">{entry.label}</p>
+                  <p className="text-caption text-text-3">
                     {entryStatus(entry)} · saved on this phone {formatUpdated(entry.createdAt, now)}
                   </p>
                 </div>
                 {entry.state !== 'sending' && (
-                  <div className="flex items-center gap-2 flex-shrink-0 pt-0.5">
+                  <div className="flex shrink-0 items-center gap-1">
                     {(entry.state !== 'queued' || online) && (
-                      <button onClick={() => sendNow(entry)} className="text-orange-600 font-medium hover:text-orange-700">
+                      <Button size="sm" variant="ghost" className="text-primary" onClick={() => sendNow(entry)}>
                         Send now
-                      </button>
+                      </Button>
                     )}
                     {entry.state !== 'queued' && (
-                      <button onClick={() => removeEntry(entry)} className="text-gray-400 hover:text-gray-600">
+                      <Button size="sm" variant="ghost" onClick={() => removeEntry(entry)}>
                         Remove
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -177,17 +186,20 @@ export function WaitingToSend({ kinds, date }: { kinds: outbox.OutboxKind[]; dat
   const entries = useOutbox().filter((e) => kinds.includes(e.kind) && (!date || e.body?.date === date));
   if (entries.length === 0) return null;
   return (
-    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 space-y-0.5">
-      {entries.map((entry) => (
-        <p key={entry.id}>
-          <span className="font-medium">{entryStatus(entry, true)}:</span> {entry.label}
+    <div className="flex gap-2.5 rounded-md border border-warning-border bg-warning-soft px-3 py-2.5 text-body-sm text-text" role="status">
+      <CloudOff className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        {entries.map((entry) => (
+          <p key={entry.id}>
+            <span className="font-medium">{entryStatus(entry, true)}:</span> {entry.label}
+          </p>
+        ))}
+        <p className="text-caption text-text-2">
+          {entries.every((e) => e.state === 'queued' || e.state === 'sending')
+            ? 'Saved on this phone - it sends by itself when the signal is back.'
+            : 'Saved on this phone - open "waiting to send" at the top to check it.'}
         </p>
-      ))}
-      <p className="text-[11px] text-amber-700">
-        {entries.every((e) => e.state === 'queued' || e.state === 'sending')
-          ? 'Saved on this phone - it sends by itself when the signal is back.'
-          : 'Saved on this phone - open "waiting to send" at the top to check it.'}
-      </p>
+      </div>
     </div>
   );
 }

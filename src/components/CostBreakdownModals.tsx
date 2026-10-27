@@ -1,6 +1,11 @@
 import { useMemo, type ReactNode } from 'react';
-import { Percent, Landmark } from 'lucide-react';
+import { Landmark } from 'lucide-react';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
 import { ResponsiveModal } from './ui/responsive-modal';
+import { StatSplit, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { TextRow } from './insights/parts/common';
 import type { AggregatorSettlement, OnlineLoan } from '../utils/api';
 import { settlementShareInRange, type OnlineCosts } from '../utils/onlineCosts';
 import { getTodayIST } from '../utils/timezone';
@@ -72,105 +77,81 @@ export function CommissionBreakdownModal({
     () => [...settlements].sort((a, b) => ((a.periodEnd || a.settlementDate) < (b.periodEnd || b.settlementDate) ? 1 : -1)),
     [settlements]
   );
+  const pctOf = (s: AggregatorSettlement) => (s.grossSales - gstOf(s) > 0 ? ((commissionExGst(s) / (s.grossSales - gstOf(s))) * 100).toFixed(1) : '-');
+  const lines = [
+    { label: 'Commission from settlement files', value: costs.settledCommission },
+    { label: 'Commission from old manual payout entries', value: costs.legacyCommission },
+    {
+      label: `Estimated commission for ${costs.estimatedDays} day${costs.estimatedDays === 1 ? '' : 's'} not settled yet`,
+      value: costs.estimatedCommission,
+      note: `At the last 60 days' rate: Zomato ${(costs.rates.zomato.commission * 100).toFixed(1)}%, Swiggy ${(costs.rates.swiggy.commission * 100).toFixed(1)}% of sales. Replaced by the real figure once the settlement is uploaded.`,
+    },
+    { label: 'Platform ads', value: costs.ads, note: costs.estimatedAds > 0.5 ? `incl. ${inr(costs.estimatedAds)} estimated` : undefined },
+  ].filter((row) => Math.abs(row.value) > 0.5);
 
   return (
     <Shell
-      title="Zomato & Swiggy Commission and Ads"
+      title="Zomato & Swiggy commission and ads"
       subtitle={`${periodLabel} • Total ${inr(totalAmount)} • ${settlements.length} settlement${settlements.length === 1 ? '' : 's'}`}
-      icon={<Percent className="w-6 h-6 text-text-2" />}
       onClose={onClose}
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {perAggregator.map((a) => (
-          <div key={a.agg} className="rounded-lg border border-border p-4">
-            <div className="flex items-center justify-between">
-              <p className="font-semibold text-text capitalize">{a.agg}</p>
-              <span className="text-xs text-text-3">{a.count} settlement{a.count === 1 ? '' : 's'} • {a.orders} orders</span>
-            </div>
-            {a.count === 0 ? (
-              <p className="text-sm text-text-3 mt-3">No settlement uploaded for this period.</p>
-            ) : (
-              <>
-                <p className="text-2xl font-bold text-text tabular-nums mt-2">{inr(a.commission)}
-                  {a.pct !== null && <span className="ml-2 text-sm font-semibold text-danger">{a.pct.toFixed(1)}% of order value</span>}
-                </p>
-                <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                  <div><p className="text-text-3">Order value</p><p className="font-semibold tabular-nums">{inr(a.gross)}</p></div>
-                  <div><p className="text-text-3">Ad spend</p><p className="font-semibold tabular-nums">{inr(a.adSpend)}</p></div>
-                  <div><p className="text-text-3">Net payout</p><p className="font-semibold tabular-nums">{inr(a.net)}</p></div>
-                </div>
-              </>
+          <StatTile
+            key={a.agg}
+            label={<span className="capitalize">{a.agg}</span>}
+            headerChip={<span className="num text-caption text-text-3">{a.count} settlement{a.count === 1 ? '' : 's'} • {a.orders} orders</span>}
+            value={a.count === 0 ? <span className="text-body-md font-normal text-text-3">No settlement uploaded for this period</span> : inr(a.commission)}
+            chip={a.count > 0 && a.pct !== null ? <StatusChip tone="neutral">{a.pct.toFixed(1)}% of order value</StatusChip> : undefined}
+          >
+            {a.count > 0 && (
+              <StatSplit
+                items={[
+                  { label: 'Order value', value: inr(a.gross) },
+                  { label: 'Ad spend', value: inr(a.adSpend) },
+                  { label: 'Net payout', value: inr(a.net) },
+                ]}
+              />
             )}
-          </div>
+          </StatTile>
         ))}
       </div>
 
-      <div className="rounded-lg border border-border divide-y divide-border text-sm">
-        {[
-          { label: 'Commission from settlement files', value: costs.settledCommission },
-          { label: 'Commission from old manual payout entries', value: costs.legacyCommission },
-          {
-            label: `Estimated commission for ${costs.estimatedDays} day${costs.estimatedDays === 1 ? '' : 's'} not settled yet`,
-            value: costs.estimatedCommission,
-            note: `At the last 60 days' rate: Zomato ${(costs.rates.zomato.commission * 100).toFixed(1)}%, Swiggy ${(costs.rates.swiggy.commission * 100).toFixed(1)}% of sales. Replaced by the real figure once the settlement is uploaded.`,
-          },
-          { label: 'Platform ads', value: costs.ads, note: costs.estimatedAds > 0.5 ? `incl. ${inr(costs.estimatedAds)} estimated` : undefined },
-        ].filter((row) => Math.abs(row.value) > 0.5).map((row) => (
-          <div key={row.label} className="flex items-start justify-between gap-4 px-4 py-3">
-            <div>
-              <p className="text-text">{row.label}</p>
-              {row.note && <p className="text-xs text-text-3 mt-0.5">{row.note}</p>}
-            </div>
-            <p className="font-semibold tabular-nums text-text">{inr(row.value)}</p>
-          </div>
-        ))}
-        {costs.gstExcluded > 0.5 && (
-          <p className="px-4 py-3 text-xs text-text-3">
-            Not counted: {inr(costs.gstExcluded)} GST the platforms collected from customers and paid to the government for us. It was never part of our revenue, so it isn't our cost.
-          </p>
-        )}
-      </div>
+      {(lines.length > 0 || costs.gstExcluded > 0.5) && (
+        <ListGroup
+          title="What the total is made of"
+          footer={costs.gstExcluded > 0.5
+            ? `Not counted: ${inr(costs.gstExcluded)} GST the platforms collected from customers and paid to the government for us. It was never part of our revenue, so it isn't our cost.`
+            : undefined}
+        >
+          {lines.map((row) => (
+            <ListRow key={row.label} density="compact" title={row.label} subtitle={row.note} trailing={<span className="num text-body-md font-semibold text-text">{inr(row.value)}</span>} />
+          ))}
+        </ListGroup>
+      )}
 
-      <div className="rounded-lg border border-border overflow-hidden">
-        <div className="px-4 py-3 bg-surface-2 border-b border-border">
-          <h3 className="text-base font-semibold text-text">Settlements in this period</h3>
-          <p className="text-xs text-text-3">Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it.</p>
-        </div>
-        {sorted.length === 0 ? (
-          <p className="text-sm text-text-3 p-5 text-center">No settlements cover this period.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-text-3 border-b border-border">
-                  <th className="px-4 py-2">Aggregator</th>
-                  <th className="px-4 py-2">Orders from</th>
-                  <th className="px-4 py-2">Paid on</th>
-                  <th className="px-4 py-2 text-right">Order value</th>
-                  <th className="px-4 py-2 text-right">Commission</th>
-                  <th className="px-4 py-2 text-right">%</th>
-                  <th className="px-4 py-2 text-right">Ad spend</th>
-                  <th className="px-4 py-2 text-right">Net payout</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((s) => (
-                  <tr key={s.id} className="border-b border-border">
-                    <td className="px-4 py-2 capitalize font-medium text-text">{s.aggregator}</td>
-                    <td className="px-4 py-2 text-text-2">{shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</td>
-                    <td className="px-4 py-2 text-text-2">{shortDate(s.settlementDate)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{inr2((s.grossSales || 0) - gstOf(s))}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(commissionExGst(s))}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-danger">{s.grossSales - gstOf(s) > 0 ? ((commissionExGst(s) / (s.grossSales - gstOf(s))) * 100).toFixed(1) : '-'}%</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{s.adSpend ? inr2(s.adSpend) : '-'}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{inr2(s.netPayout || 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <ListGroup
+        title="Settlements in this period"
+        footer="Counted by the orders' dates, not the day the money arrived - a settlement paid in October for September orders belongs to September. A settlement that runs past the period's edge only counts for its days inside it."
+        empty={<EmptyState compact title="No settlements cover this period" />}
+      >
+        {sorted.map((s) => (
+          <TextRow
+            key={s.id}
+            title={<span className="capitalize">{s.aggregator} · {shortDate(s.periodStart || s.settlementDate)} - {shortDate(s.periodEnd || s.settlementDate)}</span>}
+            lines={[
+              `Paid ${shortDate(s.settlementDate)} · order value ${inr2((s.grossSales || 0) - gstOf(s))}`,
+              `Ad spend ${s.adSpend ? inr2(s.adSpend) : '-'} · net payout ${inr2(s.netPayout || 0)}`,
+            ]}
+            trailing={
+              <>
+                <span className="num text-body-md font-semibold text-text">{inr2(commissionExGst(s))}</span>
+                <span className="num text-caption text-text-3">{pctOf(s)}%</span>
+              </>
+            }
+          />
+        ))}
+      </ListGroup>
     </Shell>
   );
 }
@@ -209,49 +190,34 @@ export function InterestBreakdownModal({
       .filter((r) => r.interest > 0)
       .sort((a, b) => b.interest - a.interest);
   }, [loans, range]);
+  const statusText = (loan: OnlineLoan) => `${loan.status}${loan.status === 'repaid' && loan.repaymentDate ? ` (${shortDate(loan.repaymentDate)})` : ''}`;
 
   return (
     <Shell
-      title="Loan Interest Breakdown"
+      title="Loan interest breakdown"
       subtitle={`${periodLabel} • Total ${inr(totalAmount)} • ${rows.length} loan${rows.length === 1 ? '' : 's'} accruing interest`}
-      icon={<Landmark className="w-6 h-6 text-text-2" />}
       onClose={onClose}
     >
       {rows.length === 0 ? (
-        <p className="text-sm text-text-3 p-5 text-center">No interest-bearing loans accrue in this period.</p>
+        <EmptyState compact icon={Landmark} title="No interest-bearing loans accrue in this period" />
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-text-3 border-b border-border bg-surface-2">
-                  <th className="px-4 py-2">Lender</th>
-                  <th className="px-4 py-2">Taken on</th>
-                  <th className="px-4 py-2 text-right">Principal</th>
-                  <th className="px-4 py-2 text-right">Rate / month</th>
-                  <th className="px-4 py-2 text-right">Days in period</th>
-                  <th className="px-4 py-2">Status</th>
-                  <th className="px-4 py-2 text-right">Interest</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ loan, days, interest }) => (
-                  <tr key={loan.id} className="border-b border-border">
-                    <td className="px-4 py-2 font-medium text-text">{loan.investorName || 'Unknown lender'}</td>
-                    <td className="px-4 py-2 text-text-2">{shortDate(loan.loanDate)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{inr(loan.loanAmount)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{loan.interestRate}%</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{days}</td>
-                    <td className="px-4 py-2 capitalize text-text-2">{loan.status}{loan.status === 'repaid' && loan.repaymentDate ? ` (${shortDate(loan.repaymentDate)})` : ''}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-semibold">{inr2(interest)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <>
+          <ListGroup>
+            {rows.map(({ loan, days, interest }) => (
+              <TextRow
+                key={loan.id}
+                title={loan.investorName || 'Unknown lender'}
+                lines={[
+                  `${inr(loan.loanAmount)} at ${loan.interestRate}% a month · taken ${shortDate(loan.loanDate)}`,
+                  <span className="capitalize">{days} days in period · {statusText(loan)}</span>,
+                ]}
+                trailing={<span className="num text-body-md font-semibold text-text">{inr2(interest)}</span>}
+              />
+            ))}
+          </ListGroup>
+        </>
       )}
-      <p className="text-xs text-text-3">Interest accrues daily at principal × monthly rate × days ÷ 30, from the day the loan was taken until it is repaid (or the end of the period).</p>
+      <p className="text-label text-text-3">Interest accrues daily at principal × monthly rate × days ÷ 30, from the day the loan was taken until it is repaid (or the end of the period).</p>
     </Shell>
   );
 }

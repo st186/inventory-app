@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { Shapes } from 'lucide-react';
 import * as api from '../utils/api';
 import { OverheadItem } from '../App';
 import { OVERHEAD_CATEGORY_META } from '../utils/inventoryData';
 import { currentAccessToken } from '../utils/accessToken';
 import { Button } from './ui/button';
-import { Callout } from './ui/callout';
+import { ListGroup, ListRow } from './ui/list-row';
 import { formatINR } from './ui/money';
 import { PickerField } from './ui/picker-sheet';
+import { Skeleton } from './ui/skeleton';
 import { stripEmoji } from './money/categoryDisplay';
 
 // "Miscellaneous" is no longer offered when logging an expense - this lets the cluster head
 // move the old entries to a real category. Moved here (Manage Categories) from the Export page,
-// which is now only for downloads.
+// which is now only for downloads. A list section like the clean-up tools above it: one row
+// loads the old entries, then each entry is a row with a category picker and Save.
 export function MiscExpenseRecategorize() {
   const [items, setItems] = useState<OverheadItem[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,32 +53,42 @@ export function MiscExpenseRecategorize() {
   };
 
   return (
-    <Callout
-      tone="warning"
-      title='Recategorise old "Miscellaneous" expenses'
-      action={items === null ? <Button variant="secondary" size="sm" loading={loading} onClick={load}>Load miscellaneous items</Button> : undefined}
+    <ListGroup
+      overline='Old "Miscellaneous" expenses'
+      footer="Give these old entries a proper category so they land on the right profit line."
+      empty={<ListRow icon={Shapes} iconTone="success" title="No miscellaneous items left to recategorise" />}
     >
-      <span className="flex flex-col gap-3">
-        <span>Give these old entries a proper category so they land on the right profit line.</span>
-        {items !== null && items.length === 0 && <span className="font-medium text-success">No miscellaneous items left to recategorise.</span>}
-        {items !== null && items.length > 0 && items.map((item) => (
-          <span key={item.id} className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center">
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-body-sm font-medium text-text">{item.description || 'No description'}</span>
-              <span className="num text-caption text-text-3">{item.date} · {formatINR(item.amount)}</span>
-            </span>
+      {items === null && !loading && (
+        <ListRow icon={Shapes} title="Load miscellaneous items" subtitle="See the old entries that still need a category" onClick={load} />
+      )}
+      {loading && (
+        <div className="flex items-center gap-3 px-4 py-3" aria-busy="true">
+          <Skeleton className="size-9 rounded-md" />
+          <div className="flex flex-1 flex-col gap-1.5">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+      )}
+      {items !== null && items.map((item) => (
+        <div key={item.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-body-md font-medium text-text">{item.description || 'No description'}</span>
+            <span className="num text-label text-text-3">{item.date} · {formatINR(item.amount)}</span>
+          </span>
+          <div className="flex gap-2 sm:w-96">
             <PickerField
               title="New category"
               items={categoryItems}
               value={newCategory[item.id] || null}
               onValueChange={(v) => setNewCategory((prev) => ({ ...prev, [item.id]: v }))}
               placeholder="Choose a category"
-              className="sm:w-60"
+              className="min-w-0 flex-1"
             />
             <Button variant="secondary" onClick={() => save(item)} disabled={!newCategory[item.id]} loading={saving === item.id}>Save</Button>
-          </span>
-        ))}
-      </span>
-    </Callout>
+          </div>
+        </div>
+      ))}
+    </ListGroup>
   );
 }

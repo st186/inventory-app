@@ -1,11 +1,27 @@
+// Money > Payouts: Zomato and Swiggy settlements. One primary action (Upload settlement), the
+// period as one chip, the net payout headline, then one platform at a time (segmented): its
+// figures, payout/commission trend, discounts, channel economics and per-item pricing as lists
+// (tables only from 1024 px); long explanations behind How it works.
 import { useState, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
 import { confirm } from './ui/confirm';
 import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { CHART_COLORS, CHART_SERIES, ShareBars } from './ui/chart-theme';
+import { EmptyState } from './ui/empty-state';
+import { Field, controlClasses } from './ui/field';
+import { IconButton } from './ui/icon-button';
+import { ListGroup, ListRow } from './ui/list-row';
 import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { StatGrid, StatSplit, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { cn } from './ui/utils';
+import { HowItWorks, MiniFigures, OptionChip, SectionHeading, TextRow } from './insights/parts/common';
+import { ChartCard, ChartEmpty, TrendChart } from './insights/tabs/shared';
 import { InventoryContextType } from '../App';
-import { DollarSign, TrendingUp, TrendingDown, Wallet, Upload, X, CheckCircle, ChevronDown, ChevronUp, AlertCircle, Trash2, FileSpreadsheet, BarChart3 } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { Upload, X, CheckCircle, AlertCircle, Trash2, FileSpreadsheet } from 'lucide-react';
 import * as api from '../utils/api';
 import { parseZomatoSettlementFile, parseSwiggySettlementFile, ParsedSettlement } from '../utils/aggregatorSettlementParser';
 import { getSettlementPeriod, settlementOverlapsPeriod } from '../utils/settlementPeriod';
@@ -889,82 +905,48 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
     return { rows, total };
   }, [channelEconomicsByPlatform]);
 
+  // A settlement missing a figure shows a dash instead of breaking the whole screen.
+  const rupees = (n: number | undefined | null) => (typeof n === 'number' ? `₹${n.toFixed(2)}` : '—');
+  const openUpload = () => { setShowUploadModal(true); setUploadStoreId(defaultUploadStoreId); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); };
+  const stats = byAggregator[econPlatform];
+  const trend = dailyPctTrend[econPlatform];
+  const hasPayoutPct = trend.some(r => r.payoutPct !== null);
+  const hasAnyTrend = trend.some(r => r.payoutPct !== null || r.commissionPct !== null);
+  const pricing = pricingAdequacy[econPlatform];
+  const pricingRows = pricing?.rows.filter(r => r.hasData) || [];
+  const pricingChartRows = pricingRows.slice(0, 10); // top 10 by volume - a bar per item beyond that stops being readable
+  const periodLabel = FILTER_LABELS[filterPreset];
+  const [pricesOpen, setPricesOpen] = useState(false);
+  const rowsCaption = (all: number, shown: number) => (all > shown ? `Top ${shown} by online pieces sold` : 'By online pieces sold');
+  const leftOnTable = (counter: number, paid: number) => `${counter - paid > 0 ? '' : '+'}₹${Math.abs(Math.round(counter - paid)).toLocaleString('en-IN')}`;
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-surface rounded-2xl shadow-sm border border-border p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
-              <Wallet className="w-6 h-6 text-text" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-text tracking-tight">
-                Aggregator Payout Reconciliation (Swiggy & Zomato)
-              </h2>
-              <p className="text-sm text-text-3 mt-1">
-                Upload each settlement report as it's downloaded from Swiggy/Zomato - net payout, gross sales, and
-                commission are computed automatically, and the net payout is credited to Online Cash in Hand (Paytm)
-                on that settlement's own date.
-              </p>
-            </div>
-          </div>
-          {canEdit && (
-            <button
-              onClick={() => { setShowUploadModal(true); setUploadStoreId(defaultUploadStoreId); setParsedSettlements(null); setParseErrors([]); setSaveError(null); setSkippedDuplicates([]); }}
-              className="min-h-11 flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary rounded-lg font-semibold   transition-all shadow-lg"
-            >
-              <Upload className="w-4 h-4" />
-              Upload Settlement
-            </button>
-          )}
+    <div className="flex flex-col gap-6">
+      {/* Header: one primary action, the period, and the explanation behind How it works */}
+      <section className="flex flex-col gap-3" aria-labelledby="payouts-title">
+        <SectionHeading id="payouts-title" title="Aggregator payouts" caption="Zomato and Swiggy settlements, commission and what each platform really pays" />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <OptionChip title="Period" value={filterPreset} onChange={setFilterPreset} options={FILTER_OPTIONS.map(([value, label]) => ({ value, label }))} />
+          {canEdit && <Button leadingIcon={<Upload />} onClick={openUpload}>Upload settlement</Button>}
         </div>
-      </div>
-
-      {/* Date filter - applies to both the summary cards and the settlement history below */}
-      <div className="bg-surface rounded-2xl p-4 border border-border shadow-sm">
-        <div className="flex flex-wrap gap-2">
-          {FILTER_OPTIONS.map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setFilterPreset(value)}
-              className={`hit-44 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                filterPreset === value ? 'bg-primary text-white' : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
         {filterPreset === 'custom' && (
-          <div className="flex flex-wrap items-center gap-2 mt-3">
-            <input
-              type="date"
-              value={draftCustomStart}
-              onChange={(e) => setDraftCustomStart(e.target.value)}
-              className="min-h-11 px-3 py-1.5 border border-border-strong rounded-lg text-sm"
-            />
-            <span className="text-text-3 text-sm">to</span>
-            <input
-              type="date"
-              value={draftCustomEnd}
-              onChange={(e) => setDraftCustomEnd(e.target.value)}
-              className="min-h-11 px-3 py-1.5 border border-border-strong rounded-lg text-sm"
-            />
-            <button
-              onClick={() => { setAppliedCustomStart(draftCustomStart); setAppliedCustomEnd(draftCustomEnd); }}
-              disabled={!draftCustomStart || !draftCustomEnd}
-              className="min-h-11 px-4 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Apply
-            </button>
-            {!appliedCustomStart && (
-              <span className="text-xs text-text-3">Pick both dates and press Apply</span>
-            )}
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="From" className="w-40">
+              <input type="date" value={draftCustomStart} onChange={(e) => setDraftCustomStart(e.target.value)} className={controlClasses} />
+            </Field>
+            <Field label="To" className="w-40">
+              <input type="date" value={draftCustomEnd} onChange={(e) => setDraftCustomEnd(e.target.value)} className={controlClasses} />
+            </Field>
+            <Button variant="secondary" size="lg" onClick={() => { setAppliedCustomStart(draftCustomStart); setAppliedCustomEnd(draftCustomEnd); }} disabled={!draftCustomStart || !draftCustomEnd}>Apply</Button>
+            {!appliedCustomStart && <span className="text-label text-text-3">Pick both dates and press Apply</span>}
           </div>
         )}
-      </div>
+        <HowItWorks title="Aggregator payouts">
+          <p>Upload each settlement report as it's downloaded from Swiggy or Zomato. Net payout, sales and commission are worked out automatically, and the net payout is added to online cash (Paytm) on that settlement's own date.</p>
+          <p><span className="font-medium text-text">Net order value</span> comes from the settlement report, after discounts - not the same figure as online revenue elsewhere in the app, which comes from POS billing.</p>
+          <p><span className="font-medium text-text">Net commission</span> is Zomato's or Swiggy's service and payment fees, taxes on those and other order-level deductions. Ad spend is shown on its own.</p>
+        </HowItWorks>
+      </section>
 
       {/* Which days have a settlement and which are missing */}
       {hasActiveRange && (
@@ -977,620 +959,349 @@ export function OnlineSalesTab({ context, selectedStoreId }: Props) {
         />
       )}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Order Value ({FILTER_LABELS[filterPreset]})</span>
-            <DollarSign className="w-5 h-5 text-text-2" />
-          </div>
-          <p className="text-2xl font-semibold">₹{filteredStats.totalSales.toFixed(2)}</p>
-          {/* From the aggregator's own settlement report (post-discount, pre-payout) - not
-              the same figure as Online Revenue elsewhere in the app, which comes from POS
-              billing. Used here for commission % and the Channel Economics comparison. */}
-          <p className="text-xs text-text-2 mt-1">From settlement report, post-discount - not the same as Online Revenue</p>
-        </div>
+      {/* Headline: what the platforms paid, with the split */}
+      <StatTile
+        hero
+        label={`Net payout · ${periodLabel}`}
+        value={rupees(filteredStats.totalPayouts)}
+      >
+        <StatSplit
+          items={[
+            { label: 'Net order value', value: rupees(filteredStats.totalSales) },
+            { label: 'Commission', value: rupees(filteredStats.totalCommission) },
+            { label: 'Ad spend', value: rupees(filteredStats.totalAdSpend) },
+          ]}
+        />
+      </StatTile>
 
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Payout ({FILTER_LABELS[filterPreset]})</span>
-            <Wallet className="w-5 h-5 text-text-2" />
-          </div>
-          <p className="text-2xl font-semibold">₹{filteredStats.totalPayouts.toFixed(2)}</p>
-        </div>
+      {/* One platform at a time */}
+      <SegmentedControl
+        aria-label="Platform"
+        value={econPlatform}
+        onValueChange={setEconPlatform}
+        options={[{ value: 'zomato', label: 'Zomato' }, { value: 'swiggy', label: 'Swiggy' }]}
+        className="sm:max-w-sm"
+      />
 
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Net Commission ({FILTER_LABELS[filterPreset]})</span>
-            <TrendingUp className="w-5 h-5 text-text-2" />
-          </div>
-          <p className="text-2xl font-semibold">₹{filteredStats.totalCommission.toFixed(2)}</p>
-          <p className="text-xs text-text-2 mt-1">Zomato/Swiggy's service + payment fees, taxes on those, and other order-level deductions - separate from Ad Spend, shown on its own below</p>
-        </div>
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+        <ListGroup title={`${platformName} · ${periodLabel}`}>
+          <ListRow density="compact" title="Orders" trailing={<span className="num text-body-md font-semibold text-text">{stats.orders}</span>} />
+          <ListRow density="compact" title="Items total" trailing={stats.hasItemData ? <span className="num text-body-md font-semibold text-text">{rupees(stats.itemSubtotal)}</span> : <span className="text-label text-text-3">Not tracked yet</span>} />
+          <ListRow density="compact" title="Discounts" trailing={stats.hasItemData ? <span className="num text-body-md font-semibold text-danger">− {rupees(stats.discount)}</span> : <span className="text-label text-text-3">Not tracked yet</span>} />
+          <ListRow density="compact" title="GST" trailing={stats.hasItemData ? <span className="num text-body-md font-semibold text-text">+ {rupees(stats.gstCollected)}</span> : <span className="text-label text-text-3">Not tracked yet</span>} />
+          <TextRow
+            title="Net order value"
+            lines={[stats.untrackedCount > 0
+              ? <span className="text-warning">Includes {rupees(stats.untrackedGrossSales)} from {stats.untrackedCount} untracked settlement{stats.untrackedCount > 1 ? 's' : ''} - re-upload to reconcile</span>
+              : 'Items total − discounts + GST']}
+            trailing={<span className="num text-body-md font-semibold text-text">{rupees(stats.grossSales)}</span>}
+          />
+          <ListRow density="compact" title="Net commission" trailing={<span className={cn('num text-body-md font-semibold', stats.netCommission >= 0 ? 'text-text' : 'text-danger')}>{rupees(stats.netCommission)}</span>} />
+          <ListRow density="compact" title="Ad spend" trailing={<span className="num text-body-md font-semibold text-text">{rupees(stats.adSpend)}</span>} />
+          <TextRow title="Net payout" lines={['Net order value − commission − ad spend']} trailing={<span className="num text-body-md font-semibold text-text">{rupees(stats.netPayout)}</span>} />
+          <ListRow density="compact" title="Payout %" subtitle="Of items total" trailing={stats.payoutPct === null ? <span className="text-label text-text-3">Not tracked yet</span> : <span className={cn('num text-body-md font-semibold', stats.payoutPct >= 0 ? 'text-success' : 'text-danger')}>{stats.payoutPct.toFixed(1)}%</span>} />
+          <ListRow density="compact" title="Commission %" subtitle="Of net order value" trailing={<span className={cn('num text-body-md font-semibold', stats.commissionPct >= 0 ? 'text-text' : 'text-danger')}>{stats.commissionPct.toFixed(1)}%</span>} />
+        </ListGroup>
 
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 shadow-lg text-text">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs uppercase tracking-wide text-text-2 font-medium">Ad Spend ({FILTER_LABELS[filterPreset]})</span>
-            <TrendingUp className="w-5 h-5 text-text-2" />
-          </div>
-          <p className="text-2xl font-semibold">₹{filteredStats.totalAdSpend.toFixed(2)}</p>
-          <p className="text-xs text-text-2 mt-1">Zomato ads + Swiggy ads, from each settlement's Payout Breakup</p>
-        </div>
+        <ChartCard
+          title="Payout % and commission %"
+          caption={`By settlement date${!hasPayoutPct ? ' · payout % needs items total, not tracked for this platform yet' : ''}`}
+          legend={[
+            ...(hasPayoutPct ? [{ label: 'Payout %', color: CHART_SERIES[1] }] : []),
+            { label: 'Commission %', color: CHART_SERIES[0] },
+          ]}
+        >
+          {hasAnyTrend ? (
+            <TrendChart
+              data={trend}
+              format="percent"
+              height={220}
+              series={[
+                ...(hasPayoutPct ? [{ key: 'payoutPct', name: 'Payout %', color: CHART_SERIES[1] }] : []),
+                { key: 'commissionPct', name: 'Commission %', color: CHART_SERIES[0] },
+              ]}
+              ariaLabel={`${platformName} payout and commission percentages by settlement date`}
+            />
+          ) : (
+            <ChartEmpty title={`No ${econPlatform} settlements in this period`} body=" " />
+          )}
+        </ChartCard>
       </div>
 
-      {/* Per-aggregator breakdown - same date filter as the summary cards above */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(['zomato', 'swiggy'] as const).map(agg => {
-          const stats = byAggregator[agg];
-          return (
-            <div key={agg} className={`bg-surface rounded-2xl p-5 border shadow-sm ${agg === 'zomato' ? 'border-danger-border' : 'border-border-strong'}`}>
-              <h3 className="text-base font-bold text-text capitalize mb-3">{agg} ({FILTER_LABELS[filterPreset]})</h3>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-text-3">Orders</p>
-                  <p className="text-lg font-semibold text-text">{stats.orders}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">Items Total</p>
-                  {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-text">₹{stats.itemSubtotal.toFixed(2)}</p>
-                  ) : (
-                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">Discounts</p>
-                  {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-danger">− ₹{stats.discount.toFixed(2)}</p>
-                  ) : (
-                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">GST</p>
-                  {stats.hasItemData ? (
-                    <p className="text-lg font-semibold text-text">+ ₹{stats.gstCollected.toFixed(2)}</p>
-                  ) : (
-                    <p className="text-sm text-text-3 mt-1">Not tracked yet</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-border">
-                <div>
-                  <p className="text-xs text-text-3">Net Order Value</p>
-                  <p className="text-lg font-semibold text-text">₹{stats.grossSales.toFixed(2)}</p>
-                  {stats.untrackedCount > 0 ? (
-                    <p className="text-caption text-warning" title={`₹${stats.untrackedGrossSales.toFixed(2)} from ${stats.untrackedCount} settlement(s) uploaded before item-level tracking existed - re-upload them to include in Items Total/Discounts/GST`}>
-                      Includes ₹{stats.untrackedGrossSales.toFixed(2)} from {stats.untrackedCount} untracked settlement{stats.untrackedCount > 1 ? 's' : ''} - re-upload to reconcile
-                    </p>
-                  ) : (
-                    <p className="text-caption text-text-3">Items Total − Discounts + GST</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">Net Commission</p>
-                  <p className={`text-lg font-semibold ${stats.netCommission >= 0 ? 'text-primary' : 'text-danger'}`}>₹{stats.netCommission.toFixed(2)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">Ad Spend</p>
-                  <p className="text-lg font-semibold text-info">₹{stats.adSpend.toFixed(2)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-text-3">Net Payout</p>
-                  <p className="text-lg font-semibold text-info">₹{stats.netPayout.toFixed(2)}</p>
-                  <p className="text-caption text-text-3">Net Order Value − Commission − Ad Spend</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-border">
-                <div className="flex items-center justify-between col-span-2">
-                  <span className="text-xs text-text-3">Payout % <span className="text-text-3">(of Items Total)</span></span>
-                  <span className={`text-sm font-semibold ${stats.payoutPct === null ? 'text-text-3' : stats.payoutPct >= 0 ? 'text-success' : 'text-danger'}`}>
-                    {stats.payoutPct === null ? 'Not tracked yet' : `${stats.payoutPct.toFixed(1)}%`}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between col-span-2">
-                  <span className="text-xs text-text-3">Commission % <span className="text-text-3">(of Net Order Value)</span></span>
-                  <span className={`text-sm font-semibold ${stats.commissionPct >= 0 ? 'text-primary' : 'text-danger'}`}>{stats.commissionPct.toFixed(1)}%</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Payout %/Commission % trend, per aggregator - Payout % needs Items Total, only
-          available for Zomato settlements uploaded after that field existed. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(['zomato', 'swiggy'] as const).map(agg => {
-          const trend = dailyPctTrend[agg];
-          const hasPayoutPct = trend.some(r => r.payoutPct !== null);
-          const hasAnyData = trend.some(r => r.payoutPct !== null || r.commissionPct !== null);
-          return (
-            <div key={agg} className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
-              <h3 className="text-base sm:text-lg font-bold text-text tracking-tight capitalize mb-1">{agg} - Payout % vs Commission %</h3>
-              <p className="text-xs text-text-3 mb-4">
-                By settlement date{!hasPayoutPct ? ' · Payout % needs Items Total, not tracked for this aggregator yet' : ''}
-              </p>
-              {hasAnyData ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={trend}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="period" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} unit="%" />
-                    <Tooltip formatter={(value: number, name: string) => [value === null ? 'N/A' : `${value}%`, name]} />
-                    <Legend />
-                    {hasPayoutPct && (
-                      <Line type="monotone" dataKey="payoutPct" stroke="var(--chart-2)" strokeWidth={2} name="Payout %" dot={{ r: 3 }} connectNulls />
-                    )}
-                    <Line type="monotone" dataKey="commissionPct" stroke="var(--chart-1)" strokeWidth={2} name="Commission %" dot={{ r: 3 }} connectNulls />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="text-center text-text-3 py-8 text-sm">No {agg} settlements in this period</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Zomato Discounts - moved here from Analytics so it sits with the settlements it's
-          derived from, using this page's own date-range filter above. */}
-      {hasActiveRange && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
-              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-info" />
-              Zomato Discount % of Menu Subtotal
-            </h3>
-            <p className="text-xs text-text-3 mb-4">Promo + flat-off discount as a % of the pre-discount dish price total, from Zomato's own settlement file</p>
+      {/* Zomato discounts (Zomato's settlement file has them) */}
+      {hasActiveRange && econPlatform === 'zomato' && (
+        <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+          <ChartCard title="Discount % of menu subtotal" caption="Promo + flat-off discount as a % of the dish prices before discount">
             {discountChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={discountChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="period" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} unit="%" />
-                  <Tooltip formatter={(value: number) => [`${value}%`, 'Discount']} />
-                  <Line type="monotone" dataKey="discountPct" stroke="var(--chart-4)" strokeWidth={2} name="Discount %" dot={{ r: 3 }} />
-                </LineChart>
-              </ResponsiveContainer>
+              <TrendChart data={discountChartData} format="percent" height={200} series={[{ key: 'discountPct', name: 'Discount', color: CHART_SERIES[3] }]} ariaLabel="Zomato discount as a percentage of the menu subtotal by settlement date" />
             ) : (
-              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with discount data in this period</div>
+              <ChartEmpty title="No Zomato settlements with discount data in this period" body=" " />
             )}
-          </div>
-
-          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
-              <Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-danger" />
-              Promo vs Flat-off Discount
-            </h3>
-            <p className="text-xs text-text-3 mb-4">₹ discount by type, per settlement date</p>
+          </ChartCard>
+          <ChartCard
+            title="Promo vs flat-off discount"
+            caption="₹ discount by type, per settlement date"
+            legend={[{ label: 'Promo', color: CHART_SERIES[0], shape: 'square' }, { label: 'Flat-off', color: CHART_SERIES[3], shape: 'square' }]}
+          >
             {discountChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={discountChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="period" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="promoDiscount" stackId="disc" fill="var(--chart-1)" name="Promo" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="flatOffDiscount" stackId="disc" fill="var(--chart-4)" name="Flat-off" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <TrendChart
+                data={discountChartData}
+                height={200}
+                series={[
+                  { key: 'promoDiscount', name: 'Promo', color: CHART_SERIES[0], kind: 'bar', stack: 'disc' },
+                  { key: 'flatOffDiscount', name: 'Flat-off', color: CHART_SERIES[3], kind: 'bar', stack: 'disc' },
+                ]}
+                ariaLabel="Zomato promo and flat-off discount in rupees by settlement date"
+              />
             ) : (
-              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with discount data in this period</div>
+              <ChartEmpty title="No Zomato settlements with discount data in this period" body=" " />
             )}
-          </div>
+          </ChartCard>
+          <ChartCard title="Discount by promo code" caption="Top Zomato codes by total ₹ discount in this period, with the orders each applied to" className="lg:col-span-2">
+            {discountByConstructData.length > 0 ? (
+              <ShareBars items={discountByConstructData.map(row => ({ label: row.construct, value: row.discount, color: CHART_COLORS.primary, valueText: `₹${row.discount.toLocaleString('en-IN')} (${row.orders})` }))} />
+            ) : (
+              <ChartEmpty title="No Zomato settlements with promo-code data in this period" body=" " />
+            )}
+          </ChartCard>
         </div>
       )}
 
-      {/* Discount by Promo Code + Channel Economics - moved here from Analytics.tsx's
-          "Revenue & Channels" tab so they sit with the settlements/orders they're derived
-          from, using this page's own date-range filter above. */}
+      {/* Channel economics: what the same dishes would have earned at the counter */}
       {hasActiveRange && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Per-promo-code breakdown - replaces Zomato's own "Discounts Summary" sheet,
-              which is broken (formula errors) in every real export seen so far. */}
-          <div className="bg-surface rounded-2xl border border-border shadow-sm p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-text tracking-tight mb-1 flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-info" />
-              Discount by Promo Code
-            </h3>
-            <p className="text-xs text-text-3 mb-4">Top Zomato codes by total ₹ discount given in this period, with the order count each one applied to</p>
-            {discountByConstructData.length > 0 ? (
-              <div className="space-y-2">
-                {discountByConstructData.map(row => {
-                  const maxDiscount = discountByConstructData[0]?.discount || 1;
+        <section className="flex flex-col gap-3" aria-labelledby="channel-econ-title">
+          <SectionHeading
+            as="h3"
+            id="channel-econ-title"
+            title="Channel economics"
+            caption={`For every real ${platformName} order this period: the same dishes at your counter price, at ${platformName}'s menu price, and what ${platformName} actually paid you`}
+          />
+          {channelEconomicsData.totalOrders === 0 ? (
+            <Card><EmptyState compact icon={FileSpreadsheet} title={`No ${platformName} orders with item-level detail in this period`} /></Card>
+          ) : (
+            <>
+              <Card>
+                <MiniFigures
+                  items={[
+                    { label: 'Counter price', value: `₹${channelEconomicsData.totals.theoreticalOffline.toLocaleString('en-IN')}`, sub: 'latest dine-in price' },
+                    { label: `${platformName} menu`, value: `₹${channelEconomicsData.totals.itemSubtotal.toLocaleString('en-IN')}`, sub: 'what it listed them at' },
+                    { label: `${platformName} paid you`, value: `₹${channelEconomicsData.totals.netPayout.toLocaleString('en-IN')}`, sub: 'actual net payout' },
+                  ]}
+                />
+              </Card>
+              <StatGrid>
+                <StatTile
+                  label={channelEconomicsData.deficitVsPayout > 0 ? 'Money left on the table' : `${platformName} paid a premium`}
+                  value={`₹${Math.abs(channelEconomicsData.deficitVsPayout).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                  caption={channelEconomicsData.deficitVsPayout > 0
+                    ? `Counter price − ${platformName} paid you: these dishes would have earned this much more at the counter`
+                    : `Counter price − ${platformName} paid you: ${platformName} paid more than the counter price for these dishes`}
+                />
+                <StatTile
+                  label="Online menu mark-up"
+                  value={`₹${Math.abs(channelEconomicsData.deficitVsMenuSubtotal).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                  caption={channelEconomicsData.deficitVsMenuSubtotal < 0
+                    ? `Counter price − ${platformName} menu price: listed higher than the counter, but not enough to cover the gap`
+                    : `Counter price − ${platformName} menu price: listed at or below the counter price`}
+                />
+              </StatGrid>
+              <div className="flex flex-wrap items-center gap-2 text-label text-text-3">
+                <span>Based on <span className="num font-semibold text-text-2">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} {platformName} orders ({channelEconomicsData.matchRatePct}% matched to item and price data)</span>
+                {channelEconomicsData.unmatchedOrders > 0 && <StatusChip tone="neutral">{channelEconomicsData.unmatchedOrders} unmatched</StatusChip>}
+                {channelEconomicsData.unpricedOrders > 0 && <StatusChip tone="warning" title={channelEconomicsData.unpricedItemNames.join(', ')}>{channelEconomicsData.unpricedOrders} missing item price</StatusChip>}
+              </div>
+              <ListGroup>
+                <ListRow
+                  title="Counter prices used"
+                  subtitle={`${channelEconomicsData.latestPricedCount} of ${channelEconomicsData.pricesUsedList.length} dishes priced from the latest counter sales`}
+                  onClick={() => setPricesOpen(true)}
+                />
+              </ListGroup>
+              {channelEconomicsData.chartData.length > 0 && (
+                <ChartCard
+                  title="By settlement date"
+                  legend={[
+                    { label: 'Counter price', color: CHART_SERIES[1] },
+                    { label: `${platformName} menu price`, color: CHART_SERIES[3] },
+                    { label: `${platformName} paid you`, color: CHART_SERIES[2] },
+                  ]}
+                >
+                  <TrendChart
+                    data={channelEconomicsData.chartData}
+                    height={220}
+                    series={[
+                      { key: 'theoreticalOffline', name: 'Counter price', color: CHART_SERIES[1] },
+                      { key: 'itemSubtotal', name: `${platformName} menu price`, color: CHART_SERIES[3] },
+                      { key: 'netPayout', name: `${platformName} paid you`, color: CHART_SERIES[2] },
+                    ]}
+                    ariaLabel={`Counter price, ${platformName} menu price and what ${platformName} paid, by settlement date`}
+                  />
+                </ChartCard>
+              )}
+            </>
+          )}
+          <ResponsiveModal
+            open={pricesOpen}
+            onOpenChange={setPricesOpen}
+            title="Counter prices used"
+            description="The newest sale at the counter, or the saved menu price when there is none"
+            size="form"
+          >
+            <ListGroup>
+              {channelEconomicsData.pricesUsedList.map(row => (
+                <TextRow
+                  key={row.name}
+                  title={row.name}
+                  lines={[
+                    `${row.quantity} sold · ${row.source === 'latest' ? `latest sale${row.lastSeen ? ` (${formatDateIN(row.lastSeen, { day: 'numeric', month: 'short' })})` : ''}` : 'saved menu price'}`,
+                    row.saved !== null && row.saved !== row.used ? <span className="text-warning">Saved menu: ₹{row.saved}</span> : null,
+                  ]}
+                  trailing={<span className="num text-body-md font-semibold text-text">₹{row.used}</span>}
+                />
+              ))}
+            </ListGroup>
+          </ResponsiveModal>
+
+          {/* Every online platform together */}
+          <ListGroup title="All online platforms" footer="Zomato and Swiggy together for this period, the same matched orders as above. Left on the table = counter price − what the platform paid you.">
+            {[...allPlatformsEconomics.rows.map(r => ({ ...r, isTotal: false })), { agg: 'total', label: 'Total', ...allPlatformsEconomics.total, isTotal: true }].map(r => (
+              <TextRow
+                key={r.agg}
+                title={r.label}
+                lines={[`${r.orders} orders · counter ₹${r.counter.toLocaleString('en-IN')} · menu ₹${r.menu.toLocaleString('en-IN')} · paid ₹${r.paid.toLocaleString('en-IN')}`]}
+                trailing={
+                  <>
+                    <span className={cn('num text-body-md font-semibold', r.counter - r.paid > 0 ? 'text-warning' : 'text-success')}>{leftOnTable(r.counter, r.paid)}</span>
+                    <span className="text-caption text-text-3">left on table</span>
+                  </>
+                }
+                className={r.isTotal ? 'bg-surface-2' : undefined}
+              />
+            ))}
+          </ListGroup>
+        </section>
+      )}
+
+      {/* Are we pricing this right online? - per menu item, for the chosen platform */}
+      {hasActiveRange && (
+        <section className="flex flex-col gap-3" aria-labelledby="pricing-title">
+          <SectionHeading as="h3" id="pricing-title" title={`${platformName}: are we pricing this right?`} caption="What lands in hand per plate online, against the dine-in price of the same item" />
+          {!pricing ? (
+            <Card><EmptyState compact icon={FileSpreadsheet} title="Needs items total data" body="Upload or re-upload settlements with item-level tracking for this period." /></Card>
+          ) : pricingRows.length === 0 ? (
+            <Card><EmptyState compact icon={FileSpreadsheet} title={`No ${econPlatform} online sales matched to POS item data in this period`} body="Needs pos-sync data from 2026-08-23 onward." /></Card>
+          ) : (
+            <>
+              <ListGroup className="lg:hidden" footer="Sorted by online pieces sold, most first.">
+                {pricingRows.map(r => {
+                  const isLoss = (r.marginPct ?? 0) < 0;
                   return (
-                    <div key={row.construct} className="flex items-center gap-3">
-                      <span className="text-xs text-text-2 w-40 sm:w-48 truncate flex-shrink-0" title={row.construct}>{row.construct}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="w-full bg-surface-2 rounded-full h-2">
-                          <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.max(4, (row.discount / maxDiscount) * 100)}%` }} />
-                        </div>
-                      </div>
-                      <span className="text-xs font-semibold text-text flex-shrink-0 w-28 text-right tabular-nums">₹{row.discount.toLocaleString('en-IN')} ({row.orders})</span>
-                    </div>
+                    <TextRow
+                      key={r.key}
+                      title={`${r.label} (${r.piecesPerPlate} pc)`}
+                      lines={[
+                        `Online ₹${r.onlinePrice.toFixed(1)}${r.hasCatalogPrice && Math.abs(r.realizedPrice - r.onlinePrice) > 0.5 ? ` (billed avg ₹${r.realizedPrice.toFixed(1)})` : ''} · dine-in ₹${r.realPrice.toFixed(1)}`,
+                        `Payout ₹${r.effectivePayout.toFixed(1)} a plate`,
+                      ]}
+                      trailing={
+                        <>
+                          <span className={cn('num text-body-md font-semibold', isLoss ? 'text-danger' : 'text-success')}>{r.marginPct !== null ? `${r.marginPct >= 0 ? '+' : ''}${r.marginPct.toFixed(0)}%` : '—'}</span>
+                          {r.priceIncreasePct !== null && r.priceIncreasePct > 1
+                            ? <StatusChip tone="danger">Raise +{r.priceIncreasePct.toFixed(0)}%</StatusChip>
+                            : <StatusChip tone="success">Healthy</StatusChip>}
+                        </>
+                      }
+                    />
                   );
                 })}
+              </ListGroup>
+              <div className="hidden lg:block">
+                <Table containerClassName="max-h-96 overflow-y-auto">
+                  <TableHeader sticky>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead numeric>Online ₹ a plate</TableHead>
+                      <TableHead numeric>Dine-in ₹ a plate</TableHead>
+                      <TableHead numeric>Payout ₹ a plate</TableHead>
+                      <TableHead numeric>Margin</TableHead>
+                      <TableHead numeric>Suggested change</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pricingRows.map(r => {
+                      const isLoss = (r.marginPct ?? 0) < 0;
+                      return (
+                        <TableRow key={r.key}>
+                          <TableCell>{r.label} <span className="text-label text-text-3">({r.piecesPerPlate} pc)</span></TableCell>
+                          <TableCell numeric className="text-text-2">
+                            ₹{r.onlinePrice.toFixed(1)}
+                            {r.hasCatalogPrice && Math.abs(r.realizedPrice - r.onlinePrice) > 0.5 && <span className="block text-caption text-warning">billed avg ₹{r.realizedPrice.toFixed(1)}</span>}
+                          </TableCell>
+                          <TableCell numeric className="text-text-2">₹{r.realPrice.toFixed(1)}</TableCell>
+                          <TableCell numeric className="text-text-2">₹{r.effectivePayout.toFixed(1)}</TableCell>
+                          <TableCell numeric className={cn('font-semibold', isLoss ? 'text-danger' : 'text-success')}>{r.marginPct !== null ? `${r.marginPct >= 0 ? '+' : ''}${r.marginPct.toFixed(0)}%` : '—'}</TableCell>
+                          <TableCell numeric>
+                            {r.priceIncreasePct !== null && r.priceIncreasePct > 1
+                              ? <StatusChip tone="danger">Raise +{r.priceIncreasePct.toFixed(0)}%</StatusChip>
+                              : <StatusChip tone="success">Healthy</StatusChip>}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
-            ) : (
-              <div className="text-center text-text-3 py-8 text-sm">No Zomato settlements with promo-code data in this period</div>
-            )}
-          </div>
-
-          <div className="space-y-4">
-          {/* Channel Economics - "would these dishes have earned more sold at the counter than what
-              the aggregator actually paid us?" For Zomato or Swiggy (toggle). Counter prices are each
-              dish's newest price from POS sales; see channelEconomicsData / latestCounterPrices. */}
-          <div className="bg-surface rounded-2xl border border-warning-border shadow-sm p-4 sm:p-6">
-            <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
-              <h3 className="text-base sm:text-lg font-bold text-text tracking-tight flex items-center gap-2">
-                <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-warning" />
-                Channel Economics
-              </h3>
-              <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs" role="group" aria-label="Aggregator">
-                {(['zomato', 'swiggy'] as const).map((agg, i) => (
-                  <button
-                    key={agg}
-                    onClick={() => setEconPlatform(agg)}
-                    className={`min-h-11 px-3 py-1.5 capitalize ${i > 0 ? 'border-l border-border' : ''} ${econPlatform === agg ? (agg === 'zomato' ? 'bg-danger text-white' : 'bg-primary text-white') : 'bg-surface text-text-2 hover:bg-surface-2'}`}
-                  >
-                    {agg}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="text-xs text-text-3 mb-4">
-              For every real {platformName} order this period, what the exact same dishes would have cost at your counter - compared to what {platformName}'s menu listed them at, and what {platformName} actually paid you.
-            </p>
-
-            {channelEconomicsData.totalOrders === 0 ? (
-              <div className="text-center text-text-3 py-8 text-sm">No {platformName} orders with item-level detail in this period</div>
-            ) : (
-              <>
-                {/* The three raw inputs, side by side, before the derived deficit/markup
-                    cards below - so the two big numbers aren't a black box. */}
-                <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-                  <div className="bg-surface-2 rounded-lg p-2.5">
-                    <p className="text-caption uppercase tracking-wide text-text-3">Counter Price</p>
-                    <p className="text-sm font-bold text-success">₹{channelEconomicsData.totals.theoreticalOffline.toLocaleString('en-IN')}</p>
-                    <p className="text-caption text-text-3">same dishes, latest dine-in price</p>
-                  </div>
-                  <div className="bg-surface-2 rounded-lg p-2.5">
-                    <p className="text-caption uppercase tracking-wide text-text-3">{platformName} Menu Price</p>
-                    <p className="text-sm font-bold text-text-2">₹{channelEconomicsData.totals.itemSubtotal.toLocaleString('en-IN')}</p>
-                    <p className="text-caption text-text-3">what {platformName} listed them at</p>
-                  </div>
-                  <div className="bg-surface-2 rounded-lg p-2.5">
-                    <p className="text-caption uppercase tracking-wide text-text-3">{platformName} Paid You</p>
-                    <p className="text-sm font-bold text-primary">₹{channelEconomicsData.totals.netPayout.toLocaleString('en-IN')}</p>
-                    <p className="text-caption text-text-3">actual net payout</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  <div className={`rounded-xl p-4 shadow-lg text-text ${channelEconomicsData.deficitVsPayout > 0 ? 'bg-surface border border-border' : 'bg-surface border border-border'}`}>
-                    <div className="text-xs uppercase tracking-wide text-text mb-1">
-                      {channelEconomicsData.deficitVsPayout > 0 ? 'Money Left on the Table' : `${platformName} Paid a Premium`}
-                    </div>
-                    <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsPayout).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                    <div className="text-xs text-text mt-1">
-                      {channelEconomicsData.deficitVsPayout > 0
-                        ? `Counter Price − ${platformName} Paid You: these dishes would have earned this much more sold at the counter`
-                        : `Counter Price − ${platformName} Paid You: ${platformName} actually paid more than counter price for these dishes`}
-                    </div>
-                  </div>
-                  <div className="rounded-xl p-4 shadow-lg text-text bg-surface border border-border">
-                    <div className="text-xs uppercase tracking-wide text-text mb-1">Online Menu Markup</div>
-                    <div className="text-2xl font-semibold">₹{Math.abs(channelEconomicsData.deficitVsMenuSubtotal).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                    <div className="text-xs text-text mt-1">
-                      {channelEconomicsData.deficitVsMenuSubtotal < 0
-                        ? `Counter Price − ${platformName} Menu Price: ${platformName} lists these dishes higher than the counter, but it isn't enough to cover the deficit above`
-                        : `Counter Price − ${platformName} Menu Price: ${platformName}'s listed prices are at or below counter price for these dishes`}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between flex-wrap gap-2 mb-3 text-xs">
-                  <span className="text-text-3">
-                    Based on <span className="font-semibold text-text-2">{channelEconomicsData.matchedOrders}</span> of {channelEconomicsData.totalOrders} {platformName} orders ({channelEconomicsData.matchRatePct}% matched to item + price data)
-                  </span>
-                  <div className="flex gap-1.5">
-                    {channelEconomicsData.unmatchedOrders > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-surface-2 text-text-2 font-medium">{channelEconomicsData.unmatchedOrders} unmatched</span>
-                    )}
-                    {channelEconomicsData.unpricedOrders > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-warning-soft text-warning font-medium" title={channelEconomicsData.unpricedItemNames.join(', ')}>
-                        {channelEconomicsData.unpricedOrders} missing item price
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Where each counter price came from - the newest sale at the counter, or the saved menu price as a fallback. */}
-                <details className="mb-3 rounded-lg border border-border bg-surface-2">
-                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text-2">
-                    Counter prices used - {channelEconomicsData.latestPricedCount} of {channelEconomicsData.pricesUsedList.length} dishes priced from the latest counter sales
-                  </summary>
-                  <div className="px-3 pb-3 overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-text-3">
-                          <th className="py-1.5 pr-2 font-medium">Dish</th>
-                          <th className="py-1.5 px-1 font-medium text-right">Sold</th>
-                          <th className="py-1.5 px-1 font-medium text-right">Counter ₹</th>
-                          <th className="py-1.5 pl-1 font-medium">Source</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {channelEconomicsData.pricesUsedList.map(row => (
-                          <tr key={row.name} className="border-t border-border">
-                            <td className="py-1.5 pr-2 text-text">{row.name}</td>
-                            <td className="py-1.5 px-1 text-right tabular-nums text-text-2">{row.quantity}</td>
-                            <td className="py-1.5 px-1 text-right tabular-nums font-semibold text-text">
-                              ₹{row.used}
-                              {row.saved !== null && row.saved !== row.used && <span className="block text-caption font-normal text-warning">saved menu: ₹{row.saved}</span>}
-                            </td>
-                            <td className="py-1.5 pl-1 text-text-3">
-                              {row.source === 'latest' ? `Latest sale${row.lastSeen ? ` (${formatDateIN(row.lastSeen, { day: 'numeric', month: 'short' })})` : ''}` : 'Saved menu price'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                {channelEconomicsData.chartData.length > 0 && (
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={channelEconomicsData.chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="period" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <Tooltip formatter={(value: number, name: string) => [`₹${value.toLocaleString('en-IN')}`, name]} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Line type="monotone" dataKey="theoreticalOffline" stroke="var(--chart-2)" strokeWidth={2} name="Counter Price" dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="itemSubtotal" stroke="var(--chart-5)" strokeWidth={1.5} strokeDasharray="4 3" name={`${platformName} Menu Price`} dot={false} />
-                      <Line type="monotone" dataKey="netPayout" stroke="var(--chart-3)" strokeWidth={2} name={`${platformName} Paid You`} dot={{ r: 3 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Aggregated across every online platform, so the combined picture is visible at a glance. */}
-          <div className="bg-surface rounded-2xl border border-warning-border shadow-sm p-4 sm:p-5">
-            <h4 className="text-sm font-bold text-text tracking-tight mb-0.5">All online platforms</h4>
-            <p className="text-caption text-text-3 mb-3">Zomato + Swiggy together for this period, same matched orders as above</p>
-            <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <p className="text-caption uppercase tracking-wide text-text-3">Counter Price</p>
-                <p className="text-sm font-bold text-success tabular-nums">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</p>
-              </div>
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <p className="text-caption uppercase tracking-wide text-text-3">Online Menu Price</p>
-                <p className="text-sm font-bold text-text-2 tabular-nums">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</p>
-              </div>
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <p className="text-caption uppercase tracking-wide text-text-3">Online Paid You</p>
-                <p className="text-sm font-bold text-primary tabular-nums">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</p>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-text-3">
-                    <th className="py-1.5 pr-2 font-medium">Platform</th>
-                    <th className="py-1.5 px-1 font-medium text-right">Orders</th>
-                    <th className="py-1.5 px-1 font-medium text-right">Counter</th>
-                    <th className="py-1.5 px-1 font-medium text-right">Menu</th>
-                    <th className="py-1.5 px-1 font-medium text-right">Paid you</th>
-                    <th className="py-1.5 pl-1 font-medium text-right" title="Counter Price minus what the platform paid you">Left on table</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allPlatformsEconomics.rows.map(r => (
-                    <tr key={r.agg} className="border-t border-border">
-                      <td className="py-1.5 pr-2 font-medium text-text">{r.label}</td>
-                      <td className="py-1.5 px-1 text-right tabular-nums text-text-2">{r.orders}</td>
-                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.counter.toLocaleString('en-IN')}</td>
-                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.menu.toLocaleString('en-IN')}</td>
-                      <td className="py-1.5 px-1 text-right tabular-nums">₹{r.paid.toLocaleString('en-IN')}</td>
-                      <td className={`py-1.5 pl-1 text-right tabular-nums font-semibold ${r.counter - r.paid > 0 ? 'text-warning' : 'text-success'}`}>
-                        {r.counter - r.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(r.counter - r.paid)).toLocaleString('en-IN')}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="border-t-2 border-border font-bold">
-                    <td className="py-1.5 pr-2 text-text">Total</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-text">{allPlatformsEconomics.total.orders}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.counter.toLocaleString('en-IN')}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.menu.toLocaleString('en-IN')}</td>
-                    <td className="py-1.5 px-1 text-right tabular-nums text-text">₹{allPlatformsEconomics.total.paid.toLocaleString('en-IN')}</td>
-                    <td className={`py-1.5 pl-1 text-right tabular-nums ${allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? 'text-warning' : 'text-success'}`}>
-                      {allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid > 0 ? '' : '+'}₹{Math.abs(Math.round(allPlatformsEconomics.total.counter - allPlatformsEconomics.total.paid)).toLocaleString('en-IN')}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          </div>
-        </div>
+              <ChartCard title="Margin against the dine-in price" caption={rowsCaption(pricingRows.length, pricingChartRows.length)}>
+                <TrendChart
+                  data={pricingChartRows.map(r => ({ name: r.label, marginPct: r.marginPct !== null ? Math.round(r.marginPct * 10) / 10 : 0 }))}
+                  xKey="name"
+                  layout="vertical"
+                  format="percent"
+                  height={Math.max(160, pricingChartRows.length * 30)}
+                  categoryWidth={112}
+                  series={[{ key: 'marginPct', name: 'Margin vs dine-in price', color: CHART_SERIES[1], kind: 'bar', cellColors: pricingChartRows.map(r => ((r.marginPct ?? 0) < 0 ? 'var(--danger)' : CHART_SERIES[1])) }]}
+                  ariaLabel={`${platformName} margin per item against the dine-in price`}
+                />
+              </ChartCard>
+              <p className="text-label text-text-3">
+                Discount + GST + commission keep {pricing.payoutPct.toFixed(1)}% of the listing price, then a further ₹{pricing.adSharePerPlate.toFixed(2)} a plate goes to ad spend (the same flat share whether it's a 2 pc burger, a 6 pc plate or a 12 pc combo) - shown separately so ad spend isn't taken off twice.
+              </p>
+            </>
+          )}
+        </section>
       )}
 
-      {/* Are we pricing this right online? - per MENU ITEM, compares the effective amount
-          that lands in hand per piece sold on each aggregator (online price, after that
-          aggregator's average discount+GST+commission shrinkage and a per-piece share of ad
-          spend) against the same item's dine-in/POS price. See the pricingAdequacy comment
-          above for the "-O" SKU-name normalization this depends on. */}
-      {hasActiveRange && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {(['zomato', 'swiggy'] as const).map(agg => {
-            const data = pricingAdequacy[agg];
-            const rowsWithData = data?.rows.filter(r => r.hasData) || [];
-            const chartRows = rowsWithData.slice(0, 10); // top 10 by volume - a bar per item beyond that stops being readable
-            return (
-              <div key={agg} className={`bg-surface rounded-2xl border shadow-sm p-4 sm:p-6 ${agg === 'zomato' ? 'border-danger-border' : 'border-border-strong'}`}>
-                <h3 className="text-base sm:text-lg font-bold text-text tracking-tight capitalize mb-1">{agg} - Are We Pricing This Right?</h3>
-                <p className="text-xs text-text-3 mb-4">
-                  Effective payout per plate (the price actually billed after any discount, × Payout %, minus that plate's share of ad spend) vs your dine-in price for the same menu item. "Online ₹/plate" is the latest menu listing price (from the newest {agg} orders) - see "billed avg" below it where the two differ
-                </p>
-                {!data ? (
-                  <div className="text-center text-text-3 py-8 text-sm">Needs Items Total data - upload/re-upload settlements with item-level tracking for this period</div>
-                ) : rowsWithData.length === 0 ? (
-                  <div className="text-center text-text-3 py-8 text-sm">No {agg} online sales matched to POS item data in this period (needs pos-sync data from 2026-08-23 onward)</div>
-                ) : (
-                  <>
-                    <div className="overflow-x-auto overflow-y-auto max-h-80 -mx-1">
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-surface">
-                          <tr className="text-left text-text-3 text-xs uppercase tracking-wide">
-                            <th className="py-2 px-1 font-medium">Item</th>
-                            <th className="py-2 px-1 font-medium text-right">Online ₹/plate</th>
-                            <th className="py-2 px-1 font-medium text-right">Real ₹/plate</th>
-                            <th className="py-2 px-1 font-medium text-right">Payout ₹/plate</th>
-                            <th className="py-2 px-1 font-medium text-right">Margin</th>
-                            <th className="py-2 px-1 font-medium text-right">Suggested Change</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rowsWithData.map(r => {
-                            const isLoss = (r.marginPct ?? 0) < 0;
-                            return (
-                              <tr key={r.key} className="border-t border-border">
-                                <td className="py-2 px-1 flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />
-                                  {r.label}
-                                  <span className="text-caption text-text-3 font-normal">({r.piecesPerPlate}pc)</span>
-                                </td>
-                                <td className="py-2 px-1 text-right text-text-2">
-                                  ₹{r.onlinePrice.toFixed(1)}
-                                  {r.hasCatalogPrice && Math.abs(r.realizedPrice - r.onlinePrice) > 0.5 && (
-                                    <div className="text-caption text-warning font-normal" title="Average actually billed after order-level discounts, vs. the listed menu price at left">
-                                      billed avg ₹{r.realizedPrice.toFixed(1)}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="py-2 px-1 text-right text-text-2">₹{r.realPrice.toFixed(1)}</td>
-                                <td className="py-2 px-1 text-right text-text-2">₹{r.effectivePayout.toFixed(1)}</td>
-                                <td className={`py-2 px-1 text-right font-medium ${isLoss ? 'text-danger' : 'text-success'}`}>
-                                  {r.marginPct !== null ? `${r.marginPct >= 0 ? '+' : ''}${r.marginPct.toFixed(0)}%` : '—'}
-                                </td>
-                                <td className="py-2 px-1 text-right">
-                                  {r.priceIncreasePct !== null && r.priceIncreasePct > 1 ? (
-                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-danger-soft text-danger">Raise +{r.priceIncreasePct.toFixed(0)}%</span>
-                                  ) : (
-                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-success-soft text-success">Healthy</span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="text-caption text-text-3 mt-2">Sorted by online pieces sold, most first{rowsWithData.length > chartRows.length ? ` - chart below shows the top ${chartRows.length}` : ''}</p>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <BarChart data={chartRows.map(r => ({ name: r.label, marginPct: r.marginPct !== null ? Math.round(r.marginPct * 10) / 10 : 0, color: (r.marginPct ?? 0) < 0 ? 'var(--danger)' : 'var(--chart-2)' }))} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" tick={{ fontSize: 12 }} interval={0} angle={-30} textAnchor="end" height={70} />
-                        <YAxis tick={{ fontSize: 12 }} unit="%" />
-                        <Tooltip formatter={(value: number) => [`${value}%`, 'Margin vs dine-in price']} />
-                        <Bar dataKey="marginPct" radius={[4, 4, 0, 0]}>
-                          {chartRows.map((r, i) => (
-                            <Cell key={i} fill={(r.marginPct ?? 0) < 0 ? 'var(--danger)' : 'var(--chart-2)'} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <p className="text-caption text-text-3 mt-2">
-                      Discount + GST + commission keep {data.payoutPct.toFixed(1)}% of listing price, then a further ₹{data.adSharePerPlate.toFixed(2)}/plate goes to ad spend (same flat share whether it's a 2pc burger, 6pc plate, or 12pc combo) - shown separately so ad spend isn't deducted twice
-                    </p>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Settlement History - collapsible, uses the date filter above */}
-      <div className="bg-surface rounded-2xl border border-border shadow-sm">
-        <button
-          onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-          className="min-h-11 w-full flex items-center justify-between p-6 text-left"
-        >
-          <h3 className="text-lg sm:text-xl font-bold text-text tracking-tight">Settlement History</h3>
-          {isHistoryOpen ? <ChevronUp className="w-5 h-5 text-text-3" /> : <ChevronDown className="w-5 h-5 text-text-3" />}
-        </button>
-
-        {isHistoryOpen && (
-          <div className="px-6 pb-6">
-            {!hasActiveRange ? (
-              <div className="py-8 text-center text-sm text-text-3">Pick a custom date range and press Apply above</div>
-            ) : filteredSettlements.length === 0 ? (
-              <div className="py-8 text-center text-sm text-text-3">No settlements in this date range yet - use "Upload Settlement" above to add one</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b-2 border-border">
-                      <th className="text-left py-3 px-4 font-semibold text-text-2">Settlement Date</th>
-                      <th className="text-left py-3 px-4 font-semibold text-text-2">Aggregator</th>
-                      <th className="text-right py-3 px-4 font-semibold text-text-2">Orders</th>
-                      <th className="text-right py-3 px-4 font-semibold text-text-2">Net Order Value</th>
-                      <th className="text-right py-3 px-4 font-semibold text-text-2">Net Payout</th>
-                      <th className="text-right py-3 px-4 font-semibold text-text-2">Commission</th>
-                      <th className="text-right py-3 px-4 font-semibold text-text-2">Ad Spend</th>
-                      <th className="text-left py-3 px-4 font-semibold text-text-2">Bank UTR</th>
-                      {canEdit && <th className="text-right py-3 px-4 font-semibold text-text-2"></th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSettlements.map(s => (
-                      <tr key={s.id} className="border-b border-border hover:bg-surface-2">
-                        <td className="py-3 px-4 text-text-2">
-                          <div>{formatDateIN(s.settlementDate)}</div>
-                          <div className="text-xs text-text-3">Sales: {formatSettlementPeriod(s)}</div>
-                        </td>
-                        <td className="py-3 px-4 text-text-2 capitalize">{s.aggregator}</td>
-                        <td className="py-3 px-4 text-right text-text-2">{s.orderCount}</td>
-                        <td className="py-3 px-4 text-right text-text-2">₹{s.grossSales.toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right font-semibold text-info">₹{s.netPayout.toFixed(2)}</td>
-                        <td className={`py-3 px-4 text-right font-semibold ${s.netCommission >= 0 ? 'text-primary' : 'text-danger'}`}>
-                          ₹{s.netCommission.toFixed(2)}
-                        </td>
-                        <td className="py-3 px-4 text-right text-text-2">
-                          {s.adSpend !== undefined ? `₹${s.adSpend.toFixed(2)}` : <span className="text-text-3">—</span>}
-                        </td>
-                        <td className="py-3 px-4 text-text-3 text-xs">{s.bankUTR}</td>
-                        {canEdit && (
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => handleDelete(s.id)}
-                              disabled={deletingId === s.id}
-                              className="min-h-11 p-1.5 text-text-3 hover:text-danger hover:bg-danger-soft rounded transition-colors disabled:opacity-50"
-                              title="Delete settlement"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
+      {/* Settlement history - closed until asked for; a list at every width (the Money page is too
+          narrow for its nine columns) */}
+      <ListGroup
+        title="Settlement history"
+        meta={isHistoryOpen && hasActiveRange ? `${filteredSettlements.length}` : undefined}
+        empty={!hasActiveRange
+          ? <EmptyState compact icon={FileSpreadsheet} title="Pick a custom date range and press Apply above" />
+          : <EmptyState compact icon={FileSpreadsheet} title="No settlements in this date range yet" body={canEdit ? 'Use "Upload settlement" above to add one.' : undefined} />}
+      >
+        {!isHistoryOpen ? (
+          <ListRow muted title="Show the settlements in this period" onClick={() => setIsHistoryOpen(true)} chevron="down" aria-expanded={false} />
+        ) : hasActiveRange ? (
+          filteredSettlements.map(s => (
+            <TextRow
+              key={s.id}
+              title={<span className="capitalize">{s.aggregator} · paid {formatDateIN(s.settlementDate)}</span>}
+              lines={[
+                `Sales: ${formatSettlementPeriod(s)} · ${s.orderCount} orders`,
+                `Order value ${rupees(s.grossSales)} · commission ${rupees(s.netCommission)}${s.adSpend !== undefined ? ` · ads ${rupees(s.adSpend)}` : ''}`,
+                s.bankUTR ? `UTR ${s.bankUTR}` : null,
+              ]}
+              trailing={
+                <>
+                  <span className="num text-body-md font-semibold text-text">{rupees(s.netPayout)}</span>
+                  {canEdit && <IconButton label="Delete settlement" variant="danger-ghost" size="sm" icon={<Trash2 />} disabled={deletingId === s.id} onClick={() => handleDelete(s.id)} />}
+                </>
+              }
+            />
+          ))
+        ) : null}
+      </ListGroup>
       {/* Upload Settlement Modal */}
       <ResponsiveModal
         open={showUploadModal}
