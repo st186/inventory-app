@@ -40,6 +40,7 @@ import { setScreenPage } from './utils/screenContext';
 import { StoreManagement } from './components/StoreManagement';
 import { StoreSelector } from './components/StoreSelector';
 import { FixLegacyInventory } from './components/FixLegacyInventory';
+import { EquipmentNavButton } from './components/assets/EquipmentNavButton';
 // Note: StockRequestReminderScheduler and AttendanceReminderScheduler were removed
 // from the render tree — reminders now run server-side via pg_cron (see
 // supabase/migrations/20260701000000_reminder_cron_jobs.sql), so no client-side
@@ -2124,6 +2125,7 @@ export default function App() {
  <span>Export</span>
  </button>
  )}
+ {isAnyIncharge && <EquipmentNavButton variant="staff-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />}
  {/* Notification bell and Refresh moved to the always-visible bar next to the
  hamburger menu button above, reachable without opening the desktop nav or
  the mobile menu. */}
@@ -2357,6 +2359,7 @@ export default function App() {
  <span>Export</span>
  </button>
  )}
+ {isAnyIncharge && <EquipmentNavButton variant="staff-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />}
  <button
  onClick={handleLogout}
  className="w-full flex items-center gap-3 px-4 py-3 bg-red-500/90 text-white rounded-lg hover:bg-red-600 transition-all"
@@ -2445,6 +2448,8 @@ export default function App() {
  />
  ) : activeView === 'stock-requests' && isAnyIncharge ? (
  <StockRequestManagement context={contextValue} stores={stores} initialTab={highlightTab} />
+ ) : activeView === 'assets' && isAnyIncharge ? (
+ <AssetsManagement context={contextValue} stores={stores} employees={employees} onRefreshStores={loadStores} />
  ) : activeView === 'advanced-inventory' && isManager ? (
  <AdvancedInventoryManagement 
  context={contextValue} 
@@ -2707,6 +2712,7 @@ export default function App() {
  <Database className="w-4 h-4" />
  <span className="hidden xl:inline">Backup</span>
  </button>
+ <EquipmentNavButton variant="manager-desktop" active={activeView === 'assets'} onClick={() => setActiveView('assets')} />
  </>
  )}
  {/* Refresh moved to the always-visible bar next to the notification bell above. */}
@@ -2942,6 +2948,7 @@ export default function App() {
                     <Database className="w-5 h-5" />
                     <span>Backup</span>
                   </button>
+                  <EquipmentNavButton variant="manager-mobile" active={activeView === 'assets'} onClick={() => { setActiveView('assets'); setIsMobileMenuOpen(false); }} />
                   </>
  )}
  <button

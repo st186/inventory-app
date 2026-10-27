@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Store, Factory, Package, Settings, TrendingUp } from 'lucide-react';
+import { Store, Factory, Package, Settings, TrendingUp, Boxes } from 'lucide-react';
+import { EquipmentRegister } from './assets/EquipmentRegister';
 import { StoreManagement } from './StoreManagement';
 import { ProductionHouseManagement } from './ProductionHouseManagement';
 import { ClusterManagement } from './ClusterManagement';
@@ -16,10 +17,20 @@ type Props = {
 
 export function AssetsManagement({ context, stores, employees, onRefreshStores }: Props) {
  const isClusterHead = context.user?.role === 'cluster_head';
- const [mainTab, setMainTab] = useState<'assets' | 'investments'>('assets');
+ const [mainTab, setMainTab] = useState<'equipment' | 'assets' | 'investments'>('equipment');
  const [activeTab, setActiveTab] = useState<'stores' | 'production-houses' | 'cluster-management'>(
  isClusterHead ? 'cluster-management' : 'stores'
  );
+
+ // Managers and incharges reach this page only for the equipment register (their "Equipment"
+ // menu entry); stores, production houses and investments stay with the owner.
+ if (!isClusterHead) {
+ return (
+ <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+ <EquipmentRegister />
+ </div>
+ );
+ }
 
  return (
  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -38,8 +49,19 @@ export function AssetsManagement({ context, stores, employees, onRefreshStores }
  </div>
  </div>
  
- {/* Main Tabs - Assets vs Investments */}
- <div className="flex gap-3 mb-4">
+ {/* Main Tabs - Equipment register, Assets (stores / production houses), Investments */}
+ <div className="flex flex-wrap gap-3 mb-4">
+ <button
+ onClick={() => setMainTab('equipment')}
+ className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
+ mainTab === 'equipment'
+ ? 'bg-white text-orange-600 border-white shadow-lg'
+ : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+ }`}
+ >
+ <Boxes className="w-5 h-5" />
+ <span>Equipment & assets</span>
+ </button>
  <button
  onClick={() => setMainTab('assets')}
  className={`flex items-center gap-2 px-6 py-3 rounded-xl transition-all border-2 ${
@@ -49,7 +71,7 @@ export function AssetsManagement({ context, stores, employees, onRefreshStores }
  }`}
  >
  <Package className="w-5 h-5" />
- <span>Assets</span>
+ <span>Stores & houses</span>
  </button>
  <button
  onClick={() => setMainTab('investments')}
@@ -110,7 +132,9 @@ export function AssetsManagement({ context, stores, employees, onRefreshStores }
 
  {/* Tab Content */}
  <div>
- {mainTab === 'investments' ? (
+ {mainTab === 'equipment' ? (
+ <EquipmentRegister />
+ ) : mainTab === 'investments' ? (
  <InvestmentsManagement context={context} />
  ) : activeTab === 'cluster-management' ? (
  <ClusterManagement context={context} />

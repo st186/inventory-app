@@ -25,6 +25,7 @@ import { useCashCover, type LoadCashCover } from './useCashCover';
 import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
+import { AssetHint } from './assets/AssetHint';
 import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
 
 type Props = {
@@ -515,6 +516,7 @@ export function QuickAddExpense({
                 </p>
               </div>
             )}
+            <AssetHint name={query} category={currentCategory} source={currentEntryType} date={selectedDate} />
 
             {isNewItem && (
               <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2.5">
