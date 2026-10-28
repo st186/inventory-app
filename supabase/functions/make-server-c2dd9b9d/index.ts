@@ -93,9 +93,32 @@ function employeeForViewer(emp: any, viewer: Viewer) {
   const { aadharFront, aadharBack, ...rest } = emp;
   const out: any = { ...rest, hasAadharImages: !!(aadharFront || aadharBack) };
   if (viewer.role !== 'manager' && viewer.role !== 'audit') {
-    for (const k of ['salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'dob', 'dateOfBirth', 'phone', 'bankDetails', 'tempPassword']) delete out[k];
+    for (const k of ['salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'dob', 'dateOfBirth', 'phone', 'contactEmail', 'bankDetails', 'tempPassword']) delete out[k];
   }
   return viewer.lean ? withoutImages(out) : out;
+}
+
+// Who is asking, for pay and leave lists (security review, 28 Oct 2026).
+async function callerOf(c: any): Promise<{ role: string; employeeId: string | null; lead: boolean; incharge: boolean; places: string[] }> {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return { role: '', employeeId: null, lead: false, incharge: false, places: [] };
+  const m = auth.user.user_metadata || {};
+  const places = [m.storeId, ...(Array.isArray(m.assignedStoreIds) ? m.assignedStoreIds : []), ...(Array.isArray(m.assignedProductionHouseIds) ? m.assignedProductionHouseIds : [])].filter(Boolean).map(String);
+  return {
+    role: String(m.role || ''), employeeId: m.employeeId ? String(m.employeeId) : null,
+    lead: ['cluster_head', 'manager', 'audit'].includes(m.role),
+    incharge: ['store_incharge', 'production_incharge', 'operations_incharge'].includes(m.designation), places,
+  };
+}
+
+// Pay rows (payouts, salary advances): everything for the owner, managers and audit; an incharge
+// also the ones paid from their store's or production house's cash (their day close counts them);
+// everyone else only their own.
+async function payScope(c: any, rows: any[]): Promise<any[]> {
+  const caller = await callerOf(c);
+  if (caller.lead) return rows || [];
+  return (rows || []).filter((r: any) => (caller.employeeId && String(r?.employeeId) === caller.employeeId)
+    || (caller.incharge && r?.storeId && caller.places.includes(String(r.storeId))));
 }
 
 // ---- Lean employee lists (lean-lists-v1, speed work 28 Oct 2026) ----
@@ -344,7 +367,11 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
   { test: /^\/salary-advances\/.+/, methods: ['PUT', 'DELETE'], roles: LEADS },
   // Store/production incharges (role employee) approve their own staff; the routes check who (canApproveFor).
   { test: /^\/(timesheets|leaves)\/[^/]+\/(approve|reject)$/, roles: [...LEADS, 'employee'] },
-  { test: /^\/push\/send$/, roles: LEADS },
+  { test: /^\/push\/send(-multiple)?$/, roles: LEADS },
+  // Pay and money that is not the caller's: the org chart, investors, online loans (security review, 28 Oct 2026).
+  { test: /^\/organizational-hierarchy$/, roles: [...LEADS, 'audit'] },
+  { test: /^\/investors(\/|$)/, roles: [...LEADS, 'audit'] },
+  { test: /^\/online-loans(\/|$)/, roles: [...LEADS, 'audit'], alsoDesignations: INCHARGE_DESIGNATIONS },
   // Reminder blasts: the cron jobs (with the secret) or a manager pressing the button.
   { test: /^\/send-/, roles: LEADS },
   // Item catalog edits: renaming, merging or deleting expense items and changing the momo
@@ -364,6 +391,28 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
   { test: /^\/recipes\/(review|costs|price-items|price-links)(\/|$)/, roles: LEADS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
+// Security review, 28 Oct 2026:
+// - The cron secret opens only the scheduled-job routes (it used to skip every check on every route).
+const CRON_ROUTES = /^\/(cron\/|send-|pos-sync$|production\/auto-approve-stale$|timesheets\/auto-approve-stale$|notifications\/auto-cleanup$|app-updates\/cleanup$|admin\/recompute-(paytm-balance|production-cash)$|workplace\/summary$)/;
+// - The read-only auditor role writes nothing of the business (site auditors post to their audits).
+const AUDIT_WRITES = /^\/(notifications|push|auth|me|site-audits|insights)(\/|$)/;
+// - Timesheets, leave and salary advances name their person in the body: staff file only their own.
+const OWN_RECORD_POSTS = /^\/(timesheets|timesheets\/bulk|leaves|leaves\/bulk|salary-advances)$/;
+// - Staff records of the owner and managers, and your own, are changed only by the owner (a manager
+//   could archive the owner - a 100-year login block - or change the owner's email, role or pay).
+const STAFF_RECORD = /^\/(unified-employees|employees|employee)\/([^/]+)(\/|$)/;
+const OWNER_ONLY_FIELDS = ['email', 'role', 'salaryStructure', 'monthlySalary', 'dailyRate', 'salary', 'hourlyRate', 'variablePayMax', 'hasVariablePay', 'bonus'];
+
+// Constant-time comparison for shared secrets.
+function sameSecret(given: string | undefined | null, expected: string | undefined | null): boolean {
+  if (!given || !expected) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
 const SITE_AUDITOR_PATHS = /^\/(site-audits|notifications|push|me|auth|bootstrap)(\/|$)/;
 
 app.use(`${API_PREFIX}/*`, async (c, next) => {
@@ -374,8 +423,7 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   }
   if (PUBLIC_ROUTES.some((p) => path === p || path.startsWith(`${p}/`))) return next();
   if (c.req.method === 'GET' && LEGACY_PUBLIC_READS.includes(path)) return next();
-  const cronSecret = Deno.env.get('CRON_SYNC_SECRET');
-  if (cronSecret && c.req.header('X-Cron-Secret') === cronSecret) return next();
+  if (CRON_ROUTES.test(path) && sameSecret(c.req.header('X-Cron-Secret'), Deno.env.get('CRON_SYNC_SECRET'))) return next();
 
   warmPasswordPolicy();
   const auth = await verifyUser(c.req.header('Authorization'));
@@ -391,6 +439,27 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   const gate = ROLE_GATES.find((g) => g.test.test(path) && (!g.methods || g.methods.includes(c.req.method)));
   const designation = auth.user.user_metadata?.designation;
   if (gate && !gate.roles.includes(role) && !gate.alsoDesignations?.includes(designation)) return c.json({ error: 'You are not allowed to do this' }, 403);
+  const writing = WRITES.includes(c.req.method) || c.req.method === 'PATCH';
+  if (role === 'audit' && writing && !AUDIT_WRITES.test(path)) return c.json({ error: 'This login can only look, not change anything' }, 403);
+  const me = auth.user.user_metadata?.employeeId ? String(auth.user.user_metadata.employeeId) : null;
+  if (c.req.method === 'POST' && OWN_RECORD_POSTS.test(path) && !LEADS.includes(role) && !INCHARGE_DESIGNATIONS.includes(designation)) {
+    const body = await c.req.json().catch(() => ({}));
+    const rows = [body, ...(Array.isArray(body?.timesheets) ? body.timesheets : []), ...(Array.isArray(body?.leaves) ? body.leaves : [])];
+    if (rows.some((r: any) => r?.employeeId && String(r.employeeId) !== me)) return c.json({ error: 'You can only do this for yourself' }, 403);
+  }
+  const staffRecord = writing && role !== 'cluster_head' ? STAFF_RECORD.exec(path) : null;
+  if (staffRecord && staffRecord[2] !== 'by-email') {
+    const targetId = decodeURIComponent(staffRecord[2]);
+    const target = await kv.get<any>(`unified-employee:${targetId}`).catch(() => null);
+    if (targetId === me || target?.employeeId === me || target?.role === 'cluster_head' || target?.role === 'manager') {
+      return c.json({ error: 'Only the owner can change this person' }, 403);
+    }
+    if (c.req.method === 'PUT') {
+      const body = await c.req.json().catch(() => ({}));
+      const changed = OWNER_ONLY_FIELDS.filter((k) => body && k in body && JSON.stringify(body[k]) !== JSON.stringify(target?.[k]));
+      if (changed.length) return c.json({ error: 'Only the owner can change email, role or pay' }, 403);
+    }
+  }
 
   if (WRITES.includes(c.req.method) && /^\/unified-employees(\/|$)/.test(path) && role !== 'cluster_head') {
     // Only the owner hands out manager, owner or audit roles.
@@ -4152,7 +4221,7 @@ app.get('/make-server-c2dd9b9d/payouts', async (c) => {
     // Paginated: every salary and daily wage is a row, so this passes 1000 and payslips,
     // My Payouts and advance recovery would silently miss the rest.
     const payouts = await getAllByPrefixWithRetry('payout:', windowed.range);
-    return c.json({ success: true, payouts });
+    return c.json({ success: true, payouts: await payScope(c, payouts) });
   } catch (error: any) {
     console.log('Error fetching payouts:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -6643,7 +6712,7 @@ app.delete('/make-server-c2dd9b9d/aggregator-settlements/:id', async (c) => {
 app.get('/make-server-c2dd9b9d/salary-advances', async (c) => {
   try {
     const salaryAdvances = await kv.getByPrefix('salary_advance:');
-    return c.json({ success: true, salaryAdvances });
+    return c.json({ success: true, salaryAdvances: await payScope(c, salaryAdvances) });
   } catch (error) {
     console.log('Error fetching salary advances:', error);
     return c.json({ error: 'Failed to fetch salary advances' }, 500);
@@ -7219,6 +7288,8 @@ app.get('/make-server-c2dd9b9d/timesheets/all', async (c) => {
 app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
   try {
     const employeeId = c.req.param('employeeId');
+    const caller = await callerOf(c);
+    if (!caller.lead && !caller.incharge && caller.employeeId !== employeeId) return c.json({ error: 'You can only see your own timesheets' }, 403);
     // Paginated: a year of daily timesheets is ~365 rows, so one person passes 1000 in time.
     const allTimesheets = await getAllByPrefixWithRetry(`timesheet:${employeeId}:`);
     return c.json({ timesheets: allTimesheets });
@@ -7525,7 +7596,11 @@ app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
   try {
     // Paginated - plain getByPrefix stopped at 1000 rows and hid newer applications.
     const allLeaves = await getAllByPrefixWithRetry('leave:', windowed.range);
-    return c.json({ leaves: allLeaves });
+    // The reason is for the person, their approvers, the owner and managers (security review, 28 Oct 2026).
+    const caller = await callerOf(c);
+    const approver = caller.lead || caller.incharge;
+    const leaves = approver ? allLeaves : (allLeaves || []).map((l: any) => (String(l?.employeeId) === caller.employeeId ? l : { ...l, reason: undefined, notes: undefined }));
+    return c.json({ leaves });
   } catch (error) {
     console.log('Error fetching all leaves:', error);
     return c.json({ error: 'Failed to fetch all leaves' }, 500);
@@ -7604,6 +7679,8 @@ app.get('/make-server-c2dd9b9d/team/leave-calendar', async (c) => {
 app.get('/make-server-c2dd9b9d/leaves/:employeeId', async (c) => {
   try {
     const employeeId = c.req.param('employeeId');
+    const caller = await callerOf(c);
+    if (!caller.lead && !caller.incharge && caller.employeeId !== employeeId) return c.json({ error: 'You can only see your own leave' }, 403);
     const allLeaves = await getAllByPrefixWithRetry(`leave:${employeeId}:`);
     return c.json({ leaves: allLeaves });
   } catch (error) {
@@ -8074,6 +8151,11 @@ app.delete('/make-server-c2dd9b9d/leaves/:leaveId', async (c) => {
 
     if (!leave) {
       return c.json({ error: 'Leave not found' }, 404);
+    }
+    // Only the person themself, or the owner and managers, take back a leave request.
+    const caller = await callerOf(c);
+    if (caller.role !== 'cluster_head' && caller.role !== 'manager' && String(leave.employeeId) !== caller.employeeId) {
+      return c.json({ error: 'You can only take back your own leave request' }, 403);
     }
     if (leave.status !== 'pending') {
       return c.json({ error: `Cannot delete a leave that has already been ${leave.status}` }, 400);
@@ -8615,7 +8697,10 @@ app.get('/make-server-c2dd9b9d/organizational-hierarchy', async (c) => {
 
   try {
     const storeId = c.req.query('storeId');
-    let allEmployees = await kv.getByPrefix('unified-employee:');
+    // Every record cleaned for the viewer: no Aadhaar images, and pay, birthday and phone only for
+    // the owner, managers and audit (security review, 28 Oct 2026).
+    const hierarchyViewer = await viewerOf(c);
+    let allEmployees = (await kv.getByPrefix('unified-employee:')).map((e: any) => employeeForViewer(e, hierarchyViewer));
     
     console.log(`[Hierarchy] Total employees before filtering: ${allEmployees.length}`);
     console.log(`[Hierarchy] Requested storeId: ${storeId || 'ALL'}`);
@@ -8876,7 +8961,8 @@ app.get('/make-server-c2dd9b9d/cluster-heads', async (c) => {
   try {
     const allEmployees = await kv.getByPrefix('unified-employee:');
     const clusterHeads = allEmployees.filter((emp: any) => emp.role === 'cluster_head');
-    return c.json({ clusterHeads: wantsLeanLists(c) ? clusterHeads.map(withoutImages) : clusterHeads });
+    const viewer = await viewerOf(c);
+    return c.json({ clusterHeads: clusterHeads.map((e: any) => employeeForViewer(e, viewer)) });
   } catch (error) {
     console.log('Error fetching cluster heads:', error);
     return c.json({ error: 'Failed to fetch cluster heads' }, 500);
