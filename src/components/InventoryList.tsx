@@ -1,9 +1,10 @@
 // The day's expenses on the Expenses screen, as list groups by type (wireframe Expenses):
-// ingredients, running costs, fixed costs. Tap a row to edit it (delete sits in that sheet).
+// ingredients (one card per category with its total - meat, dairy, vegetables, ... - as before the
+// new look; owner, 29 Oct 2026), running costs, fixed costs. Tap a row to edit it (delete sits in that sheet).
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { InventoryItem, OverheadItem, FixedCostItem } from '../App';
-import { BUILT_IN_ITEM_BENGALI } from '../utils/inventoryData';
+import { BUILT_IN_ITEM_BENGALI, INVENTORY_CATEGORIES } from '../utils/inventoryData';
 import * as api from '../utils/api';
 import type { PriceFlag } from '../utils/expenseChecks';
 import { useT } from '../utils/i18n';
@@ -81,40 +82,52 @@ export function InventoryList({
   }
 
   const visible = <T extends { id: string }>(list: T[]) => (hiddenIds && hiddenIds.size ? list.filter((x) => !hiddenIds.has(x.id)) : list);
-  // Ingredients stay together by category (meat, dairy, ...), as before.
-  const ingredients = [...visible(inventory)].sort((a, b) => categoryText(a.category).localeCompare(categoryText(b.category)));
+  // Ingredients by category, in the usual order (meat, dairy, vegetables, staples, ...); any other category after.
+  const ingredients = visible(inventory);
+  const order: string[] = Object.keys(INVENTORY_CATEGORIES);
+  const rank = (c: string) => (order.includes(c) ? order.indexOf(c) : order.length);
+  const byCategory = [...ingredients.reduce((m, item) => m.set(item.category, [...(m.get(item.category) || []), item]), new Map<string, InventoryItem[]>())]
+    .sort(([a], [b]) => rank(a) - rank(b) || categoryText(a).localeCompare(categoryText(b)));
   const running = visible(overheads);
   const fixed = visible(fixedCosts);
 
   return (
     <div className="flex flex-col gap-6">
       {ingredients.length > 0 && (
-        <ListGroup title={t('exp.ingredients')} meta={formatINR(ingredients.reduce((s, i) => s + i.totalCost, 0))}>
-          {ingredients.map((item) => {
-            const meta = getItemMeta(item.itemName, item.category);
-            const bengali = meta?.itemNameBengali || BUILT_IN_ITEM_BENGALI[item.itemName];
-            const flag = priceFlags?.get(item.id);
-            const isDuplicate = duplicateIds.has(item.id);
-            return (
-              <ListRow
-                key={item.id}
-                leading={<IconWell icon={categoryIcon(item.category, 'inventory')} />}
-                title={<span>{item.itemName}{bengali ? <span className="font-normal text-text-3"> · {bengali}</span> : null}</span>}
-                subtitle={
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="num">{formatNumber(item.quantity || 0)} {item.unit} · {formatINR(item.costPerUnit || 0)}/{item.unit}</span>
-                    {item.paymentMethod === 'both' && <span className="num">{t('money.cash')} {formatINR(item.cashAmount || 0)} + {t('money.paytm')} {formatINR(item.onlineAmount || 0)}</span>}
-                    {isDuplicate && <StatusChip tone="warning" size="sm" icon={AlertTriangle}>{t('exp.duplicate')}</StatusChip>}
-                    {flag && <StatusChip tone="warning" size="sm" icon={AlertTriangle} title={flag.message}>{t('exp.checkUnit')}</StatusChip>}
-                  </span>
-                }
-                chip={<PaidByChip item={item} />}
-                amount={item.totalCost}
-                onClick={isManager ? () => onEditInventory(item) : undefined}
-              />
-            );
-          })}
-        </ListGroup>
+        <section className="flex flex-col gap-3" aria-label={t('exp.ingredients')}>
+          <div className="flex min-h-6 items-baseline gap-2">
+            <h2 className="text-subtitle font-semibold text-text">{t('exp.ingredients')}</h2>
+            <span className="text-label text-text-3">{formatINR(ingredients.reduce((s, i) => s + i.totalCost, 0))}</span>
+          </div>
+          {byCategory.map(([category, items]) => (
+            <ListGroup key={category} overline={`${categoryText(category)} · ${formatINR(items.reduce((s, i) => s + i.totalCost, 0))}`}>
+              {items.map((item) => {
+                const meta = getItemMeta(item.itemName, item.category);
+                const bengali = meta?.itemNameBengali || BUILT_IN_ITEM_BENGALI[item.itemName];
+                const flag = priceFlags?.get(item.id);
+                const isDuplicate = duplicateIds.has(item.id);
+                return (
+                  <ListRow
+                    key={item.id}
+                    leading={<IconWell icon={categoryIcon(item.category, 'inventory')} />}
+                    title={<span>{item.itemName}{bengali ? <span className="font-normal text-text-3"> · {bengali}</span> : null}</span>}
+                    subtitle={
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="num">{formatNumber(item.quantity || 0)} {item.unit} · {formatINR(item.costPerUnit || 0)}/{item.unit}</span>
+                        {item.paymentMethod === 'both' && <span className="num">{t('money.cash')} {formatINR(item.cashAmount || 0)} + {t('money.paytm')} {formatINR(item.onlineAmount || 0)}</span>}
+                        {isDuplicate && <StatusChip tone="warning" size="sm" icon={AlertTriangle}>{t('exp.duplicate')}</StatusChip>}
+                        {flag && <StatusChip tone="warning" size="sm" icon={AlertTriangle} title={flag.message}>{t('exp.checkUnit')}</StatusChip>}
+                      </span>
+                    }
+                    chip={<PaidByChip item={item} />}
+                    amount={item.totalCost}
+                    onClick={isManager ? () => onEditInventory(item) : undefined}
+                  />
+                );
+              })}
+            </ListGroup>
+          ))}
+        </section>
       )}
 
       {running.length > 0 && (
