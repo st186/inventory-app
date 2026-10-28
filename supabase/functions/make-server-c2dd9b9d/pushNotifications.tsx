@@ -257,7 +257,8 @@ async function sendFcmNotification(
             token,
             data: dataStrings,
             android: {
-              priority: 'high',
+              // Reminders and updates can wait for the phone's next wake-up (notificationRules.ts).
+              priority: payload.data?.category === 'update' || payload.data?.category === 'reminder' ? 'normal' : 'high',
             },
           },
         }),
@@ -348,6 +349,7 @@ async function sendWebPushNotification(
 
     await webpush.sendNotification(storedSub.subscription, notificationPayload, {
       TTL: 86400, // 24 hours
+      urgency: payload.data?.category === 'urgent' ? 'high' : payload.data?.category === 'update' ? 'low' : 'normal',
     });
 
     console.log(`Push notification sent successfully to user: ${userId}`);

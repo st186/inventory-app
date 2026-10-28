@@ -40,6 +40,11 @@ self.addEventListener('push', (event) => {
         // the same type silently replaced the first one still waiting in the tray.
         tag: flat.type && flat.notificationId ? `${flat.type}-${flat.notificationId}` : (data.tag || notificationData.tag),
         data: flat, // Store full data for click handling
+        // Urgent stays on screen until dealt with; updates arrive without a sound; a bundle that
+        // grew buzzes again (notificationRules.ts).
+        requireInteraction: flat.category === 'urgent',
+        silent: flat.category === 'update',
+        renotify: flat.category !== 'update',
       };
     } catch (e) {
       console.error('Error parsing push data:', e);
@@ -134,6 +139,7 @@ const NOTIFICATION_VIEW_MAP = {
   workplace_due: { view: 'workplace', tab: 'mine' },
   workplace_missed: { view: 'workplace', tab: 'review' },
   workplace_flag: { view: 'workplace', tab: 'review' },
+  workplace_alarm: { view: 'workplace', tab: 'review' },
   kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
   shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
   // Server reminders that had no screen to open (WP0b): stock requests waiting for the production

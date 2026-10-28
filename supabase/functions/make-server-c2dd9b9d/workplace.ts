@@ -583,7 +583,7 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
     for (const e of employees) if (e.status !== 'inactive' && e.authUserId && e.role === 'manager' && e.designation !== 'store_incharge' && e.designation !== 'production_incharge') to.set(e.authUserId, e);
     for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
     for (const authUserId of to.keys()) {
-      await safeNotify(deps, authUserId, 'workplace_flag', `Garbage / dirt alert: ${o.it.name} at ${locName}`,
+      await safeNotify(deps, authUserId, 'workplace_alarm', `Garbage / dirt alert: ${o.it.name} at ${locName}`,
         `${person?.name || 'A staff member'}'s photo shows a serious problem (AI ${o.it.aiScore}/10)${en ? `: ${en}` : ''}. Get it cleaned now. It lowers the incharge's KPI.`, related, o.date);
     }
     return;

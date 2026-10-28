@@ -999,6 +999,23 @@ export interface Notification {
   relatedDate: string | null;
   read: boolean;
   createdAt: string;
+  // Notifications brought up to date (notificationRules.ts): priority, bundling, done-elsewhere.
+  category?: 'urgent' | 'action' | 'reminder' | 'update';
+  count?: number; // bundled: this many of the same kind; items holds the earlier messages
+  items?: string[];
+  readAt?: string;
+  resolvedAt?: string; resolvedBy?: string; resolvedVerb?: string;
+}
+
+export interface NotificationPrefs { quietOn: boolean; quietFrom: string; quietTo: string; muted: Partial<Record<'action' | 'reminder' | 'update', boolean>>; digest: boolean }
+export async function getNotificationPrefs(): Promise<{ prefs: NotificationPrefs; isOwner: boolean }> {
+  return fetchWithAuth(`${API_BASE}/notifications/prefs`, await tokenOr());
+}
+export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<{ prefs: NotificationPrefs }> {
+  return fetchWithAuth(`${API_BASE}/notifications/prefs`, await tokenOr(), { method: 'PUT', body: JSON.stringify(prefs) });
+}
+export async function sendTestNotification(): Promise<{ sent: boolean }> {
+  return fetchWithAuth(`${API_BASE}/notifications/test`, await tokenOr(), { method: 'POST', body: '{}' });
 }
 
 export async function getNotifications(): Promise<{ notifications: Notification[]; unreadCount: number }> {

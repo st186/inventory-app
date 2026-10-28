@@ -99,7 +99,8 @@ export function useNotifications(): NotificationsFeed {
 }
 
 /** Icon and well tone by kind; colour only where the icon is the status. */
-export function notificationLook(type: string): { icon: LucideIcon; tone: IconWellTone } {
+export function notificationLook(type: string, category?: string): { icon: LucideIcon; tone: IconWellTone } {
+  if (category === 'urgent' || type === 'workplace_alarm' || type === 'repair_alert' || type === 'escalation') return { icon: AlertTriangle, tone: 'danger' };
   if (type.endsWith('_approved') || type === 'salary_credited' || type.endsWith('_fulfilled') || type === 'kpi_ready') return { icon: CheckCircle2, tone: 'success' };
   if (type.endsWith('_rejected') || type.endsWith('_cancelled') || type === 'backup_failed') return { icon: XCircle, tone: 'danger' };
   if (type === 'stock_out' || type === 'low_stock_alert' || type === 'eod_data_alert' || type.includes('discrepancy') || type === 'workplace_missed' || type === 'workplace_flag') return { icon: AlertTriangle, tone: 'warning' };

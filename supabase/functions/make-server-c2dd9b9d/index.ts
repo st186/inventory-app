@@ -11,6 +11,7 @@ import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } fr
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
+import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
 import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, lateStartIssues, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
@@ -407,6 +408,31 @@ console.log('✅ Supabase client initialized');
 // Safe retries for writes: Idempotency-Key (idempotency.ts). After the login gate, before every
 // route, so only signed-in requests are keyed (per person).
 app.use(`${API_PREFIX}/*`, idempotencyMiddleware({ supabase, verifyUser }));
+
+// When someone approves, rejects or decides a record, every notification about it shows as done
+// ("Approved by the store incharge") for everyone it went to (notification-related:{id}).
+const RESOLVES: RegExp[] = [
+  '/leaves/([^/]+)/(approve|reject)$', '/timesheets/([^/]+)/(approve|reject)$', '/production/([^/]+)/(approve)$',
+  '/sales/([^/]+)/(approve|approve-discrepancy|reject-discrepancy)$', '/cash-topup-requests/([^/]+)/(approve|reject)$',
+  '/online-loans/([^/]+)/(approve|reject)$', '/production-cash/([^/]+)/(approve-discrepancy|reject-discrepancy)$',
+  '/stock-recalibration/([^/]+)/(approve|reject)$', '/repair-alerts/([^/]+)/(fixed)$', '/complaints/([^/]+)/(explain|decide)$',
+].map((re) => new RegExp(re));
+const VERB: Record<string, string> = { approve: 'approved', reject: 'rejected', 'approve-discrepancy': 'approved', 'reject-discrepancy': 'rejected', fixed: 'fixed', explain: 'explained', decide: 'decided' };
+app.use(`${API_PREFIX}/*`, async (c, next) => {
+  await next();
+  if ((c.req.method !== 'POST' && c.req.method !== 'PUT') || c.res.status >= 300) return;
+  const path = new URL(c.req.url).pathname;
+  for (const re of RESOLVES) {
+    const m = path.match(re);
+    if (!m) continue;
+    const auth = await verifyUser(c.req.header('Authorization'));
+    const by = 'error' in auth ? 'someone' : (auth.user.user_metadata?.name || auth.user.email || 'someone');
+    const id = decodeURIComponent(m[1]);
+    const verb = VERB[m[2]] || 'handled';
+    await afterResponse('Resolve notifications', () => resolveNotifications(id, { by, verb, onlyUser: m[2] === 'explain' && !('error' in auth) ? auth.user.id : undefined }));
+    break;
+  }
+});
 
 // ---- Date windows on the history lists (date-range-v1, speed work 28 Oct 2026) ----
 // The big history lists accept ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional, inclusive) and
@@ -10088,7 +10114,8 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
     
     const updatedNotification = {
       ...notification,
-      read: true
+      read: true,
+      readAt: notification.readAt || new Date().toISOString(),
     };
     
     await kvWithRetry.set(key, updatedNotification);
@@ -10104,6 +10131,105 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
 });
 
 // Mark all notifications as read
+// Each person's notification settings: quiet hours, muted kinds, the evening digest.
+app.get('/make-server-c2dd9b9d/notifications/prefs', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  const saved = await kvWithRetry.get(`notification-prefs:${authResult.user.id}`);
+  const isOwner = authResult.user.user_metadata?.role === 'cluster_head';
+  return c.json({ prefs: { ...DEFAULT_PREFS, digest: isOwner, ...(saved || {}) }, isOwner });
+});
+app.put('/make-server-c2dd9b9d/notifications/prefs', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  const body = await c.req.json().catch(() => ({}));
+  const time = (v: any, d: string) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : d);
+  const muted: Record<string, boolean> = {};
+  for (const k of ['action', 'reminder', 'update']) if (body?.muted?.[k]) muted[k] = true; // urgent can't be muted
+  const prefs = { quietOn: !!body.quietOn, quietFrom: time(body.quietFrom, DEFAULT_PREFS.quietFrom), quietTo: time(body.quietTo, DEFAULT_PREFS.quietTo), muted, digest: !!body.digest, updatedAt: new Date().toISOString() };
+  await kvWithRetry.set(`notification-prefs:${authResult.user.id}`, prefs);
+  return c.json({ prefs });
+});
+app.post('/make-server-c2dd9b9d/notifications/test', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  const employeeId = await getEmployeeIdByAuthUserId(authResult.user.id);
+  const n = await createNotification(authResult.user.id, 'test_notification', 'Test notification', 'Notifications reach this phone.');
+  const sent = employeeId ? await push.sendPushNotification(employeeId, { title: 'Test notification', message: 'Notifications reach this phone.', tag: 'test_notification', data: { type: 'test_notification', notificationId: n?.id || null, category: 'update' } }) : false;
+  return c.json({ sent });
+});
+
+// 7 AM and 9 PM IST (pg_cron): one buzz for what was held - overnight (quiet hours) in the
+// morning, the day's updates (digest) in the evening.
+app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const hour = new Date(Date.now() + IST_OFFSET_MS).getUTCHours();
+    const held = hour < 12 ? 'quiet' : 'digest';
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data, error } = await supabase.from('kv_store_c2dd9b9d').select('key, value')
+      .like('key', 'notification:%').eq('value->>pushHeld', held).eq('value->>read', 'false').is('value->>digestedAt', null).gte('value->>createdAt', since).limit(2000);
+    if (error) throw new Error(error.message);
+    const byUser = new Map<string, any[]>();
+    for (const row of data || []) byUser.set(row.value.userId, [...(byUser.get(row.value.userId) || []), row]);
+    let sent = 0;
+    for (const [userId, rows] of byUser) {
+      const employeeId = await getEmployeeIdByAuthUserId(userId);
+      const kinds = new Map<string, number>();
+      for (const r of rows) kinds.set(r.value.title, (kinds.get(r.value.title) || 0) + (Number(r.value.count) || 1));
+      const total = [...kinds.values()].reduce((a, b) => a + b, 0);
+      const list = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(' · ');
+      if (employeeId) {
+        await push.sendPushNotification(employeeId, {
+          title: held === 'quiet' ? `While you were away: ${total} notification${total === 1 ? '' : 's'}` : `Today's updates: ${total}`,
+          message: list, tag: `digest_${held}`, data: { type: 'digest', category: 'update' },
+        }).catch(() => undefined);
+        sent++;
+      }
+      const at = new Date().toISOString();
+      for (const r of rows) await kvWithRetry.set(r.key, { ...r.value, digestedAt: at });
+    }
+    return c.json({ success: true, held, users: byUser.size, sent });
+  } catch (error: any) {
+    console.log('Notification digest failed:', error?.message || error);
+    return c.json({ error: 'Digest failed' }, 500);
+  }
+});
+
+// Every 15 minutes (pg_cron): an urgent notification nobody has opened for 30 minutes goes to the
+// owner as well ("Not seen yet"), once.
+app.post('/make-server-c2dd9b9d/cron/notification-escalations', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const now = Date.now();
+    const { data, error } = await supabase.from('kv_store_c2dd9b9d').select('key, value')
+      .like('key', 'notification:%').eq('value->>category', 'urgent').eq('value->>read', 'false').is('value->>escalatedAt', null)
+      .lte('value->>createdAt', new Date(now - 30 * 60000).toISOString()).gte('value->>createdAt', new Date(now - 6 * 3600000).toISOString()).limit(500);
+    if (error) throw new Error(error.message);
+    const staff = await staffForNotifications();
+    const owners = staff.filter((u: any) => u.role === 'cluster_head' && u.authUserId && u.status !== 'inactive');
+    const ownerIds = new Set(owners.map((o: any) => o.authUserId));
+    let sent = 0;
+    for (const row of data || []) {
+      const n = row.value;
+      await kvWithRetry.set(row.key, { ...n, escalatedAt: new Date().toISOString() });
+      if (ownerIds.has(n.userId)) continue;
+      const who = staff.find((u: any) => u.authUserId === n.userId)?.name || 'Someone';
+      const time = new Date(Date.parse(n.createdAt) + IST_OFFSET_MS).toISOString().slice(11, 16);
+      for (const o of owners) {
+        await notifyUser(o.authUserId, 'escalation', `Not seen yet: ${n.title}`, `${who} hasn't opened it since ${time}. ${n.message}`.slice(0, 300), n.relatedId || undefined, n.relatedDate || undefined).catch(() => undefined);
+        sent++;
+      }
+    }
+    return c.json({ success: true, escalated: (data || []).length, sent });
+  } catch (error: any) {
+    console.log('Notification escalation failed:', error?.message || error);
+    return c.json({ error: 'Escalation failed' }, 500);
+  }
+});
+
 app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) {
@@ -10191,26 +10317,60 @@ app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
 
 // Create notification (internal helper)
 async function createNotification(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
-  const notificationId = crypto.randomUUID();
-  const notification = {
-    id: notificationId,
-    userId,
-    type,
-    title,
-    message,
-    relatedId: relatedId || null,
-    relatedDate: relatedDate || null,
-    read: false,
-    createdAt: new Date().toISOString()
-  };
-  
+  const category = notificationCategory(type);
+  const now = new Date().toISOString();
   try {
-    await kvWithRetry.set(`notification:${userId}:${notificationId}`, notification);
+    // Another of the same kind within 30 minutes, still unread, folds into the last one
+    // ("Inventory logged +3 more") - notificationRules.ts says which kinds bundle.
+    if (bundles(type)) {
+      const since = new Date(Date.now() - BUNDLE_MINUTES * 60000).toISOString();
+      const { data } = await supabase.from('kv_store_c2dd9b9d').select('key, value')
+        .like('key', `notification:${userId}:%`).eq('value->>type', type).eq('value->>read', 'false').gte('value->>createdAt', since)
+        .order('value->>createdAt', { ascending: false }).limit(1);
+      const prev = data?.[0];
+      if (prev?.value?.id) {
+        const p = prev.value;
+        const merged = {
+          ...p, title, message, category, relatedId: relatedId || p.relatedId || null, relatedDate: relatedDate || p.relatedDate || null,
+          count: (Number(p.count) || 1) + 1, items: [p.message, ...(p.items || [])].filter(Boolean).slice(0, 6), createdAt: now,
+        };
+        await kvWithRetry.set(prev.key, merged);
+        if (relatedId) await indexRelatedNotification(relatedId, prev.key);
+        return merged;
+      }
+    }
+    const notificationId = crypto.randomUUID();
+    const notification = {
+      id: notificationId, userId, type, category, title, message,
+      relatedId: relatedId || null, relatedDate: relatedDate || null, read: false, createdAt: now,
+    };
+    const key = `notification:${userId}:${notificationId}`;
+    await kvWithRetry.set(key, notification);
+    if (relatedId) await indexRelatedNotification(relatedId, key);
     return notification;
   } catch (error: any) {
     console.error(`Failed to create notification for user ${userId}:`, error);
     // Don't throw - notifications are non-critical, don't fail the main operation
     return null;
+  }
+}
+
+// Which notifications are about one record (notification-related:{relatedId}), so they can all be
+// marked done when someone approves, rejects or decides it.
+async function indexRelatedNotification(relatedId: string, key: string) {
+  const k = `notification-related:${relatedId}`;
+  const keys: string[] = (await kvWithRetry.get(k)) || [];
+  if (!keys.includes(key)) await kvWithRetry.set(k, [key, ...keys].slice(0, 30));
+}
+
+async function resolveNotifications(relatedId: string, o: { by: string; verb: string; onlyUser?: string }) {
+  const keys: string[] = (await kvWithRetry.get(`notification-related:${relatedId}`)) || [];
+  const now = new Date().toISOString();
+  for (const key of keys) {
+    if (o.onlyUser && !key.startsWith(`notification:${o.onlyUser}:`)) continue;
+    const n = await kvWithRetry.get(key);
+    if (!n || n.resolvedAt) continue;
+    await kvWithRetry.set(key, { ...n, resolvedAt: now, resolvedBy: o.by, resolvedVerb: o.verb, read: true, readAt: n.readAt || now });
   }
 }
 
@@ -10317,8 +10477,26 @@ async function notifyUser(
   const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
 
   try {
-    const employeeId = await getEmployeeIdByAuthUserId(userId);
-    if (employeeId) {
+    const emp = (await staffForNotifications()).find((u: any) => u.authUserId === userId) || null;
+    const employeeId = emp?.employeeId || null;
+    // Quiet hours, muted kinds and the evening digest hold the buzz (the inbox still has it);
+    // urgent always goes through (notificationRules.ts).
+    const category = notificationCategory(type);
+    const prefs = { ...DEFAULT_PREFS, digest: emp?.role === 'cluster_head', ...((await kvWithRetry.get(`notification-prefs:${userId}`)) || {}) };
+    let held: string | null = null;
+    if (category !== 'urgent') {
+      if (prefs.muted?.[category]) held = 'muted';
+      else if (inQuietHours(prefs)) held = 'quiet';
+      else if (prefs.digest && category === 'update') held = 'digest';
+    }
+    if (held && notificationResult?.id) {
+      await kvWithRetry.set(`notification:${userId}:${notificationResult.id}`, { ...notificationResult, pushHeld: held }).catch(() => undefined);
+    }
+    // Staff read Bengali more easily: the Bengali title follows the English one.
+    const isStaff = !!emp && emp.role !== 'cluster_head' && !(emp.role === 'manager' && emp.designation !== 'store_incharge' && emp.designation !== 'production_incharge');
+    const count = Number((notificationResult as any)?.count) || 1;
+    const pushTitle = `${title}${count > 1 ? ` (+${count - 1} more)` : ''}${isStaff && BENGALI_TITLE[type] ? ` · ${BENGALI_TITLE[type]}` : ''}`;
+    if (employeeId && !held) {
       // notificationId carries the real per-notification unique id so the Android side
       // can derive a unique tray notification ID from it (see
       // QuickActionMessagingService.java) instead of from `tag`/`type`. `type` is shared
@@ -10339,8 +10517,9 @@ async function notifyUser(
         data.approveToken = await createQuickActionToken('approve', quickAction.recordType, quickAction.recordId, userId);
         data.rejectToken = await createQuickActionToken('reject', quickAction.recordType, quickAction.recordId, userId);
       }
+      data.category = category;
       await push.sendPushNotification(employeeId, {
-        title,
+        title: pushTitle,
         message,
         tag: type,
         data,

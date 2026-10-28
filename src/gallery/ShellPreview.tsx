@@ -41,11 +41,15 @@ const STORES = [
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 const NOTIFICATIONS: api.Notification[] = [
-  { id: 'n1', userId: 'u', type: 'discrepancy_request', title: 'Cash short by ₹240', message: "Yesterday's day close at Store A needs your approval.", relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(12) },
-  { id: 'n2', userId: 'u', type: 'leave_pending', title: 'Leave request', message: 'A crew member asked for 2 days next week.', relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(95) },
-  { id: 'n3', userId: 'u', type: 'stock_out', title: 'Chicken cheese momo is out of stock', message: 'Marked 6:40 pm at Store A.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(200) },
-  { id: 'n4', userId: 'u', type: 'production_request_shipped', title: 'Stock request shipped', message: 'Packed and on the way to Store A.', relatedId: 'PR-1', relatedDate: null, read: true, createdAt: minutesAgo(60 * 30) },
-  { id: 'n5', userId: 'u', type: 'salary_credited', title: 'October salary paid', message: 'Sent to your account.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(60 * 50) },
+  { id: 'n0', userId: 'u', type: 'repair_alert', category: 'urgent', title: 'Steamer down at the production house', message: 'Reported 10:20 am. Prep is on the backup steamer.', relatedId: 'R-1', relatedDate: null, read: false, createdAt: minutesAgo(4) },
+  { id: 'n1', userId: 'u', type: 'discrepancy_request', category: 'action', title: 'Cash short by ₹240', message: "Yesterday's day close at Store A needs your approval.", relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(12) },
+  { id: 'n2', userId: 'u', type: 'leave_pending', category: 'action', title: 'Leave request', message: 'A crew member asked for 2 days next week.', relatedId: 'L-1', relatedDate: null, read: false, createdAt: minutesAgo(95) },
+  { id: 'n6', userId: 'u', type: 'expense_flag', category: 'action', title: 'Expense looks off', message: 'Gas refill ₹1,900 is twice the usual.', relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(30), count: 3, items: ['Two bills for the same vegetables on Monday.', 'Cleaning supplies bought at both places.'] },
+  { id: 'n7', userId: 'u', type: 'timesheet_pending', category: 'action', title: 'Timesheet to approve', message: 'Monday at Store A.', relatedId: 'T-1', relatedDate: null, read: true, createdAt: minutesAgo(140), resolvedAt: minutesAgo(100), resolvedBy: 'Store incharge', resolvedVerb: 'approved' },
+  { id: 'n3', userId: 'u', type: 'stock_out', category: 'urgent', title: 'Chicken cheese momo is out of stock', message: 'Marked 6:40 pm at Store A.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(200) },
+  { id: 'n8', userId: 'u', type: 'workplace_due', category: 'reminder', title: 'Opening photos due', message: 'Counter, dustbin and back area by 11 am.', relatedId: null, relatedDate: null, read: false, createdAt: minutesAgo(50) },
+  { id: 'n4', userId: 'u', type: 'production_request_shipped', category: 'update', title: 'Stock request shipped', message: 'Packed and on the way to Store A.', relatedId: 'PR-1', relatedDate: null, read: true, createdAt: minutesAgo(60 * 30) },
+  { id: 'n5', userId: 'u', type: 'salary_credited', category: 'update', title: 'October salary paid', message: 'Sent to your account.', relatedId: null, relatedDate: null, read: true, createdAt: minutesAgo(60 * 50) },
 ];
 
 function mockSource(): NotificationsSource {
