@@ -10,6 +10,8 @@
 //                                            versionName / versionCode from build.gradle. Phones
 //                                            on an older APK get a Download button.
 //
+// --min-build N (bundle): the oldest APK build that may take it, when that is below build.gradle's
+// versionCode - e.g. build.gradle was raised for a Play Store build the phones don't have yet.
 // --dry builds the files and the new manifest in a temp folder without uploading anything.
 // Files go to the app-updates storage folder, named with a fingerprint of their contents, as
 // `supabase storage cp` can't replace a file: a rebuilt file gets a new name. The manifest - both halves, the other one kept -
@@ -27,6 +29,7 @@ import { crc32, deflateRawSync } from 'node:zlib';
 const root = join(import.meta.dirname, '..');
 const kind = process.argv[2];
 const dry = process.argv.includes('--dry');
+const minBuildArg = process.argv.indexOf('--min-build');
 if (kind !== 'bundle' && kind !== 'apk') {
   console.error('Usage: node scripts/publish-update.mjs bundle|apk');
   process.exit(1);
@@ -38,6 +41,8 @@ const appVersionUrl = `https://${projectId}.supabase.co/functions/v1/make-server
 const appVersion = readFileSync(join(root, 'src/utils/appVersion.ts'), 'utf8').match(/APP_VERSION = '([\d.]+)'/)[1];
 const gradle = readFileSync(join(root, 'android/app/build.gradle'), 'utf8');
 const versionCode = Number(gradle.match(/versionCode (\d+)/)[1]);
+const minNativeBuild = minBuildArg > 0 ? Number(process.argv[minBuildArg + 1]) : versionCode;
+if (!Number.isInteger(minNativeBuild) || minNativeBuild < 1 || minNativeBuild > versionCode) throw new Error('--min-build needs a build number no higher than the build.gradle versionCode');
 const versionName = gradle.match(/versionName "([\d.]+)"/)[1];
 const work = mkdtempSync(join(tmpdir(), 'bunny-update-'));
 
@@ -125,8 +130,8 @@ if (kind === 'bundle') {
   const checksum = fingerprint(file);
   const dest = `bundles/${appVersion}-${checksum.slice(0, 10)}.zip`;
   await upload(file, dest, 'application/zip', 'max-age=31536000');
-  manifest.bundle = { version: appVersion, url: `${base}/${dest}`, checksum, minNativeBuild: versionCode };
-  console.log(`Bundle ${appVersion}: ${(zip.length / 1e6).toFixed(1)} MB, for APK build ${versionCode} and newer`);
+  manifest.bundle = { version: appVersion, url: `${base}/${dest}`, checksum, minNativeBuild };
+  console.log(`Bundle ${appVersion}: ${(zip.length / 1e6).toFixed(1)} MB, for APK build ${minNativeBuild} and newer`);
 } else {
   const apk = join(root, 'android/app/build/outputs/apk/debug/app-debug.apk');
   const built = JSON.parse(readFileSync(join(root, 'android/app/build/outputs/apk/debug/output-metadata.json'), 'utf8')).elements[0];
