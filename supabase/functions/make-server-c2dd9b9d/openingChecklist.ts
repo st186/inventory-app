@@ -217,7 +217,10 @@ export async function openingChecklistTick(deps: KpiDeps) {
     }
     if (now >= due && done < boxes.length && !day.sent.late) {
       const left = boxes.filter((b) => !day.ticks?.[b.id]).slice(0, 4).map((b) => b.name).join(', ');
-      const to = new Set<string>([...(person?.authUserId ? [person.authUserId] : []), ...owners.map((o) => o.authUserId)]);
+      // Whoever had it, the owner, the store's incharge and the operations managers (owner, 28 Oct 2026).
+      const incharges = ctx.employees.filter((e) => e.authUserId && e.designation === 'store_incharge' && String(e.storeId) === t.storeId);
+      const ops = ctx.employees.filter((e) => e.authUserId && e.role === 'manager' && e.designation !== 'store_incharge' && e.designation !== 'production_incharge');
+      const to = new Set<string>([...(person?.authUserId ? [person.authUserId] : []), ...owners.map((o) => o.authUserId), ...incharges.map((e) => e.authUserId), ...ops.map((e) => e.authUserId)]);
       for (const authUserId of to) {
         await deps.notifyUser(authUserId, 'opening_late', `Opening checklist not done: ${boxes.length - done} of ${boxes.length} left`,
           `${storeName}${person ? ` (${person.name})` : ''}: ${left}${boxes.length - done > 4 ? ' …' : ''}.`, undefined, date).catch(() => undefined);
