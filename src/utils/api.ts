@@ -800,11 +800,12 @@ export async function closeProductionLedgerDay(accessToken: string, productionHo
 
 // Why stuffing was left over at the day's close (server cleanLeftoverReport), and what the form
 // needs to ask it: the house's staff with today's check-in and lateness, and its machines.
-export type LeftoverKind = 'power_cut' | 'late_start' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
+export type LeftoverKind = 'power_cut' | 'late_start' | 'long_break' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
 export interface LeftoverReason {
   kind: LeftoverKind;
   periods?: { from: string; to: string }[];
   startedAt?: string | null; people?: any[]; why?: string; genuine?: 'yes' | 'no' | 'unsure' | '';
+  extraMin?: number | null; // long break: about how many minutes past the hour
   assetId?: string | null; machine?: string; downFrom?: string; downTo?: string | null; stillDown?: boolean; alternative?: string; raiseRepair?: boolean; repairAlertId?: string;
   note?: string;
 }

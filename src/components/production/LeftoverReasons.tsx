@@ -1,7 +1,8 @@
 // Why stuffing was left over (owner, 28 Oct 2026), asked in the day's close when more than a
 // little stuffing or coating is left. Every reason that applies is picked, each with its details:
 // a power cut (from when to when), a late start (when work began, who was late - their check-in
-// times are shown - why, and whether that was genuine), a machine breakdown (which machine, down
+// times are shown - why, and whether that was genuine), a break that ran past its hour (who, about
+// how long, why, genuine; breaks aren't tracked otherwise), a machine breakdown (which machine, down
 // from when to when, what was used instead; it raises a repair alarm for the incharge and the
 // owner), fewer orders, made ahead for tomorrow, short of staff, or something else. The server
 // keeps it on the day's ledger record (index.ts cleanLeftoverReport).
@@ -20,6 +21,7 @@ export type LeftoverDraft = {
   kinds: LeftoverKind[];
   power: { from: string; to: string }[];
   late: { startedAt: string; people: string[]; why: string; genuine: '' | 'yes' | 'no' | 'unsure' };
+  longBreak: { people: string[]; minutes: string; why: string; genuine: '' | 'yes' | 'no' | 'unsure' };
   machine: { machine: string; downFrom: string; downTo: string; stillDown: boolean; alternative: string; raiseRepair: boolean };
   notes: Partial<Record<LeftoverKind, string>>;
   missing: string[];
@@ -29,6 +31,7 @@ export const emptyLeftoverDraft = (): LeftoverDraft => ({
   kinds: [],
   power: [{ from: '', to: '' }],
   late: { startedAt: '', people: [], why: '', genuine: '' },
+  longBreak: { people: [], minutes: '', why: '', genuine: '' },
   machine: { machine: '', downFrom: '', downTo: '', stillDown: false, alternative: '', raiseRepair: true },
   notes: {},
   missing: [],
@@ -37,6 +40,7 @@ export const emptyLeftoverDraft = (): LeftoverDraft => ({
 const KINDS: { kind: LeftoverKind; label: I18nKey }[] = [
   { kind: 'power_cut', label: 'stock.prod.why.power' },
   { kind: 'late_start', label: 'stock.prod.why.late' },
+  { kind: 'long_break', label: 'stock.prod.why.longBreak' },
   { kind: 'machine', label: 'stock.prod.why.machine' },
   { kind: 'low_demand', label: 'stock.prod.why.lowDemand' },
   { kind: 'planned', label: 'stock.prod.why.planned' },
@@ -57,6 +61,10 @@ export function leftoverProblem(d: LeftoverDraft, t: (k: I18nKey, v?: Record<str
       if (d.late.why.trim().length < 3) return t('stock.prod.why.errLateWhy');
       if (!d.late.genuine) return t('stock.prod.why.errGenuine');
     }
+    if (kind === 'long_break') {
+      if (d.longBreak.why.trim().length < 3) return t('stock.prod.why.errBreakWhy');
+      if (!d.longBreak.genuine) return t('stock.prod.why.errBreakGenuine');
+    }
     if (kind === 'machine') {
       if (!d.machine.machine.trim() || !TIME.test(d.machine.downFrom)) return t('stock.prod.why.errMachine');
       if (!d.machine.stillDown && (!TIME.test(d.machine.downTo) || d.machine.downTo <= d.machine.downFrom)) return t('stock.prod.why.errMachineBack');
@@ -72,6 +80,7 @@ export function leftoverPayload(d: LeftoverDraft, ctx: LedgerDayContext | null):
   const reasons = d.kinds.map((kind) => {
     if (kind === 'power_cut') return { kind, periods: d.power.filter((p) => TIME.test(p.from) && TIME.test(p.to)) };
     if (kind === 'late_start') return { kind, startedAt: d.late.startedAt || null, people: d.late.people, why: d.late.why.trim(), genuine: d.late.genuine };
+    if (kind === 'long_break') return { kind, people: d.longBreak.people, extraMin: parseInt(d.longBreak.minutes, 10) || null, why: d.longBreak.why.trim(), genuine: d.longBreak.genuine };
     if (kind === 'machine') {
       const asset = ctx?.machines.find((m) => m.name.trim().toLowerCase() === d.machine.machine.trim().toLowerCase());
       return { kind, assetId: asset?.id || null, ...d.machine, machine: d.machine.machine.trim(), alternative: d.machine.alternative.trim(), downTo: d.machine.stillDown ? null : d.machine.downTo };
@@ -205,6 +214,34 @@ export function LeftoverReasons({ leftoverKg, ctx, value: d, onChange, disabled 
         </fieldset>
       )}
 
+      {d.kinds.includes('long_break') && (
+        <fieldset className="flex flex-col gap-3 rounded-md bg-surface p-3">
+          <legend className="sr-only">{t('stock.prod.why.longBreak')}</legend>
+          <p className="text-body-sm font-semibold text-text">{t('stock.prod.why.longBreak')}</p>
+          <p className="text-label text-text-3">{t('stock.prod.why.breakHint')}</p>
+          {ctx && ctx.staff.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-body-sm font-medium text-text">{t('stock.prod.why.whoBreak')}</span>
+              <PeoplePicker ctx={ctx} picked={d.longBreak.people} disabled={disabled} onChange={(people) => set({ longBreak: { ...d.longBreak, people } })} />
+            </div>
+          )}
+          <Field label={t('stock.prod.why.extraMin')} optional>
+            <Input type="number" inputMode="numeric" min={0} max={480} className="num" value={d.longBreak.minutes} disabled={disabled} onChange={(e) => set({ longBreak: { ...d.longBreak, minutes: e.target.value } })} />
+          </Field>
+          <Field label={t('stock.prod.why.breakWhy')}>
+            <Input value={d.longBreak.why} disabled={disabled} maxLength={300} onChange={(e) => set({ longBreak: { ...d.longBreak, why: e.target.value } })} />
+          </Field>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body-sm font-medium text-text">{t('stock.prod.why.genuine')}</span>
+            <div className="flex flex-wrap gap-2">
+              {(['yes', 'no', 'unsure'] as const).map((g) => (
+                <Chip key={g} on={d.longBreak.genuine === g} disabled={disabled} label={t(`stock.prod.why.${g}` as I18nKey)} onClick={() => set({ longBreak: { ...d.longBreak, genuine: g } })} />
+              ))}
+            </div>
+          </div>
+        </fieldset>
+      )}
+
       {d.kinds.includes('machine') && (
         <fieldset className="flex flex-col gap-3 rounded-md bg-surface p-3">
           <legend className="sr-only">{t('stock.prod.why.machine')}</legend>
@@ -268,6 +305,11 @@ export function LeftoverReportView({ report }: { report: LeftoverReport & { left
       const who = (r.people || []).map((p: any) => p.name).join(', ');
       const genuine = r.genuine ? t(`stock.prod.why.${r.genuine}` as I18nKey) : '';
       return [r.startedAt ? `${t('stock.prod.why.startedAt')} ${fmt(r.startedAt)}` : '', who, r.why, genuine ? `${t('stock.prod.why.genuine')} ${genuine}` : ''].filter(Boolean).join(' · ');
+    }
+    if (r.kind === 'long_break') {
+      const who = (r.people || []).map((p: any) => p.name).join(', ');
+      const genuine = r.genuine ? t(`stock.prod.why.${r.genuine}` as I18nKey) : '';
+      return [who, r.extraMin ? t('stock.prod.why.extraMinShort', { n: r.extraMin }) : '', r.why, genuine ? `${t('stock.prod.why.genuine')} ${genuine}` : ''].filter(Boolean).join(' · ');
     }
     if (r.kind === 'machine') {
       return [r.machine, r.stillDown ? `${fmt(r.downFrom)} → ${t('stock.prod.why.stillDown')}` : `${fmt(r.downFrom)}–${fmt(r.downTo)}`, r.alternative, r.repairAlertId ? t('stock.prod.why.repairSent') : ''].filter(Boolean).join(' · ');

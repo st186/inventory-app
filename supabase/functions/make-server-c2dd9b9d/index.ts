@@ -5944,11 +5944,12 @@ app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
 // ---- Why stuffing was left over (owner, 28 Oct 2026) ----
 // When the day closes with stuffing or coating left over, the incharge says why: a power cut
 // (from when to when), a late start (when work began, who was late, why, and whether that was
-// genuine), a machine breakdown (which machine, down from when to when, what was used instead -
+// genuine), a break that ran past its hour (who, about how long, why, genuine - breaks themselves
+// aren't tracked, owner 28 Oct 2026), a machine breakdown (which machine, down from when to when, what was used instead -
 // raising a repair alarm, repairs.ts), fewer orders, made ahead for tomorrow, short of staff or
 // something else. Kept on the day's ledger record as leftoverReport.
 const LEFTOVER_REASON_MIN_KG = 0.5; // the app asks for a reason from this much stuffing/coating left
-const LEFTOVER_KINDS = ['power_cut', 'late_start', 'machine', 'low_demand', 'planned', 'short_staff', 'other'];
+const LEFTOVER_KINDS = ['power_cut', 'late_start', 'long_break', 'machine', 'low_demand', 'planned', 'short_staff', 'other'];
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const leftoverKgOf = (pools: Record<string, any>) => Object.entries(pools || {})
   .filter(([id, p]) => /^(stuffing|coating):/.test(id) && typeof p?.closingActual === 'number')
@@ -5986,6 +5987,13 @@ function cleanLeftoverReport(raw: any, staff: any[]): { report?: any; error?: st
       if (!periods.length) return { error: 'Power cut: give the time it went and came back' };
       if (periods.some((pd: any) => pd.from >= pd.to)) return { error: 'Power cut: the power must come back after it went' };
       out.push({ kind, periods, note: text(x.note) });
+    } else if (kind === 'long_break') {
+      const why = text(x.why);
+      if (why.length < 3) return { error: 'Long break: say why it went past the hour' };
+      const genuine = ['yes', 'no', 'unsure'].includes(x.genuine) ? x.genuine : null;
+      if (!genuine) return { error: 'Long break: say whether the reason was genuine' };
+      const extraMin = Math.round(Number(x.extraMin));
+      out.push({ kind, people: people(x.people), extraMin: Number.isFinite(extraMin) && extraMin > 0 && extraMin <= 480 ? extraMin : null, why, genuine });
     } else if (kind === 'late_start') {
       const why = text(x.why);
       if (why.length < 3) return { error: 'Late start: say why work started late' };
