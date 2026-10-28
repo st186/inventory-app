@@ -171,91 +171,48 @@ export function computeMomoTypeReport({
   customRange: { from: string; to: string };
   now?: Date;
 }): MomoTypeReport {
-  const today = now.toISOString().split('T')[0];
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const thisWeekStart = new Date(now);
-  thisWeekStart.setDate(now.getDate() - now.getDay());
-  thisWeekStart.setHours(0, 0, 0, 0);
-  const lastWeekStart = new Date(thisWeekStart);
-  lastWeekStart.setDate(thisWeekStart.getDate() - 7);
-  const lastWeekEnd = new Date(thisWeekStart);
-  lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-
-  let filteredForCards = requests;
-  let periodLabel = '';
-  const between = (a: Date, b: Date) => requests.filter((r) => {
-    const reqDate = new Date(r.requestDate);
-    return reqDate >= a && reqDate <= b;
+  // India days (YYYY-MM-DD, like requestDate), whatever the phone's clock zone: by the UTC date it is
+  // still yesterday until 5:30 AM, which showed yesterday's request as "Today" (owner, 29 Oct 2026).
+  const today = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
+  const shift = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  const monthStart = (back: number) => { const d = new Date(`${today.slice(0, 7)}-01T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - back); return d.toISOString().slice(0, 10); };
+  const monthEnd = (back: number) => shift(monthStart(back - 1), -1);
+  const yesterday = shift(today, -1);
+  const weekStart = shift(today, -new Date(`${today}T00:00:00Z`).getUTCDay()); // Sunday
+  const dayOfMonth = Number(today.slice(8, 10));
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const between = (a: string, b: string) => requests.filter((r) => {
+    const day = String(r.requestDate || '').slice(0, 10);
+    return day >= a && day <= b;
   });
-  if (filter === 'today') {
-    filteredForCards = requests.filter((r) => r.requestDate === today);
-    periodLabel = 'Today';
-  } else if (filter === 'yesterday') {
-    filteredForCards = requests.filter((r) => r.requestDate === yesterday);
-    periodLabel = 'Yesterday';
-  } else if (filter === 'thisWeek') {
-    filteredForCards = between(thisWeekStart, now);
-    periodLabel = 'This Week';
-  } else if (filter === 'lastWeek') {
-    filteredForCards = between(lastWeekStart, lastWeekEnd);
-    periodLabel = 'Last Week';
-  } else if (filter === 'thisMonth') {
-    filteredForCards = between(thisMonthStart, now);
-    periodLabel = 'This Month';
-  } else if (filter === 'lastMonth') {
-    filteredForCards = between(lastMonthStart, lastMonthEnd);
-    periodLabel = 'Last Month';
-  } else if (filter === 'custom') {
-    filteredForCards = between(new Date(customRange.from), new Date(customRange.to));
-    periodLabel = `${customRange.from} to ${customRange.to}`;
-  }
 
-  let comparisonFilteredRequests: Row[] = [];
-  let comparisonLabel = '';
-  if (filter === 'today') {
-    comparisonFilteredRequests = requests.filter((r) => r.requestDate === yesterday);
-    comparisonLabel = 'vs Yesterday';
-  } else if (filter === 'yesterday') {
-    const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    comparisonFilteredRequests = requests.filter((r) => r.requestDate === dayBeforeYesterday);
-    comparisonLabel = 'vs Day Before';
-  } else if (filter === 'thisWeek') {
-    const prevWeekStart = new Date(thisWeekStart);
-    prevWeekStart.setDate(thisWeekStart.getDate() - 7);
-    const prevWeekEnd = new Date(thisWeekStart);
-    prevWeekEnd.setDate(thisWeekStart.getDate() - 1);
-    comparisonFilteredRequests = between(prevWeekStart, prevWeekEnd);
-    comparisonLabel = 'vs Last Week';
-  } else if (filter === 'lastWeek') {
-    const weekBefore = new Date(lastWeekStart);
-    weekBefore.setDate(lastWeekStart.getDate() - 7);
-    const weekBeforeEnd = new Date(lastWeekStart);
-    weekBeforeEnd.setDate(lastWeekStart.getDate() - 1);
-    comparisonFilteredRequests = between(weekBefore, weekBeforeEnd);
-    comparisonLabel = 'vs Week Before';
-  } else if (filter === 'thisMonth') {
-    const currentDayOfMonth = now.getDate();
-    comparisonFilteredRequests = between(new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth() - 1, currentDayOfMonth));
-    comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
-  } else if (filter === 'lastMonth') {
-    const lastMonthDays = lastMonthEnd.getDate();
-    comparisonFilteredRequests = between(new Date(now.getFullYear(), now.getMonth() - 2, 1), new Date(now.getFullYear(), now.getMonth() - 2, lastMonthDays));
-    comparisonLabel = `vs Month Before (Day 1-${lastMonthDays})`;
-  } else if (filter === 'custom') {
-    const customStart = new Date(customRange.from);
-    const customEnd = new Date(customRange.to);
-    const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));
-    const comparisonStart = new Date(customStart);
-    comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
-    const comparisonEnd = new Date(customStart);
-    comparisonEnd.setDate(customStart.getDate() - 1);
-    comparisonFilteredRequests = between(comparisonStart, comparisonEnd);
-    comparisonLabel = 'vs Previous Period';
-  }
+  // [period, period before] for each choice.
+  const ranges: Record<StockFilterPreset, { label: string; from: string; to: string; cmpLabel: string; cmpFrom: string; cmpTo: string }> = {
+    today: { label: 'Today', from: today, to: today, cmpLabel: 'vs Yesterday', cmpFrom: yesterday, cmpTo: yesterday },
+    yesterday: { label: 'Yesterday', from: yesterday, to: yesterday, cmpLabel: 'vs Day Before', cmpFrom: shift(today, -2), cmpTo: shift(today, -2) },
+    thisWeek: { label: 'This Week', from: weekStart, to: today, cmpLabel: 'vs Last Week', cmpFrom: shift(weekStart, -7), cmpTo: shift(weekStart, -1) },
+    lastWeek: { label: 'Last Week', from: shift(weekStart, -7), to: shift(weekStart, -1), cmpLabel: 'vs Week Before', cmpFrom: shift(weekStart, -14), cmpTo: shift(weekStart, -8) },
+    thisMonth: {
+      label: 'This Month', from: monthStart(0), to: today, cmpLabel: `vs Last Month (Day 1-${dayOfMonth})`,
+      cmpFrom: monthStart(1), cmpTo: [shift(monthStart(1), dayOfMonth - 1), monthEnd(1)].sort()[0],
+    },
+    lastMonth: {
+      label: 'Last Month', from: monthStart(1), to: monthEnd(1), cmpLabel: `vs Month Before (Day 1-${Number(monthEnd(1).slice(8, 10))})`,
+      cmpFrom: monthStart(2), cmpTo: monthEnd(2),
+    },
+    custom: (() => {
+      const base = { label: `${customRange.from} to ${customRange.to}`, from: customRange.from, to: customRange.to, cmpLabel: 'vs Previous Period' };
+      // No dates picked yet: nothing to compare (and no date maths on blanks).
+      if (!DAY.test(customRange.from) || !DAY.test(customRange.to)) return { ...base, cmpFrom: '', cmpTo: '' };
+      const days = Math.max(0, Math.round((Date.parse(`${customRange.to}T00:00:00Z`) - Date.parse(`${customRange.from}T00:00:00Z`)) / 86400000));
+      return { ...base, cmpFrom: shift(customRange.from, -days - 1), cmpTo: shift(customRange.from, -1) };
+    })(),
+  };
+  const range = ranges[filter];
+  const filteredForCards = range ? between(range.from, range.to) : requests;
+  const periodLabel = range?.label || '';
+  const comparisonFilteredRequests = range ? between(range.cmpFrom, range.cmpTo) : [];
+  const comparisonLabel = range?.cmpLabel || '';
 
   const totalsRequested: Record<string, number> = {};
   const totalsDelivered: Record<string, number> = {};

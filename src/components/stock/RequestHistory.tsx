@@ -133,7 +133,7 @@ export function RequestOversight({ vm }: { vm: StockRequestsVM }) {
         <section className="flex flex-col gap-3">
           <div className="flex flex-col">
             <h2 className="text-subtitle font-semibold text-text">Requests by momo type</h2>
-            <span className="text-label text-text-3">{report.periodLabel} · {report.requestCount} requests · {report.comparisonLabel}</span>
+            <span className="text-label text-text-3">{report.periodLabel} · {report.requestCount} request{report.requestCount === 1 ? '' : 's'} · {report.comparisonLabel}</span>
           </div>
           <FilterChips
             aria-label="Period"
