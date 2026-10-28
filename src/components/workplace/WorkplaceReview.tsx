@@ -325,7 +325,7 @@ function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; on
           </span>
         )}
         {photoCount > 1 && (
-          <span className="num absolute right-1.5 bottom-1.5 rounded-full bg-scrim/70 px-2 py-0.5 text-caption font-medium text-on-primary">{t('team.check.morePhotos', { n: photoCount - 1 })}</span>
+          <span className="num absolute right-1.5 bottom-1.5 rounded-full bg-scrim/70 px-2 py-0.5 text-caption font-medium text-on-scrim">{t('team.check.morePhotos', { n: photoCount - 1 })}</span>
         )}
       </div>
       <div className="flex flex-col gap-1 p-2.5">

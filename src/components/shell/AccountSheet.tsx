@@ -11,6 +11,7 @@ import { StatusChip } from '../ui/status-chip';
 import { Button } from '../ui/button';
 import { InitialsAvatar } from '../ui/avatar';
 import { LanguagePicker } from '../BunnyLanguagePicker';
+import { ThemePicker } from './ThemePicker';
 import { PushNotificationStatus, pushStateChip, usePushStatus } from '../PushNotificationStatus';
 import { APP_VERSION, isNewerVersion } from '../../utils/appVersion';
 import { applyUpdateNow, getLiveUpdateState, liveUpdatesOn } from '../../utils/liveUpdate';
@@ -94,6 +95,7 @@ export function AccountSheet(props: AccountSheetProps) {
         <div className="flex flex-col gap-4" lang={lang}>
           <LanguagePicker kind="app" />
           {props.showBunnyLanguage && <LanguagePicker kind="bunny" />}
+          <ThemePicker />
 
           <ListGroup>
             {props.showProfile && profile?.required && (

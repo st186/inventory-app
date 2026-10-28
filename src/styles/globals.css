@@ -7,8 +7,9 @@
  *
  * Every colour lives here as a CSS variable on :root and is exposed to Tailwind through
  * `@theme inline` below, so components write `bg-surface`, `text-text-2`, `border-border-strong`,
- * `bg-success-soft` and so on - never raw hex or palette classes. A `[data-theme=dark]` block
- * can later redefine the same variables; dark mode itself is not built.
+ * `bg-success-soft` and so on - never raw hex or palette classes. The `[data-theme="dark"]` block
+ * below redefines the same variables for the dark theme (owner, 28 Oct 2026: "night mode"),
+ * chosen in the Account sheet - utils/appTheme.ts sets data-theme on <html>.
  */
 
 @custom-variant dark (&:is([data-theme="dark"] *));
@@ -39,6 +40,7 @@
   --text-3: #78716C;                 /* captions and meta, 4.8:1 on white */
   --text-disabled: #A8A29E;
   --scrim: rgb(28 25 23 / 0.5);
+  --on-scrim: #FFFFFF;               /* text and icons over a photo or the scrim, in both themes */
 
   /* Semantic: always paired with an icon or a word */
   --success: #15803D;
@@ -152,8 +154,98 @@
   }
 }
 
-/* Dark mode is not built. This hook is where a later package redefines the variables above. */
+/* Dark theme: warm near-black paper, the same hues lifted so text stays 4.5:1 or better. On a
+   filled button or chip the text turns dark (on-primary / on-danger), since the lighter fills can't
+   carry white text. Ratios are against --surface. */
 [data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand-ink: #F5F2EE;
+  --brand-saffron: #F7B24C;
+  --brand-saffron-soft: #3A2D16;
+  --brand-saffron-border: #5E4722;
+
+  --primary: #FB923C;                /* 7:1 as text; dark text on it 7.7:1 */
+  --primary-hover: #FDBA74;
+  --primary-pressed: #F97316;
+  --primary-soft: #3A2214;           /* primary text on it 6.5:1 */
+  --on-primary: #1C1917;
+
+  --bg: #121110;
+  --surface: #1C1A18;
+  --surface-2: #262320;
+  --surface-3: #322E2A;
+  --border: #2F2B27;
+  --border-strong: #48423C;
+  --text: #F5F2EE;                   /* 15:1 */
+  --text-2: #CFC8C0;                 /* 10:1 */
+  --text-3: #A69D93;                 /* 6.3:1 */
+  --text-disabled: #6F675F;
+  --scrim: rgb(0 0 0 / 0.6);
+
+  --success: #4ADE80;
+  --success-soft: #10291A;
+  --success-border: #1F4D30;
+  --warning: #FACC15;
+  --warning-soft: #2D2610;
+  --warning-border: #574814;
+  --danger: #F87171;
+  --danger-soft: #2E1515;
+  --danger-border: #5C2626;
+  --info: #60A5FA;
+  --info-soft: #111F36;
+  --info-border: #213C66;
+  --danger-hover: #EF4444;
+  --on-danger: #1C1917;
+
+  --tint-mint: #0E2A22;
+  --tint-mint-label: #5DCAA5;
+  --tint-mint-ink: #9FE1CB;
+  --tint-peach: #2E1A12;
+  --tint-peach-label: #F0997B;
+  --tint-peach-ink: #F5C4B3;
+  --tint-sky: #0F2133;
+  --tint-sky-label: #85B7EB;
+  --tint-sky-ink: #B5D4F4;
+  --tint-lavender: #1E1C38;
+  --tint-lavender-label: #AFA9EC;
+  --tint-lavender-ink: #CECBF6;
+  --tint-butter: #2B2110;
+  --tint-butter-label: #EF9F27;
+  --tint-butter-ink: #FAC775;
+  --tint-rose: #2E1520;
+  --tint-rose-label: #ED93B1;
+  --tint-rose-ink: #F4C0D1;
+
+  --chart-1: #FB923C;
+  --chart-2: #2DD4BF;
+  --chart-3: #FACC15;
+  --chart-4: #60A5FA;
+  --chart-5: #A8A29E;
+  --chart-grid: #2F2B27;
+  --channel-counter: #D6D3D1;
+  --channel-zomato: #F87171;
+  --channel-swiggy: #FB923C;
+
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --elevation-2: 0 4px 12px rgb(0 0 0 / 0.5);
+  --elevation-3: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-e1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-e2: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-e3: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.6);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-xl: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-2xl: 0 12px 32px rgb(0 0 0 / 0.6);
+}
+
+/* The bunny is black line art on a clear background: white lines in the dark theme, cheeks kept
+   saffron (invert, then turn the hue back round). */
+[data-theme="dark"] img[src$="bunny-logo.png"] {
+  filter: invert(1) hue-rotate(180deg);
 }
 
 @theme {
@@ -251,6 +343,7 @@
   --color-text-3: var(--text-3);
   --color-text-disabled: var(--text-disabled);
   --color-scrim: var(--scrim);
+  --color-on-scrim: var(--on-scrim);
   --color-primary-hover: var(--primary-hover);
   --color-primary-pressed: var(--primary-pressed);
   --color-primary-soft: var(--primary-soft);

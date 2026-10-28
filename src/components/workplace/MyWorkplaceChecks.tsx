@@ -306,7 +306,7 @@ function PhotoBadge({ photo, threshold }: { photo: CheckPhoto; threshold: number
   const { t } = useT();
   if (photo.aiStatus === 'pending') {
     return (
-      <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-scrim/70 py-0.5 text-caption text-on-primary">
+      <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-scrim/70 py-0.5 text-caption text-on-scrim">
         <RefreshCw className="size-3 animate-spin" aria-hidden="true" /> {t('team.check.checking')}
       </span>
     );
@@ -335,7 +335,7 @@ function LocalTile({ u, label, onRetry }: { u: Upload; label: string; onRetry: (
         {failed ? (
           <span className="flex size-8 items-center justify-center rounded-full bg-danger text-on-primary"><RotateCcw className="size-4" aria-hidden="true" /></span>
         ) : (
-          <RefreshCw className="size-6 animate-spin text-on-primary drop-shadow" aria-hidden="true" />
+          <RefreshCw className="size-6 animate-spin text-on-scrim drop-shadow" aria-hidden="true" />
         )}
       </span>
     </button>

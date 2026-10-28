@@ -8,6 +8,10 @@
   import "./styles/fonts.css";
   import "./index.css";
   import { startLiveUpdates } from "./utils/liveUpdate";
+  import { startTheme } from "./utils/appTheme";
+
+  // Light or dark, as chosen on this phone (utils/appTheme.ts), before anything is drawn.
+  startTheme();
 
   // Android app: confirm this version started, then look for an update (utils/liveUpdate.ts).
   startLiveUpdates();
