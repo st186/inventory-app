@@ -3042,6 +3042,10 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
       // house, so re-approving the edit credits only the change. An entry approved before this
       // was tracked had its pieces credited when it was approved.
       creditedPieces: existing.creditedPieces ?? (existing.approvalStatus === 'approved' ? producedPiecesByType(existing) : undefined),
+      // Also kept by the server: the form doesn't send the submission time, and an entry without
+      // one was never auto-approved. editedAt gives the approvers 24 hours to look at the edit.
+      ...(existing.createdAt ? { createdAt: existing.createdAt } : {}),
+      editedAt: getNowIST(),
     };
 
     await kv.set(key, updatedItem);
@@ -3129,16 +3133,17 @@ app.post('/make-server-c2dd9b9d/production/auto-approve-stale', async (c) => {
     const allProduction = await getAllByPrefixWithRetry('production:');
     const stalePending = allProduction.filter((p: any) => {
       if (p.approvalStatus !== 'pending') return false;
-      // Records submitted before createdAt existed have no reliable submission
-      // timestamp - skip them here rather than guess; they're handled by the
-      // one-time manual backlog approval instead.
-      if (!p.createdAt) return false;
+      // Records submitted before createdAt existed (or edited before edits kept it) have no
+      // reliable submission timestamp - skip them here rather than guess; a person approves
+      // those. An edited entry counts from its last edit.
+      const submittedAt = p.editedAt || p.createdAt;
+      if (!submittedAt) return false;
       // An entry with no finished pieces at all is never auto-approved: 20 Oct went through
       // this way at 0 pieces although stock was sent that day. A person has to confirm that
       // nothing was made (or fix the entry) before it counts.
       const totalPieces = PRODUCTION_MOMO_TYPES.reduce((sum, t) => sum + (Number(p[t.key]?.final) || 0), 0);
       if (totalPieces <= 0) return false;
-      const submitted = new Date(p.createdAt).getTime();
+      const submitted = new Date(submittedAt).getTime();
       return !isNaN(submitted) && submitted <= cutoff;
     });
 
