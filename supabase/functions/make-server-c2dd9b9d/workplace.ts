@@ -257,7 +257,7 @@ async function loadAllTemplates(kv: Kv): Promise<Template[]> {
   return out;
 }
 
-// Cover for someone away (owner, 28 Oct 2026: "if Saniya is on leave who clicks the photos"): on a
+// Cover for someone away (owner, 28 Oct 2026: who takes the photos when that person is on leave): on a
 // day a person has approved full-day leave, each of their checks goes to the check's "if away"
 // person, else the place's incharge, else someone else who works there (that kind of staff first).
 // The person on leave has nothing due that day, so nothing counts as missed for them.
