@@ -10125,7 +10125,9 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
     if (listError) throw new Error(listError.message);
     if (countError) throw new Error(countError.message);
 
-    return c.json({ notifications: (recent || []).map((r: any) => r.value), unreadCount: unread ?? 0 });
+    const notifications = (recent || []).map((r: any) => r.value);
+    await settleDecidedRequests(userId, notifications);
+    return c.json({ notifications, unreadCount: unread ?? 0 });
   } catch (error: any) {
     console.log('Error fetching notifications:', error);
     if (error?.message === 'DATABASE_UNAVAILABLE') {
@@ -10134,6 +10136,50 @@ app.get('/make-server-c2dd9b9d/notifications', async (c) => {
     return c.json({ error: 'Failed to fetch notifications' }, 500);
   }
 });
+
+// A request decided where its notification couldn't hear about it - notifications from before the
+// done-elsewhere links (28 Oct 2026), an auto-approval, another screen: when the inbox loads, a
+// leave, timesheet or stock request that is no longer pending shows as done, without its buttons.
+// Each open one is looked at no more than every 10 minutes per server copy (the inbox polls).
+const DECIDED_CHECKS: Record<string, { find: (id: string) => Promise<any>; done: (r: any) => { verb: string; by: string } | null }> = {
+  leave_pending: {
+    find: async (id) => (await findKvRecordById('leave:', id))?.value,
+    done: (r) => (r.status === 'approved' ? { verb: 'approved', by: r.approvedBy } : r.status === 'rejected' ? { verb: 'rejected', by: r.rejectedBy } : null),
+  },
+  timesheet_pending: {
+    find: async (id) => (await findKvRecordById('timesheet:', id))?.value,
+    done: (r) => (r.status === 'approved' ? { verb: 'approved', by: r.approvedBy } : r.status === 'rejected' ? { verb: 'rejected', by: r.rejectedBy } : null),
+  },
+  stock_request_new: {
+    find: (id) => kvWithRetry.get(`production_request_${id}`),
+    done: (r) => (r.status && r.status !== 'pending' ? { verb: 'accepted', by: r.acceptedBy } : null),
+  },
+};
+const DECIDED_RECHECK_MS = 10 * 60_000;
+const decidedCheckedAt = new Map<string, number>();
+async function settleDecidedRequests(userId: string, list: any[]) {
+  const now = Date.now();
+  const open = list.filter((n) => n?.id && n.relatedId && !n.resolvedAt && DECIDED_CHECKS[n.type] && now - (decidedCheckedAt.get(n.id) || 0) > DECIDED_RECHECK_MS).slice(0, 20);
+  if (!open.length) return;
+  const staff = await staffForNotifications().catch(() => [] as any[]);
+  await Promise.all(open.map(async (n) => {
+    decidedCheckedAt.set(n.id, now);
+    try {
+      const check = DECIDED_CHECKS[n.type];
+      const record = await check.find(String(n.relatedId).split(',')[0]);
+      const d = record ? check.done(record) : null;
+      if (!d) return;
+      // Some routes store the approver's employee id rather than their name.
+      const by = staff.find((e: any) => e.employeeId && e.employeeId === d.by)?.name || d.by || 'someone';
+      const at = new Date().toISOString();
+      Object.assign(n, { resolvedAt: at, resolvedBy: by, resolvedVerb: d.verb, read: true, readAt: n.readAt || at });
+      await kvWithRetry.set(`notification:${userId}:${n.id}`, n);
+    } catch {
+      // looked at again on a later load
+    }
+  }));
+  if (decidedCheckedAt.size > 5000) decidedCheckedAt.clear();
+}
 
 // Mark notification as read
 app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
