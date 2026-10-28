@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   BarChart3, Banknote, Bell, Bike, Boxes, CalendarDays, Camera, ChefHat, CircleUserRound, ClipboardList, Clock, DatabaseBackup, Factory,
   FileSearch, FileSpreadsheet, HandCoins, Home, IdCard, IndianRupee, Landmark, LayoutGrid, Layers, Network,
-  MessageSquareWarning, Package, PackageCheck, PackageX, PiggyBank, Receipt, ShoppingBasket, Store, Tags, Target, Users, Wallet, Wrench,
+  MessageSquareWarning, Package, PackageCheck, PackageX, PhoneCall, PiggyBank, Receipt, ShoppingBasket, Store, Tags, Target, Users, Wallet, Wrench,
 } from 'lucide-react';
 import type { IconKey } from './navConfig';
 
@@ -11,6 +11,7 @@ export const NAV_ICONS: Record<IconKey, LucideIcon> = {
   events: CalendarDays,
   recipes: ChefHat,
   complaints: MessageSquareWarning,
+  contacts: PhoneCall,
   home: Home,
   insights: BarChart3,
   money: Wallet,
