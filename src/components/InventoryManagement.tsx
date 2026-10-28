@@ -442,6 +442,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  await context.addFixedCostItem(item);
  toast.success(t('exp.saved'));
  }}
+ fixedCosts={context.fixedCosts}
  />
  )}
 
@@ -521,6 +522,7 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  allowOwnerPayment={isClusterHead}
  productionCashHouseId={productionCashHouseFor(editingFixedCost)}
  productionCashCover={editCashCover}
+ fixedCosts={context.fixedCosts}
  onDelete={editingFixedCost && canAddOnActiveTab ? deleteFromSheet(editingFixedCost.id, `${formatINR(editingFixedCost.amount)} · ${categoryText(editingFixedCost.category)} · ${formatDate(editingFixedCost.date)}`, context.deleteFixedCostItem) : undefined}
  onSubmit={async (item) => {
  try {

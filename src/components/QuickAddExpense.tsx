@@ -27,6 +27,8 @@ import { ProductionCashChoice } from './ProductionCashChoice';
 import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
 import { AssetHint } from './assets/AssetHint';
+import { BillFields, billNeedsMonth, defaultBillMonth } from './money/BillFields';
+import type { FixedCostItem } from '../App';
 import { idbGet, idbSet } from '../utils/idbStore';
 import { useT } from '../utils/i18n';
 import { formatDateIST, getTodayIST } from '../utils/timezone';
@@ -58,6 +60,8 @@ type Props = {
   onSubmitInventory: (item: any) => Promise<void>;
   onSubmitOverhead: (item: any) => Promise<void>;
   onSubmitFixedCost: (item: any) => Promise<void>;
+  /** Bills already logged, so rent can say when a month is paid twice or missing. */
+  fixedCosts?: FixedCostItem[];
   // Only cluster heads can add a name to the reusable catalog (see /custom-items on the
   // server). Everyone else can still log a purchase of something unrecognized, but it
   // won't be remembered - the item will show as "new" again next time until the cluster
@@ -98,6 +102,7 @@ export function QuickAddExpense({
   loadCashCover,
   priceGuide,
   accessToken,
+  fixedCosts,
 }: Props) {
   const [amount, setAmount] = useState('');
   // Default: the expense's own cash (store cash for a store bill, production cash for production).
@@ -247,6 +252,15 @@ export function QuickAddExpense({
   const resolved = matched || (hasStrongMatch ? bestMatch : null);
   const currentEntryType: ExpenseEntryType = resolved ? resolved.entryType : manualType;
   const currentCategory = resolved ? resolved.category : manualCategory;
+  // Rent and electricity: the month the bill is for, and electricity's meter units.
+  const [billMonth, setBillMonth] = useState('');
+  const [meterUnits, setMeterUnits] = useState('');
+  const isBill = currentEntryType === 'fixedcost' && billNeedsMonth(currentCategory);
+  useEffect(() => {
+    setBillMonth(isBill ? defaultBillMonth(currentCategory, entryDate) : '');
+    // Only when the kind of bill changes, not when the date does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBill, currentCategory]);
   const isBeverage = currentEntryType === 'inventory' && currentCategory === 'beverages';
   const beverageTotalPieces = packageType === 'carton'
     ? (parseFloat(cartonCount) || 0) * (parseFloat(piecesPerCarton) || 0)
@@ -361,6 +375,14 @@ export function QuickAddExpense({
       toast.error(t('exp.enterPacks'));
       return;
     }
+    if (isBill && !billMonth) {
+      toast.error('Pick the month this bill is for');
+      return;
+    }
+    if (isBill && category === 'electricity' && !(parseFloat(meterUnits) > 0)) {
+      toast.error('Enter the meter units from the bill');
+      return;
+    }
 
     let pendingNotice: string | null = null;
     setIsSubmitting(true);
@@ -427,6 +449,8 @@ export function QuickAddExpense({
           category,
           description: query.trim(),
           amount: amt,
+          ...(isBill ? { forMonth: billMonth } : {}),
+          ...(isBill && category === 'electricity' ? { units: parseFloat(meterUnits), unitPrice: Math.round((amt / parseFloat(meterUnits)) * 100) / 100 } : {}),
           ...paymentFieldsFor(amt),
           ...entityFieldsFor(entity),
         });
@@ -461,6 +485,7 @@ export function QuickAddExpense({
     setSplitOnline('');
     setVoiceHeard(null);
     setKeepOpen(false);
+    setMeterUnits('');
   };
 
   // Unit pills: piece = loose pieces, pack = pieces bought in packs (same saved shape as before).
@@ -660,6 +685,18 @@ export function QuickAddExpense({
             <span className="num">{priceLine.text}</span>
             {priceLine.usual ? ` · ${t('exp.usualPrice')}` : priceLine.usualText ? ` · ${t('exp.usually', { price: priceLine.usualText })}` : ''}
           </p>
+        )}
+        {isBill && (
+          <BillFields
+            category={currentCategory}
+            date={entryDate}
+            forMonth={billMonth}
+            onForMonth={setBillMonth}
+            units={meterUnits}
+            onUnits={setMeterUnits}
+            amount={enteredAmount}
+            fixedCosts={fixedCosts}
+          />
         )}
         {currentEntryType === 'inventory' && (
           <PriceWarning flag={priceFlag} onFix={isBeverage ? (packageType === 'carton' ? undefined : applyPriceFix) : (isBundlePurchase ? undefined : applyPriceFix)} />

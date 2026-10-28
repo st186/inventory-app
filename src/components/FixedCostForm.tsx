@@ -17,6 +17,7 @@ import { Textarea } from './ui/textarea';
 import { MoneyWaiting } from './money/DayCloseParts';
 import { DeleteAction, PaidFromField, SplitAmounts } from './money/PaidFromField';
 import { categoryText, stripEmoji } from './money/categoryDisplay';
+import { BillFields, billNeedsMonth, billMonthOf, defaultBillMonth } from './money/BillFields';
 
 type Props = {
   selectedDate: string;
@@ -31,9 +32,11 @@ type Props = {
   productionCashCover?: CashCover | null;
   /** Editing: delete this entry (confirm + Undo are the caller's). */
   onDelete?: () => void;
+  /** Bills already logged, so rent can say when a month is paid twice or missing. */
+  fixedCosts?: FixedCostItem[];
 };
 
-export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null, onDelete }: Props) {
+export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, allowOwnerPayment = false, productionCashHouseId = null, productionCashCover = null, onDelete, fixedCosts }: Props) {
   const [fromProductionCash, setFromProductionCash] = useState(!!editingItem?.paidFromProductionHouseId);
   const [formData, setFormData] = useState({
     category: editingItem ? editingItem.category : 'electricity' as FixedCostItem['category'],
@@ -43,10 +46,15 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, al
     unitPrice: editingItem?.unitPrice ? editingItem.unitPrice.toString() : '',
     paymentMethod: (editingItem?.paymentMethod || 'cash') as 'cash' | 'online' | 'both' | 'owner',
     cashAmount: editingItem?.cashAmount ? editingItem.cashAmount.toString() : '',
-    onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : ''
+    onlineAmount: editingItem?.onlineAmount ? editingItem.onlineAmount.toString() : '',
+    // Rent and electricity: the month the bill is for (an old entry: the month it was paid in).
+    forMonth: editingItem ? (billNeedsMonth(editingItem.category) ? billMonthOf(editingItem) : '') : defaultBillMonth('electricity', selectedDate),
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Meter units are asked for on every new electricity bill (owner, 28 Oct 2026); an old one
+  // saved without them can still be edited without making them up.
+  const unitsOptional = !!editingItem && editingItem.category === 'electricity' && !editingItem.units;
 
   // Calculate total amount for LPG
   const totalAmount = formData.category === 'lpg_gas' && formData.units && formData.unitPrice
@@ -100,6 +108,18 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, al
     if (formData.category === 'lpg_gas') {
       baseData.units = parseFloat(formData.units);
       baseData.unitPrice = parseFloat(formData.unitPrice);
+    }
+    if (billNeedsMonth(formData.category)) {
+      if (!formData.forMonth) { toast.error('Pick the month this bill is for'); return; }
+      baseData.forMonth = formData.forMonth;
+    }
+    if (formData.category === 'electricity') {
+      const units = parseFloat(formData.units);
+      if (!(units > 0) && !unitsOptional) { toast.error('Enter the meter units from the bill'); return; }
+      if (units > 0) {
+        baseData.units = units;
+        baseData.unitPrice = Math.round((calculatedAmount / units) * 100) / 100;
+      }
     }
 
     // Calculate payment method amounts
@@ -165,7 +185,7 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, al
             title={t('exp.category')}
             items={categoryItems}
             value={formData.category}
-            onValueChange={(v) => setFormData({ ...formData, category: v as FixedCostItem['category'] })}
+            onValueChange={(v) => setFormData({ ...formData, category: v as FixedCostItem['category'], forMonth: billNeedsMonth(v) ? (formData.forMonth || defaultBillMonth(v, selectedDate)) : '' })}
           />
         </Field>
 
@@ -193,6 +213,19 @@ export function FixedCostForm({ selectedDate, onSubmit, onClose, editingItem, al
             <MoneyInput value={formData.amount} onValueChange={(_, raw) => setFormData({ ...formData, amount: raw })} required />
           </Field>
         )}
+
+        <BillFields
+          category={formData.category}
+          date={editingItem?.date || selectedDate}
+          forMonth={formData.forMonth}
+          onForMonth={(m) => setFormData({ ...formData, forMonth: m })}
+          units={formData.units}
+          onUnits={(u) => setFormData({ ...formData, units: u })}
+          amount={totalAmount}
+          fixedCosts={fixedCosts}
+          editingId={editingItem?.id}
+          unitsOptional={unitsOptional}
+        />
 
         <PaidFromField
           value={formData.paymentMethod}

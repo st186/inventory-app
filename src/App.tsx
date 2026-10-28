@@ -114,9 +114,10 @@ export type FixedCostItem = {
  storeId?: string;
  entityType?: 'store' | 'production_house'; // Which entity this expense belongs to
  productionHouseId?: string; // Set when entityType is 'production_house'
- // LPG Gas specific fields
+ // Units and price per unit: cylinders for LPG, meter units for electricity
  units?: number;
  unitPrice?: number;
+ forMonth?: string; // YYYY-MM the rent or electricity bill is for (components/money/BillFields.tsx)
  // Payment method fields
  paymentMethod?: 'cash' | 'online' | 'both' | 'owner'; // owner = cluster head's own money
  cashAmount?: number; // Amount paid via cash (for 'both' option)
