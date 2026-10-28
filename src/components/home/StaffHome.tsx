@@ -38,6 +38,7 @@ import { OpeningChecklistCard } from '../opening/OpeningChecklist';
 import { RunningLowCard } from '../supplies/RunningLow';
 import { ShoppingCard } from '../supplies/Shopping';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
+import { DeliveryChecksCard } from './DeliveryChecks';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
 const ON_THE_WAY = ['shipped', 'partially-shipped'];
@@ -263,6 +264,7 @@ function InchargeHome() {
 
   return (
     <HomePage>
+      {!isProduction && store && <DeliveryChecksCard requests={mine} today={today} />}
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead framed={false} />
       <StoreCoverCard />

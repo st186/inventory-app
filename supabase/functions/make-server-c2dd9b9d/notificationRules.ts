@@ -15,6 +15,7 @@ export const BUNDLE_MINUTES = 30;
 const URGENT = new Set([
   'repair_alert', 'workplace_alarm', 'complaint_explain', 'backup_failed', 'pos_sync_stock_failed', 'eod_data_alert',
   'production_cash_discrepancy', 'stock_out', 'low_stock_alert', 'stock_request_delayed', 'shipped_delivery_check', 'escalation',
+  'delivery_confirmation_reminder', // orders sent and not received or confirmed (owner, 29 Oct 2026: high priority)
 ]);
 const ACTION = new Set([
   'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'supply_low', 'shopping_list', 'shopping_done', 'shift_checkin', 'delivery_incoming',

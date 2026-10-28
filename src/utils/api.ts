@@ -2892,6 +2892,8 @@ export interface ProductionRequest {
   deliveredBy?: string; // Store In-Charge employee ID
   dispatch?: DispatchInfo; // bags, batch codes, boxes - set when shipped from app 1.15.17
   receipt?: DeliveryReceipt; // the store's count - set when received from app 1.15.17
+  // Marked received for the store by someone else; the store incharge confirms what came (owner, 29 Oct 2026).
+  receiptConfirm?: { pending: boolean; markedBy?: string; markedAt?: string; ok?: boolean; note?: string; by?: string; at?: string };
   createdAt: string;
   updatedAt: string;
 }
@@ -2941,6 +2943,15 @@ export async function shipProductionRequest(
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
     method: 'PUT',
     body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch }),
+  });
+  return data.request;
+}
+
+// The store incharge confirms a delivery marked received for the store: all came, or what didn't.
+export async function confirmProductionReceipt(accessToken: string, id: string, ok: boolean, note?: string): Promise<ProductionRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/confirm-receipt`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ ok, note }),
   });
   return data.request;
 }

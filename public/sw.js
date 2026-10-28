@@ -163,7 +163,7 @@ const NOTIFICATION_VIEW_MAP = {
   // house, deliveries to confirm, the end-of-day data alert, production cash gaps, salary and backup.
   acceptance_reminder: { view: 'analytics', tab: 'production-requests' },
   morning_request_reminder: { view: 'analytics', tab: 'production-requests' },
-  delivery_confirmation_reminder: { view: 'analytics', tab: 'production-requests' },
+  delivery_confirmation_reminder: { view: 'home' }, // the deliveries card on Home
   shipped_delivery_check: { view: 'analytics', tab: 'production-requests' },
   eod_data_alert: { view: 'sales' },
   production_cash_discrepancy: { view: 'sales' },

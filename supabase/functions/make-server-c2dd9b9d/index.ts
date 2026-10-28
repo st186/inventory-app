@@ -7,7 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
-import { registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { recheckAmount, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
@@ -1325,6 +1325,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await kvWithRetry.set(key, inventoryItem);
     console.log('✅ Inventory Purchase Record updated successfully:', key);
+    await afterResponse('Expense recheck', () => recheckAmount(expenseReviewDeps, inventoryItem, authResult.user.user_metadata?.name || authResult.user.email));
 
     await cascadeProductionCashForExpense(existing, inventoryItem);
     if (inventoryItem.paidFromProductionHouseId && inventoryItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
@@ -12800,6 +12801,47 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/receive', async (c) => {
 
 // Delivery damage photos, stored one per key (not inside the request, which every stock
 // screen loads in bulk). Compressed on the phone first - a ~1000px JPEG.
+// Confirm a delivery that was marked received for the store (owner, 29 Oct 2026: two part-sent
+// orders were never received in the app, so the owner marked them received to put the store's stock
+// right and asked the store incharge to confirm what actually came). Not right: the owner and the
+// operations managers hear what was missing.
+app.post('/make-server-c2dd9b9d/production-requests/:id/confirm-receipt', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const id = c.req.param('id');
+    const key = `production_request_${id}`;
+    const req = await kv.get(key);
+    if (!req) return c.json({ error: 'That request was not found' }, 404);
+    if (!req.receiptConfirm?.pending) return c.json({ error: 'This delivery is already confirmed' }, 409);
+    const m = authResult.user.user_metadata || {};
+    const isLead = m.role === 'cluster_head' || (m.role === 'manager' && m.designation !== 'store_incharge' && m.designation !== 'production_incharge');
+    const incharge = req.storeId ? await getStoreIncharge(req.storeId) : null;
+    const isIncharge = !!incharge && !!m.employeeId && String(incharge.employeeId) === String(m.employeeId);
+    if (!isLead && !isIncharge) return c.json({ error: 'Only the store incharge can confirm this delivery' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    const ok = body?.ok !== false;
+    const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 300) : '';
+    if (!ok && !note) return c.json({ error: 'Write what was missing or different' }, 400);
+    const name = m.name || authResult.user.email || 'Someone';
+    const now = new Date().toISOString();
+    const updated = { ...req, receiptConfirm: { ...req.receiptConfirm, pending: false, ok, ...(note ? { note } : {}), by: name, at: now }, updatedAt: now };
+    await kv.set(key, updated);
+    if (!ok) {
+      const told = new Set<string>();
+      for (const p of [...(await getAllClusterHeads()), ...(await getOperationsManagers())]) {
+        if (!p?.authUserId || told.has(p.authUserId)) continue;
+        told.add(p.authUserId);
+        await notifyUser(p.authUserId, 'delivery_variance', `Delivery not right: ${req.requestDate} order`, `${name}: ${note}`, id, req.requestDate).catch(() => undefined);
+      }
+    }
+    return c.json({ request: updated });
+  } catch (error) {
+    console.log('Error confirming a delivery:', error);
+    return c.json({ error: 'Could not save that - try again' }, 500);
+  }
+});
+
 app.post('/make-server-c2dd9b9d/production-requests/:id/receipt-photos', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
@@ -15403,13 +15445,20 @@ async function sendProductionLogReminders(today: string): Promise<number> {
 
 app.post('/make-server-c2dd9b9d/send-delivery-confirmation-reminders', async (c) => {
   try {
-    console.log('=== DELIVERY CONFIRMATION REMINDER CHECK (10PM) ===');
+    // 10 PM, and 9:30 AM with ?slot=am (owner, 29 Oct 2026: orders sat unreceived for days). Urgent
+    // (notificationRules.ts): it gets through quiet hours and reaches the owner if not opened.
+    const slot = c.req.query('slot') === 'am' ? 'am' : 'pm';
+    console.log(`=== DELIVERY CONFIRMATION REMINDER CHECK (${slot === 'am' ? '9:30 AM' : '10 PM'}) ===`);
     const today = getTodayIST();
 
-    const productionRemindersSent = await sendProductionLogReminders(today);
+    const productionRemindersSent = slot === 'pm' ? await sendProductionLogReminders(today) : 0;
 
     const allProductionRequests = await kv.getByPrefix('production_request_');
-    const shippedRequests = allProductionRequests.filter((r: any) => r.status === 'shipped' || r.status === 'partially-shipped');
+    const istDay = (iso: any) => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(Date.parse(iso) + 330 * 60000).toISOString().slice(0, 10) : '');
+    // Sent and not received (in the morning: sent before today), and deliveries marked received
+    // for the store that the incharge hasn't confirmed yet.
+    const shippedRequests = allProductionRequests.filter((r: any) =>
+      ((r.status === 'shipped' || r.status === 'partially-shipped') && (slot === 'pm' || istDay(r.shippedAt) < today)) || r.receiptConfirm?.pending);
 
     if (shippedRequests.length === 0) {
       console.log('No shipped-but-unconfirmed requests tonight');
@@ -15430,17 +15479,22 @@ app.post('/make-server-c2dd9b9d/send-delivery-confirmation-reminders', async (c)
       const storeIncharge = await getStoreIncharge(storeId);
       if (!storeIncharge?.authUserId || !storeIncharge?.employeeId) continue;
 
-      const dedupeKey = `delivery_reminder_sent:${storeIncharge.employeeId}:${today}`;
+      const dedupeKey = `delivery_reminder_sent:${storeIncharge.employeeId}:${today}${slot === 'am' ? ':am' : ''}`;
       if (await kv.get(dedupeKey)) {
         skipped++;
         continue;
       }
 
       const count = requests.length;
-      const message = `Hi ${storeIncharge.name}, ${count} shipment${count > 1 ? 's' : ''} to your store ${count > 1 ? 'haven\'t' : 'hasn\'t'} been confirmed as delivered yet. Please confirm receipt as soon as possible so stock figures stay accurate.`;
+      const dayWord = (d: string) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
+      const lines = requests
+        .sort((a: any, b: any) => String(a.requestDate).localeCompare(String(b.requestDate)))
+        .map((r: any) => (r.receiptConfirm?.pending ? `${dayWord(r.requestDate)} order: check what came` : `${dayWord(r.requestDate)} order: sent ${dayWord(istDay(r.shippedAt))}, not received`));
+      const title = count === 1 ? (requests[0].receiptConfirm?.pending ? 'Confirm a delivery' : 'Receive a delivery') : `${count} deliveries to receive or confirm`;
+      const message = `${lines.join('; ')}. Tap each one on Home - the store's stock is wrong until you do.`;
 
       try {
-        await notifyUser(storeIncharge.authUserId, 'delivery_confirmation_reminder', '📦 Confirm Delivery', message, undefined, today);
+        await notifyUser(storeIncharge.authUserId, 'delivery_confirmation_reminder', title, message, undefined, today);
         await kv.set(dedupeKey, { sentAt: new Date().toISOString(), shippedCount: count });
         sent++;
         console.log(`✓ Sent delivery confirmation reminder to ${storeIncharge.name} (${count} shipped)`);
