@@ -11,9 +11,10 @@ import { Callout } from '../ui/callout';
 import { StatusChip } from '../ui/status-chip';
 import { currentPosition } from './ShiftClockCard';
 import * as kpi from './kpiApi';
+import { distanceText } from '../../utils/distance';
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-const where = (ev: kpi.CoverPunchEvent) => (ev.noGps ? 'no location' : ev.outside ? `${ev.distanceM ?? '?'} m from the store` : 'at the store');
+const where = (ev: kpi.CoverPunchEvent) => (ev.noGps ? 'no location' : ev.outside ? `${distanceText(ev.distanceM)} from the store` : 'at the store');
 
 export function StoreCoverCard() {
   const [data, setData] = useState<kpi.CoverToday | null>(null);
@@ -29,7 +30,7 @@ export function StoreCoverCard() {
       const r = await kpi.coverPunch(action, pos);
       setData({ ...data, punch: r.punch });
       const ev = action === 'in' ? r.punch.in : r.punch.out;
-      if (ev?.outside) toast.warning(`Saved, but you're ${ev.distanceM} m from ${data.storeName}`);
+      if (ev?.outside) toast.warning(`Saved, but you're ${distanceText(ev.distanceM)} from ${data.storeName}`);
       else toast.success(action === 'in' ? `Checked in at ${data.storeName}` : 'Checked out of the store');
     } catch (e) {
       toast.error((e as Error)?.message || 'Could not save that');

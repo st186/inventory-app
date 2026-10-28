@@ -12,6 +12,7 @@ import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
 import { StatusChip } from '../ui/status-chip';
 import { useHomeData } from '../home/homeData';
+import { distanceText } from '../../utils/distance';
 import {
   clearLocalEvent, ensureShiftTracking, localEvents, onShiftTrackerChange, subscribeShiftTracker, type TrackerStatus,
 } from './shiftTracker';
@@ -108,7 +109,7 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
       apply(res.punch);
       const ev = action === 'in' ? res.punch.in : res.punch.out;
       if (!pos) toast.warning(t('shift.toastNoGps'));
-      else if (ev?.outside) toast.warning(t('shift.toastFar', { m: ev.distanceM ?? '?', place }));
+      else if (ev?.outside) toast.warning(t('shift.toastFar', { d: distanceText(ev.distanceM, t), place }));
       else toast.success(action === 'in' ? t('shift.toastStarted') : t('shift.toastEnded'));
     } catch (e: any) {
       toast.error(e?.message || t('shift.toastFailed'));
@@ -172,7 +173,7 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
     if (ev.exempt) return <StatusChip tone="neutral" size="sm">{t('shift.riderNoCheck')}</StatusChip>;
     if (ev.noGps) return <StatusChip tone="warning" size="sm" icon={MapPinOff}>{t('shift.noGps')}</StatusChip>;
     if (ev.verified) return <StatusChip tone="success" size="sm" icon={MapPin}>{t('shift.atPlace', { place })}</StatusChip>;
-    if (ev.outside) return <StatusChip tone="danger" size="sm" icon={MapPinOff}>{t('shift.metersAway', { m: ev.distanceM ?? '?' })}</StatusChip>;
+    if (ev.outside) return <StatusChip tone="danger" size="sm" icon={MapPinOff}>{t('shift.metersAway', { d: distanceText(ev.distanceM, t) })}</StatusChip>;
     return <StatusChip tone="warning" size="sm" icon={MapPinOff}>{t('shift.notChecked')}</StatusChip>;
   };
   const eventMeta = (ev: kpi.PunchEvent) => [
