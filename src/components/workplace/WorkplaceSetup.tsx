@@ -23,7 +23,7 @@ import { LoadingList } from '../setup/SetupPage';
 type Props = { access: WorkplaceAccess; onSettings: (s: WorkplaceSettings) => void };
 
 const locKey = (l: { kind: string; id: string }) => `${l.kind}:${l.id}`;
-const newItem = (): TemplateItem => ({ id: '', name: '', nameBn: '', hint: '', assigneeId: null, start: '15:00', end: '16:00', days: [0, 1, 2, 3, 4, 5, 6] });
+const newItem = (): TemplateItem => ({ id: '', name: '', nameBn: '', hint: '', assigneeId: null, coverId: null, start: '15:00', end: '16:00', days: [0, 1, 2, 3, 4, 5, 6] });
 
 function daysText(days: number[]) {
   if (days.length === 7) return 'Every day';
@@ -260,11 +260,12 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
           >
             {items.map((it, i) => {
               const who = personName(it.assigneeId);
+              const cover = personName(it.coverId || null);
               return (
                 <ListRow
                   key={it.id || `new-${i}`}
                   title={it.name || 'New check'}
-                  subtitle={<><span lang="bn">{it.nameBn}</span>{it.nameBn ? ' · ' : ''}<span className="num">{it.start}–{it.end}</span> · {daysText(it.days)}{who ? ` · ${who}` : ''}</>}
+                  subtitle={<><span lang="bn">{it.nameBn}</span>{it.nameBn ? ' · ' : ''}<span className="num">{it.start}–{it.end}</span> · {daysText(it.days)}{who ? ` · ${who}` : ''}{cover ? ` (if away: ${cover})` : ''}</>}
                   trailing={!it.assigneeId ? <StatusChip tone="warning">No person</StatusChip> : undefined}
                   onClick={() => openItem(i)}
                 />
@@ -312,9 +313,15 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
               <Input value={draft.hint || ''} onChange={(e) => setDraft({ ...draft, hint: e.target.value })} maxLength={160} />
             </Field>
             <Field label="Who takes the photo">
-              <NativeSelect value={draft.assigneeId || ''} onChange={(e) => setDraft({ ...draft, assigneeId: e.target.value || null })}>
+              <NativeSelect value={draft.assigneeId || ''} onChange={(e) => setDraft({ ...draft, assigneeId: e.target.value || null, ...(e.target.value && e.target.value === draft.coverId ? { coverId: null } : {}) })}>
                 <option value="">Not assigned yet</option>
                 <PersonOptions people={people} />
+              </NativeSelect>
+            </Field>
+            <Field label="If they're on leave" helper="Who takes it on their approved leave days. Left empty, it goes to the incharge here, or to someone else here if the incharge is the one away.">
+              <NativeSelect value={draft.coverId || ''} onChange={(e) => setDraft({ ...draft, coverId: e.target.value || null })} disabled={!draft.assigneeId}>
+                <option value="">The incharge (automatic)</option>
+                <PersonOptions people={people.filter((pp) => pp.id !== draft.assigneeId)} />
               </NativeSelect>
             </Field>
             <div className="grid grid-cols-2 gap-3">

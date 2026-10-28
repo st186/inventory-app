@@ -37,10 +37,11 @@ type Deps = {
 };
 
 type LocationKind = 'store' | 'production' | 'event';
-type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; start: string; end: string; days: number[] };
+// coverId: who takes the photo on a day the assignee is on leave (see coverOn).
+type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[] };
 // activeFrom/activeTo: an event's checklist only applies on the event days (taken from the event).
 type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string; activeFrom?: string; activeTo?: string };
-type Assigned = { id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string };
+type Assigned = { id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string; coveringFor?: string; coveringForName?: string };
 type Flag = { status: 'ok' | 'needs_cleaning'; note: string; by: string; byId?: string; at: string; auto?: boolean; fixedAt?: string };
 type CheckItem = {
   name: string; nameBn?: string; path: string; uploadedAt: string; late: boolean; flag?: Flag;
@@ -228,17 +229,67 @@ async function loadAllTemplates(kv: Kv): Promise<Template[]> {
   return out;
 }
 
-// Who has which check on a date.
-function assignedOn(templates: Template[], date: string, employeeId?: string): (Assigned & { assigneeId: string })[] {
+// Cover for someone away (owner, 28 Oct 2026: "if Saniya is on leave who clicks the photos"): on a
+// day a person has approved full-day leave, each of their checks goes to the check's "if away"
+// person, else the place's incharge, else someone else who works there (that kind of staff first).
+// The person on leave has nothing due that day, so nothing counts as missed for them.
+type Cover = { away: Set<string>; fallback: (t: Template, assigneeId: string) => string | null; names: Map<string, string> };
+type CoverInputs = { leaves: any[]; employees: any[]; locs: Locations };
+
+async function loadCoverInputs(kv: Kv, employees?: any[], locs?: Locations): Promise<CoverInputs> {
+  const [leaves, emps, places] = await Promise.all([kv.getByPrefix<any>('leave:'), employees || loadEmployees(kv), locs || loadLocations(kv)]);
+  return { leaves: leaves || [], employees: emps, locs: places };
+}
+
+function coverOn(inputs: CoverInputs, date: string): Cover {
+  const { leaves, employees, locs } = inputs;
+  const away = new Set<string>();
+  for (const l of leaves) {
+    if (l?.status === 'approved' && String(l.leaveDate || '').slice(0, 10) === date && l.leaveType !== 'half' && l.employeeId) away.add(String(l.employeeId));
+  }
+  const names = new Map(employees.map((e) => [empIdOf(e), String(e.name || empIdOf(e))]));
+  const candidates = new Map<string, string[]>();
+  const candidatesOf = (t: Template) => {
+    const key = `${t.locationKind}:${t.locationId}`;
+    if (candidates.has(key)) return candidates.get(key)!;
+    let list: string[];
+    if (t.locationKind === 'event') {
+      const ev = findLoc(locs, 'event', t.locationId);
+      list = [ev?.inchargeId, ...(ev?.staffIds || [])].filter(Boolean).map(String);
+    } else {
+      const incharges = inchargesOf(employees, t.locationKind, t.locationId, locs).map(empIdOf);
+      const prefix = t.locationKind === 'store' ? 'store_' : 'production_';
+      const staff = employees
+        .filter((e) => e.status !== 'inactive' && e.designation !== 'rider' && !['cluster_head', 'audit'].includes(e.role) && worksAt(e, t.locationKind, t.locationId, locs))
+        .sort((a, b) => Number(!String(a.designation || '').startsWith(prefix)) - Number(!String(b.designation || '').startsWith(prefix)) || String(a.name).localeCompare(String(b.name)))
+        .map(empIdOf);
+      list = [...incharges, ...staff];
+    }
+    candidates.set(key, list);
+    return list;
+  };
+  return { away, names, fallback: (t, assigneeId) => candidatesOf(t).find((id) => id && id !== assigneeId && !away.has(id)) || null };
+}
+
+// Who has which check on a date (with cover, the person standing in for someone on leave).
+function assignedOn(templates: Template[], date: string, employeeId?: string, cover?: Cover): (Assigned & { assigneeId: string })[] {
   const wd = weekdayOf(date);
   const out: (Assigned & { assigneeId: string })[] = [];
   for (const t of templates) {
     if ((t.activeFrom && date < t.activeFrom) || (t.activeTo && date > t.activeTo)) continue;
     for (const it of t.items) {
-      if (!it.assigneeId || (employeeId && it.assigneeId !== employeeId) || !(it.days || ALL_DAYS).includes(wd)) continue;
+      if (!it.assigneeId || !(it.days || ALL_DAYS).includes(wd)) continue;
+      let who = it.assigneeId;
+      let coveringFor: string | undefined;
+      if (cover?.away.has(who)) {
+        const stand = (it.coverId && !cover.away.has(it.coverId) ? it.coverId : null) || cover.fallback(t, who);
+        if (stand && stand !== who) { coveringFor = who; who = stand; }
+      }
+      if (employeeId && who !== employeeId) continue;
       out.push({
         id: it.id, name: it.name, nameBn: it.nameBn, ...(it.hint ? { hint: it.hint } : {}), start: it.start, end: it.end,
-        locationKind: t.locationKind, locationId: t.locationId, assigneeId: it.assigneeId,
+        locationKind: t.locationKind, locationId: t.locationId, assigneeId: who,
+        ...(coveringFor ? { coveringFor, coveringForName: cover!.names.get(coveringFor) || coveringFor } : {}),
       });
     }
   }
@@ -605,11 +656,14 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       if (!days.length) return c.json({ error: `${name}: pick at least one day` }, 400);
       const assigneeId = r?.assigneeId ? str(r.assigneeId, 80) : null;
       if (assigneeId && !staff.has(assigneeId)) return c.json({ error: `${name}: that person is not in the staff list` }, 400);
+      const coverId = r?.coverId ? str(r.coverId, 80) : null;
+      if (coverId && !staff.has(coverId)) return c.json({ error: `${name}: the "if away" person is not in the staff list` }, 400);
+      if (coverId && coverId === assigneeId) return c.json({ error: `${name}: the "if away" person must be someone else` }, 400);
       let id = str(r?.id, 40);
       if (!/^[a-z0-9-]{1,40}$/.test(id) || seen.has(id)) id = `${slug(name)}-${randomId()}`;
       seen.add(id);
       const hint = str(r?.hint, 160);
-      items.push({ id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, start, end, days });
+      items.push({ id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days });
     }
     const template: Template = { locationKind: loc.kind, locationId: loc.id, items, updatedAt: new Date().toISOString(), updatedBy: actor!.name };
     await kv.set(templateKey(loc.kind, loc.id), template);
@@ -624,7 +678,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     if (!actor!.employeeId) return c.json({ date: today, earlyMinutes: EARLY_UPLOAD_MINUTES, items: [] });
     const [templates, row, locs] = await Promise.all([loadAllTemplates(kv), kv.get<CheckRow>(checkKey(today, actor!.employeeId)), loadLocations(kv)]);
     const nowMin = nowMinutesIST();
-    const mine = assignedOn(templates, today, actor!.employeeId).map(stripAssignee);
+    const cover = coverOn(await loadCoverInputs(kv, undefined, locs), today);
+    const mine = assignedOn(templates, today, actor!.employeeId, cover).map(stripAssignee);
     const items = mine.map((a) => {
       const it = row?.items?.[a.id];
       return { ...a, locationName: findLoc(locs, a.locationKind, a.locationId)?.name || '', status: statusOf(today, today, nowMin, a, it), ...itemView(it) };
@@ -648,7 +703,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     if (!forEmployeeId) return c.json({ error: 'Only staff logins can send workplace photos' }, 400);
     const today = deps.getTodayIST();
     const [templates, locs] = await Promise.all([loadAllTemplates(kv), loadLocations(kv)]);
-    const mine = assignedOn(templates, today, forEmployeeId).map(stripAssignee);
+    const mine = assignedOn(templates, today, forEmployeeId, coverOn(await loadCoverInputs(kv, undefined, locs), today)).map(stripAssignee);
     const a = mine.find((x) => x.id === itemId);
     if (!a) return c.json({ error: 'This check is not on the list for today · আজকের তালিকায় এটা নেই' }, 404);
     const onBehalf = forEmployeeId !== actor!.employeeId;
@@ -790,11 +845,13 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
         items.push({
           date: d, employeeId, personName: names.get(employeeId) || 'Former staff', itemId: a.id, name: a.name, nameBn: a.nameBn || '', hint: a.hint || '',
           start: a.start, end: a.end, status: statusOf(d, today, nowMin, a, it), ...itemView(it),
+          ...(a.coveringFor ? { coveringForName: a.coveringForName || names.get(a.coveringFor) || '' } : {}),
         });
       };
       // What was due here: today from the live checklist, earlier days from what each person had.
       if (d === today && template) {
-        for (const a of assignedOn([template], d)) add(a.assigneeId, stripAssignee(a), byPerson.get(a.assigneeId)?.items?.[a.id]);
+        const cover = coverOn(await loadCoverInputs(kv, employees, locs), d);
+        for (const a of assignedOn([template], d, undefined, cover)) add(a.assigneeId, stripAssignee(a), byPerson.get(a.assigneeId)?.items?.[a.id]);
       } else {
         for (const r of rows) for (const a of r.assigned || []) if (atLocation(a, loc.kind, loc.id)) add(r.employeeId, a, r.items?.[a.id]);
       }
@@ -894,12 +951,12 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     try {
       const today = deps.getTodayIST();
       const nowMin = nowMinutesIST();
-      const templates = await loadAllTemplates(kv);
-      const all = assignedOn(templates, today);
+      const [templates, employees, locs] = await Promise.all([loadAllTemplates(kv), loadEmployees(kv), loadLocations(kv)]);
+      const all = assignedOn(templates, today, undefined, coverOn(await loadCoverInputs(kv, employees, locs), today));
       if (!all.length) return c.json({ success: true, people: 0 });
       const byPerson = new Map<string, Assigned[]>();
       for (const a of all) byPerson.set(a.assigneeId, [...(byPerson.get(a.assigneeId) || []), stripAssignee(a)]);
-      const [employees, locs, clusterHeads, sentRaw] = await Promise.all([loadEmployees(kv), loadLocations(kv), deps.getAllClusterHeads(), kv.get<any>(sentKey(today))]);
+      const [clusterHeads, sentRaw] = await Promise.all([deps.getAllClusterHeads(), kv.get<any>(sentKey(today))]);
       const sent = { date: today, due: { ...(sentRaw?.due || {}) } as Record<string, string[]>, missed: { ...(sentRaw?.missed || {}) } as Record<string, boolean> };
       let sentChanged = false; let duePushes = 0; let missedPushes = 0;
       const rows = await mgetRows<CheckRow>(kv, [...byPerson.keys()].map((id) => checkKey(today, id)));
@@ -924,8 +981,9 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
           sentChanged = true;
           const end = pending[0].end;
           const names = pending.slice(0, 5).map((a) => a.name).join(', ') + (pending.length > 5 ? ` +${pending.length - 5}` : '');
+          const covering = [...new Set(pending.map((a) => a.coveringForName).filter(Boolean))];
           if (await safeNotify(deps, person?.authUserId, 'workplace_due', `Workplace photos due by ${fmt12(end)}`,
-            `${pending.length} photo${pending.length === 1 ? '' : 's'}: ${names}. · ${bnBy(end)} ছবি দিন`, undefined, today)) duePushes++;
+            `${pending.length} photo${pending.length === 1 ? '' : 's'}: ${names}.${covering.length ? ` Covering for ${covering.join(', ')} (on leave).` : ''} · ${bnBy(end)} ছবি দিন`, undefined, today)) duePushes++;
         }
 
         // Window closed without a photo: once a day per person, to the incharge(s) and the owner.

@@ -125,6 +125,7 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     <p className="text-body-md font-semibold text-text">{checkName(it, lang)}</p>
                     {it.hint && <p className="text-label text-text-2">{it.hint}</p>}
+                    {it.coveringForName && <p className="text-label font-medium text-primary">{t('team.check.covering', { name: it.coveringForName })}</p>}
                     <div className="flex flex-wrap items-center gap-1.5">
                       <CheckStatusChip status={it.status} start={it.start} end={it.end} />
                       <HygieneChip photo={it} threshold={threshold} />

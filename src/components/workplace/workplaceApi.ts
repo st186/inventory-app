@@ -29,11 +29,13 @@ export interface PhotoView {
   aiShown?: string;
 }
 
-export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; start: string; end: string; days: number[] }
+// coverId: who takes the photo on a day the assignee is on leave (empty: their incharge, or someone else there).
+export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[] }
 
 export interface MyCheck extends PhotoView {
   id: string; name: string; nameBn: string; hint?: string; start: string; end: string;
   locationKind: LocationKind; locationId: string; locationName: string; status: CheckStatus;
+  coveringForName?: string; // standing in for someone on leave
 }
 export interface MyChecks { date: string; earlyMinutes: number; employeeId?: string; items: MyCheck[] }
 
@@ -53,6 +55,7 @@ export interface TemplateResponse { template: { items: TemplateItem[]; updatedAt
 export interface ReviewItem extends PhotoView {
   date: string; employeeId: string; personName: string; itemId: string; name: string; nameBn: string; hint: string;
   start: string; end: string; status: CheckStatus;
+  coveringForName?: string;
 }
 export interface ReviewResponse { from: string; to: string; location: WorkplaceLocation; items: ReviewItem[] }
 

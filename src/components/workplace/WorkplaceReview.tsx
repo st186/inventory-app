@@ -326,7 +326,7 @@ function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; on
       </div>
       <div className="flex flex-col gap-1 p-2.5">
         <p className="truncate text-body-sm font-semibold text-text">{checkName(it, lang)}</p>
-        <p className="truncate text-label text-text-2">{it.personName}</p>
+        <p className="truncate text-label text-text-2">{it.personName}{it.coveringForName ? ` · for ${it.coveringForName} (on leave)` : ''}</p>
         <div className="flex flex-wrap items-center gap-1">
           <CheckStatusChip status={it.status} start={it.start} end={it.end} short />
           {it.hasPhoto && it.uploadedAt && <span className="text-caption text-text-3">{timeOfIso(it.uploadedAt)}</span>}

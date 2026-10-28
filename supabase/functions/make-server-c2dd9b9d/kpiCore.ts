@@ -571,7 +571,7 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
   {
     let required = 0, done = 0, onTimeChecks = 0, needsCleaning = 0, scoreSum = 0, scored = 0;
     for (const { date, row } of input.workplaceChecks || []) {
-      if (!row || date < from || date > to) continue;
+      if (!row || date < from || date > to || fullLeave.has(date)) continue; // on leave: someone else covers
       required += Number(row.required) || 0;
       done += typeof row.done === 'boolean' ? (row.done ? 1 : 0) : Number(row.done) || 0;
       onTimeChecks += typeof row.onTime === 'boolean' ? (row.onTime ? Number(row.done) || 1 : 0) : Number(row.onTime) || 0;
