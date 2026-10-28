@@ -46,7 +46,8 @@ export function photosOfView(v: PhotoView): CheckPhoto[] {
 }
 
 // coverId: who takes the photo on a day the assignee is on leave (empty: their incharge, or someone else there).
-export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[] }
+// from: the first day it's due (a check added after the day's window starts the next day).
+export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string }
 
 export interface MyCheck extends PhotoView {
   id: string; name: string; nameBn: string; hint?: string; start: string; end: string;

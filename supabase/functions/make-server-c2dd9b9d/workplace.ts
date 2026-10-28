@@ -44,8 +44,9 @@ type Deps = {
 };
 
 type LocationKind = 'store' | 'production' | 'event';
-// coverId: who takes the photo on a day the assignee is on leave (see coverOn).
-type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[] };
+// coverId: who takes the photo on a day the assignee is on leave (see coverOn). from: the first day
+// it's due, so a check added after the day's window doesn't count as missed that day.
+type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string };
 // activeFrom/activeTo: an event's checklist only applies on the event days (taken from the event).
 type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string; activeFrom?: string; activeTo?: string };
 type Assigned = { id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string; coveringFor?: string; coveringForName?: string };
@@ -296,7 +297,7 @@ function assignedOn(templates: Template[], date: string, employeeId?: string, co
   for (const t of templates) {
     if ((t.activeFrom && date < t.activeFrom) || (t.activeTo && date > t.activeTo)) continue;
     for (const it of t.items) {
-      if (!it.assigneeId || !(it.days || ALL_DAYS).includes(wd)) continue;
+      if (!it.assigneeId || !(it.days || ALL_DAYS).includes(wd) || (it.from && date < it.from)) continue;
       let who = it.assigneeId;
       let coveringFor: string | undefined;
       if (cover?.away.has(who)) {
@@ -790,7 +791,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       if (!/^[a-z0-9-]{1,40}$/.test(id) || seen.has(id)) id = `${slug(name)}-${randomId()}`;
       seen.add(id);
       const hint = str(r?.hint, 160);
-      items.push({ id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days });
+      const from = str(r?.from, 10);
+      items.push({ id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days, ...(DATE.test(from) ? { from } : {}) });
     }
     const template: Template = { locationKind: loc.kind, locationId: loc.id, items, updatedAt: new Date().toISOString(), updatedBy: actor!.name };
     await kv.set(templateKey(loc.kind, loc.id), template);
