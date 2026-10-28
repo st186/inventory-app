@@ -11,7 +11,15 @@
       <link rel="preload" as="font" type="font/woff2" crossorigin href="/node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2" />
       <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
       <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
-      <link rel="apple-touch-icon" href="/icon-192.png" />
+      <!-- Added to a phone's Home Screen (iPhone: Share > Add to Home Screen) the website opens full
+           screen like an app, with the orange Bunny icon; on iPhone that is also what lets it receive
+           notifications (iOS 16.4 and later). The Android app ignores these. -->
+      <link rel="manifest" href="/manifest.webmanifest" />
+      <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-title" content="Bunny Momos" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       <style>
         /* Start-up splash, painted with the very first frame before any JavaScript has loaded
            (a low-end phone needs a second or more to read the app's code). It sits over #root

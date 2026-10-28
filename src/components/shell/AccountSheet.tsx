@@ -138,14 +138,25 @@ export function AccountSheet(props: AccountSheetProps) {
   );
 }
 
+// An iPhone or iPad browser tab (not the website opened from the Home Screen). iPads report
+// themselves as a Mac, so a touch screen tells them apart.
+function isIosBrowserTab(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  const fromHomeScreen = window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  return ios && !fromHomeScreen;
+}
+
 function NotificationsRow({ pushUserId, onEnableNative, onOpen, preview }: { pushUserId: string; onEnableNative?: () => Promise<boolean>; onOpen: () => void; preview: boolean }) {
   const { t } = useT();
   const push = usePushStatus(pushUserId, onEnableNative, !preview);
+  // iPhone Safari gives websites notifications only once they are on the Home Screen.
+  const iphoneNeedsHomeScreen = push.state === 'unsupported' && isIosBrowserTab();
   return (
     <ListRow
       icon={Bell}
       title={t('account.notifications')}
-      subtitle={t('account.notificationsHint')}
+      subtitle={iphoneNeedsHomeScreen ? t('account.notificationsIphone') : t('account.notificationsHint')}
       trailing={preview ? <StatusChip tone="success">{t('status.on')}</StatusChip> : pushStateChip(push.state, t)}
       chevron
       onClick={onOpen}
