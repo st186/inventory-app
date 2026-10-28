@@ -97,7 +97,8 @@ export function legacy(user, today) {
     const effective = (view) => {
       let v = view === 'stock-requests' ? 'analytics' : view;
       if (user.designation === 'rider') {
-        return ['riders', 'payroll', 'rider-profile', 'my-kpis'].includes(v) ? v : 'riders';
+        // My KPIs left the rider's app on 28 Oct 2026 (riders are paid per trip, no KPIs).
+        return ['riders', 'payroll', 'rider-profile'].includes(v) ? v : 'riders';
       }
       const isPlainEmployee = user.role === 'employee' && user.designation !== 'store_incharge' && user.designation !== 'production_incharge';
       const restrictedViews = ['analytics', 'sales', 'inventory', 'production', 'export', 'backup', 'employees', 'stock-requests', 'advanced-inventory', 'inventory-items', 'assets'];

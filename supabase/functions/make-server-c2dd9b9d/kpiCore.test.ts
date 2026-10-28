@@ -102,7 +102,7 @@ function crewMonth(overrides: Partial<MonthInput> = {}): MonthInput {
   return {
     month: '2026-10', today: '2026-10-11', emp: { employeeId: 'BM010', joiningDate: '2025-01-01' },
     group: 'store_staff', kind: 'store', settings, punchSince: '2026-10-01', punches,
-    timesheets: worked.map((d) => ({ date: d, hoursWorked: 7, status: 'approved', submittedAt: d === '2026-10-07' ? at('2026-10-10', '12:00') : at(d, '23:00') })),
+    timesheets: worked.map((d) => ({ date: d, totalHours: 7, status: 'approved', submittedAt: d === '2026-10-07' ? at('2026-10-10', '12:00') : at(d, '23:00') })),
     hasTimesheetHistory: true,
     leaves: [{ employeeId: 'BM010', leaveDate: '2026-10-08', status: 'approved', leaveType: 'full' }],
     workplaceChecks: [

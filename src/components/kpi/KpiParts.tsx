@@ -55,7 +55,7 @@ export function KpiBars({ kpis, showTips = false, compact = false }: { kpis: kpi
                 <p className="text-body-sm font-medium text-text">
                   {k.label} <span className="text-caption font-normal text-text-3">· {t('team.kpi.weight', { n: k.weight })}</span>
                 </p>
-                <p className={cn('num text-body-sm font-semibold', TEXT[tone])}>{k.score === null ? t('team.kpi.noData') : Math.round(k.score)}</p>
+                <p className={cn('num text-body-sm font-semibold', TEXT[tone])}>{k.score === null ? t('team.kpi.noData') : <>{Math.round(k.score)}<span className="font-normal text-text-3">/100</span></>}</p>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-surface-2" role="img" aria-label={`${k.label}: ${k.score === null ? t('team.kpi.noData') : Math.round(k.score)}`}>
                 <div className={cn('h-full rounded-full', BAR[tone])} style={{ width: `${k.score ?? 0}%` }} />

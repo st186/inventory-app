@@ -374,6 +374,10 @@ export type MonthInput = {
   sales?: any[]; // the store's sales rows (store incharge)
   stockOuts?: any[]; // the store's stock-out log (store incharge)
   production?: any[]; // the production house's daily production records
+  // The production ledger (kg made into dough/stuffing pools, kg written off): wastage comes from
+  // here when the daily records carry no weights, as they don't since the ledger arrived.
+  ledgerMadeKg?: { date: string; kg: number }[];
+  ledgerWastedKg?: { date: string; kg: number }[];
   requests?: any[]; // stock requests from the stores that house supplies
   trips?: any[]; // the rider's rides
 };
@@ -437,7 +441,9 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     const p = punchBy.get(d);
     if (p?.in || p?.out) return true;
     const t = sheetBy.get(d);
-    return !!t && !t.isLeave && t.status !== 'rejected' && (Number(t.hoursWorked) || 0) > 0;
+    // Timesheets save their hours as totalHours (hoursWorked was never written, so nobody counted as
+    // present: attendance 0 for everyone, owner 28 Oct 2026); a start and end time also count.
+    return !!t && !t.isLeave && t.status !== 'rejected' && ((Number(t.totalHours ?? t.hoursWorked) || 0) > 0 || (!!t.startTime && !!t.endTime));
   };
 
   let offDays = 0;
@@ -612,11 +618,18 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       const w = p?.wastage || {};
       wasted += (Number(w.dough) || 0) + (Number(w.stuffing) || 0) + (Number(w.batter) || 0) + (Number(w.coating) || 0);
     }
+    let source = 'dough, stuffing, batter and coating';
+    if (used <= 0 && (input.ledgerMadeKg || []).length) {
+      const inRange = (x: { date: string }) => x.date >= from && x.date <= to;
+      used = (input.ledgerMadeKg || []).filter(inRange).reduce((s, x) => s + x.kg, 0);
+      wasted = (input.ledgerWastedKg || []).filter(inRange).reduce((s, x) => s + x.kg, 0);
+      source = 'dough and stuffing in the production ledger';
+    }
     if (used <= 0) set('wastage', null, 'No production with weights logged.');
     else {
       const w = (wasted / used) * 100;
       const score = w <= WASTAGE_FULL_MARKS_PCT ? 100 : w >= WASTAGE_ZERO_PCT ? 0 : ((WASTAGE_ZERO_PCT - w) / (WASTAGE_ZERO_PCT - WASTAGE_FULL_MARKS_PCT)) * 100;
-      set('wastage', score, `Wastage ${Math.round(w * 10) / 10}% (${Math.round(wasted * 10) / 10} kg of ${Math.round(used * 10) / 10} kg dough, stuffing, batter and coating). ${WASTAGE_FULL_MARKS_PCT}% or less scores full marks, ${WASTAGE_ZERO_PCT}% or more scores zero.`);
+      set('wastage', score, `Wastage ${Math.round(w * 10) / 10}% (${Math.round(wasted * 10) / 10} kg of ${Math.round(used * 10) / 10} kg ${source}). ${WASTAGE_FULL_MARKS_PCT}% or less scores full marks, ${WASTAGE_ZERO_PCT}% or more scores zero.`);
     }
   }
   if (ids.includes('shippedOnTime')) {

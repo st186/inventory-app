@@ -380,14 +380,12 @@
     "menu": [
       "riders",
       "rider-profile",
-      "my-kpis",
       "payroll"
     ],
     "views": {
       "payroll": "EmployeeDashboard",
       "riders": "RiderTrips(rider,canDispatch=false)",
-      "rider-profile": "RiderProfile",
-      "my-kpis": "MyKpis"
+      "rider-profile": "RiderProfile"
     }
   },
   "auditor@2026-10-31": {
@@ -798,14 +796,12 @@
     "menu": [
       "riders",
       "rider-profile",
-      "my-kpis",
       "payroll"
     ],
     "views": {
       "payroll": "EmployeeDashboard",
       "riders": "RiderTrips(rider,canDispatch=false)",
-      "rider-profile": "RiderProfile",
-      "my-kpis": "MyKpis"
+      "rider-profile": "RiderProfile"
     }
   },
   "auditor@2026-11-01": {

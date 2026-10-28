@@ -251,7 +251,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     stockOuts: p.canViewStockOuts && !(staff && p.isRider),
     workplace: staff ? !p.isRider : true,
     teamKpis: !staff && (p.isClusterHead || p.isOperationsManager),
-    myKpis: staff ? true : !p.isClusterHead,
+    myKpis: staff ? !p.isRider : !p.isClusterHead,
   };
 
   const L = (view: string, spec: ScreenSpec, screen?: string) => ({ view, screen: screen ?? describeSpec(spec) });
@@ -442,7 +442,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
-    more = [group('more.myWork', 'rider-profile', 'my-kpis')];
+    // Riders are paid per trip: no KPIs (owner, 28 Oct 2026).
+    more = [group('more.myWork', 'rider-profile')];
   }
 
   const finalTabs = tabs.filter((t): t is NavTab => !!t);

@@ -52,7 +52,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 const monthLabel = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const istDayOf = (iso: any) => (typeof iso === 'string' && !Number.isNaN(Date.parse(iso)) ? istDate(Date.parse(iso)) : '');
-const isStaff = (e: any) => e?.employeeId && e.status !== 'inactive' && e.role !== 'cluster_head' && e.role !== 'audit';
+// Riders are paid per trip, with no KPIs or variable pay (owner, 28 Oct 2026).
+const isStaff = (e: any) => e?.employeeId && e.status !== 'inactive' && e.role !== 'cluster_head' && e.role !== 'audit' && e.designation !== 'rider';
 
 function storeOf(emp: any, places: Places): string | null {
   const ids = [emp.storeId, ...(emp.assignedStoreIds || [])].filter(Boolean).map(String);
@@ -69,6 +70,7 @@ type Shared = {
   sales: any[]; production: any[]; requests: any[]; trips: any[];
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
+  ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
 };
 
 async function loadShared(deps: KpiDeps, month: string, groups: Set<RoleGroup>, places: Places, punchSince: string | null): Promise<Shared> {
@@ -102,6 +104,7 @@ async function loadShared(deps: KpiDeps, month: string, groups: Set<RoleGroup>, 
     trips: (trips || []).filter((t: any) => t?.date && inMonth(String(t.date).slice(0, 10))),
     checks,
     stockOuts: new Map(),
+    ledger: new Map(),
   };
 }
 
@@ -122,6 +125,24 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     stockOuts = await shared.stockOuts.get(store)!;
   }
   const housesStores = house ? [...places.storeHouse.entries()].filter(([, h]) => h === house).map(([s]) => s) : [];
+  // The house's production ledger for the month, once per house: kg made and kg written off.
+  let ledger: { made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] } = { made: [], wasted: [] };
+  if (house && (profile.group === 'production_incharge' || profile.group === 'production_staff')) {
+    if (!shared.ledger.has(house)) {
+      shared.ledger.set(house, Promise.all([
+        deps.kv.getByPrefix<any>(`production-ledger-item:${house}:${month}-`),
+        deps.kv.getByPrefix<any>(`production-wastage-note:${house}:${month}-`),
+      ]).then(([items, notes]) => ({
+        // The ledger has no unit: a pool entry over 200 was typed in grams (21,940 for 21.94 kg).
+        made: (items || []).map((x: any) => {
+          const kg = (q: any) => { const n = Number(q) || 0; return n > 200 ? n / 1000 : n; };
+          return { date: String(x?.date || '').slice(0, 10), kg: kg(x?.globalPoolQty) + kg(x?.perTypePoolQty) };
+        }),
+        wasted: (notes || []).map((x: any) => ({ date: String(x?.date || '').slice(0, 10), kg: (Number(x?.quantity) || 0) / (String(x?.unit || 'kg').toLowerCase() === 'g' ? 1000 : 1) })),
+      })));
+    }
+    ledger = await shared.ledger.get(house)!;
+  }
   return computeMonthKpis({
     month, today: shared.today, emp: { employeeId: id, joiningDate: emp.joiningDate || null },
     group: profile.group, kind: profile.kind, settings: profile.settings, punchSince: shared.punchSince,
@@ -135,6 +156,8 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     production: house ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === house) : shared.production,
     requests: housesStores.length ? shared.requests.filter((r: any) => housesStores.includes(r.storeId)) : shared.requests,
     trips: shared.trips.filter((t: any) => t.riderEmployeeId === id),
+    ledgerMadeKg: ledger.made,
+    ledgerWastedKg: ledger.wasted,
   });
 }
 
