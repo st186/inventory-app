@@ -34,7 +34,10 @@ export function TeamAttendanceView({
   top?: React.ReactNode;
 }) {
   const { t } = useT();
-  const pending = team.pendingTimesheets.length + team.pendingLeaves.length + team.escalated.filter((l) => !team.pendingLeaves.some((p) => p.id === l.id)).length;
+  // Every waiting request this login can decide: their own team's, escalated ones, and (owner,
+  // operations managers) the ones waiting with an incharge.
+  const pendingLeaveIds = new Set([...team.pendingLeaves, ...team.escalated, ...team.othersPending].map((l) => l.id));
+  const pending = team.pendingTimesheets.length + pendingLeaveIds.size;
 
   return (
     <TeamPage data-ai-private>
@@ -53,7 +56,7 @@ export function TeamAttendanceView({
         <ErrorState body={team.error} onRetry={team.reload} />
       ) : team.loading || team.loadingPeople ? (
         <SkeletonListRows count={5} leading="avatar" />
-      ) : team.people.length === 0 && !(isClusterHead && team.escalated.length) ? (
+      ) : team.people.length === 0 && !(isClusterHead && (team.escalated.length || team.othersPending.length)) ? (
         <div className="rounded-lg border border-border bg-surface">
           <EmptyState icon={Users} title={isClusterHead ? t('team.att.noManagers') : t('team.att.noTeam')} body={t('team.att.noTeamBody')} />
         </div>

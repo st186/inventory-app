@@ -28,25 +28,35 @@ export function ApproveLeaves({ team }: { team: TeamAttendance }) {
   const rows = [...team.pendingLeaves].sort((a, b) => a.leaveDate.localeCompare(b.leaveDate));
   const ownIds = new Set(rows.map((r) => r.id));
   const escalated = team.escalated.filter((l) => !ownIds.has(l.id));
+  const escalatedIds = new Set(escalated.map((l) => l.id));
+  const others = team.othersPending.filter((l) => !ownIds.has(l.id) && !escalatedIds.has(l.id)).sort((a, b) => a.leaveDate.localeCompare(b.leaveDate));
 
-  const row = (l: LeaveRow) => (
-    <ListRow
-      key={l.id}
-      leading={<InitialsAvatar name={team.nameOf(l.employeeId)} />}
-      title={team.nameOf(l.employeeId)}
-      subtitle={[formatDay(l.leaveDate, lang, { weekday: true, short: true }), leaveTypeLabel(l, t), l.reason].filter(Boolean).join(' · ')}
-      onClick={() => setOpen(l)}
-    />
-  );
+  const row = (l: LeaveRow, withWho = false) => {
+    const who = withWho ? team.waitsWith(l.employeeId) : null;
+    return (
+      <ListRow
+        key={l.id}
+        leading={<InitialsAvatar name={team.nameOf(l.employeeId)} />}
+        title={team.nameOf(l.employeeId)}
+        subtitle={[formatDay(l.leaveDate, lang, { weekday: true, short: true }), leaveTypeLabel(l, t), who ? t('team.att.waitsWith', { name: who }) : '', l.reason].filter(Boolean).join(' · ')}
+        onClick={() => setOpen(l)}
+      />
+    );
+  };
 
   return (
     <>
       <ListGroup title={t('team.att.leaveRequests')} meta={rows.length ? String(rows.length) : undefined} empty={<ListRow density="compact" icon={CalendarDays} muted title={t('team.att.noLeave')} />}>
-        {rows.map(row)}
+        {rows.map((l) => row(l))}
       </ListGroup>
       {escalated.length > 0 && (
         <ListGroup title={t('team.att.escalated')} meta={String(escalated.length)} footer={t('team.att.escalatedHint')}>
-          {escalated.map(row)}
+          {escalated.map((l) => row(l))}
+        </ListGroup>
+      )}
+      {others.length > 0 && (
+        <ListGroup title={t('team.att.othersWaiting')} meta={String(others.length)} footer={t('team.att.othersWaitingHint')}>
+          {others.map((l) => row(l, true))}
         </ListGroup>
       )}
       <LeaveDecisionSheet leave={open} team={team} onClose={() => setOpen(null)} />

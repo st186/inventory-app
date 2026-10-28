@@ -44,6 +44,12 @@ export function useTeamAttendance({
   const [byPerson, setByPerson] = React.useState<Record<string, PersonData>>({});
   const [loadingPeople, setLoadingPeople] = React.useState(false);
   const [escalated, setEscalated] = React.useState<LeaveRow[]>([]);
+  // The owner and operations managers can decide anyone's leave (the server allows it), and
+  // Home counts every waiting request: so they also see the ones waiting with an incharge
+  // (owner, 28 Oct 2026: "Leave requests 2 waiting" opened to nothing).
+  const seesAll = isClusterHead || (role === 'manager' && !isIncharge);
+  const [othersPending, setOthersPending] = React.useState<LeaveRow[]>([]);
+  const [staff, setStaff] = React.useState<api.Employee[]>([]);
 
   const loadEmployees = React.useCallback(async () => {
     setError(null);
@@ -61,14 +67,22 @@ export function useTeamAttendance({
   }, [isClusterHead, isIncharge, managerId]);
 
   const loadEscalated = React.useCallback(async () => {
-    if (!isClusterHead) return;
+    if (!seesAll) return;
     try {
       const all = (await teamApi.getAllLeaves()) as LeaveRow[];
-      setEscalated(all.filter((l) => l.status === 'pending' && l.isAdvanceLeave && l.approverRole === 'cluster_head'));
+      const pending = all.filter((l) => l.status === 'pending');
+      if (isClusterHead) setEscalated(pending.filter((l) => l.isAdvanceLeave && l.approverRole === 'cluster_head'));
+      setOthersPending(pending);
     } catch (e) {
       console.error('Error loading escalated leaves:', e);
     }
-  }, [isClusterHead]);
+  }, [isClusterHead, seesAll]);
+
+  // Names for requests from people outside this login's own list (the owner's list is managers).
+  React.useEffect(() => {
+    if (!seesAll) return;
+    teamApi.getEmployees().then((list: api.Employee[]) => setStaff(list || [])).catch(() => undefined);
+  }, [seesAll]);
 
   React.useEffect(() => {
     if (!managerId) {
@@ -112,7 +126,13 @@ export function useTeamAttendance({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peopleKey, loadPerson]);
 
-  const nameOf = (employeeId: string) => (employees || []).find((e) => e.employeeId === employeeId)?.name || employeeId;
+  const nameOf = (employeeId: string) => (employees || []).find((e) => e.employeeId === employeeId)?.name || staff.find((e) => e.employeeId === employeeId)?.name || employeeId;
+  /** Whose queue a request waits in: the person's incharge, else their manager. */
+  const waitsWith = (employeeId: string) => {
+    const person = staff.find((e) => e.employeeId === employeeId) || (employees || []).find((e) => e.employeeId === employeeId);
+    const approver = person?.inchargeId || person?.managerId;
+    return approver ? nameOf(approver) : null;
+  };
   const allTimesheets = people.flatMap((p) => byPerson[p.employeeId]?.timesheets || []);
   const allLeaves = people.flatMap((p) => byPerson[p.employeeId]?.leaves || []);
   const pendingTimesheets = allTimesheets.filter((t) => t.status === 'pending');
@@ -153,6 +173,8 @@ export function useTeamAttendance({
     pendingTimesheets,
     pendingLeaves,
     escalated,
+    othersPending,
+    waitsWith,
     approveTimesheet,
     rejectTimesheet,
     approveLeave,
