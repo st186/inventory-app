@@ -7,7 +7,8 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
-import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
+import { registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
@@ -1167,7 +1168,7 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     await cascadeProductionCashForExpense(inventoryItem);
     // Checked for slips, odd categories and repeat buys, after the response (expenseReview.ts).
-    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'inventory', key, inventoryItem, userName || userEmail));
+    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'inventory', key, inventoryItem, userName || userEmail, role));
 
     // Notify the production incharge (bill paid from production cash) and cluster heads about
     // the inventory data entry - after the response (afterResponse).
@@ -1405,7 +1406,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     if (overheadItem.paidFromProductionHouseId) {
       await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
-    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'overhead', key, overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
+    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'overhead', key, overheadItem, authResult.user.user_metadata?.name || authResult.user.email, role));
 
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -2987,7 +2988,7 @@ const expenseReviewDeps: ExpenseReviewDeps = {
   kv: kvWithRetry,
   rows: (prefix, range) => getAllByPrefixWithRetry(prefix, range),
   verifyUser,
-  notifyUser: (authUserId, type, title, message, relatedId, relatedDate) => notifyUser(authUserId, type, title, message, relatedId, relatedDate),
+  notifyUser: (authUserId, type, title, message, relatedId, relatedDate, quickAction) => notifyUser(authUserId, type, title, message, relatedId, relatedDate, quickAction),
 };
 
 // From 1 November 2026 staff food is Rs 500 a month in salary (owner, 28 Oct): meals are no longer
@@ -7935,6 +7936,13 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
       return c.json({ success: true, title: 'Request accepted', message: `${storeName} · ${requestDate}` });
     }
 
+    // The owner's OK on a repair, labour or equipment expense above ₹2,000 (expenseReview.ts).
+    if (tokenRecord.recordType === 'expense_approval') {
+      const r: any = await settleApproval(expenseReviewDeps, String(tokenRecord.recordId), approve, approverName);
+      if (r.error) return r.status === 409 ? c.json({ success: true, title: 'Already decided', message: r.error }) : c.json({ error: r.error }, r.status);
+      return c.json({ success: true, title: approve ? 'Expense OK' : 'Marked not OK', message: `${r.entry?.itemName || r.entry?.description || 'Expense'} · ${r.entry?.date || ''}` });
+    }
+
     // "Looks OK" on an AI photo flag: the same as a reviewer's OK in Workplace checks.
     if (tokenRecord.recordType === 'workplace_photo') {
       const [date, employeeId, itemId] = String(tokenRecord.recordId).split('|');
@@ -10493,7 +10501,7 @@ async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | n
 // authorizes the exact action on the exact record it was minted for (see POST
 // /quick-action below) and is marked used immediately, so it can't be replayed.
 // The buttons each kind of record gets on its notification (Android, QuickActionMessagingService).
-type QuickRecord = 'leave' | 'timesheet' | 'production_request' | 'stock_request' | 'workplace_photo';
+type QuickRecord = 'leave' | 'timesheet' | 'production_request' | 'stock_request' | 'workplace_photo' | 'expense_approval';
 type QuickVerb = 'approve' | 'reject' | 'deliver' | 'accept' | 'ok';
 const QUICK_ACTIONS: Record<QuickRecord, { action: QuickVerb; label: string }[]> = {
   leave: [{ action: 'approve', label: 'Approve' }, { action: 'reject', label: 'Reject' }],
@@ -10501,6 +10509,7 @@ const QUICK_ACTIONS: Record<QuickRecord, { action: QuickVerb; label: string }[]>
   production_request: [{ action: 'deliver', label: 'Delivered' }],
   stock_request: [{ action: 'accept', label: 'Accept' }],
   workplace_photo: [{ action: 'ok', label: 'Looks OK' }],
+  expense_approval: [{ action: 'approve', label: 'OK' }, { action: 'reject', label: 'Not OK' }],
 };
 
 async function createQuickActionToken(action: QuickVerb, recordType: QuickRecord, recordId: string, approverUserId: string): Promise<string> {
@@ -17671,7 +17680,8 @@ registerExpenseReviewRoutes(app, expenseReviewDeps);
 registerProductionReviewRoutes(app, expenseReviewDeps);
 registerRepairRoutes(app, expenseReviewDeps);
 // Customer complaints: photos, Bunny's reading, explanations, decisions (complaints.ts).
-registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate), storage: supabase.storage, getTodayIST });
+registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST });
+registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, verifyUser, storage: supabase.storage });
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

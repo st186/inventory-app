@@ -123,6 +123,8 @@ const NOTIFICATION_VIEW_MAP = {
   fulfillment_reminder: { view: 'analytics', tab: 'production-requests' }, // covers both stock + production requests; lands on the fulfillment screen
   data_entry_reminder: { view: 'inventory' },
   expense_flag: { view: 'inventory' },
+  expense_approval: { view: 'inventory' },
+  expense_rejected: { view: 'inventory' },
   production_flag: { view: 'production' },
   repair_alert: { view: 'production' },
   rider_called: { view: 'riders' },

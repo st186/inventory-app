@@ -28,6 +28,8 @@ import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
 import { AssetHint } from './assets/AssetHint';
 import { BillFields, billNeedsMonth, defaultBillMonth } from './money/BillFields';
+import { BillPhotoField, RepairFields, emptyRepair, repairMissing } from './money/RepairDetails';
+import { APPROVAL_ABOVE, BILL_PHOTO_ABOVE, needsPaperwork, uploadBill, type RepairInfo } from './money/paperworkApi';
 import { MEALS_STOPPED_TEXT, mealsStopped } from '../utils/inventoryData';
 import type { FixedCostItem } from '../App';
 import { idbGet, idbSet } from '../utils/idbStore';
@@ -262,6 +264,19 @@ export function QuickAddExpense({
     // Only when the kind of bill changes, not when the date does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBill, currentCategory]);
+  // Repairs, labour and equipment (the expenses plan): which machine, what was wrong, who did it,
+  // the bill photo above BILL_PHOTO_ABOVE; above APPROVAL_ABOVE the owner is asked to OK it.
+  const [repairInfo, setRepairInfo] = useState<RepairInfo>(emptyRepair);
+  const [billPhoto, setBillPhoto] = useState<string | null>(null);
+  const serviceKind: 'repair' | 'labour' | null = currentEntryType === 'overhead'
+    ? (currentCategory === 'repair' ? 'repair' : currentCategory === 'labour_charge' ? 'labour' : null)
+    : null;
+  const paperwork = !!currentCategory && !!query.trim() && needsPaperwork(currentEntryType === 'inventory' ? 'inventory' : 'overhead', { category: currentCategory, itemName: query, description: query });
+  const billRequired = paperwork && enteredAmount > BILL_PHOTO_ABOVE;
+  const needsOwnerOk = paperwork && enteredAmount > APPROVAL_ABOVE && !ownerPaymentOption;
+  const repairPlace = entity === 'production_house'
+    ? (targetProductionHouseId ? { kind: 'production_house' as const, id: targetProductionHouseId } : null)
+    : (storeIdForCash ? { kind: 'store' as const, id: storeIdForCash } : null);
   const isBeverage = currentEntryType === 'inventory' && currentCategory === 'beverages';
   const beverageTotalPieces = packageType === 'carton'
     ? (parseFloat(cartonCount) || 0) * (parseFloat(piecesPerCarton) || 0)
@@ -388,10 +403,25 @@ export function QuickAddExpense({
       toast.error('Enter the meter units from the bill');
       return;
     }
+    const repairGap = serviceKind ? repairMissing(serviceKind, repairInfo) : null;
+    if (repairGap) {
+      toast.error(repairGap);
+      return;
+    }
+    if (billRequired && !billPhoto) {
+      toast.error(`Take a photo of the bill: repairs, labour and equipment above ${formatINR(BILL_PHOTO_ABOVE)} need one`);
+      return;
+    }
 
     let pendingNotice: string | null = null;
     setIsSubmitting(true);
     try {
+      // The bill photo goes up first; its path is saved with the expense.
+      const billPhotoPath = paperwork && billPhoto ? await uploadBill(billPhoto) : null;
+      const paperworkFields = {
+        ...(billPhotoPath ? { billPhotoPath } : {}),
+        ...(serviceKind ? { repair: { ...repairInfo, machine: repairInfo.machine.trim(), fault: repairInfo.fault.trim() } } : {}),
+      };
       // Remember a brand-new classification so the next person who types this exact
       // name gets it auto-detected instead of having to classify it again. Only the
       // cluster head is allowed to do this (server-enforced too) - for anyone else,
@@ -437,6 +467,7 @@ export function QuickAddExpense({
           ...(!isBeverage && (unit === 'pcs' || unit === 'units') && weightPerUnit
             ? { weightPerUnitGrams: weightUnit === 'kg' ? (parseFloat(weightPerUnit) || 0) * 1000 : (parseFloat(weightPerUnit) || 0) }
             : {}),
+          ...paperworkFields,
           ...entityFieldsFor(entity),
         });
       } else if (entryType === 'overhead') {
@@ -446,6 +477,7 @@ export function QuickAddExpense({
           description: query.trim(),
           amount: amt,
           ...paymentFieldsFor(amt),
+          ...paperworkFields,
           ...entityFieldsFor(entity),
         });
       } else {
@@ -489,6 +521,8 @@ export function QuickAddExpense({
     setSplitCash('');
     setSplitOnline('');
     setVoiceHeard(null);
+    setRepairInfo(emptyRepair());
+    setBillPhoto(null);
     setKeepOpen(false);
     setMeterUnits('');
   };
@@ -693,6 +727,11 @@ export function QuickAddExpense({
         )}
         {mealsStopped(currentCategory, entryDate) && (
           <Callout tone="warning" title="Meals aren't expenses any more">{MEALS_STOPPED_TEXT}</Callout>
+        )}
+        {serviceKind && <RepairFields kind={serviceKind} place={repairPlace} value={repairInfo} onChange={setRepairInfo} />}
+        {paperwork && <BillPhotoField value={billPhoto} onChange={setBillPhoto} required={billRequired} />}
+        {needsOwnerOk && (
+          <Callout tone="info" title="The owner will be asked to OK this">{`Repairs, labour and equipment above ${formatINR(APPROVAL_ABOVE)} wait for the owner's OK. It is saved and counted now.`}</Callout>
         )}
         {isBill && (
           <BillFields

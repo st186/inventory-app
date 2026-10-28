@@ -2579,6 +2579,7 @@ export interface ExpenseFlag {
   decidedBy?: string;
   decidedAt?: string;
   entry: (Record<string, any> & { id: string; date: string }) | null;
+  canDecide?: boolean; // an expense waiting for the owner's OK is only the owner's to decide
 }
 
 async function tokenOr(accessToken?: string): Promise<string> {

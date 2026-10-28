@@ -11,8 +11,13 @@
 // unlike before), category (filed unlike before, or a word that belongs elsewhere), detail (a
 // repair or labour entry that doesn't say what), repeat (a consumable bought again and again),
 // unusual (far above what this kind of spend usually is here), duplicate (same amount, kind and
-// place within two days).
+// place within two days); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
+// photo of the bill above ₹500), approval (above ₹2,000: waits for the owner's OK) and replace
+// (a machine repaired 3 times in 4 months, or repairs reaching 40% of its price).
 import { askClaudeForJson } from './insights.ts';
+import {
+  APPROVAL_ABOVE, BILL_PHOTO_ABOVE, REPLACE_AFTER_REPAIRS, REPLACE_SHARE, REPLACE_WINDOW_DAYS, describeRepair, isBillPath, needsPaperwork,
+} from './expensePaperwork.ts';
 
 type Kv = {
   get: (key: string) => Promise<any>;
@@ -24,7 +29,8 @@ export type ExpenseReviewDeps = {
   kv: Kv;
   rows: (prefix: string, range?: Range | null) => Promise<any[]>;
   verifyUser: (authHeader: string | null) => Promise<any>;
-  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<unknown>;
+  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string,
+    quickAction?: { recordType: 'expense_approval'; recordId: string }) => Promise<unknown>;
 };
 type Source = 'inventory' | 'overhead';
 type Flag = {
@@ -89,7 +95,8 @@ const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
 const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
 
 /** Check one newly saved purchase or expense and save any flags. Never throws. */
-export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key: string, item: any, loggedBy?: string): Promise<Flag[]> {
+// loggedByRole: the owner's own entries need nobody's OK.
+export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key: string, item: any, loggedBy?: string, loggedByRole?: string): Promise<Flag[]> {
   try {
     if (!item?.id || !item?.date) return [];
     const since = addDays(item.date, -90);
@@ -222,6 +229,19 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       flags.push({ kind: 'duplicate', title: 'Logged twice?', message: `${rupees(amount)} for ${nameOf(twin) || 'the same thing'} was also logged on ${twin.date}. Delete one if it is the same bill.` });
     }
 
+    // Repairs, labour and equipment: the bill, the owner's OK, and a machine that keeps breaking.
+    if (needsPaperwork(source, item)) {
+      const what = describeRepair(item) || catLabel(item.category);
+      if (amount > BILL_PHOTO_ABOVE && !isBillPath(item.billPhotoPath)) {
+        flags.push({ kind: 'bill', title: 'Bill photo missing', message: `${what}: ${rupees(amount)}. Repairs, labour and equipment above ${rupees(BILL_PHOTO_ABOVE)} need a photo of the bill.` });
+      }
+      if (amount > APPROVAL_ABOVE && loggedByRole !== 'cluster_head') {
+        flags.push({ kind: 'approval', title: 'Needs your OK', message: `${what} · ${rupees(amount)}, above ${rupees(APPROVAL_ABOVE)}.` });
+      }
+    }
+    const replace = await replaceCheck(deps, source, item);
+    if (replace) flags.push(replace);
+
     if (flags.length === 0) return [];
     const now = new Date().toISOString();
     const saved: Flag[] = [];
@@ -241,6 +261,51 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
   }
 }
 
+// A repair to a machine in the equipment register: repaired REPLACE_AFTER_REPAIRS times within
+// REPLACE_WINDOW_DAYS, or repairs adding up to REPLACE_SHARE of its price.
+async function replaceCheck(deps: ExpenseReviewDeps, source: Source, item: any) {
+  const assetId = item?.repair?.assetId;
+  if (source !== 'overhead' || item?.category !== 'repair' || !assetId) return null;
+  const asset = await deps.kv.get(`asset:${assetId}`);
+  if (!asset?.name) return null;
+  const repairs = (await deps.rows('overhead:', { from: addDays(item.date, -3 * 365), to: addDays(item.date, 2), field: 'date' }))
+    .filter((r: any) => r && r.id !== item.id && r.category === 'repair' && r.repair?.assetId === assetId)
+    .concat([item]);
+  const recent = repairs.filter((r: any) => r.date >= addDays(item.date, -REPLACE_WINDOW_DAYS) && r.date <= item.date);
+  const spent = repairs.reduce((sum: number, r: any) => sum + amountOf(r), 0);
+  const price = Number(asset.totalCost) || (Number(asset.unitCost) || 0) * (Number(asset.quantity) || 1);
+  const often = recent.length >= REPLACE_AFTER_REPAIRS;
+  const costly = price > 0 && spent >= price * REPLACE_SHARE;
+  if (!often && !costly) return null;
+  return {
+    kind: 'replace',
+    title: `Time to replace the ${asset.name}?`,
+    message: [
+      often ? `${recent.length} repairs in the last 4 months` : '',
+      costly ? `repairs have cost ${rupees(spent)}, ${Math.round((spent / price) * 100)}% of its price (${rupees(price)})` : `${rupees(spent)} spent on repairs so far`,
+    ].filter(Boolean).join('; ') + '. A new one may cost less than repairing it again.',
+  };
+}
+
+// The owner's OK (or not) on a repair, labour or equipment entry above APPROVAL_ABOVE, from the
+// app (POST /expense-flags/:id/apply|dismiss) or the notification's buttons (POST /quick-action).
+// Not OK tells whoever logged it.
+export async function settleApproval(deps: Pick<ExpenseReviewDeps, 'kv' | 'notifyUser'>, flagId: string, approve: boolean, by: string, note?: string) {
+  const flag: Flag | null = await deps.kv.get(`expense-flag:${flagId}`);
+  if (!flag || flag.kind !== 'approval') return { error: 'That expense was not found', status: 404 };
+  if (flag.status !== 'open') return { error: 'Someone has already decided this one', status: 409 };
+  const at = new Date().toISOString();
+  const entry = await deps.kv.get(flag.expenseKey);
+  if (entry) await deps.kv.set(flag.expenseKey, { ...entry, approval: { status: approve ? 'approved' : 'rejected', by, at, ...(note ? { note } : {}) } });
+  const next: Flag = { ...flag, status: approve ? 'fixed' : 'dismissed', decidedBy: by, decidedAt: at, ...(note ? { note } : {}) };
+  await deps.kv.set(`expense-flag:${flagId}`, next);
+  if (!approve && entry?.userId) {
+    await deps.notifyUser(entry.userId, 'expense_rejected', 'The owner did not OK an expense',
+      `${describeRepair(entry) || 'An entry'} · ${rupees(amountOf(entry))} · ${entry.date}${note ? `: ${note}` : ''}. Talk to the owner about it.`, entry.id, entry.date).catch(() => undefined);
+  }
+  return { flag: next, entry };
+}
+
 // The place's incharge and the owner (cluster heads) get one notification per entry.
 async function tellPeople(deps: ExpenseReviewDeps, item: any, place: string, flags: Flag[]) {
   const people = await deps.rows('unified-employee:');
@@ -251,10 +316,21 @@ async function tellPeople(deps: ExpenseReviewDeps, item: any, place: string, fla
       : p.designation === 'production_incharge' && (p.storeId === placeId || (p.assignedProductionHouseIds || []).includes(placeId))
   ));
   const owners = people.filter((p: any) => p?.role === 'cluster_head' && p?.authUserId && p?.status !== 'inactive');
+  // The owner's OK goes to the owner alone, with OK / Not OK on the notification itself.
+  const approval = flags.find((f) => f.kind === 'approval');
+  if (approval) {
+    for (const o of owners) {
+      await deps.notifyUser(o.authUserId, 'expense_approval', `OK this expense? ${rupees(amountOf(item))}`,
+        `${describeRepair(item) || nameOf(item) || 'An entry'} · ${item.date}${approval.loggedBy ? ` · logged by ${approval.loggedBy}` : ''}.`,
+        item.id, item.date, { recordType: 'expense_approval', recordId: approval.id }).catch(() => undefined);
+    }
+  }
+  const rest = flags.filter((f) => f.kind !== 'approval');
+  if (!rest.length) return;
   const to = new Map<string, any>();
   [...incharges, ...owners].forEach((p: any) => to.set(p.authUserId, p));
-  const title = flags.length === 1 ? flags[0].title : 'Check an expense entry';
-  const message = `${nameOf(item) || 'An entry'} · ${rupees(amountOf(item))} · ${item.date}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
+  const title = rest.length === 1 ? rest[0].title : 'Check an expense entry';
+  const message = `${nameOf(item) || 'An entry'} · ${rupees(amountOf(item))} · ${item.date}: ${rest.map((f) => f.title.toLowerCase()).join(', ')}.`;
   for (const authUserId of to.keys()) {
     await deps.notifyUser(authUserId, 'expense_flag', title, message, item.id, item.date).catch(() => undefined);
   }
@@ -274,8 +350,10 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
     if (m.designation === 'store_incharge') [m.storeId, ...(m.assignedStoreIds || [])].filter(Boolean).forEach((id: string) => places.add(`store:${id}`));
     if (m.designation === 'production_incharge') [m.storeId, ...(m.assignedProductionHouseIds || [])].filter(Boolean).forEach((id: string) => places.add(`production:${id}`));
     if (!all && places.size === 0) return { error: c.json({ error: 'Only the owner, operations managers and incharges check expenses' }, 403) };
-    return { all, places, name: m.name || auth.user.email || 'Someone' };
+    return { all, places, name: m.name || auth.user.email || 'Someone', isOwner: m.role === 'cluster_head' };
   };
+  // An expense waiting for the owner's OK is the owner's to decide; everything else, anyone who sees it.
+  const canDecide = (v: { isOwner: boolean }, flag: Flag) => flag.kind !== 'approval' || v.isOwner;
   const canSee = (v: { all: boolean; places: Set<string> }, flag: Flag) => v.all || v.places.has(flag.place);
 
   app.get(`${P}/expense-flags`, async (c: any) => {
@@ -289,7 +367,7 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
       const byId = new Map<string, any>();
       records.filter(Boolean).forEach((r: any) => byId.set(r.id, r));
       const rows = flags
-        .map((f: Flag) => ({ ...f, entry: byId.get(f.expenseId) || null }))
+        .map((f: Flag) => ({ ...f, entry: byId.get(f.expenseId) || null, canDecide: canDecide(v, f) }))
         .filter((f: any) => f.entry || f.status !== 'open')
         .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));
       return c.json({ flags: rows });
@@ -309,6 +387,12 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
       if (!canSee(v, flag)) return c.json({ error: 'This entry belongs to another place' }, 403);
       if (flag.status !== 'open') return c.json({ error: 'Someone has already decided this one' }, 409);
       const body = await c.req.json().catch(() => ({}));
+      if (flag.kind === 'approval') {
+        if (!canDecide(v, flag)) return c.json({ error: 'Only the owner can OK this' }, 403);
+        const r: any = await settleApproval(deps, id, action === 'apply', v.name, typeof body?.note === 'string' ? body.note.slice(0, 300) : undefined);
+        if (r.error) return c.json({ error: r.error }, r.status);
+        return c.json({ flag: r.flag });
+      }
       if (action === 'apply') {
         if (!flag.suggestion) return c.json({ error: 'There is no fix to apply; edit the entry instead' }, 400);
         const entry = await deps.kv.get(flag.expenseKey);
@@ -327,4 +411,28 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
   };
   app.post(`${P}/expense-flags/:id/apply`, (c: any) => decide(c, 'apply'));
   app.post(`${P}/expense-flags/:id/dismiss`, (c: any) => decide(c, 'dismiss'));
+
+  // The missing bill photo, added afterwards: the path from POST /expense-bills goes on the entry.
+  app.post(`${P}/expense-flags/:id/bill`, async (c: any) => {
+    const v: any = await viewerOf(c);
+    if (v.error) return v.error;
+    try {
+      const id = decodeURIComponent(c.req.param('id'));
+      const flag: Flag | null = await deps.kv.get(`expense-flag:${id}`);
+      if (!flag || flag.kind !== 'bill') return c.json({ error: 'That check was not found' }, 404);
+      if (!canSee(v, flag)) return c.json({ error: 'This entry belongs to another place' }, 403);
+      if (flag.status !== 'open') return c.json({ error: 'Someone has already decided this one' }, 409);
+      const body = await c.req.json().catch(() => ({}));
+      if (!isBillPath(body?.path)) return c.json({ error: 'Take a photo of the bill first' }, 400);
+      const entry = await deps.kv.get(flag.expenseKey);
+      if (!entry) return c.json({ error: 'The entry was deleted' }, 404);
+      await deps.kv.set(flag.expenseKey, { ...entry, billPhotoPath: body.path });
+      const next: Flag = { ...flag, status: 'fixed', decidedBy: v.name, decidedAt: new Date().toISOString() };
+      await deps.kv.set(`expense-flag:${id}`, next);
+      return c.json({ flag: next });
+    } catch (error) {
+      console.log('Error adding a bill photo:', error);
+      return c.json({ error: 'Could not save that' }, 500);
+    }
+  });
 }
