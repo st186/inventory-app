@@ -953,6 +953,11 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
   const cashOnOwnTab = shellHasTab.cash;
   const showCashContent = activeTab === 'cash' || (activeTab === 'entry' && !cashOnOwnTab);
   const canSync = isOperationsManager || isClusterHead || isStoreIncharge || isProductionIncharge;
+  const syncButton = canSync ? (
+    <Button variant="secondary" size="sm" leadingIcon={<RefreshCw className={isSyncingPos ? 'animate-spin' : undefined} />} onClick={handleSyncPosNow} disabled={isSyncingPos || syncDisabledForTiming}>
+      {isSyncingPos ? t('dc.syncing') : isClusterHead && isViewingPastDate ? 'Re-sync' : t('dc.syncNow')}
+    </Button>
+  ) : null;
 
   const reviewStatus: DayStatus | null = !entry ? null
     : entry.createdBy === 'pos-sync' ? { kind: 'notStarted' }
@@ -1096,10 +1101,11 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
           {reviewStatus && <DayStatusBanner status={reviewStatus} readOnly />}
 
           {!hasSalesEntries && liveCashPosition && (
-            <Section title="Right now">
+            <Section title="Right now" action={syncButton ?? undefined}>
               <p className="-mt-1 text-body-sm text-text-2">
-                No day close for {formatDateIST(selectedDate)} yet - where things stand now{liveCashPosition.storeCount > 1 ? ` across ${liveCashPosition.storeCount} stores` : ''}. Today's sales come in with the day close.
+                No day close for {formatDateIST(selectedDate)} yet - where things stand now{liveCashPosition.storeCount > 1 ? ` across ${liveCashPosition.storeCount} stores` : ''}. {canSync ? 'Tap Sync now to bring in the sales so far from the POS.' : "Today's sales come in with the day close."}
               </p>
+              {canSync && syncDisabledForTiming && <p className="-mt-1 text-label text-text-3">{t('dc.syncOpensAt3')}</p>}
               {!liveCashPosition.hasCarriedData && (
                 <Callout tone="warning" title={`No cash or Paytm balance saved for ${formatDateIST(liveCashPosition.prevDateStr)}`}>The carried-forward figures start at ₹0.</Callout>
               )}
@@ -1121,7 +1127,7 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
           )}
 
           {!hasSalesEntries && !liveCashPosition && !onlineSalesTotal && (
-            <EmptyState icon={Wallet} title={`No sales for ${formatDateIST(selectedDate)}`} body="The day close shows here once the store sends it." />
+            <EmptyState icon={Wallet} title={`No sales for ${formatDateIST(selectedDate)}`} body="The day close shows here once the store sends it." action={syncButton ?? undefined} />
           )}
 
           {(hasSalesEntries || onlineSalesTotal > 0) && (
@@ -1130,11 +1136,7 @@ export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Pr
               action={(canSync || isClusterHead) ? (
                 <div className="flex items-center gap-2">
                   {isClusterHead && <Button variant="ghost" size="sm" onClick={() => setShowBulkSync(true)}>Re-sync days</Button>}
-                  {canSync && (
-                    <Button variant="secondary" size="sm" leadingIcon={<RefreshCw className={isSyncingPos ? 'animate-spin' : undefined} />} onClick={handleSyncPosNow} disabled={isSyncingPos || syncDisabledForTiming}>
-                      {isSyncingPos ? t('dc.syncing') : isClusterHead && isViewingPastDate ? 'Re-sync' : t('dc.syncNow')}
-                    </Button>
-                  )}
+                  {syncButton}
                 </div>
               ) : undefined}
             >
