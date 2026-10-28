@@ -21,6 +21,7 @@ const StaffHome = lazy(() => import('../../home/StaffHome').then((m) => ({ defau
 const CrewHome = lazy(() => import('../../home/CrewHome').then((m) => ({ default: m.CrewHome })));
 const RiderHome = lazy(() => import('../../home/RiderHome').then((m) => ({ default: m.RiderHome })));
 const ComplaintsScreen = lazy(() => import('../../complaints/ComplaintsScreen').then((m) => ({ default: m.ComplaintsScreen })));
+const SiteAuditsScreen = lazy(() => import('../../audits/SiteAuditsScreen').then((m) => ({ default: m.SiteAuditsScreen })));
 
 class ScreenBoundary extends Component<{ children: ReactNode }, { error: Error | null; attempt: number }> {
   state = { error: null as Error | null, attempt: 0 };
@@ -148,6 +149,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'Complaints':
         content = <ComplaintsScreen onBack={() => shell.router.back()} />;
+        break;
+      case 'SiteAudits':
+        content = <SiteAuditsScreen />;
         break;
       default:
         content = null;

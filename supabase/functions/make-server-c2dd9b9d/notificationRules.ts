@@ -17,7 +17,7 @@ const URGENT = new Set([
   'production_cash_discrepancy', 'stock_out', 'low_stock_alert', 'stock_request_delayed', 'shipped_delivery_check', 'escalation',
 ]);
 const ACTION = new Set([
-  'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'shift_checkin', 'delivery_incoming',
+  'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'shift_checkin', 'delivery_incoming',
   'stock_request_new', 'event_momo_return', 'rider_fare_proposed', 'rider_called', 'calendar_suggestions', 'stock_recalibration',
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);

@@ -45,6 +45,8 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 export function bootstrapPathsFor(meta: { role?: string; designation?: string }): string[] {
   const role = meta?.role || 'employee';
   const designation = meta?.designation || '';
+  // Independent site auditors: their own record only (siteAudits.ts).
+  if (designation === 'site_auditor') return [...SELF];
   if (LEADS.includes(role) || INCHARGES.includes(designation)) {
     return [...SELF, '/employees', '/stores', ...CATALOG, ...HISTORY, ...(role === 'cluster_head' ? ['/cluster/info'] : [])];
   }

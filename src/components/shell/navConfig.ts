@@ -28,6 +28,8 @@ export function permissionsFor(user: NavUser, today: string) {
   const isClusterHead = user.role === 'cluster_head';
   const isEmployee = user.role === 'employee';
   const isAudit = user.role === 'audit';
+  // An independent auditor for surprise visits (siteAudits.ts): their audits and nothing else.
+  const isSiteAuditor = isAudit && user.designation === 'site_auditor';
   const isStoreIncharge = user.role === 'employee' && user.designation === 'store_incharge';
   // Production incharge can be either employee OR manager with production_incharge designation
   const isProductionIncharge = user.designation === 'production_incharge';
@@ -70,12 +72,13 @@ export function permissionsFor(user: NavUser, today: string) {
     canViewStockOuts,
     canAskBunny,
     isPlainEmployee,
+    isSiteAuditor,
   };
 }
 
 export type Permissions = ReturnType<typeof permissionsFor>;
 
-export type RoleKind = 'owner' | 'ops' | 'store-incharge' | 'production-incharge' | 'crew' | 'rider' | 'auditor';
+export type RoleKind = 'owner' | 'ops' | 'store-incharge' | 'production-incharge' | 'crew' | 'rider' | 'auditor' | 'site-auditor';
 export type HomeKind = 'owner' | 'staff' | 'crew' | 'rider';
 
 /** Lucide icon names, mapped to components in the UI layer (shell/icons.ts). */
@@ -115,6 +118,7 @@ export type ScreenSpec =
   | { screen: 'Events' }
   | { screen: 'Recipes'; mode: 'capture' | 'review' }
   | { screen: 'Complaints' }
+  | { screen: 'SiteAudits' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -180,6 +184,7 @@ export function describeSpec(spec: ScreenSpec): string {
 
 /** The role a login works as in the new navigation. */
 export function roleKindFor(perms: Permissions): RoleKind {
+  if (perms.isSiteAuditor) return 'site-auditor';
   if (perms.isAudit) return 'auditor';
   if (perms.isRider) return 'rider';
   if (perms.isEmployee) {
@@ -202,6 +207,14 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     return path;
   };
   const chrome = { askBunny: p.canAskBunny, storeSwitcher: p.isClusterHead };
+
+  // --- Site auditor: their surprise audits (Home) and the inbox; the account is the avatar sheet --
+  if (kind === 'site-auditor') {
+    add('home', 'nav.audits', 'audit', { screen: 'SiteAudits' }, null, 'audits');
+    add('inbox', 'nav.inbox', 'inbox', { screen: 'Inbox' }, null);
+    const tabs: NavTab[] = [{ path: 'home', label: 'nav.audits', icon: 'audit', subs: [] }, { path: 'inbox', label: 'nav.inbox', icon: 'inbox', subs: [] }];
+    return { kind, home: 'owner', perms: p, tabs, more: [], destinations, discoverable: ['home', 'inbox'], chrome: { ...chrome, askBunny: false } };
+  }
 
   // --- Auditor: the read-only audit dashboard's five views, one per tab (Insights is their Home) --
   if (kind === 'auditor') {
@@ -365,6 +378,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   // Customer complaints (owner, 28 Oct 2026): logged and decided by the owner and operations managers;
   // people asked to explain answer from their Home.
   if (kind === 'owner' || kind === 'ops') add('complaints', 'more.complaints', 'complaints', { screen: 'Complaints' }, null, 'complaints');
+  // Surprise audits (owner, 28 Oct 2026): set up by the owner and ops, done by them or an auditor.
+  if (kind === 'owner' || kind === 'ops') add('audits', 'more.audits', 'audit', { screen: 'SiteAudits' }, null, 'audits');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -391,7 +406,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events', 'complaints'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events', 'complaints', 'audits'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -406,7 +421,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'events', 'recipes-costs', 'complaints', 'my-kpis'),
+      group('more.business', 'insights', 'events', 'recipes-costs', 'complaints', 'audits', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report'),
@@ -498,6 +513,8 @@ export function roleLabelKey(kind: RoleKind): I18nKey {
       return 'role.rider';
     case 'auditor':
       return 'role.auditor';
+    case 'site-auditor':
+      return 'role.siteAuditor';
     default:
       return 'role.staff';
   }

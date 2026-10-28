@@ -66,11 +66,13 @@ export interface PersonLike {
 // none of the business-wide lists, which used to be downloaded to every phone anyway (5 MB, and
 // everyone's figures on a crew member's phone).
 export function needsBusinessData(person: PersonLike): boolean {
+  if (person.designation === 'site_auditor') return false; // independent auditors: their audits only
   return person.role !== 'employee' || person.designation === 'store_incharge' || person.designation === 'production_incharge';
 }
 
 // The staff list for managers' screens; for everyone else only to find their own record.
 export function keepsStaffList(person: PersonLike): boolean {
+  if (person.designation === 'site_auditor') return false;
   return person.role === 'cluster_head' || person.role === 'manager' || person.role === 'audit';
 }
 

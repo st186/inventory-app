@@ -403,9 +403,10 @@ export async function askClaudeForJson(kv: Kv, opts: {
 // first, then the text. At most four images are sent.
 export async function askClaudeWithImages(kv: Kv, opts: {
   purpose: string; system: string; text: string; images: { base64: string; mediaType: string }[]; schema: any; user: AiUser; maxTokens?: number;
+  maxImages?: number; // 4 unless asked (a surprise audit's report reads up to 8)
 }): Promise<{ data: any; model: string }> {
   const content = [
-    ...opts.images.slice(0, 4).map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.base64 } })),
+    ...opts.images.slice(0, opts.maxImages || 4).map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.base64 } })),
     { type: 'text', text: opts.text },
   ];
   const res = await callClaude({ kv } as Deps, {

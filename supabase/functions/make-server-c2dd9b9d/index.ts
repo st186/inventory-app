@@ -9,6 +9,7 @@ import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.t
 import { registerInsightsRoutes } from './insights.ts';
 import { registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
+import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
@@ -363,6 +364,7 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
   { test: /^\/recipes\/(review|costs|price-items|price-links)(\/|$)/, roles: LEADS },
 ];
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
+const SITE_AUDITOR_PATHS = /^\/(site-audits|notifications|push|me|auth|bootstrap)(\/|$)/;
 
 app.use(`${API_PREFIX}/*`, async (c, next) => {
   if (c.req.method === 'OPTIONS') return next();
@@ -382,6 +384,9 @@ app.use(`${API_PREFIX}/*`, async (c, next) => {
   // opens the password routes until it is changed; the app then shows its change-password screen.
   const passwordBlock = await passwordGate(path, auth.user);
   if (passwordBlock) return c.json(passwordBlock, 403);
+  // Independent site auditors (siteAudits.ts) reach their audits, their own login and their
+  // notifications - nothing of the business.
+  if (auth.user.user_metadata?.designation === 'site_auditor' && !SITE_AUDITOR_PATHS.test(path)) return c.json({ error: 'You are not allowed to do this' }, 403);
   const role = auth.user.user_metadata?.role;
   const gate = ROLE_GATES.find((g) => g.test.test(path) && (!g.methods || g.methods.includes(c.req.method)));
   const designation = auth.user.user_metadata?.designation;
@@ -17728,6 +17733,26 @@ registerRepairRoutes(app, expenseReviewDeps);
 // Customer complaints: photos, Bunny's reading, explanations, decisions (complaints.ts).
 registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST });
 registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, verifyUser, storage: supabase.storage });
+registerSiteAuditRoutes(app, {
+  kv: kvWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST,
+  // A sign-in for an independent auditor: role audit, designation site_auditor (trusted keys are
+  // mirrored into app_metadata), and a staff record that no staff list, KPI or payroll counts.
+  createAuditorLogin: async ({ name, email, phone, password, createdBy }) => {
+    const employeeId = await issueNextEmployeeId();
+    const { data, error } = await supabase.auth.admin.createUser({
+      email, password, email_confirm: true,
+      user_metadata: { name, role: 'audit', designation: 'site_auditor', employeeId },
+      // The owner typed the first password, so the auditor sets their own at first sign-in (passwords.ts).
+      app_metadata: { mustChangePassword: true, passwordChangedAt: new Date().toISOString(), passwordChangedBy: 'owner' },
+    });
+    if (error || !data?.user) return { error: error?.message || 'Could not create the sign-in' };
+    await kvWithRetry.set(`unified-employee:${employeeId}`, {
+      id: employeeId, employeeId, name, email, phone, role: 'audit', designation: 'site_auditor', employmentType: 'contract',
+      joiningDate: getTodayIST(), status: 'active', authUserId: data.user.id, createdBy, createdAt: new Date().toISOString(),
+    });
+    return { employeeId };
+  },
+});
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,
