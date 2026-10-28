@@ -176,10 +176,11 @@ export function registerOpeningChecklistRoutes(app: any, deps: KpiDeps) {
 // Called from the store-cover cron (every half hour), so no job of its own.
 export async function openingChecklistTick(deps: KpiDeps) {
   if (!deps.notifyUser) return 0;
-  const templates = ((await deps.kv.getByPrefix<OpeningTemplate>('opening-template:')) || []).filter((t) => t?.storeId && t.assigneeId);
+  const date = istDate(Date.now());
+  // No reminders before the list's first day - those days do not count either (kpi.ts).
+  const templates = ((await deps.kv.getByPrefix<OpeningTemplate>('opening-template:')) || []).filter((t) => t?.storeId && t.assigneeId && (!t.startedOn || t.startedOn <= date));
   if (!templates.length) return 0;
   const ctx = await loadCtx(deps);
-  const date = istDate(Date.now());
   const now = istMinutesNow();
   const owners = ctx.employees.filter((e) => e.role === 'cluster_head' && e.authUserId);
   let sent = 0;
