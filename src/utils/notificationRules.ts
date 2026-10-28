@@ -17,10 +17,10 @@ const URGENT = new Set([
   'production_cash_discrepancy', 'stock_out', 'low_stock_alert', 'stock_request_delayed', 'shipped_delivery_check', 'escalation',
 ]);
 const ACTION = new Set([
-  'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'shift_checkin', 'delivery_incoming',
+  'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'shift_checkin', 'delivery_incoming',
   'stock_request_new', 'event_momo_return', 'rider_fare_proposed', 'rider_called', 'calendar_suggestions', 'stock_recalibration',
 ]);
-const REMINDER = new Set(['workplace_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
+const REMINDER = new Set(['workplace_due', 'workplace_checked', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
 const NEVER_BUNDLE = new Set(['leave_pending', 'timesheet_pending', 'production_pending', 'sales_pending', 'cash_topup_request', 'loan_requested', 'discrepancy_request', 'production_cash_discrepancy_request']);
 
@@ -55,6 +55,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   shift_checkin: 'চেক-ইন নিশ্চিত করুন', attendance_reminder: 'হাজিরা মনে রাখুন', repair_alert: 'মেশিন খারাপ', production_flag: 'প্রোডাকশন যাচাই করুন',
   expense_flag: 'খরচ যাচাই করুন', workplace_alarm: 'নোংরা / আবর্জনা', salary_credited: 'বেতন জমা হয়েছে', kpi_ready: 'আপনার মাসের স্কোর',
   stock_request_new: 'নতুন স্টকের চাহিদা', delivery_incoming: 'মাল আসছে', data_entry_reminder: 'হিসাব লিখতে ভুলবেন না',
+  workplace_due: 'ছবি তোলার সময়', workplace_checked: 'ছবি দেখা হয়েছে',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

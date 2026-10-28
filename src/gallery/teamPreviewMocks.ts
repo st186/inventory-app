@@ -144,9 +144,18 @@ const photo = (label: string, shade: string) =>
 const reviewItem = (date: string, employeeId: string, personName: string, itemId: string, name: string, nameBn: string, extra: Record<string, unknown>) => ({
   date, employeeId, personName, itemId, name, nameBn, hint: '', start: '10:00', end: '11:30', status: 'done', hasPhoto: true, uploadedAt: `${date}T05:10:00Z`, aiStatus: 'scored', aiScore: 8, aiVerdict: 'clean', ...extra,
 });
+const shot = (id: string, at: string, extra: Record<string, unknown> = {}) => ({ id, uploadedAt: `${today}T${at}:00Z`, aiStatus: 'scored', aiScore: 8, aiVerdict: 'clean', aiIssues: [], aiIssuesBengali: [], aiShown: '', aiSevere: false, ...extra });
+const MY_CHECKS: Record<string, any>[] = [
+  { id: 'counter', name: 'Counter top', nameBn: 'কাউন্টার', hint: 'Whole counter, lights on', start: '00:00', end: '23:59', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'done', hasPhoto: true, uploadedAt: `${today}T05:12:00Z`, aiStatus: 'pending', aiScore: 8, aiVerdict: 'clean',
+    photos: [shot('p1', '05:10'), shot('p2', '05:12', { aiStatus: 'pending', aiScore: null, aiVerdict: null })] },
+  { id: 'steamer', name: 'Steamer area', nameBn: 'স্টিমারের জায়গা', start: '00:00', end: '23:59', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'done', hasPhoto: true, uploadedAt: `${today}T06:40:00Z`, aiStatus: 'scored', aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'], aiIssuesBengali: ['স্টিলে তেলের দাগ'], flag: { status: 'needs_cleaning', note: 'AI score 4/10', by: 'AI check', at: `${today}T06:41:00Z`, auto: true },
+    photos: [shot('p3', '06:40', { aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'], aiIssuesBengali: ['স্টিলে তেলের দাগ'] }), shot('p4', '06:41', { aiVerdict: 'unclear_photo', aiScore: 3 })] },
+  { id: 'crates', name: 'Crates and containers', nameBn: 'ক্রেট ও কন্টেনার', hint: 'Washed, dry, stacked, lids on', start: '00:00', end: '23:59', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'due', hasPhoto: false },
+  { id: 'floor', name: 'Floor', nameBn: 'মেঝে', start: '23:58', end: '23:59', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'upcoming', hasPhoto: false },
+];
 const REVIEW = [
   reviewItem(today, 'DEMO-41', 'Counter Crew Demo', 'counter', 'Counter top', 'কাউন্টার', {}),
-  reviewItem(today, 'DEMO-42', 'Steamer Crew Demo', 'steamer', 'Steamer area', 'স্টিমারের জায়গা', { aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'], aiIssuesBengali: ['স্টিলে তেলের দাগ'], flag: { status: 'needs_cleaning', note: 'Wipe the steel', by: 'Store Incharge Demo', at: `${today}T06:00:00Z` } }),
+  reviewItem(today, 'DEMO-42', 'Steamer Crew Demo', 'steamer', 'Steamer area', 'স্টিমারের জায়গা', { photos: [shot('p3', '06:40', { aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'] }), shot('p4', '06:42')], aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'], aiIssuesBengali: ['স্টিলে তেলের দাগ'], flag: { status: 'needs_cleaning', note: 'Wipe the steel', by: 'Store Incharge Demo', at: `${today}T06:00:00Z` } }),
   reviewItem(today, 'DEMO-41', 'Counter Crew Demo', 'floor', 'Floor', 'মেঝে', { hasPhoto: false, status: 'late', aiStatus: undefined, aiScore: null, aiVerdict: null, start: '09:00', end: '10:00' }),
   reviewItem(today, 'DEMO-42', 'Steamer Crew Demo', 'sink', 'Wash basin', 'বেসিন', { aiScore: 9, uploadedAt: `${today}T06:40:00Z`, late: true, status: 'done_late' }),
 ];
@@ -208,17 +217,23 @@ export const TEAM_PREVIEW_MOCK: TeamPreviewMock = {
   },
   workplace: {
     getAccess: () => wait({ canSetup: true, locations: [{ kind: 'store', id: 'STORE-1', name: 'Store A' }, { kind: 'production', id: 'PH-1', name: 'Kitchen A' }], settings: { aiEnabled: true, aiThreshold: 6 } }),
-    getMyChecks: () =>
-      wait({
-        date: today,
-        earlyMinutes: 30,
-        employeeId: 'DEMO-41',
-        items: [
-          { id: 'counter', name: 'Counter top', nameBn: 'কাউন্টার', hint: 'Whole counter, lights on', start: '10:00', end: '11:30', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'done', hasPhoto: true, uploadedAt: `${today}T05:10:00Z`, aiStatus: 'scored', aiScore: 8, aiVerdict: 'clean' },
-          { id: 'steamer', name: 'Steamer area', nameBn: 'স্টিমারের জায়গা', start: '12:00', end: '13:00', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'done', hasPhoto: true, uploadedAt: `${today}T06:40:00Z`, aiStatus: 'scored', aiScore: 4, aiVerdict: 'needs_cleaning', aiIssues: ['Oil marks on the steel'], aiIssuesBengali: ['স্টিলে তেলের দাগ'], flag: { status: 'needs_cleaning', note: 'Wipe the steel', by: 'Store Incharge Demo', at: `${today}T07:00:00Z`, auto: false } },
-          { id: 'floor', name: 'Floor', nameBn: 'মেঝে', start: '20:00', end: '22:00', locationKind: 'store', locationId: 'STORE-1', locationName: 'Store A', status: 'upcoming', hasPhoto: false },
-        ],
-      }),
+    getMyChecks: () => wait({ date: today, earlyMinutes: 30, employeeId: 'DEMO-41', items: MY_CHECKS.map((x) => ({ ...x })) }),
+    // Uploads answer at once with the photo waiting for the AI, as the server does.
+    uploadPhoto: (p: never) => {
+      const { itemId, replacePhotoId } = p as { itemId: string; replacePhotoId?: string };
+      const it = MY_CHECKS.find((x) => x.id === itemId)!;
+      const shot = { id: `p${Date.now()}`, uploadedAt: new Date().toISOString(), aiStatus: 'pending', aiScore: null, aiVerdict: null, aiIssues: [], aiIssuesBengali: [], aiShown: '', aiSevere: false };
+      const photos = (it.photos as any[]) || [];
+      it.photos = replacePhotoId ? photos.map((x) => (x.id === replacePhotoId ? shot : x)) : [...photos, shot];
+      Object.assign(it, { hasPhoto: true, status: 'done', uploadedAt: shot.uploadedAt, aiStatus: 'pending' });
+      return wait({ success: true, flagged: false, item: { ...it } }, 700);
+    },
+    removePhoto: (p: never) => {
+      const { itemId, photoId } = p as { itemId: string; photoId: string };
+      const it = MY_CHECKS.find((x) => x.id === itemId)!;
+      it.photos = ((it.photos as any[]) || []).filter((x) => x.id !== photoId);
+      return wait({ success: true, item: { ...it } });
+    },
     getReview: () => wait({ from: today, to: today, location: { kind: 'store', id: 'STORE-1', name: 'Store A' }, items: REVIEW }),
     getSummary: () => wait({ from: day(-6), to: today, people: [{ employeeId: 'DEMO-41', name: 'Counter Crew Demo', required: 21, done: 19, onTime: 17, needsCleaning: 1, avgScore: 7.8 }, { employeeId: 'DEMO-42', name: 'Steamer Crew Demo', required: 14, done: 12, onTime: 9, needsCleaning: 3, avgScore: 5.9 }] }),
     loadPhotoUrl: (path: never) => wait(photo(String(path).includes('steamer') ? 'Steamer area' : String(path).includes('sink') ? 'Wash basin' : 'Counter top', String(path).includes('steamer') ? 'rgb(236,233,228)' : 'rgb(245,243,240)'), 200),

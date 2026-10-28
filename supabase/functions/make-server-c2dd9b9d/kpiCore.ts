@@ -80,7 +80,7 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -108,6 +108,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   productionCash: 'Production cash matches',
   storeCover: 'Store cover kept',
   requestAccepted: 'Requests accepted by 9 AM',
+  cratesClean: 'Crates and containers clean',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -134,6 +135,8 @@ export const DEFAULT_WEIGHTS: Record<RoleGroup, Partial<Record<KpiId, number>>> 
 // does, not just their role. The role's list above is only the starting point; a KPI added
 // outside it starts at ADDED_KPI_WEIGHT.
 export const ALL_KPIS = Object.keys(KPI_LABELS) as KpiId[];
+// The crates and containers photo check(s) at a place, by name or id (a renamed check still counts).
+export const isCratesCheck = (x: { id?: string; name?: string }) => /crate|container/i.test(`${x.id || ''} ${x.name || ''}`);
 export const ADDED_KPI_WEIGHT = 10;
 
 // Default shift by workplace (owner, 27-28 Oct 2026): store 3:00-10:30 PM; production house
@@ -494,6 +497,7 @@ export type MonthInput = {
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
+  crateChecks?: { date: string; itemId: string; item: any | null }[]; // crates and containers checks due at that place, with the photo if one came
   productionCash?: any[]; // the day's production-house cash counts (production-cash:{house}:{date})
   coverDays?: { date: string; reasons: string[] }[]; // this month's store-cover days for the person
   coverPunches?: { date: string; rec: any }[]; // their separate store check-ins (punch-cover:{id}:{date})
@@ -533,6 +537,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
     case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
     case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
+    case 'cratesClean': return 'Wash, dry and stack every crate and container with the lids on, and photograph them each morning (a photo for each stack). No photo scores nothing that day; one that needs cleaning, half.';
   }
 }
 
@@ -967,6 +972,29 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       severe ? `${plural(severe, 'photo')} showed a garbage dump or serious dirt (${PLACE_SEVERE_PENALTY} points off each).` : '',
       dirty ? `${plural(dirty, 'photo')} needed cleaning (${PLACE_FLAG_PENALTY} points off each).` : '',
       !severe && !dirty ? 'All clean.' : '',
+    ].filter(Boolean).join(' '));
+  }
+
+  // Crates and containers (owner, 28 Oct 2026): each day the check was due at the place, full marks
+  // for a clean photo, half for one that needed cleaning, nothing for no photo or filth.
+  if (ids.includes('cratesClean')) {
+    const seen = new Set<string>();
+    let due = 0, clean = 0, dirty = 0, filthy = 0, missing = 0;
+    for (const { date, itemId, item } of input.crateChecks || []) {
+      if (date < from || date > to || seen.has(`${date}|${itemId}`)) continue;
+      seen.add(`${date}|${itemId}`);
+      due++;
+      if (!item) missing++;
+      else if (item.wasSevere || item.aiSevere) filthy++;
+      else if (item.wasFlagged || item.flag?.status === 'needs_cleaning' || item.aiVerdict === 'needs_cleaning') dirty++;
+      else clean++;
+    }
+    if (!due) set('cratesClean', null, 'No crates and containers photos were due in this period.');
+    else set('cratesClean', pct(clean + dirty / 2, due), [
+      `${clean} of ${plural(due, 'day')} clean.`,
+      dirty ? `${plural(dirty, 'day')} needed cleaning (half marks).` : '',
+      filthy ? `${plural(filthy, 'day')} showed filth or garbage (no marks).` : '',
+      missing ? `${plural(missing, 'day')} with no photo.` : '',
     ].filter(Boolean).join(' '));
   }
 

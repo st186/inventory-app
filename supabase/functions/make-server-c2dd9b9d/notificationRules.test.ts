@@ -18,6 +18,7 @@ test('categories', () => {
   assert.equal(notificationCategory('cash_topup_request'), 'action');
   assert.equal(notificationCategory('expense_flag'), 'action');
   assert.equal(notificationCategory('workplace_due'), 'reminder');
+  assert.equal(notificationCategory('workplace_checked'), 'reminder'); // "your photos are checked" buzzes, unlike updates
   assert.equal(notificationCategory('attendance_reminder'), 'reminder');
   assert.equal(notificationCategory('leave_approved'), 'update');
   assert.equal(notificationCategory('inventory_logged'), 'update');

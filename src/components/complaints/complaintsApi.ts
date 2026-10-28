@@ -20,8 +20,8 @@ export interface Complaint {
     storeOnShift: { id: string; name: string }[]; productionOnShift: { id: string; name: string }[];
   };
   ai: {
-    status: 'done' | 'failed'; summary?: string; issues?: { kind: string; note: string }[]; severity?: Severity; likelySource?: LikelySource;
-    confidence?: 'low' | 'medium' | 'high'; reasoning?: string; questionsForStaff?: string[]; recommendedActions?: string[]; error?: string;
+    status: 'done' | 'failed' | 'pending'; summary?: string; issues?: { kind: string; note: string }[]; severity?: Severity; likelySource?: LikelySource;
+    confidence?: 'low' | 'medium' | 'high'; reasoning?: string; questionsForStaff?: string[]; recommendedActions?: string[]; error?: string; at?: string;
   };
   proposed: { id: string; name: string; why: string }[];
   asked: { id: string; name: string; askedAt: string }[];

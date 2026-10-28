@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
   coverReasonsOn, extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
-  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, type MonthInput, type PunchRecord,
+  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, isCratesCheck, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
 let passed = 0;
@@ -319,6 +319,24 @@ test('place kept clean: every photo at the incharge\'s place, a garbage dump cos
   assert.equal(k.placeClean.score, 100 - 5 - 15 * 2); // 65
   assert.match(k.placeClean.explanation, /4 photos taken here\. 2 photos showed a garbage dump/);
   assert.equal(computeMonthKpis({ ...base, group: 'store_incharge', settings, placePhotos: [] }).kpis.find((x) => x.id === 'placeClean')!.score, null);
+});
+
+test('crates and containers: a day per check, half marks when it needed cleaning', () => {
+  const base = crewMonth();
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['attendance', 'cratesClean'] }, 'BM002', 'production', 'production_incharge');
+  const crateChecks = [
+    { date: '2026-10-01', itemId: 'crates-x', item: { aiScore: 9, aiVerdict: 'clean' } },
+    { date: '2026-10-01', itemId: 'crates-x', item: { aiScore: 9, aiVerdict: 'clean' } }, // the same day twice counts once
+    { date: '2026-10-02', itemId: 'crates-x', item: { aiScore: 5, aiVerdict: 'needs_cleaning' } },
+    { date: '2026-10-03', itemId: 'crates-x', item: null }, // no photo
+    { date: '2026-10-04', itemId: 'crates-x', item: { aiScore: 8, aiVerdict: 'clean', wasSevere: true } }, // filth earlier that day
+    { date: '2026-10-25', itemId: 'crates-x', item: null }, // after the counted days
+  ];
+  const k = computeMonthKpis({ ...base, group: 'production_incharge', settings, crateChecks }).kpis.find((x) => x.id === 'cratesClean')!;
+  assert.equal(k.score, 37.5); // (1 + 0.5) of 4 days
+  assert.match(k.explanation, /1 of 4 days clean\. 1 day needed cleaning .* 1 day showed filth .* 1 day with no photo/);
+  assert.equal(isCratesCheck({ id: 'crates-containers-k7c2', name: 'Crates and containers' }), true);
+  assert.equal(isCratesCheck({ id: 'walls-92cg', name: 'Walls' }), false);
 });
 
 test('cash KPIs: POS cash for the cashier, production cash', () => {

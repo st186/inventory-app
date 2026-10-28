@@ -39,6 +39,11 @@ function statusOf(c: api.Complaint): { label: string; tone: 'neutral' | 'warning
   return { label: 'To review', tone: 'info' };
 }
 
+// Bunny reads a new complaint in the background; one still "reading" after a few minutes was
+// dropped on the way, so it shows as not read (with Try again).
+const READING_GIVE_UP_MS = 3 * 60_000;
+const isReading = (c: api.Complaint) => c.ai?.status === 'pending' && Date.now() - Date.parse(c.ai.at || '') < READING_GIVE_UP_MS;
+
 export function ComplaintsScreen(_props: { onBack?: () => void }) {
   const [data, setData] = useState<{ complaints: api.Complaint[]; canManage: boolean } | null>(null);
   const [error, setError] = useState(false);
@@ -50,6 +55,13 @@ export function ComplaintsScreen(_props: { onBack?: () => void }) {
     api.listComplaints().then((r) => setData(r)).catch(() => setError(true));
   }, []);
   useEffect(() => { load(); }, [load]);
+  // While Bunny is still reading one (in the background), check back now and then.
+  const reading = (data?.complaints || []).some(isReading);
+  useEffect(() => {
+    if (!reading) return;
+    const id = setInterval(() => api.listComplaints().then((r) => setData(r)).catch(() => undefined), 8000);
+    return () => clearInterval(id);
+  }, [reading]);
   const list = (data?.complaints || []).filter((c) => (tab === 'open' ? c.status !== 'closed' : c.status === 'closed'));
   const current = data?.complaints.find((c) => c.id === openId) || null;
   const replace = (c: api.Complaint) => setData((d) => (d ? { ...d, complaints: [c, ...d.complaints.filter((x) => x.id !== c.id)] } : d));
@@ -116,7 +128,7 @@ function NewComplaint({ onClose, onSaved }: { onClose: () => void; onSaved: (c: 
     setSaving(true);
     try {
       const c = await api.createComplaint({ source, rating, orderDate, storeId, customerText, ownerNote, photos });
-      toast.success(c.ai?.status === 'done' ? 'Logged. Bunny has read it.' : 'Logged. Bunny could not read it - try again from the complaint.');
+      toast.success('Logged. Bunny is reading it - you will get a notification when it is done.');
       onSaved(c);
     } catch (e) {
       toast.error((e as Error).message || 'Could not save it');
@@ -125,8 +137,8 @@ function NewComplaint({ onClose, onSaved }: { onClose: () => void; onSaved: (c: 
     }
   };
   return (
-    <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} title="Log a complaint" description="Bunny reads the photos and checks that day's records. It takes about half a minute."
-      footer={<Button size="lg" className="flex-1" loading={saving} onClick={save}>{saving ? 'Bunny is reading it…' : 'Save and check'}</Button>}>
+    <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} title="Log a complaint" description="Saved at once. Bunny then reads the photos, checks that day's records and sends you a notification."
+      footer={<Button size="lg" className="flex-1" loading={saving} onClick={save}>{saving ? 'Saving…' : 'Save and check'}</Button>}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <span className="text-body-sm font-medium text-text">Where it came from</span>
@@ -229,7 +241,9 @@ function ComplaintSheet({ complaint: c, canManage, onClose, onChanged }: { compl
         {c.customerText && <Callout tone="neutral" title="What the customer said">{c.customerText}</Callout>}
         {c.ownerNote && <p className="text-body-sm text-text-2"><span className="font-medium text-text">Notes:</span> {c.ownerNote}</p>}
 
-        {ai?.status === 'done' ? (
+        {isReading(c) ? (
+          <Callout tone="info" icon={Sparkles} title="Bunny is reading this complaint">It checks the photos against that day's records. You will get a notification when it is done.</Callout>
+        ) : ai?.status === 'done' ? (
           <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Sparkles className="size-4 text-primary" aria-hidden="true" />

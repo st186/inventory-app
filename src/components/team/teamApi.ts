@@ -94,6 +94,7 @@ export const teamWorkplaceApi = {
   getAccess: wrap('workplace', 'getAccess', wp.getAccess),
   getMyChecks: wrap('workplace', 'getMyChecks', wp.getMyChecks),
   uploadPhoto: wrap('workplace', 'uploadPhoto', wp.uploadPhoto),
+  removePhoto: wrap('workplace', 'removePhoto', wp.removePhoto),
   rescorePhoto: wrap('workplace', 'rescorePhoto', wp.rescorePhoto),
   getReview: wrap('workplace', 'getReview', wp.getReview),
   getSummary: wrap('workplace', 'getSummary', wp.getSummary),

@@ -11,6 +11,7 @@
 //   complaint:{id}   one complaint, its photos, evidence, Bunny's reading, explanations, decision
 // Photos are in the private bucket complaint-photos at {id}/{n}.jpg, shown by signed links.
 import { askClaudeWithImages } from './insights.ts';
+import { inBackground } from './background.ts';
 
 type Kv = {
   get: (key: string) => Promise<any>;
@@ -284,10 +285,20 @@ export function registerComplaintRoutes(app: any, deps: ComplaintDeps) {
       const complaint: any = {
         id, createdAt: new Date().toISOString(), createdBy: a.name, source, rating: rating >= 1 && rating <= 5 ? Math.round(rating) : null,
         orderDate, storeId, customerText, ownerNote, photos, evidence, status: 'open', asked: [], explanations: {},
+        ai: { status: 'pending', at: new Date().toISOString() }, proposed: proposePeople(evidence, 'unclear'),
       };
-      complaint.ai = await analyse(deps, complaint, photosIn.map((p: any) => ({ base64: p.base64, mediaType: p.mediaType })));
-      complaint.proposed = proposePeople(evidence, complaint.ai.likelySource || 'unclear');
       await deps.kv.set(`complaint:${id}`, complaint);
+      // Saved and answered at once; Bunny reads it afterwards and tells whoever logged it.
+      const images = photosIn.map((p: any) => ({ base64: p.base64, mediaType: p.mediaType }));
+      await inBackground('Complaint review', async () => {
+        const ai = await analyse(deps, complaint, images);
+        const latest = (await deps.kv.get(`complaint:${id}`)) || complaint;
+        latest.ai = ai;
+        if (!latest.asked?.length) latest.proposed = proposePeople(latest.evidence, ai.likelySource || 'unclear');
+        await deps.kv.set(`complaint:${id}`, latest);
+        await deps.notifyUser(a.user.id, 'complaint_read', ai.status === 'done' ? `Bunny has read it: ${headline(latest)}` : `Bunny could not read it: ${headline(latest)}`,
+          ai.status === 'done' ? `${ai.summary || ''} Open it to ask the people concerned to explain.`.trim() : 'Open the complaint and tap Try again.', id, latest.orderDate).catch(() => undefined);
+      });
       return c.json({ complaint: await withPhotos(complaint) });
     } catch (err) { return fail(c, err); }
   });

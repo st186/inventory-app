@@ -12,6 +12,14 @@ export type AiVerdict = 'clean' | 'needs_cleaning' | 'unclear_photo';
 
 export interface WorkplaceFlag { status: 'ok' | 'needs_cleaning'; note: string; by: string; at: string; auto?: boolean; fixedAt?: string }
 
+// One photo of a check. A check can hold several (walls, shelves, stacks of crates); the check's
+// own AI fields are the worst of them.
+export interface CheckPhoto {
+  id: string; uploadedAt: string; aiStatus: AiStatus; aiScore: number | null; aiVerdict: AiVerdict | null;
+  aiIssues: string[]; aiIssuesBengali: string[]; aiShown: string; aiSevere: boolean;
+}
+export const MAX_PHOTOS = 6; // per check, as the server allows (workplace.ts)
+
 // What a screen gets about a photo (no storage ids).
 export interface PhotoView {
   hasPhoto: boolean;
@@ -27,6 +35,14 @@ export interface PhotoView {
   aiIssues?: string[];
   aiIssuesBengali?: string[];
   aiShown?: string;
+  photos?: CheckPhoto[];
+}
+
+// The check's photos; a server from before several were allowed sends none, so its one photo stands in.
+export function photosOfView(v: PhotoView): CheckPhoto[] {
+  if (v.photos?.length) return v.photos;
+  if (!v.hasPhoto) return [];
+  return [{ id: 'p0', uploadedAt: v.uploadedAt || '', aiStatus: v.aiStatus || 'off', aiScore: v.aiScore ?? null, aiVerdict: v.aiVerdict ?? null, aiIssues: v.aiIssues || [], aiIssuesBengali: v.aiIssuesBengali || [], aiShown: v.aiShown || '', aiSevere: false }];
 }
 
 // coverId: who takes the photo on a day the assignee is on leave (empty: their incharge, or someone else there).
@@ -91,9 +107,13 @@ export const getTemplate = (kind: LocationKind, id: string) => call<TemplateResp
 export const saveTemplate = (kind: LocationKind, id: string, items: TemplateItem[]) =>
   call<TemplateResponse>(`/workplace/template?${q({ kind, id })}`, { method: 'PUT', body: JSON.stringify({ items }) });
 export const getMyChecks = () => call<MyChecks>('/workplace/my');
-export const uploadPhoto = (p: { itemId: string; image: string; thumb?: string; forEmployeeId?: string }) =>
+// add: another photo next to the ones already sent; replacePhotoId: a retake of that one. The
+// answer comes once the photo is saved - the AI looks at it afterwards.
+export const uploadPhoto = (p: { itemId: string; image: string; thumb?: string; forEmployeeId?: string; add?: boolean; replacePhotoId?: string }) =>
   call<{ success: boolean; flagged: boolean; item: MyCheck }>('/workplace/upload', { method: 'POST', body: JSON.stringify(p) });
-export const rescorePhoto = (p: { date: string; employeeId: string; itemId: string }) =>
+export const removePhoto = (p: { itemId: string; photoId: string; forEmployeeId?: string }) =>
+  call<{ success: boolean; item: MyCheck }>('/workplace/photo-remove', { method: 'POST', body: JSON.stringify(p) });
+export const rescorePhoto = (p: { date: string; employeeId: string; itemId: string; photoId?: string }) =>
   call<PhotoView & { success: boolean; flagged: boolean }>('/workplace/rescore', { method: 'POST', body: JSON.stringify(p) });
 export const getReview = (kind: LocationKind, id: string, from: string, to: string) => call<ReviewResponse>(`/workplace/review?${q({ kind, id, from, to })}`);
 export const setFlag = (p: { date: string; employeeId: string; itemId: string; status: 'ok' | 'needs_cleaning'; note: string }) =>
@@ -106,8 +126,9 @@ export const getAlerts = () => call<{ alerts: WorkplaceAlert[] }>('/workplace/al
 // Photos come through the server with the sign-in token (no public links), so an <img> can't load
 // them directly: fetch as a blob and hand back an object URL. Thumbnails are cached for the session.
 const blobCache = new Map<string, Promise<string>>();
-export function photoPath(date: string, employeeId: string, itemId: string, thumb: boolean) {
-  return `/workplace/photo/${date}/${encodeURIComponent(employeeId)}/${encodeURIComponent(itemId)}${thumb ? '?size=thumb' : ''}`;
+export function photoPath(date: string, employeeId: string, itemId: string, thumb: boolean, photoId?: string) {
+  const query = q({ size: thumb ? 'thumb' : undefined, photo: photoId });
+  return `/workplace/photo/${date}/${encodeURIComponent(employeeId)}/${encodeURIComponent(itemId)}${query ? `?${query}` : ''}`;
 }
 export function loadPhotoUrl(path: string, version = ''): Promise<string> {
   const key = `${path}#${version}`;

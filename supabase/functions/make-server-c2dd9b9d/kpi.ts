@@ -20,7 +20,7 @@ import { askClaudeForJson, AiError } from './insights.ts';
 import {
   FLAG_LABELS, KPI_LABELS, ROLE_LABELS, AI_MAX_SHIFT, EXTRA_MIN_OFFERED, addDays, checkApprovedAmount, clampAiAmount, cleanSettingsInput,
   computeMonthKpis, extraMinutesOf, isMonth, istDate, monthDays, variablePayFormula,
-  type KpiId, type MonthKpis,
+  type KpiId, type MonthKpis, isCratesCheck,
 } from './kpiCore.ts';
 import { coverFor, loadCoverContext, registerStoreCoverRoutes } from './storeCover.ts';
 import {
@@ -175,16 +175,22 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
   }
   // Production entries are approved for the house that supplies the person's store.
   const supplyHouse = house || (store ? places.storeHouse.get(store) || null : null);
-  // Every photo taken at the incharge's place (a production incharge's kitchen, else their store).
-  let placePhotos: { date: string; item: any }[] = [];
-  if (has.has('placeClean')) {
-    const place = profile.group === 'production_incharge' || (!store && house) ? { kind: 'production', id: house } : { kind: 'store', id: store };
-    if (place.id) {
-      for (const rows of shared.checks.values()) {
-        for (const { date, row } of rows) {
-          for (const item of Object.values(row?.items || {}) as any[]) {
-            if (item?.locationKind === place.kind && item?.locationId === place.id) placePhotos.push({ date, item });
-          }
+  // Every photo taken at the incharge's place (a production incharge's kitchen, else their store),
+  // and that place's crates and containers checks, whoever had them.
+  const place = profile.group === 'production_incharge' || (!store && house) ? { kind: 'production', id: house } : { kind: 'store', id: store };
+  const atPlace = (x: any) => x?.locationKind === place.kind && x?.locationId === place.id;
+  const placePhotos: { date: string; item: any }[] = [];
+  const crateChecks: { date: string; itemId: string; item: any | null }[] = [];
+  if (place.id && (has.has('placeClean') || has.has('cratesClean'))) {
+    for (const rows of shared.checks.values()) {
+      for (const { date, row } of rows) {
+        for (const [itemId, item] of Object.entries(row?.items || {}) as [string, any][]) {
+          if (!atPlace(item)) continue;
+          placePhotos.push({ date, item });
+          if (isCratesCheck({ id: itemId, name: item?.name })) crateChecks.push({ date, itemId, item });
+        }
+        for (const a of row?.assigned || []) {
+          if (atPlace(a) && isCratesCheck(a) && !row?.items?.[a.id]) crateChecks.push({ date, itemId: a.id, item: null });
         }
       }
     }
@@ -210,6 +216,7 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
     placePhotos,
+    crateChecks,
     productionCash: supplyHouse ? shared.productionCash.filter((r: any) => r.productionHouseId === supplyHouse) : [],
     coverDays,
     coverPunches,

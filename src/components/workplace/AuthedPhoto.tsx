@@ -6,9 +6,10 @@ import { photoPath } from './workplaceApi';
 import { teamWorkplaceApi } from '../team/teamApi';
 
 // A workplace photo loaded through the server with the sign-in token, fetched only once it
-// scrolls into view so a month-long gallery doesn't pull hundreds of photos at once.
-export function AuthedPhoto({ date, employeeId, itemId, thumb, version, className, alt = '', fit = 'cover' }: {
-  date: string; employeeId: string; itemId: string; thumb: boolean; version?: string; className?: string; alt?: string; fit?: 'cover' | 'contain';
+// scrolls into view so a month-long gallery doesn't pull hundreds of photos at once. photoId picks
+// one of a check's photos (default: the first).
+export function AuthedPhoto({ date, employeeId, itemId, photoId, thumb, version, className, alt = '', fit = 'cover' }: {
+  date: string; employeeId: string; itemId: string; photoId?: string; thumb: boolean; version?: string; className?: string; alt?: string; fit?: 'cover' | 'contain';
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -29,11 +30,11 @@ export function AuthedPhoto({ date, employeeId, itemId, thumb, version, classNam
     let cancelled = false;
     setUrl(null);
     setFailed(null);
-    teamWorkplaceApi.loadPhotoUrl(photoPath(date, employeeId, itemId, thumb), version || '')
+    teamWorkplaceApi.loadPhotoUrl(photoPath(date, employeeId, itemId, thumb, photoId), version || '')
       .then((u: string) => { if (!cancelled) setUrl(u); })
       .catch((e: Error) => { if (!cancelled) setFailed(e?.message || 'Could not load'); });
     return () => { cancelled = true; };
-  }, [visible, date, employeeId, itemId, thumb, version]);
+  }, [visible, date, employeeId, itemId, photoId, thumb, version]);
 
   return (
     <div ref={ref} className={cn('relative overflow-hidden bg-surface-2', className)}>

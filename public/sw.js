@@ -137,6 +137,9 @@ const NOTIFICATION_VIEW_MAP = {
   password_expiring: { view: 'analytics' }, // home, where the expiry banner is (plain employees/riders are moved on to their own first screen)
   // Workplace checks: staff land on their own list; "review" falls back to it for non-reviewers.
   workplace_due: { view: 'workplace', tab: 'mine' },
+  workplace_checked: { view: 'workplace', tab: 'mine' },
+  complaint_read: { view: 'complaints' },
+  complaint_answered: { view: 'complaints' },
   workplace_missed: { view: 'workplace', tab: 'review' },
   workplace_flag: { view: 'workplace', tab: 'review' },
   workplace_alarm: { view: 'workplace', tab: 'review' },

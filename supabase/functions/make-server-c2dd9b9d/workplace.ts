@@ -4,11 +4,16 @@
 // post-steaming table, surfaces, walls and equipment. Each photo is scored for hygiene by the AI
 // (insights.ts aiScorePhoto) and kept in the owner's Google Drive (gdrive.ts) - or, until Drive is
 // set up, in a private Supabase bucket that keeps 60 days. Registered from index.ts.
+// Owner, 28 Oct 2026: taking the photos should be a two-minute job. A photo is saved and answered
+// at once and the AI looks at it afterwards (inBackground; the 15-minute cron picks up any left
+// behind); the person is told when their round of photos is checked (resultPush). A check can
+// hold several photos (walls, shelves, stacks of crates), each retaken or removed on its own.
 //
 // KV:
 //   workplace-template:{store|production}:{locationId}  one location's checklist (who, when, which days)
 //   workplace-check:{date}:{employeeId}                 one person's day - the KPI feature reads this shape
 //   workplace-sent:{date}                               reminders already sent that day (cron)
+//   workplace-results-sent:{date}:{employeeId}          when the person was last told their photos were checked
 //   workplace-settings                                  AI scoring on/off and the auto-flag score
 // Event stalls (events.ts) are a third kind of place, 'event': on the event days the incharge gets
 // a short stall checklist by default (or the one the owner saves for that event).
@@ -19,6 +24,8 @@
 
 import { aiScorePhoto } from './insights.ts';
 import { driveConfigured, ensureDriveFolder, uploadDriveFile, downloadDriveFile } from './gdrive.ts';
+import { AI_KEYS, isLow, photosOf, rollUp, settleFlag, type Photo } from './workplacePhotos.ts';
+import { inBackground } from './background.ts';
 
 type Kv = {
   get: <T = any>(key: string) => Promise<T>;
@@ -53,6 +60,10 @@ type CheckItem = {
   storage: 'drive' | 'bucket'; driveFileId?: string; driveThumbId?: string; thumbPath?: string; mimeType: string;
   aiStatus?: 'pending' | 'scored' | 'failed' | 'off'; aiScore?: number; aiVerdict?: string;
   aiIssues?: string[]; aiIssuesBengali?: string[]; aiShown?: string; aiAt?: string;
+  // Every photo of the check, first one the cover. The storage and AI fields above are a roll-up
+  // of these (rollUp) so the KPI, review and complaint readers still see one answer per check.
+  // Rows from before several photos were allowed have none: photosOf reads them as one.
+  photos?: Photo[];
 };
 type CheckRow = {
   date: string; employeeId: string; locationKind: LocationKind | null; locationId: string | null;
@@ -75,6 +86,9 @@ const MAX_THUMB_BYTES = 200 * 1024; // ~320 px thumbnail made by the app alongsi
 const MAX_DATA_URL_CHARS = Math.ceil((MAX_PHOTO_BYTES * 4) / 3) + 64;
 const EARLY_UPLOAD_MINUTES = 30; // a photo hours before the window proves nothing about 3-4 PM
 const MAX_RETAKES = 10; // per item per day, so a stuck camera button can't fill the storage
+const MAX_PHOTOS = 6; // per check: a few walls or shelves, not an album
+const STUCK_PENDING_MINUTES = 3; // a photo still waiting for the AI this long after upload is scored by the cron
+const LEFTOVERS_PER_RUN = 6; // ... at most this many per cron run
 const KEEP_BUCKET_DAYS = 60; // bucket fallback only - Drive photos are kept
 const MAX_ITEMS = 40;
 const MAX_RANGE_DAYS = 31;
@@ -114,6 +128,7 @@ function bnBy(t: string) {
 const templateKey = (kind: LocationKind, id: string) => `workplace-template:${kind}:${id}`;
 const checkKey = (date: string, employeeId: string) => `workplace-check:${date}:${employeeId}`;
 const sentKey = (date: string) => `workplace-sent:${date}`;
+const resultsSentKey = (date: string, employeeId: string) => `workplace-results-sent:${date}:${employeeId}`;
 const SETTINGS_KEY = 'workplace-settings';
 const safeSeg = (s: string) => String(s || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60) || 'x';
 const str = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
@@ -171,6 +186,7 @@ const DEFAULT_ITEMS: Record<LocationKind, [string, string, string, string][]> = 
     ['steamer', 'Steamer', 'স্টিমার', 'No stuck dough · আটকে থাকা ময়দা নেই'],
     ['freezer', 'Freezer', 'ফ্রিজার', 'Door seal clean, no ice build-up · দরজার রাবার পরিষ্কার, বরফ জমেনি'],
     ['other-equipment', 'Other equipment', 'অন্যান্য যন্ত্রপাতি', 'Mixer, grinder, utensils · মিক্সার, গ্রাইন্ডার, বাসন'],
+    ['crates-containers', 'Crates and containers', 'ক্রেট ও কন্টেনার', 'Washed, dry, stacked, lids on · ধোয়া, শুকনো, সাজানো, ঢাকনা লাগানো'],
   ],
   event: [
     ['stall-front', 'Stall front and counter', 'স্টলের সামনে ও কাউন্টার', 'Counter wiped, banner straight · কাউন্টার মোছা, ব্যানার সোজা'],
@@ -339,8 +355,15 @@ function itemView(it?: CheckItem) {
     onBehalf: !!it.onBehalf, uploadedByName: it.onBehalf ? it.uploadedByName : undefined,
     flag: it.flag || null, aiStatus: it.aiStatus || 'off', aiScore: it.aiScore ?? null, aiVerdict: it.aiVerdict || null,
     aiIssues: it.aiIssues || [], aiIssuesBengali: it.aiIssuesBengali || [], aiShown: it.aiShown || '',
+    photos: photosOf(it).map((p) => ({
+      id: p.id, uploadedAt: p.uploadedAt, aiStatus: p.aiStatus || 'off', aiScore: p.aiScore ?? null, aiVerdict: p.aiVerdict || null,
+      aiIssues: p.aiIssues || [], aiIssuesBengali: p.aiIssuesBengali || [], aiShown: p.aiShown || '', aiSevere: !!p.aiSevere,
+    })),
   };
 }
+
+// ---------------- Several photos per check (rules in workplacePhotos.ts) ----------------
+const newPhotoId = () => `p${Date.now().toString(36)}${randomId()}`;
 
 // ---------------- People, places and permissions ----------------
 async function loadEmployees(kv: Kv): Promise<any[]> {
@@ -506,7 +529,7 @@ async function storePhoto(deps: Deps, o: { date: string; item: Assigned; employe
   return { storage: 'bucket', path, ...(thumbPath ? { thumbPath } : {}), mimeType: o.photo.type };
 }
 
-async function readPhoto(deps: Deps, it: CheckItem, thumb: boolean): Promise<{ body: ReadableStream | Uint8Array; type: string } | null> {
+async function readPhoto(deps: Deps, it: Stored, thumb: boolean): Promise<{ body: ReadableStream | Uint8Array; type: string } | null> {
   try {
     if (it.storage === 'drive') {
       const id = (thumb && it.driveThumbId) || it.driveFileId;
@@ -525,7 +548,7 @@ async function readPhoto(deps: Deps, it: CheckItem, thumb: boolean): Promise<{ b
 }
 
 // Superseded retakes are removed from the small bucket; Drive keeps every photo.
-function dropOldBucketPhoto(deps: Deps, prev?: CheckItem) {
+function dropOldBucketPhoto(deps: Deps, prev?: Stored) {
   if (!prev || prev.storage !== 'bucket') return;
   const paths = [prev.path, prev.thumbPath].filter(Boolean);
   if (paths.length) deps.storage.from(BUCKET).remove(paths).catch(() => {});
@@ -543,24 +566,104 @@ async function scorePhoto(deps: Deps, settings: Settings, a: { name: string; hin
   }
 }
 
-// Puts a fresh score on an item. A low score (not an unreadable photo) marks it needs-cleaning
-// unless a reviewer has already decided; a good retake clears the AI's own earlier flag.
-// Returns true when the item was newly auto-flagged.
-function applyScore(it: CheckItem, ai: Partial<CheckItem>, threshold: number): boolean {
-  for (const k of ['aiScore', 'aiVerdict', 'aiIssues', 'aiIssuesBengali', 'aiShown', 'aiSevere'] as const) delete it[k];
-  Object.assign(it, ai);
-  if (ai.aiStatus !== 'scored') return false;
-  // A garbage dump or filth stays on the day's record even after a clean retake (owner, 28 Oct 2026).
-  if (ai.aiSevere) it.wasSevere = true;
-  const low = ((ai.aiScore ?? 10) < threshold || !!ai.aiSevere) && ai.aiVerdict !== 'unclear_photo';
-  if (it.flag && !it.flag.auto) return false;
-  if (low) {
-    const issues = (ai.aiIssues || []).join('; ');
-    it.flag = { status: 'needs_cleaning', note: `${ai.aiSevere ? 'Serious: ' : ''}AI score ${ai.aiScore}/10${issues ? `: ${issues}` : ''}`, by: 'AI check', byId: 'ai', at: new Date().toISOString(), auto: true };
-    return true;
+// Scores one photo and saves the answer on the latest copy of the person's day (more photos may
+// have landed meanwhile). Two saves at the same moment can overwrite each other, so it checks its
+// answer stuck. null when the photo was retaken or removed before the answer came back.
+async function scoreOne(deps: Deps, settings: Settings, o: { key: string; itemId: string; photoId: string; hint?: string; base64: string; mediaType: string }) {
+  const first = await deps.kv.get<CheckRow>(o.key);
+  const name = first?.items?.[o.itemId]?.name;
+  if (!name) return null;
+  const ai = await scorePhoto(deps, settings, { name, hint: o.hint }, o.base64, o.mediaType);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = await deps.kv.get<CheckRow>(o.key);
+    const it = row?.items?.[o.itemId];
+    const photo = it ? photosOf(it).find((x) => x.id === o.photoId) : undefined;
+    if (!row || !it || !photo) return null;
+    it.photos = photosOf(it);
+    for (const k of AI_KEYS) delete photo[k];
+    Object.assign(photo, ai);
+    rollUp(it);
+    settleFlag(it, settings.aiThreshold);
+    await deps.kv.set(o.key, row);
+    const check = await deps.kv.get<CheckRow>(o.key);
+    const saved = check?.items?.[o.itemId];
+    const kept = saved?.photos?.find((x) => x.id === o.photoId);
+    if (!kept) return null;
+    if (kept.aiStatus === ai.aiStatus) return { it: saved!, photo: kept };
   }
-  if (it.flag?.auto) delete it.flag;
-  return false;
+  return null;
+}
+
+// What the person (and the incharge and owner) hear about one scored photo, then the round's
+// "your photos are checked" once nothing is waiting.
+async function afterScore(deps: Deps, settings: Settings, o: { date: string; employeeId: string; it: CheckItem; photo: Photo }) {
+  if (isLow(o.photo, settings.aiThreshold) && o.it.flag?.auto) {
+    // The photo's own issues, not the whole check's.
+    const view = { ...o.it, aiScore: o.photo.aiScore, aiIssues: o.photo.aiIssues, aiIssuesBengali: o.photo.aiIssuesBengali, aiSevere: o.photo.aiSevere };
+    await pushAutoFlag(deps, { date: o.date, employeeId: o.employeeId, it: view, actorEmployeeId: null });
+  } else if (o.photo.aiStatus === 'scored' && o.photo.aiVerdict === 'unclear_photo') {
+    const person = await deps.kv.get<any>(`unified-employee:${o.employeeId}`);
+    await safeNotify(deps, person?.authUserId, 'workplace_flag', `Retake: ${o.it.name} photo is not clear`,
+      'Take it again in good light with the whole area in the frame. · ভালো আলোয়, পুরো জায়গাটা ফ্রেমে রেখে আবার তুলুন।', `${o.it.locationKind}:${o.it.locationId}`, o.date);
+  }
+  await resultPush(deps, o.date, o.employeeId);
+}
+
+// "Your photos are checked": once nothing is waiting for the AI and every check that has opened
+// has a photo, one push for the round rather than one per photo. A retake later gets its own.
+async function resultPush(deps: Deps, date: string, employeeId: string) {
+  const row = await deps.kv.get<CheckRow>(checkKey(date, employeeId));
+  const items = Object.values(row?.items || {});
+  const photos = items.flatMap((it) => photosOf(it));
+  if (!row || !photos.length || photos.some((p) => p.aiStatus === 'pending')) return;
+  const sent = await deps.kv.get<{ at: string }>(resultsSentKey(date, employeeId));
+  if (!photos.some((p) => p.aiAt && p.aiAt > (sent?.at || ''))) return;
+  const nowMin = nowMinutesIST();
+  const open = (row.assigned || []).filter((a) => date < deps.getTodayIST() || !a.start || nowMin >= toMin(a.start) - EARLY_UPLOAD_MINUTES);
+  if (open.some((a) => !row.items?.[a.id])) return;
+  // Two checks finishing together could both get here: whoever's mark stuck sends it.
+  const mark = { date, employeeId, at: new Date().toISOString(), by: Math.random().toString(36).slice(2) };
+  await deps.kv.set(resultsSentKey(date, employeeId), mark);
+  if ((await deps.kv.get<{ by?: string }>(resultsSentKey(date, employeeId)))?.by !== mark.by) return;
+  const dirty = items.filter((it) => it.flag?.status === 'needs_cleaning' && it.flag.auto);
+  const unclear = items.filter((it) => it.aiStatus === 'scored' && it.aiVerdict === 'unclear_photo');
+  const clean = items.filter((it) => it.aiStatus === 'scored' && it.aiVerdict !== 'unclear_photo' && !dirty.includes(it)).length;
+  const unscored = items.filter((it) => it.aiStatus === 'failed').length;
+  const names = (xs: CheckItem[]) => xs.slice(0, 4).map((it) => it.name).join(', ') + (xs.length > 4 ? ` +${xs.length - 4}` : '');
+  const namesBn = (xs: CheckItem[]) => xs.slice(0, 4).map((it) => it.nameBn || it.name).join(', ') + (xs.length > 4 ? ` +${bnDigits(String(xs.length - 4))}` : '');
+  const title = dirty.length ? `Photos checked: ${dirty.length} to clean again` : unclear.length ? `Photos checked: ${unclear.length} not clear`
+    : unscored ? `Photos checked: ${clean} clean` : `Photos checked: all ${clean} clean`;
+  const message = [
+    dirty.length ? `Clean and retake: ${names(dirty)}. · আবার পরিষ্কার করে তুলুন: ${namesBn(dirty)}।` : '',
+    unclear.length ? `Retake, not clear: ${names(unclear)}. · পরিষ্কার আসেনি, আবার তুলুন: ${namesBn(unclear)}।` : '',
+    !dirty.length && !unclear.length ? 'Nothing to redo. Thank you! · সব ঠিক আছে, ধন্যবাদ!' : '',
+    unscored ? `${unscored} could not be checked; the incharge will look. · ${bnDigits(String(unscored))}টা দেখা যায়নি, ইনচার্জ দেখবেন।` : '',
+  ].filter(Boolean).join(' ');
+  const person = await deps.kv.get<any>(`unified-employee:${employeeId}`);
+  await safeNotify(deps, person?.authUserId, 'workplace_checked', title, message, row.locationKind && row.locationId ? `${row.locationKind}:${row.locationId}` : undefined, date);
+}
+
+// Photos the background scoring never finished (the server copy stopped, or a timeout), today only.
+async function scoreLeftovers(deps: Deps, rows: CheckRow[]) {
+  const settings = await getSettings(deps.kv);
+  if (!settings.aiEnabled || !Deno.env.get('ANTHROPIC_API_KEY')) return 0;
+  const cutoff = new Date(Date.now() - STUCK_PENDING_MINUTES * 60000).toISOString();
+  const stuck: { row: CheckRow; itemId: string; photo: Photo }[] = [];
+  for (const row of rows) {
+    for (const [itemId, it] of Object.entries(row.items || {})) {
+      for (const photo of photosOf(it)) if (photo.aiStatus === 'pending' && photo.uploadedAt < cutoff) stuck.push({ row, itemId, photo });
+    }
+  }
+  let done = 0;
+  for (const { row, itemId, photo } of stuck.slice(0, LEFTOVERS_PER_RUN)) {
+    const file = await readPhoto(deps, photo, false);
+    if (!file) continue;
+    const bytes = file.body instanceof Uint8Array ? file.body : new Uint8Array(await new Response(file.body).arrayBuffer());
+    const hint = (row.assigned || []).find((a) => a.id === itemId)?.hint;
+    const r = await scoreOne(deps, settings, { key: checkKey(row.date, row.employeeId), itemId, photoId: photo.id, hint, base64: toBase64(bytes), mediaType: sniff(bytes) || photo.mimeType });
+    if (r) { done++; await afterScore(deps, settings, { date: row.date, employeeId: row.employeeId, it: r.it, photo: r.photo }); }
+  }
+  return done;
 }
 
 async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; it: CheckItem; actorEmployeeId: string | null }) {
@@ -570,7 +673,8 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
   const en = (o.it.aiIssues || []).join(', ');
   const bn = (o.it.aiIssuesBengali || []).join(', ');
   const related = `${o.it.locationKind}:${o.it.locationId}`;
-  // The person who just took the photo sees the result on screen; everyone else gets a push.
+  // Scored in the background, so the person is told too; a reviewer scoring again on screen
+  // (actorEmployeeId) is not told about their own look.
   if (person && o.employeeId !== o.actorEmployeeId) {
     await safeNotify(deps, person.authUserId, 'workplace_flag', `Clean again: ${o.it.name} (AI ${o.it.aiScore}/10)`,
       `${en ? `${en}. ` : ''}Clean it and take a new photo. · ${bn ? `${bn}। ` : ''}পরিষ্কার করে নতুন ছবি দিন।`, related, o.date);
@@ -716,8 +820,10 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     return c.json({ date: today, earlyMinutes: EARLY_UPLOAD_MINUTES, employeeId: actor!.employeeId, items });
   });
 
-  // One photo for one check. Only the person it's assigned to, or a reviewer of that place on
-  // their behalf (recorded as such).
+  // One photo for one check: the first, another one (add), or a retake of one (replacePhotoId; an
+  // older app's plain retake replaces them all). Only the person it's assigned to, or a reviewer
+  // of that place on their behalf (recorded as such). The reply comes once the photo is saved; the
+  // AI looks at it afterwards (inBackground).
   app.post(`${P}/workplace/upload`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     const body = await c.req.json().catch(() => ({}));
@@ -740,7 +846,13 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     const key = checkKey(today, forEmployeeId);
     const before = await kv.get<CheckRow>(key);
     const prev = before?.items?.[a.id];
-    if (prev && (prev.retakes || 0) >= MAX_RETAKES) return c.json({ error: 'Too many retakes for this check today' }, 400);
+    const prevPhotos = prev ? photosOf(prev) : [];
+    const adding = !!body.add && prevPhotos.length > 0;
+    const replaceId = !adding && body.replacePhotoId ? str(body.replacePhotoId, 40) : '';
+    if (replaceId && !prevPhotos.some((p) => p.id === replaceId)) return c.json({ error: 'That photo was already replaced - refresh · ছবিটা আগেই বদলানো হয়েছে, রিফ্রেশ করুন' }, 409);
+    if (adding && prevPhotos.length >= MAX_PHOTOS) return c.json({ error: `At most ${MAX_PHOTOS} photos for one check · একটা কাজে সর্বোচ্চ ${bnDigits(String(MAX_PHOTOS))}টা ছবি` }, 400);
+    const retake = !!prev && !adding;
+    if (retake && (prev!.retakes || 0) >= MAX_RETAKES) return c.json({ error: 'Too many retakes for this check today' }, 400);
     const photo = parseImage(body.image, MAX_PHOTO_BYTES);
     if ('error' in photo) return c.json({ error: photo.error }, 400);
     const parsedThumb = body.thumb ? parseImage(body.thumb, MAX_THUMB_BYTES) : null;
@@ -754,49 +866,84 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       return c.json({ error: 'Could not save the photo - try again · ছবি সেভ হয়নি, আবার চেষ্টা করুন' }, 502);
     }
 
+    const settings = await getSettings(kv);
+    const aiOn = settings.aiEnabled && !!Deno.env.get('ANTHROPIC_API_KEY');
     const nowIso = new Date().toISOString();
+    const shot: Photo = { id: newPhotoId(), uploadedAt: nowIso, ...stored, aiStatus: aiOn ? 'pending' : 'off', ...(onBehalf ? { onBehalf: true, uploadedByName: actor!.name } : {}) };
+    const photos = adding ? [...prevPhotos, shot] : replaceId ? prevPhotos.map((p) => (p.id === replaceId ? shot : p)) : [shot];
+    const dropped = adding ? [] : replaceId ? prevPhotos.filter((p) => p.id === replaceId) : prevPhotos;
     const late = nowMin > toMin(a.end);
+    // Another photo leaves a reviewer's verdict as it was. A retake marks a reviewer's
+    // needs-cleaning fixed (it stays until they look again) and drops their OK, which was about the
+    // old photo. The AI's own flag is worked out again from the photos (settleFlag).
+    const flag = !prev?.flag ? undefined
+      : prev.flag.auto || adding ? prev.flag
+      : prev.flag.status === 'needs_cleaning' ? { ...prev.flag, fixedAt: nowIso } : undefined;
     const entry: CheckItem = {
       name: a.name, nameBn: a.nameBn, ...stored, uploadedAt: nowIso, firstUploadedAt: prev?.firstUploadedAt || prev?.uploadedAt || nowIso,
       // A retake keeps an earlier on-time photo on time (e.g. re-shooting after a flag).
       late: prev ? prev.late && late : late,
       locationKind: a.locationKind, locationId: a.locationId,
-      ...(prev ? { retakes: (prev.retakes || 0) + 1 } : {}),
+      ...(retake ? { retakes: (prev!.retakes || 0) + 1 } : prev?.retakes ? { retakes: prev.retakes } : {}),
       ...(prev?.wasFlagged ? { wasFlagged: true } : {}),
       ...(prev?.wasSevere ? { wasSevere: true } : {}),
-      // A reviewer's needs-cleaning stays (marked fixed) until they look again; an OK or the AI's own
-      // flag was about the old photo, so it goes.
-      ...(prev?.flag && !prev.flag.auto && prev.flag.status === 'needs_cleaning' ? { flag: { ...prev.flag, fixedAt: nowIso } } : {}),
+      ...(flag ? { flag } : {}),
       ...(onBehalf ? { onBehalf: true, uploadedById: actor!.employeeId || actor!.authUserId, uploadedByName: actor!.name } : {}),
-      aiStatus: 'pending',
+      photos,
     };
-    // Save first so the photo is on record even if scoring is slow or fails.
+    rollUp(entry);
+    settleFlag(entry, settings.aiThreshold);
     const row = syncRow(before, today, forEmployeeId, mine);
     row.items[a.id] = entry;
     recount(row);
     row.updatedAt = nowIso;
     await kv.set(key, row);
-    dropOldBucketPhoto(deps, prev);
+    for (const d of dropped) dropOldBucketPhoto(deps, d);
 
-    const settings = await getSettings(kv);
-    const ai = await scorePhoto(deps, settings, a, photo.base64, photo.type);
-    const latest = (await kv.get<CheckRow>(key)) || row;
-    const it = latest.items?.[a.id];
-    let flagged = false;
-    if (it && it.uploadedAt === nowIso) {
-      flagged = applyScore(it, ai, settings.aiThreshold);
-      await kv.set(key, latest);
-      if (flagged) await pushAutoFlag(deps, { date: today, employeeId: forEmployeeId, it, actorEmployeeId: actor!.employeeId });
+    // Anything the background check leaves behind is scored by the 15-minute cron (scoreLeftovers).
+    if (aiOn) {
+      await inBackground('Workplace photo check', async () => {
+        const r = await scoreOne(deps, settings, { key, itemId: a.id, photoId: shot.id, hint: a.hint, base64: photo.base64, mediaType: photo.type });
+        if (r) await afterScore(deps, settings, { date: today, employeeId: forEmployeeId, it: r.it, photo: r.photo });
+      });
     }
-    const saved = it || entry;
-    return c.json({ success: true, flagged, item: { ...a, status: statusOf(today, today, nowMin, a, saved), ...itemView(saved) } });
+    return c.json({ success: true, flagged: false, item: { ...a, status: statusOf(today, today, nowMin, a, entry), ...itemView(entry) } });
   });
 
-  // Score a photo again (the AI call failed, or a reviewer wants a second look).
+  // Takes one photo off a check (sent by mistake): today only, never the last one (retake that).
+  app.post(`${P}/workplace/photo-remove`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    const body = await c.req.json().catch(() => ({}));
+    const itemId = str(body.itemId, 40); const photoId = str(body.photoId, 40);
+    const employeeId = body.forEmployeeId ? str(body.forEmployeeId, 80) : actor!.employeeId;
+    if (!employeeId || !itemId || !photoId) return c.json({ error: 'Missing photo details' }, 400);
+    const today = deps.getTodayIST();
+    const key = checkKey(today, employeeId);
+    const row = await kv.get<CheckRow>(key);
+    const it = row?.items?.[itemId];
+    if (!row || !it) return c.json({ error: 'No photo for this check' }, 404);
+    if (employeeId !== actor!.employeeId && !reviews(actor!, it.locationKind, it.locationId, await loadLocations(kv))) return c.json({ error: 'You are not allowed to do this' }, 403);
+    const photos = photosOf(it);
+    const gone = photos.find((p) => p.id === photoId);
+    if (!gone) return c.json({ error: 'That photo was already removed - refresh · ছবিটা আগেই সরানো হয়েছে' }, 404);
+    if (photos.length < 2) return c.json({ error: 'A check needs at least one photo - retake it instead · অন্তত একটা ছবি লাগবে, আবার তুলুন' }, 400);
+    it.photos = photos.filter((p) => p.id !== photoId);
+    rollUp(it);
+    settleFlag(it, (await getSettings(kv)).aiThreshold);
+    row.updatedAt = new Date().toISOString();
+    await kv.set(key, row);
+    dropOldBucketPhoto(deps, gone);
+    const a = (row.assigned || []).find((x) => x.id === itemId) || { id: itemId, name: it.name, nameBn: it.nameBn || '', start: '', end: '', locationKind: it.locationKind, locationId: it.locationId };
+    return c.json({ success: true, item: { ...a, status: statusOf(today, today, nowMinutesIST(), a, it), ...itemView(it) } });
+  });
+
+  // Score a check's photos again (the AI call failed, or a reviewer wants a second look), or just
+  // one of them (photoId). Answered on screen, so it waits for the AI.
   app.post(`${P}/workplace/rescore`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     const body = await c.req.json().catch(() => ({}));
     const date = str(body.date, 10); const employeeId = str(body.employeeId, 80); const itemId = str(body.itemId, 40);
+    const photoId = body.photoId ? str(body.photoId, 40) : '';
     if (!DATE.test(date) || !employeeId || !itemId) return c.json({ error: 'Missing photo details' }, 400);
     const key = checkKey(date, employeeId);
     const row = await kv.get<CheckRow>(key);
@@ -806,20 +953,36 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     if (employeeId !== actor!.employeeId && !reviews(actor!, it.locationKind, it.locationId, locs)) return c.json({ error: 'You are not allowed to do this' }, 403);
     const settings = await getSettings(kv);
     if (!settings.aiEnabled || !Deno.env.get('ANTHROPIC_API_KEY')) return c.json({ error: 'AI photo checks are switched off' }, 400);
-    const file = await readPhoto(deps, it, false);
-    if (!file) return c.json({ error: 'The photo is no longer kept' }, 404);
-    const bytes = file.body instanceof Uint8Array ? file.body : new Uint8Array(await new Response(file.body).arrayBuffer());
+    const targets = photosOf(it).filter((p) => !photoId || p.id === photoId);
+    if (!targets.length) return c.json({ error: 'That photo is no longer there' }, 404);
     const hint = (row.assigned || []).find((x) => x.id === itemId)?.hint;
-    const ai = await scorePhoto(deps, settings, { name: it.name, hint }, toBase64(bytes), sniff(bytes) || it.mimeType);
+    const answers = await Promise.all(targets.map(async (p) => {
+      const file = await readPhoto(deps, p, false);
+      if (!file) return { id: p.id, ai: null };
+      const bytes = file.body instanceof Uint8Array ? file.body : new Uint8Array(await new Response(file.body).arrayBuffer());
+      return { id: p.id, ai: await scorePhoto(deps, settings, { name: it.name, hint }, toBase64(bytes), sniff(bytes) || p.mimeType) };
+    }));
+    if (answers.every((x) => !x.ai)) return c.json({ error: 'The photo is no longer kept' }, 404);
     const latest = (await kv.get<CheckRow>(key)) || row;
     const target = latest.items?.[itemId];
     if (!target) return c.json({ error: 'No photo for this check' }, 404);
-    // A failed second look keeps the score the photo already had.
-    if (ai.aiStatus !== 'scored' && target.aiStatus === 'scored') return c.json({ success: false, flagged: false, ...itemView(target) });
-    const flagged = applyScore(target, ai, settings.aiThreshold);
+    target.photos = photosOf(target);
+    const wasFlagged = target.flag?.status === 'needs_cleaning' && !!target.flag.auto;
+    let scoredAny = false;
+    for (const { id, ai } of answers) {
+      const p = target.photos.find((x) => x.id === id);
+      // A failed second look keeps the score the photo already had.
+      if (!p || !ai || (ai.aiStatus !== 'scored' && p.aiStatus === 'scored')) continue;
+      for (const k of AI_KEYS) delete p[k];
+      Object.assign(p, ai);
+      if (ai.aiStatus === 'scored') scoredAny = true;
+    }
+    rollUp(target);
+    settleFlag(target, settings.aiThreshold);
     await kv.set(key, latest);
+    const flagged = !wasFlagged && target.flag?.status === 'needs_cleaning' && !!target.flag.auto;
     if (flagged) await pushAutoFlag(deps, { date, employeeId, it: target, actorEmployeeId: actor!.employeeId });
-    return c.json({ success: ai.aiStatus === 'scored', flagged, ...itemView(target) });
+    return c.json({ success: scoredAny, flagged, ...itemView(target) });
   });
 
   // Streams one photo (or its thumbnail) to someone allowed to see it: reviewers of that place and
@@ -832,7 +995,11 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     const it = row?.items?.[itemId];
     if (!it) return c.json({ error: 'No photo' }, 404);
     if (employeeId !== actor!.employeeId && !reviews(actor!, it.locationKind, it.locationId, await loadLocations(kv))) return c.json({ error: 'You are not allowed to see this photo' }, 403);
-    const file = await readPhoto(deps, it, c.req.query('size') === 'thumb');
+    // ?photo= picks one of the check's photos; without it, the first (the cover).
+    const photos = photosOf(it);
+    const which = c.req.query('photo') ? photos.find((p) => p.id === c.req.query('photo')) : photos[0];
+    if (!which) return c.json({ error: 'That photo was replaced' }, 404);
+    const file = await readPhoto(deps, which, c.req.query('size') === 'thumb');
     if (!file) return c.json({ error: 'The photo is no longer kept' }, 404);
     return c.body(file.body, 200, { 'Content-Type': file.type, 'Cache-Control': 'private, max-age=3600' });
   });
@@ -999,7 +1166,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
 
   // Every 15 minutes (pg_cron, see the workplace_reminders_cron migration): keeps today's rows
   // current (so a day with no photos still counts in KPIs), pushes each person when their window
-  // opens, and tells the incharge and the owner once a day per person when photos were missed.
+  // opens, tells the incharge and the owner once a day per person when photos were missed, and
+  // scores photos the background check never finished.
   app.post(`${P}/cron/workplace-reminders`, async (c: any) => {
     if (!cronAllowed(c)) return c.json({ error: 'Unauthorized' }, 401);
     try {
@@ -1059,7 +1227,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
         }
       }
       if (sentChanged) await kv.set(sentKey(today), sent);
-      return c.json({ success: true, people: byPerson.size, duePushes, missedPushes });
+      const leftoversScored = await scoreLeftovers(deps, [...rowOf.values()]).catch((err) => { console.log('Workplace leftover scoring failed:', String(err?.message || err).slice(0, 160)); return 0; });
+      return c.json({ success: true, people: byPerson.size, duePushes, missedPushes, leftoversScored });
     } catch (err: any) {
       console.log('Workplace reminders failed:', String(err?.message || err).slice(0, 200));
       return c.json({ error: 'Workplace reminders failed' }, 500);
@@ -1110,6 +1279,9 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     let sentRowsRemoved = 0;
     for (const s of (await kv.getByPrefix<any>('workplace-sent:')) || []) {
       if (s?.date && s.date < addDays(today, -7)) { await kv.del(sentKey(s.date)); sentRowsRemoved++; }
+    }
+    for (const r of (await kv.getByPrefix<any>('workplace-results-sent:')) || []) {
+      if (r?.date && r?.employeeId && r.date < addDays(today, -7)) { await kv.del(resultsSentKey(r.date, r.employeeId)); sentRowsRemoved++; }
     }
     return c.json({ success: true, deleted, sentRowsRemoved });
   });

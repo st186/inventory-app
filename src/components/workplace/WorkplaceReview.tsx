@@ -19,7 +19,7 @@ import { Textarea } from '../ui/textarea';
 import { cn } from '../ui/utils';
 import { useT } from '../../utils/i18n';
 import { addDays, getTodayIST } from '../../utils/timezone';
-import type { ReviewItem, SummaryResponse, WorkplaceLocation } from './workplaceApi';
+import { photosOfView, type ReviewItem, type SummaryResponse, type WorkplaceLocation } from './workplaceApi';
 import { AuthedPhoto } from './AuthedPhoto';
 import { compressPhoto, fmt12, liveStatus, nowMinutesIST, timeOfIso } from './workplaceUtils';
 import { teamWorkplaceApi } from '../team/teamApi';
@@ -295,9 +295,10 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
 }
 
 function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; onOpen: () => void }) {
-  const { lang } = useT();
+  const { t, lang } = useT();
   const flagged = it.flag?.status === 'needs_cleaning';
   const missing = it.status === 'missed' || it.status === 'late';
+  const photoCount = photosOfView(it).length;
   return (
     <button
       type="button"
@@ -323,6 +324,9 @@ function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; on
             {flagged ? <AlertTriangle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
           </span>
         )}
+        {photoCount > 1 && (
+          <span className="num absolute right-1.5 bottom-1.5 rounded-full bg-scrim/70 px-2 py-0.5 text-caption font-medium text-on-primary">{t('team.check.morePhotos', { n: photoCount - 1 })}</span>
+        )}
       </div>
       <div className="flex flex-col gap-1 p-2.5">
         <p className="truncate text-body-sm font-semibold text-text">{checkName(it, lang)}</p>
@@ -345,6 +349,11 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
   const [saving, setSaving] = useState(false);
   const [trend, setTrend] = useState<ReviewItem[] | null>(null);
   const flagged = it.flag?.status === 'needs_cleaning';
+  // A check can have several photos (walls, shelves, stacks): one large, the rest to switch to.
+  const photos = photosOfView(it);
+  const [shownId, setShownId] = useState<string | null>(null);
+  const shown = photos.find((p) => p.id === shownId) || photos[0];
+  const shownIssues = shown ? issuesFor(shown, lang) : [];
 
   // The same check over the 14 days up to this one, so a one-off can be told from a habit.
   useEffect(() => {
@@ -433,10 +442,33 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
       }
     >
       <div className="flex flex-col gap-4" data-ai-private>
-        {it.hasPhoto ? (
-          <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} thumb={false} version={it.uploadedAt} fit="contain" className="aspect-[4/3] w-full rounded-lg" alt={checkName(it, lang)} />
+        {it.hasPhoto && shown ? (
+          <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} photoId={shown.id} thumb={false} version={shown.uploadedAt} fit="contain" className="aspect-[4/3] w-full rounded-lg" alt={checkName(it, lang)} />
         ) : (
           <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-surface-2 text-body-sm text-text-2">{t('team.check.noPhoto')}</div>
+        )}
+        {photos.length > 1 && shown && (
+          <div className="flex flex-col gap-2">
+            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 py-1" role="group" aria-label={t('team.check.photoOf', { n: photos.indexOf(shown) + 1, total: photos.length })}>
+              {photos.map((p, i) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  aria-pressed={p.id === shown.id}
+                  aria-label={t('team.check.photoN', { n: i + 1 })}
+                  onClick={() => setShownId(p.id)}
+                  className={cn('size-16 shrink-0 overflow-hidden rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring', p.id === shown.id ? 'border-primary ring-2 ring-primary' : 'border-border')}
+                >
+                  <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} photoId={p.id} thumb version={p.uploadedAt} className="h-full w-full" alt="" />
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-body-sm text-text-2">
+              <span className="num font-medium text-text">{t('team.check.photoOf', { n: photos.indexOf(shown) + 1, total: photos.length })}</span>
+              <HygieneChip photo={shown} threshold={threshold} />
+              {shownIssues.length > 0 && <span>{shownIssues.join(' · ')}</span>}
+            </div>
+          </div>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
