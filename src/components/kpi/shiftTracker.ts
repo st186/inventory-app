@@ -115,8 +115,11 @@ async function deliver(kind: 'arrival' | 'exit', ev: kpi.DetectedEvent) {
 }
 
 // Events saved while offline get another go.
-export async function resendUnsent(employeeId: string, date: string) {
+// True when something was sent. Only then is anyone told: the shift card reloads on a change and
+// reloading calls this again, so an unconditional "changed" looped (about 2,600 calls a day, 28 Oct 2026).
+export async function resendUnsent(employeeId: string, date: string): Promise<boolean> {
   const local = localEvents(employeeId, date);
+  let sentAny = false;
   for (const kind of ['arrival', 'exit'] as const) {
     const ev = local[kind];
     if (!ev || ev.sent) continue;
@@ -124,8 +127,10 @@ export async function resendUnsent(employeeId: string, date: string) {
       await kpi.sendDetected(ev);
       local[kind] = { ...ev, sent: true };
       saveLocal(employeeId, date, local);
+      sentAny = true;
     } catch { /* still offline */ }
   }
+  return sentAny;
 }
 
 // ---- Geofence ----
@@ -217,7 +222,7 @@ export function ensureShiftTracking(today: kpi.ShiftToday, employeeId: string) {
   try { if (!today.consent && localStorage.getItem(consentKey(employeeId)) === 'yes') consented = true; } catch { /* ignore */ }
   if (today.exempt || !today.workingDay || !today.pins.length) { stopShiftTracking('off'); return; }
   if (!consented) { stopShiftTracking('needs-consent'); return; }
-  resendUnsent(employeeId, today.date).then(changed);
+  resendUnsent(employeeId, today.date).then((sent) => { if (sent) changed(); });
   const next: Config = {
     employeeId, date: today.date, pins: today.pins, radiusM: today.radiusM,
     placeKind: today.pins.length && today.pins.every((p) => p.kind === 'production') ? 'production' : 'store',
