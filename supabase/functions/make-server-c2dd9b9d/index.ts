@@ -7,6 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
+import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
@@ -1135,6 +1136,8 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     // (A read-back of the row just written, for a log line, used to follow here: removed.)
 
     await cascadeProductionCashForExpense(inventoryItem);
+    // Checked for slips, odd categories and repeat buys, after the response (expenseReview.ts).
+    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'inventory', key, inventoryItem, userName || userEmail));
 
     // Notify the production incharge (bill paid from production cash) and cluster heads about
     // the inventory data entry - after the response (afterResponse).
@@ -1372,6 +1375,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     if (overheadItem.paidFromProductionHouseId) {
       await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
+    await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'overhead', key, overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
 
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -2936,6 +2940,15 @@ async function withCanonicalHouse(data: any): Promise<any> {
   if (!house || house === data.productionHouseId) return data;
   return { ...data, productionHouseId: house, ...(data.storeId === data.productionHouseId ? { storeId: house } : {}) };
 }
+
+// What the expense checks read and who they tell (expenseReview.ts). Used from the routes below,
+// so it is set up before any request arrives.
+const expenseReviewDeps: ExpenseReviewDeps = {
+  kv: kvWithRetry,
+  rows: (prefix, range) => getAllByPrefixWithRetry(prefix, range),
+  verifyUser,
+  notifyUser: (authUserId, type, title, message, relatedId, relatedDate) => notifyUser(authUserId, type, title, message, relatedId, relatedDate),
+};
 
 // From 1 November 2026 staff food is Rs 500 a month in salary (owner, 28 Oct): meals are no longer
 // expenses (the app's forms stop them too; this catches older app versions).
@@ -17200,6 +17213,8 @@ registerRecipeRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, getAllByPr
 registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
 // Event stalls: their own P&L, stock, cash, staff and sales (events.ts).
 registerEventsRoutes(app, eventsDeps);
+// Expense checks: flags on new entries, and the routes to list and decide them (expenseReview.ts).
+registerExpenseReviewRoutes(app, expenseReviewDeps);
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

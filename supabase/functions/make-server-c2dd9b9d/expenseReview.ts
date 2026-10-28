@@ -1,0 +1,330 @@
+// Every new purchase or expense is checked right after it is saved (owner, 28 Oct 2026: "flag
+// any bad entry ... we need to be sure what we are spending"). Plain rules against the last 90
+// days of entries spot the problem; Bunny (askClaudeForJson, the same small model and monthly
+// cap as Insights) only judges the category of an item never logged before. A flag says what
+// looks wrong and, where it can, the fix; the place's incharge and the owner are told, and either
+// can apply the fix or mark the entry correct.
+//
+//   expense-flag:{expenseId}:{kind}   one problem with one entry (open / fixed / dismissed)
+//
+// Kinds: weight (price per kg/L far from usual: a unit or quantity slip), bundle (pieces per pack
+// unlike before), category (filed unlike before, or a word that belongs elsewhere), detail (a
+// repair or labour entry that doesn't say what), repeat (a consumable bought again and again),
+// unusual (far above what this kind of spend usually is here), duplicate (same amount, kind and
+// place within two days).
+import { askClaudeForJson } from './insights.ts';
+
+type Kv = {
+  get: (key: string) => Promise<any>;
+  set: (key: string, value: any) => Promise<void>;
+  mget?: (keys: string[]) => Promise<any[]>;
+};
+type Range = { from?: string; to?: string; field: string };
+export type ExpenseReviewDeps = {
+  kv: Kv;
+  rows: (prefix: string, range?: Range | null) => Promise<any[]>;
+  verifyUser: (authHeader: string | null) => Promise<any>;
+  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<unknown>;
+};
+type Source = 'inventory' | 'overhead';
+type Flag = {
+  id: string; expenseId: string; expenseKey: string; source: Source; kind: string; date: string; place: string;
+  title: string; message: string; suggestion?: Record<string, unknown>; suggestionText?: string;
+  status: 'open' | 'fixed' | 'dismissed'; createdAt: string; loggedBy?: string;
+  decidedBy?: string; decidedAt?: string; note?: string;
+};
+
+const P = '/make-server-c2dd9b9d';
+const rupees = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
+const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const norm = (text: any) => String(text || '').toLowerCase().replace(/[^a-zঀ-৿ऀ-ॿ ]/g, ' ').replace(/\s+/g, ' ').trim().replace(/(es|s)$/, '');
+const placeOf = (r: any) => (r?.entityType === 'production_house' ? `production:${r.productionHouseId || ''}` : `store:${r?.storeId || ''}`);
+const canonical = (qty: number, unit?: string) => {
+  const u = String(unit || '').trim().toLowerCase();
+  if (u === 'g') return { qty: qty / 1000, unit: 'kg' };
+  if (u === 'ml') return { qty: qty / 1000, unit: 'L' };
+  if (u === 'kg') return { qty, unit: 'kg' };
+  if (u === 'l') return { qty, unit: 'L' };
+  return { qty, unit: u || 'pcs' };
+};
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0;
+};
+const amountOf = (r: any) => Number(r?.totalCost ?? r?.amount ?? 0) || 0;
+const nameOf = (r: any) => String(r?.itemName || r?.description || '').trim();
+
+// Consumables bought again and again (kitchen towels, gloves, dusters...).
+const CONSUMABLE_CATEGORIES = ['cleaning_supplies', 'cleaning_sanitation', 'hygiene_ppe', 'utensils', 'office_supplies', 'deep_cleaning'];
+const CONSUMABLE_WORDS = /towel|glove|duster|mop|sponge|scrub|apron|cap|lighter|liter|laitar|broom|jhadu|phenyl|tissue|napkin|wiper|brush|bucket|mug/i;
+// Words that put an entry in another category.
+const WORD_RULES: { test: RegExp; from: string[]; to: string; why: string }[] = [
+  { test: /scoot|scooty|bike|tyre|tyer|tire|gari|vehicle|petrol tank|chain/i, from: ['repair', 'utensils', 'asset_vehicle'], to: 'vehicle_maintenance', why: 'it is for the scooter' },
+  { test: /lebar|labou?r|mistri|helper/i, from: ['repair', 'renovation', 'miscellaneous'], to: 'labour_charge', why: 'it is labour' },
+  { test: /paint|colou?r|whitewash|putty/i, from: ['repair'], to: 'renovation', why: 'it is painting' },
+  { test: /lighter|liter|laitar|match ?box/i, from: ['repair'], to: 'utensils', why: 'it is a small kitchen tool' },
+  { test: /\bmop|duster|phenyl|broom|jhadu/i, from: ['deep_cleaning', 'repair'], to: 'cleaning_supplies', why: 'it is a cleaning supply' },
+];
+const VAGUE = /^(repair(ing)?( cost| work)?|labou?r( charge| cost)?( \(.*\))?|lebar( cost| charge)?|electric( work)?|work|equipments?|misc(ellaneous)?|cost|expense)$/i;
+const DETAIL_CATEGORIES = ['repair', 'labour_charge', 'renovation', 'vehicle_maintenance', 'asset_kitchen_equipment', 'asset_electrical', 'asset_furniture'];
+
+// Categories Bunny may choose from for an unfamiliar item (the app's own list, short labels).
+const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
+  inventory: {
+    meat: 'Meat', dairy: 'Dairy', fresh_produce: 'Vegetables', spices_seasonings: 'Grocery and spices', staples: 'Flour, oil and staples',
+    bread_buns: 'Bread and buns', beverages: 'Drinks', packaging: 'Packaging (boxes, bags, foil)', cleaning_supplies: 'Cleaning supplies',
+    hygiene_ppe: 'Gloves and caps', utensils: 'Small utensils and tools', office_supplies: 'Office supplies', water_jar: 'Water jar',
+    asset_kitchen_equipment: 'Kitchen equipment (over 1,000)', asset_electrical: 'Electrical installation',
+  },
+  overhead: {
+    fuel: 'Fuel', ev_charging: 'E-bike charging', travel: 'Staff travel', transportation: 'Goods transport', marketing: 'Marketing',
+    repair: 'Repair of equipment or building', renovation: 'Renovation and painting', labour_charge: 'Labour for a job', puja_expense: 'Puja items',
+    office_supplies: 'Office supplies', deep_cleaning: 'Deep cleaning service', utensils: 'Small utensils and tools', cleaning_supplies: 'Cleaning supplies',
+    hygiene_ppe: 'Gloves and caps', license: 'Licence and paperwork', professional_fees: 'Professional fees', water_jar: 'Water jar',
+    vehicle_maintenance: 'Vehicle service and tyres', donations_community: 'Donations', staff_welfare: 'Staff welfare', emergency_online: 'Emergency online order',
+    asset_kitchen_equipment: 'Kitchen equipment (over 1,000)', asset_furniture: 'Furniture', asset_electrical: 'Electrical installation',
+  },
+};
+
+const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
+
+/** Check one newly saved purchase or expense and save any flags. Never throws. */
+export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key: string, item: any, loggedBy?: string): Promise<Flag[]> {
+  try {
+    if (!item?.id || !item?.date) return [];
+    const since = addDays(item.date, -90);
+    const pool = (await deps.rows(`${source}:`, { from: since, to: addDays(item.date, 2), field: 'date' })).filter((r: any) => r && r.id !== item.id);
+    const place = placeOf(item);
+    const name = nameOf(item);
+    const key0 = norm(name);
+    const sameItem = key0 ? pool.filter((r: any) => norm(nameOf(r)) === key0) : [];
+    const samePlace = (r: any) => placeOf(r) === place;
+    const amount = amountOf(item);
+    const flags: Omit<Flag, 'id' | 'expenseId' | 'expenseKey' | 'source' | 'date' | 'place' | 'status' | 'createdAt'>[] = [];
+
+    // Weight or unit slip: price per kg / L / piece far from what this item usually costs.
+    if (source === 'inventory' && Number(item.quantity) > 0 && amount > 0) {
+      const mine = canonical(Number(item.quantity), item.unit);
+      const prices = sameItem
+        .map((r: any) => ({ c: canonical(Number(r.quantity) || 0, r.unit), cost: amountOf(r) }))
+        .filter((x) => x.c.unit === mine.unit && x.c.qty > 0 && x.cost > 0)
+        .map((x) => x.cost / x.c.qty);
+      if (prices.length >= 3) {
+        const usual = median(prices);
+        const price = amount / mine.qty;
+        const ratio = price / usual;
+        if (usual > 0 && (ratio >= 1.6 || ratio <= 0.6)) {
+          const unitSlip = (ratio > 400 && ratio < 2500) || (ratio > 0.0004 && ratio < 0.0025);
+          const qty = Math.round((amount / usual) * 100) / 100;
+          const unit = mine.unit;
+          flags.push({
+            kind: 'weight',
+            title: unitSlip ? 'Unit looks wrong' : 'Quantity or price looks wrong',
+            message: `${name}: ${rupees(price)} a ${unit} here, but it usually costs ${rupees(usual)} a ${unit}${unitSlip ? ' — probably g and kg (or mL and L) mixed up' : ''}.`,
+            suggestion: { quantity: qty, unit, costPerUnit: Math.round(usual * 100) / 100 },
+            suggestionText: `${qty} ${unit} at the usual ${rupees(usual)} a ${unit}`,
+          });
+        }
+      }
+    }
+
+    // Bundle slip: pieces per pack unlike every earlier purchase of the item.
+    if (source === 'inventory' && Number(item.piecesPerCarton) > 0) {
+      const counts = new Map<number, number>();
+      sameItem.forEach((r: any) => { const n = Number(r.piecesPerCarton); if (n > 0) counts.set(n, (counts.get(n) || 0) + 1); });
+      const [usualPack, seen] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || [0, 0];
+      const mine = Number(item.piecesPerCarton);
+      if (seen >= 2 && Math.abs(mine - usualPack) / usualPack > 0.3) {
+        const packs = Number(item.cartonCount) || 1;
+        flags.push({
+          kind: 'bundle',
+          title: 'Pieces per pack look wrong',
+          message: `${name}: ${mine} pieces a pack this time; earlier purchases had ${usualPack} a pack.`,
+          suggestion: { piecesPerCarton: usualPack, quantity: packs * usualPack, costPerUnit: Math.round((amount / (packs * usualPack)) * 100) / 100 },
+          suggestionText: `${packs} × ${usualPack} pieces = ${packs * usualPack}`,
+        });
+      }
+    }
+
+    // Category: filed unlike before, or a word that belongs in another category.
+    let categoryChecked = false;
+    const rule = WORD_RULES.find((r) => r.test.test(name) && r.from.includes(item.category) && r.to !== item.category);
+    if (rule) {
+      categoryChecked = true;
+      flags.push({ kind: 'category', title: 'Wrong category?', message: `${name} is under ${catLabel(item.category)}, but ${rule.why}.`, suggestion: { category: rule.to }, suggestionText: `Move to ${catLabel(rule.to)}` });
+    } else if (/salar(y|i)|wage|bonus/i.test(name) && item.category !== 'personal_expense') {
+      categoryChecked = true;
+      flags.push({ kind: 'category', title: 'Salary logged as an expense?', message: `${name} looks like pay. Salaries, bonuses and advances go through Team > Pay, so they aren't counted twice.` });
+    } else if (sameItem.length >= 2) {
+      categoryChecked = true;
+      const byCat = new Map<string, number>();
+      sameItem.forEach((r: any) => byCat.set(r.category, (byCat.get(r.category) || 0) + 1));
+      const [usualCat, n] = [...byCat.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (usualCat && usualCat !== item.category && n / sameItem.length >= 0.7) {
+        flags.push({ kind: 'category', title: 'Different category from before', message: `${name} was filed under ${catLabel(usualCat)} ${n} times before; now it is under ${catLabel(item.category)}.`, suggestion: { category: usualCat }, suggestionText: `Move to ${catLabel(usualCat)}` });
+      }
+    }
+    if (!categoryChecked && name && sameItem.length === 0) {
+      // A brand-new item: Bunny reads the name and the amount and picks the category it fits.
+      try {
+        const choices = CATEGORY_CHOICES[source];
+        {
+          const { data } = await askClaudeForJson(deps.kv as any, {
+            purpose: 'expense-review',
+            user: { id: 'expense-review', isOwner: true },
+            system: 'You check expense entries for a small momo shop in West Bengal. Names may be Bengali or Hindi words typed in English letters, often misspelled. Pick the category that fits the item best. Say confident only when the current category is clearly wrong.',
+            prompt: JSON.stringify({ item: name, amount, filedUnder: item.category, categories: choices }),
+            schema: {
+              type: 'object', additionalProperties: false, required: ['category', 'confident', 'reason'],
+              properties: { category: { type: 'string', enum: Object.keys(choices) }, confident: { type: 'boolean' }, reason: { type: 'string' } },
+            },
+            maxTokens: 300,
+          });
+          if (data?.confident && data.category && data.category !== item.category && choices[data.category]) {
+            flags.push({ kind: 'category', title: 'Wrong category?', message: `${name} is under ${catLabel(item.category)}. ${String(data.reason || '').slice(0, 160)}`, suggestion: { category: data.category }, suggestionText: `Move to ${choices[data.category]}` });
+          }
+        }
+      } catch (error) {
+        console.log('Expense review: Bunny could not check the category:', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // Repairs and labour that don't say what.
+    if (source === 'overhead' && DETAIL_CATEGORIES.includes(item.category) && (VAGUE.test(name) || name.length < 6)) {
+      flags.push({ kind: 'detail', title: 'What was it for?', message: `"${name || 'No description'}" doesn't say what was ${item.category === 'labour_charge' ? 'done' : 'repaired or bought'}. Add the machine or job, who did it, and keep the bill.` });
+    }
+
+    // A consumable bought again and again at the same place.
+    const consumable = CONSUMABLE_CATEGORIES.includes(item.category) || CONSUMABLE_WORDS.test(name);
+    if (consumable && key0) {
+      const month = sameItem.filter((r: any) => samePlace(r) && r.date >= addDays(item.date, -30) && r.date <= item.date);
+      if (month.length >= 2) {
+        const spent = month.reduce((s: number, r: any) => s + amountOf(r), 0) + amount;
+        flags.push({ kind: 'repeat', title: 'Bought again', message: `${name}: this is purchase number ${month.length + 1} in 30 days here (${rupees(spent)} in all). Check they are being used up, not lost or taken.` });
+      }
+    }
+
+    // Far above what this kind of spend usually is at this place.
+    const sameCat = pool.filter((r: any) => r.category === item.category && samePlace(r));
+    if (sameCat.length >= 5 && amount >= 500) {
+      const usual = median(sameCat.map(amountOf).filter((x: number) => x > 0));
+      if (usual > 0 && amount >= usual * 3) {
+        flags.push({ kind: 'unusual', title: 'Much bigger than usual', message: `${rupees(amount)} for ${name || catLabel(item.category)}; a ${catLabel(item.category).toLowerCase()} entry here is usually about ${rupees(usual)}.` });
+      }
+    }
+
+    // The same bill logged twice: same kind, place and amount on the same day, or within two days
+    // when neither says what it was (a consumable bought again is the repeat check's job).
+    const twin = pool.find((r: any) => r.category === item.category && samePlace(r) && Math.abs(amountOf(r) - amount) < 0.5 && (
+      r.date === item.date && (norm(nameOf(r)) === key0 || VAGUE.test(nameOf(r)) || VAGUE.test(name))
+      || Math.abs(Date.parse(r.date) - Date.parse(item.date)) <= 2 * 86400000 && VAGUE.test(nameOf(r)) && VAGUE.test(name)));
+    if (twin) {
+      flags.push({ kind: 'duplicate', title: 'Logged twice?', message: `${rupees(amount)} for ${nameOf(twin) || 'the same thing'} was also logged on ${twin.date}. Delete one if it is the same bill.` });
+    }
+
+    if (flags.length === 0) return [];
+    const now = new Date().toISOString();
+    const saved: Flag[] = [];
+    for (const f of flags) {
+      const id = `${item.id}:${f.kind}`;
+      const existing = await deps.kv.get(`expense-flag:${id}`);
+      if (existing) continue;
+      const flag: Flag = { ...f, id, expenseId: item.id, expenseKey: key, source, date: item.date, place, status: 'open', createdAt: now, loggedBy };
+      await deps.kv.set(`expense-flag:${id}`, flag);
+      saved.push(flag);
+    }
+    if (saved.length) await tellPeople(deps, item, place, saved);
+    return saved;
+  } catch (error) {
+    console.log('Expense review failed:', error instanceof Error ? error.message : String(error));
+    return [];
+  }
+}
+
+// The place's incharge and the owner (cluster heads) get one notification per entry.
+async function tellPeople(deps: ExpenseReviewDeps, item: any, place: string, flags: Flag[]) {
+  const people = await deps.rows('unified-employee:');
+  const [kind, placeId] = place.split(':');
+  const incharges = people.filter((p: any) => p?.status !== 'inactive' && p?.authUserId && (
+    kind === 'store'
+      ? p.designation === 'store_incharge' && (p.storeId === placeId || (p.assignedStoreIds || []).includes(placeId))
+      : p.designation === 'production_incharge' && (p.storeId === placeId || (p.assignedProductionHouseIds || []).includes(placeId))
+  ));
+  const owners = people.filter((p: any) => p?.role === 'cluster_head' && p?.authUserId && p?.status !== 'inactive');
+  const to = new Map<string, any>();
+  [...incharges, ...owners].forEach((p: any) => to.set(p.authUserId, p));
+  const title = flags.length === 1 ? flags[0].title : 'Check an expense entry';
+  const message = `${nameOf(item) || 'An entry'} · ${rupees(amountOf(item))} · ${item.date}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
+  for (const authUserId of to.keys()) {
+    await deps.notifyUser(authUserId, 'expense_flag', title, message, item.id, item.date).catch(() => undefined);
+  }
+}
+
+const SUGGESTION_FIELDS = ['quantity', 'unit', 'costPerUnit', 'piecesPerCarton', 'cartonCount', 'category'];
+
+export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
+  // Who sees and decides flags: the owner and operations managers everywhere, an incharge for
+  // their own store or production house.
+  const viewerOf = async (c: any) => {
+    const auth = await deps.verifyUser(c.req.header('Authorization'));
+    if ('error' in auth) return { error: c.json({ error: auth.error }, auth.status) };
+    const m = auth.user.user_metadata || {};
+    const all = m.role === 'cluster_head' || (m.role === 'manager' && m.designation !== 'store_incharge' && m.designation !== 'production_incharge');
+    const places = new Set<string>();
+    if (m.designation === 'store_incharge') [m.storeId, ...(m.assignedStoreIds || [])].filter(Boolean).forEach((id: string) => places.add(`store:${id}`));
+    if (m.designation === 'production_incharge') [m.storeId, ...(m.assignedProductionHouseIds || [])].filter(Boolean).forEach((id: string) => places.add(`production:${id}`));
+    if (!all && places.size === 0) return { error: c.json({ error: 'Only the owner, operations managers and incharges check expenses' }, 403) };
+    return { all, places, name: m.name || auth.user.email || 'Someone' };
+  };
+  const canSee = (v: { all: boolean; places: Set<string> }, flag: Flag) => v.all || v.places.has(flag.place);
+
+  app.get(`${P}/expense-flags`, async (c: any) => {
+    const v: any = await viewerOf(c);
+    if (v.error) return v.error;
+    try {
+      const status = c.req.query('status') || 'open';
+      const flags = (await deps.rows('expense-flag:')).filter((f: Flag) => f && (status === 'all' || f.status === status) && canSee(v, f));
+      const keys = [...new Set(flags.map((f: Flag) => f.expenseKey))];
+      const records = keys.length && deps.kv.mget ? await deps.kv.mget(keys) : [];
+      const byId = new Map<string, any>();
+      records.filter(Boolean).forEach((r: any) => byId.set(r.id, r));
+      const rows = flags
+        .map((f: Flag) => ({ ...f, entry: byId.get(f.expenseId) || null }))
+        .filter((f: any) => f.entry || f.status !== 'open')
+        .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));
+      return c.json({ flags: rows });
+    } catch (error) {
+      console.log('Error listing expense flags:', error);
+      return c.json({ error: 'Could not load the entries to check' }, 500);
+    }
+  });
+
+  const decide = async (c: any, action: 'apply' | 'dismiss') => {
+    const v: any = await viewerOf(c);
+    if (v.error) return v.error;
+    try {
+      const id = decodeURIComponent(c.req.param('id'));
+      const flag: Flag | null = await deps.kv.get(`expense-flag:${id}`);
+      if (!flag) return c.json({ error: 'That check was not found' }, 404);
+      if (!canSee(v, flag)) return c.json({ error: 'This entry belongs to another place' }, 403);
+      if (flag.status !== 'open') return c.json({ error: 'Someone has already decided this one' }, 409);
+      const body = await c.req.json().catch(() => ({}));
+      if (action === 'apply') {
+        if (!flag.suggestion) return c.json({ error: 'There is no fix to apply; edit the entry instead' }, 400);
+        const entry = await deps.kv.get(flag.expenseKey);
+        if (!entry) return c.json({ error: 'The entry was deleted' }, 404);
+        const fix = Object.fromEntries(Object.entries(flag.suggestion).filter(([k]) => SUGGESTION_FIELDS.includes(k)));
+        const before = Object.fromEntries(Object.keys(fix).map((k) => [k, entry[k] ?? null]));
+        await deps.kv.set(flag.expenseKey, { ...entry, ...fix, reviewFixes: [...(entry.reviewFixes || []), { kind: flag.kind, before, after: fix, by: v.name, at: new Date().toISOString() }] });
+      }
+      const next: Flag = { ...flag, status: action === 'apply' ? 'fixed' : 'dismissed', decidedBy: v.name, decidedAt: new Date().toISOString(), note: typeof body?.note === 'string' ? body.note.slice(0, 300) : undefined };
+      await deps.kv.set(`expense-flag:${id}`, next);
+      return c.json({ flag: next });
+    } catch (error) {
+      console.log('Error deciding an expense flag:', error);
+      return c.json({ error: 'Could not save that' }, 500);
+    }
+  };
+  app.post(`${P}/expense-flags/:id/apply`, (c: any) => decide(c, 'apply'));
+  app.post(`${P}/expense-flags/:id/dismiss`, (c: any) => decide(c, 'dismiss'));
+}

@@ -1,10 +1,11 @@
 // Home for the owner and - as the "ops" variant - the operations manager (design review d2, d3;
 // wireframe Main): the team, sales today, the four tiles (profit with rent and salaries spread
 // through the month first), what needs them, today's brief and the next days' forecast.
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, Scale, Truck, Wallet,
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, ReceiptText, Scale, Truck, Wallet,
 } from 'lucide-react';
+import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { useShell } from '../shell/ShellContext';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
@@ -45,6 +46,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
     : stores.length === 1 && stores[0].id === insightsStoreId);
 
   const storeName = (id?: string | null) => stores.find((s) => s.id === id)?.name || '';
+  // Expense entries the checks flagged (server expenseReview.ts).
+  const expenseFlags = useExpenseFlags(nav.perms.isClusterHead || nav.perms.isOperationsManager, token);
+  const [flagsOpen, setFlagsOpen] = useState(false);
   const x = home.extras;
 
   const attention = useMemo(() => {
@@ -108,6 +112,15 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         });
       }
     }
+    if (expenseFlags.flags.length) {
+      items.push({
+        key: 'expense-flags', icon: ReceiptText, tone: 'warning', rank: 2.5,
+        title: expenseFlags.flags.length === 1 ? '1 expense entry to check' : `${expenseFlags.flags.length} expense entries to check`,
+        meta: expenseFlags.flags.slice(0, 2).map((f) => f.title).join(' · '),
+        count: expenseFlags.flags.length,
+        onOpen: () => setFlagsOpen(true),
+      });
+    }
     if (x.recalibrations) items.push({ key: 'recal', icon: Scale, rank: 5, title: t('home.att.recalibration'), count: x.recalibrations, onOpen: () => open('insights') });
     const leavesWaiting = (x.leaves || []).filter((l) => l.status === 'pending').length;
     if (leavesWaiting && has('team/attendance')) {
@@ -127,7 +140,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
@@ -197,6 +210,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         )}
       </div>
       {profile.sheet}
+      <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
     </HomePage>
   );
 }

@@ -2500,6 +2500,43 @@ export async function getTeamLeaveCalendar(accessToken?: string, from?: string, 
   return fetchWithAuth(`${API_BASE}/team/leave-calendar${query}`, token);
 }
 
+// Expense checks (server expenseReview.ts): problems found in new purchases and expenses, with a
+// fix to apply where there is one. The owner and operations managers see all; an incharge their place.
+export interface ExpenseFlag {
+  id: string;
+  expenseId: string;
+  source: 'inventory' | 'overhead';
+  kind: 'weight' | 'bundle' | 'category' | 'detail' | 'repeat' | 'unusual' | 'duplicate' | string;
+  date: string;
+  place: string;
+  title: string;
+  message: string;
+  suggestion?: Record<string, unknown>;
+  suggestionText?: string;
+  status: 'open' | 'fixed' | 'dismissed';
+  createdAt: string;
+  loggedBy?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  entry: (Record<string, any> & { id: string; date: string }) | null;
+}
+
+async function tokenOr(accessToken?: string): Promise<string> {
+  if (accessToken) return accessToken;
+  const { data: { session } } = await createBrowserSupabase().auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return session.access_token;
+}
+
+export async function getExpenseFlags(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<ExpenseFlag[]> {
+  const data = await fetchWithAuth(`${API_BASE}/expense-flags?status=${status}`, await tokenOr(accessToken));
+  return data.flags || [];
+}
+
+export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+}
+
 export async function applyLeave(leave: LeaveApplication): Promise<LeaveApplication> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();

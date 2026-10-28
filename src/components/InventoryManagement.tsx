@@ -34,6 +34,7 @@ import { ExtendedFab, FabSpacer, MoneyPage } from './money/MoneyLayout';
 import { DayBand, MoneyWaiting } from './money/DayCloseParts';
 import { categoryIcon, categoryText, stripEmoji } from './money/categoryDisplay';
 import { useUndoableDelete } from './money/useUndoableDelete';
+import { ExpenseFlagsBanner } from './money/ExpenseFlags';
 
 // Invoice scanning is on (about ₹0.03 a bill on Haiku). The server can still switch it off with
 // its AI_INVOICE_SCAN secret set to "off" (see insights.ts).
@@ -267,6 +268,8 @@ export function InventoryManagement({ context, selectedStoreId, employees }: Pro
  </div>
 
  <MoneyWaiting kinds={['inventory', 'overhead', 'fixed-cost']} date={selectedDate} />
+ {/* What the expense checks found (owner, operations managers, incharges). */}
+ <ExpenseFlagsBanner enabled={isClusterHead || isOperationsManager || isStoreIncharge || isProductionIncharge} accessToken={accessToken} />
 
  {activeTab === 'combined' ? (
  <>

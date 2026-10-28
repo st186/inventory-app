@@ -1,9 +1,9 @@
 // Home of the store incharge and production incharge (either login), and of the operations
 // manager, who gets the owner's Home in its "ops" variant (design review d3; wireframe StaffHome):
 // the shift card pinned on top, today's checklist in due-time order, alerts, and two figures.
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Camera, ClipboardList, ClipboardPlus, Factory, IdCard, PackageCheck, PackageOpen, Receipt, Trash2, Truck, UserCheck,
+  Camera, ClipboardList, ClipboardPlus, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck,
 } from 'lucide-react';
 import { useShell } from '../shell/ShellContext';
 import { Callout } from '../ui/callout';
@@ -25,6 +25,7 @@ import { HomePage, istMinutes, timeOf, toMinutes, useClock, useDateWords, useFir
 import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
+import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -76,8 +77,18 @@ function InchargeHome() {
   const requests = context.productionRequests || [];
   const mine = requests.filter((r) => (isProduction ? suppliedStoreIds.includes(r.storeId) : r.storeId === store));
 
+  // Expense entries the checks flagged for this incharge's store or kitchen.
+  const expenseFlags = useExpenseFlags(true, token);
+  const [flagsOpen, setFlagsOpen] = useState(false);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (expenseFlags.flags.length) {
+      list.push({
+        key: 'expense-flags', icon: ReceiptText, title: expenseFlags.flags.length === 1 ? '1 expense entry to check' : `${expenseFlags.flags.length} expense entries to check`,
+        meta: expenseFlags.flags[0].title, status: 'late', count: expenseFlags.flags.length, due: 0,
+        onOpen: () => setFlagsOpen(true),
+      });
+    }
     if (!isProduction && store) {
       const sentToday = mine.some((r) => r.requestDate === today);
       list.push({
@@ -175,7 +186,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -247,6 +258,7 @@ function InchargeHome() {
         )}
       </section>
       {profile.sheet}
+      <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
     </HomePage>
   );
 }
